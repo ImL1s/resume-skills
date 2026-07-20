@@ -150,6 +150,19 @@ class SkillBoundArgvTests(unittest.TestCase):
             self.assertEqual(payload["sessions"][0]["session_id"], session_id)
             self.assertIn("skill argv works", payload["sessions"][0]["last_user_request"] or "")
 
+    def test_skill_template_argv_primary_not_request_file_required(self) -> None:
+        from portable_resume.install.render import render_skill_markdown
+
+        text = render_skill_markdown(host="claude", source="codex")
+        self.assertIn("run_reader.py show", text)
+        self.assertNotIn(
+            "Still write a request-v1 file before invoking the runner.",
+            text,
+        )
+        # optional advanced path must still be mentioned somewhere
+        lower = text.lower()
+        self.assertTrue("request-v1" in lower or "request-file" in lower)
+
 
 if __name__ == "__main__":
     unittest.main()

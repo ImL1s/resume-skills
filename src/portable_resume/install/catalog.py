@@ -68,8 +68,11 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "What did I leave unfinished in my last Codex session? (model may auto-load by description)",
         ),
         arguments_note=(
-            "If this host expands `$ARGUMENTS` into the skill body, treat that text as labeled "
-            "prompt context only. Still write a request-v1 file before invoking the runner."
+            "If this host expands `$ARGUMENTS` / invocation tail into the skill prompt, "
+            "use that text as the session <ref> (or omit for latest). "
+            "It is never process argv by itself. "
+            "Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
         ),
         caveats=(
             "Cowork/cloud sessions do not read local ~/.claude/skills; use account-enabled or repo skills.",
@@ -295,8 +298,11 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "grok inspect  # list discovered skills",
         ),
         arguments_note=(
-            "If `$ARGUMENTS` appears in the rendered body, treat it as labeled prompt context only. "
-            "Still write a request-v1 file before invoking the runner."
+            "If this host expands `$ARGUMENTS` / invocation tail into the skill prompt, "
+            "use that text as the session <ref> (or omit for latest). "
+            "It is never process argv by itself. "
+            "Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
         ),
         caveats=(
             "$ARGUMENTS substitution is documented in Grok source/user guide; still not process argv.",

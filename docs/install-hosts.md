@@ -17,7 +17,7 @@ PYTHONPATH=src python3 scripts/install-resume-skills hosts --host claude --json
 | Skill package shape | `<root>/<skill-name>/SKILL.md` + `scripts/run_reader.py` |
 | Skills written per install | `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-opencode` |
 | Portable frontmatter | only `name` + `description` |
-| Runtime contract | write `portable-resume/request-v1` JSON → `python3 …/run_reader.py --request-file … --format handoff` |
+| Runtime contract | Grok-style primary: `python3 …/run_reader.py show` / `list` (invocation tail / `$ARGUMENTS` → `<ref>`, or omit for latest). Optional advanced: write `portable-resume/request-v1` → `run_reader.py --request-file …` |
 | Argv truth | **no** host binds invocation text to process argv for these skills |
 | Packaging evidence | `verified-filesystem` (36 cells) |
 | Live host UI | **`not-run`** for all cells |
@@ -97,7 +97,7 @@ Project (and Codex global) paths can be **the same directory**. Host-rendered sk
 
 - Slash: `/resume-codex`, `/resume-claude`, …
 - Model auto-load by `description` unless disabled.
-- `$ARGUMENTS` / `$N` are **prompt string substitutions only** — still write request-v1 for the runner.
+- `$ARGUMENTS` / `$N` are **prompt string substitutions only** — use that text as the session `<ref>` (or omit for latest). Optional advanced path: request-v1 file + `--request-file`.
 
 ### Caveats
 
