@@ -38,7 +38,7 @@ Installing skills means writing instruction files that a host agent may later ex
 
 ### Secret redaction (honest coverage)
 
-Redaction is **best-effort**, not complete DLP. Patterns include common shapes such as:
+Redaction is **best-effort**, not complete DLP. The tracked-tree secret gate (`scripts/check_secrets.py`) scans `git ls-files` only (not git history). Runtime patterns include common shapes such as PEM private-key blocks, Slack `xox*`, Google-like `AIza…`, and:
 
 - AWS-like `AKIA…`
 - Common `sk-…` / Bearer-like tokens

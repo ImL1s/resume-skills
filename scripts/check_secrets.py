@@ -4,6 +4,9 @@
 Synthetic credential *shapes* inside unit tests (built at runtime for redaction
 tests) are allowed. Hard-coded home paths and real-looking keys in product
 code/docs are not.
+
+Scans `git ls-files` only (not git history). Release checklist may still run
+gitleaks against history separately.
 """
 
 from __future__ import annotations
@@ -24,12 +27,23 @@ PRODUCT_FORBIDDEN = [
     (re.compile(r"hooks\.slack\.com/services/[A-Za-z0-9/]+"), "Slack webhook"),
 ]
 
-# High-risk shapes; allowed only under tests/ when constructed for redaction tests.
+# High-risk shapes; allowlisted test files may contain synthetic shapes for redaction tests.
+# Pattern breadth matches runtime sanitize (sk- may include -/_).
 SENSITIVE_SHAPES = [
     (re.compile(r"AKIA[0-9A-Z]{16}"), "AWS access key id shape"),
-    (re.compile(r"sk-[A-Za-z0-9]{20,}"), "OpenAI-like secret shape"),
-    (re.compile(r"(?i)(api[_-]?key|secret[_-]?key|access[_-]?token)\s*[:=]\s*['\"][^'\"]{12,}['\"]"), "assigned secret-like value"),
+    (re.compile(r"sk-[A-Za-z0-9_-]{20,}"), "OpenAI-like secret shape"),
+    (
+        re.compile(r"(?i)(api[_-]?key|secret[_-]?key|access[_-]?token)\s*[:=]\s*['\"][^'\"]{12,}['\"]"),
+        "assigned secret-like value",
+    ),
 ]
+
+# Relative paths allowed to embed synthetic secret *shapes* for redaction unit tests.
+SENSITIVE_ALLOWLIST = frozenset(
+    {
+        "tests/unit/test_sanitize_handoff.py",
+    }
+)
 
 SKIP_SUFFIX = {".sqlite", ".vscdb", ".zst", ".pyc", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
@@ -52,7 +66,13 @@ def main() -> int:
         for pat, label in PRODUCT_FORBIDDEN:
             if pat.search(text):
                 hits.append(f"{rel}: {label}")
+        if under_tests and rel in SENSITIVE_ALLOWLIST:
+            continue
         if under_tests:
+            # tests/ still scanned for SENSITIVE_SHAPES except allowlisted redaction fixtures
+            for pat, label in SENSITIVE_SHAPES:
+                if pat.search(text):
+                    hits.append(f"{rel}: {label}")
             continue
         for pat, label in SENSITIVE_SHAPES:
             if pat.search(text):

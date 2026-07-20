@@ -216,7 +216,7 @@ def stable_read_bytes(
             and data == verified_data == final_data
         ):
             if budget is not None:
-                budget.consume_records()
+                # Bytes only: adapters charge consume_records() per logical row/line.
                 budget.consume_bytes(len(data))
             return StableRead(data=data, fingerprint=observed, attempts=attempt)
     family = (os.path.basename(safe),)

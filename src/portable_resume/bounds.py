@@ -12,12 +12,14 @@ class Bounds:
 
     listed_sessions: int = 50
     listing_age_minutes: int = 30 * 24 * 60
+    # Logical source rows (JSONL lines / SQLite rows). File open is not a record.
     scanned_records: int = 2_000
     record_bytes: int = 16 * 1024 * 1024
     sqlite_snapshot_bytes: int = 256 * 1024 * 1024
     # Aggregate raw bytes read from source stores for one list/show (not output size).
     source_read_bytes: int = 256 * 1024 * 1024
     normalized_turns: int = 2_000
+    # Cap for non-tool turn content (character count in sanitize_text; UTF-8 re-checked later).
     normalized_content_bytes: int = 8 * 1024 * 1024
     title_chars: int = 200
     tool_output_chars: int = 8_000

@@ -21,6 +21,7 @@ from .manifest import (
     empty_manifest,
     sha256_bytes,
     sha256_file,
+    validate_rel_path,
 )
 from .render import frontmatter_keys, materialize_plan, package_identity, render_skill_markdown
 
@@ -120,7 +121,12 @@ def load_manifest(root: str) -> Manifest | None:
     path = manifest_path(root)
     if not os.path.isfile(path):
         return None
-    return Manifest.loads(Path(path).read_text(encoding="utf-8"))
+    try:
+        return Manifest.loads(Path(path).read_text(encoding="utf-8"))
+    except ValueError as error:
+        raise DiagnosticError("E_VERIFY_MISMATCH") from error
+    except (KeyError, TypeError, json.JSONDecodeError) as error:
+        raise DiagnosticError("E_VERIFY_MISMATCH") from error
 
 
 def require_no_pending_journal(root: str) -> None:
@@ -224,17 +230,15 @@ def plan_install(
 
 def _safe_rel_path(rel: str) -> str:
     """Reject absolute paths and parent escapes in relative install paths."""
-    if not rel or rel.startswith("/") or rel.startswith("\\") or "\x00" in rel:
-        raise DiagnosticError("E_INSTALL_CONFLICT")
-    parts = Path(rel).parts
-    if any(part in {"..", ""} for part in parts):
-        raise DiagnosticError("E_INSTALL_CONFLICT")
-    # normalize to posix relative form without leading ./
-    return Path(*parts).as_posix()
+    try:
+        return validate_rel_path(rel)
+    except ValueError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
 
 
 def _dest_under_root(root: str, rel: str) -> str:
     safe = _safe_rel_path(rel)
+    # Join under root without resolving intermediate symlinks that escape via realpath of join alone.
     dest = os.path.realpath(os.path.join(root, safe))
     root_real = os.path.realpath(root)
     try:
@@ -330,10 +334,26 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
             for rel in backups:
                 safe = _safe_rel_path(rel)
                 src = _dest_under_root(root, safe)
+                if os.path.islink(src):
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
                 if os.path.isfile(src):
                     target = os.path.join(backup_root, safe)
                     os.makedirs(os.path.dirname(target), exist_ok=True)
-                    shutil.copy2(src, target)
+                    # copy without following a late-swapped symlink
+                    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+                    try:
+                        infd = os.open(src, flags)
+                    except OSError as error:
+                        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                    try:
+                        with os.fdopen(infd, "rb") as src_fh, open(target, "wb") as dst_fh:
+                            shutil.copyfileobj(src_fh, dst_fh)
+                    except Exception:
+                        try:
+                            os.remove(target)
+                        except OSError:
+                            pass
+                        raise
                     journal["paths"][safe]["backup"] = target
             journal["state"] = "committing"
             _write_journal(root, journal)
@@ -357,6 +377,27 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                 os.replace(src, dest)
                 journal["paths"][safe]["state"] = "committed"
                 _write_journal(root, journal)
+            # Remove owned orphans (in old manifest, not in new plan, sole claim released).
+            orphan_removed: list[str] = []
+            if existing is not None:
+                for rel, entry in list(existing.files.items()):
+                    if rel in plan.files:
+                        continue
+                    # After rebuild, plan.manifest already dropped empty-claim orphans.
+                    if rel in plan.manifest.files:
+                        continue
+                    try:
+                        abs_path = _dest_under_root(root, rel)
+                    except DiagnosticError:
+                        continue
+                    if os.path.islink(abs_path) or not os.path.isfile(abs_path):
+                        continue
+                    try:
+                        if sha256_file(abs_path) == entry.sha256:
+                            os.remove(abs_path)
+                            orphan_removed.append(rel)
+                    except OSError:
+                        continue
             # write manifest last
             Path(manifest_path(root)).write_text(plan.manifest.dumps(), encoding="utf-8")
             journal["state"] = "complete"
@@ -367,7 +408,10 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                 os.remove(journal_path(root))
             except OSError:
                 pass
-            return {"ok": True, "dry_run": False, "plan": plan.to_dict(), "generation": plan.generation}
+            result = {"ok": True, "dry_run": False, "plan": plan.to_dict(), "generation": plan.generation}
+            if orphan_removed:
+                result["orphan_removed"] = orphan_removed
+            return result
         except Exception:
             _attempt_rollback(root, journal, plan)
             raise
@@ -477,11 +521,19 @@ def verify_root(root: str, *, claim: str | None = None) -> dict[str, Any]:
     for rel, entry in sorted(manifest.files.items()):
         if claim is not None and claim not in entry.claims:
             continue
-        path = os.path.join(root, rel)
-        if not os.path.isfile(path):
+        try:
+            path = _dest_under_root(root, rel)
+        except DiagnosticError:
             mismatches.append(rel)
             continue
-        if sha256_file(path) != entry.sha256:
+        if os.path.islink(path) or not os.path.isfile(path):
+            mismatches.append(rel)
+            continue
+        try:
+            if sha256_file(path) != entry.sha256:
+                mismatches.append(rel)
+                continue
+        except OSError:
             mismatches.append(rel)
             continue
         if rel.endswith("SKILL.md"):
@@ -501,7 +553,7 @@ def verify_root(root: str, *, claim: str | None = None) -> dict[str, Any]:
             if skill not in manifest.files or claim_id not in manifest.files[skill].claims:
                 raise DiagnosticError("E_VERIFY_MISMATCH")
             expected = render_skill_markdown(host=meta["host"], source=source)
-            actual = Path(os.path.join(root, skill)).read_text(encoding="utf-8")
+            actual = Path(_dest_under_root(root, skill)).read_text(encoding="utf-8")
             if actual != expected:
                 raise DiagnosticError("E_VERIFY_MISMATCH")
     return {
@@ -536,9 +588,18 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
                 entry.claims = [c for c in entry.claims if c != claim]
             if entry.claims:
                 continue
-            abs_path = os.path.join(root, path)
-            if os.path.isfile(abs_path):
-                if sha256_file(abs_path) == entry.sha256:
+            try:
+                abs_path = _dest_under_root(root, path)
+            except DiagnosticError:
+                # Malicious/escaped manifest entry: drop from manifest, never delete outside root.
+                del manifest.files[path]
+                continue
+            if os.path.isfile(abs_path) and not os.path.islink(abs_path):
+                try:
+                    matches = sha256_file(abs_path) == entry.sha256
+                except OSError:
+                    matches = False
+                if matches:
                     os.remove(abs_path)
                     removed.append(path)
                 else:
@@ -553,8 +614,8 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
                 os.remove(manifest_path(root))
             except OSError:
                 pass
-            # best-effort cleanup of empty skill dirs and support runtime if empty
-            _cleanup_empty_dirs(root)
+            # best-effort cleanup of empty owned skill dirs / support tree only
+            _cleanup_empty_dirs(root, removed_paths=removed)
         return {
             "ok": True,
             "claim": claim,
@@ -564,13 +625,40 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
         }
 
 
-def _cleanup_empty_dirs(root: str) -> None:
-    for dirpath, dirnames, filenames in os.walk(root, topdown=False):
-        if dirpath == root:
+def _cleanup_empty_dirs(root: str, *, removed_paths: list[str] | None = None) -> None:
+    """Remove empty ancestors of owned removals and empty .portable-resume / resume-* trees.
+
+    Never walks the entire skill root deleting arbitrary foreign empty skill dirs.
+    """
+    root_real = os.path.realpath(root)
+    candidates: set[str] = set()
+    for rel in removed_paths or ():
+        try:
+            abs_path = _dest_under_root(root, rel)
+        except DiagnosticError:
+            continue
+        parent = os.path.dirname(abs_path)
+        while parent.startswith(root_real) and parent != root_real:
+            candidates.add(parent)
+            parent = os.path.dirname(parent)
+    # Always consider support dir cleanup after last claim.
+    support = os.path.join(root_real, SUPPORT_DIR)
+    if os.path.isdir(support):
+        for dirpath, _dirnames, _filenames in os.walk(support, topdown=False):
+            candidates.add(dirpath)
+    for path in sorted(candidates, key=lambda p: p.count(os.sep), reverse=True):
+        if path == root_real:
             continue
         try:
-            if not dirnames and not filenames:
-                os.rmdir(dirpath)
+            if not os.path.isdir(path) or os.path.islink(path):
+                continue
+            if os.listdir(path):
+                continue
+            # Only rmdir under resume-* package dirs, .portable-resume, or ancestors of removed files.
+            rel = os.path.relpath(path, root_real)
+            top = rel.split(os.sep, 1)[0]
+            if top == SUPPORT_DIR or top.startswith("resume-") or path in candidates:
+                os.rmdir(path)
         except OSError:
             pass
 

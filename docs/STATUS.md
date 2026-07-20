@@ -1,4 +1,4 @@
-# Project status (2026-07-20)
+# Project status (2026-07-21)
 
 ## What is done (deterministic V1 bar)
 
@@ -6,11 +6,12 @@
 |---|---|---|
 | Six source adapters | **done** | `src/portable_resume/adapters/*`, `tests/adapters/*`, synthetic fixtures |
 | Shared core (sanitize, snapshot, handoff, request-v1) | **done** | `src/portable_resume/*`, unit/security suites |
-| 36-cell packaging matrix | **done (filesystem)** | `matrix --json` → packaging 36, **live 0** |
+| 36-cell packaging matrix | **done (filesystem)** | `matrix --json` → packaging 36; host UI live still **0** (see below) |
+| Source live list/show (all six) | **partial live** | Claude/Codex/Grok/OpenCode/Antigravity/Cursor — see parity table |
 | Installer dry-run / install / verify / drift / uninstall | **done** | integration tests + `scripts/self_verify.py` |
 | Source CLI isolation + immutability | **done** | `tests/security/*` |
 | Public-tree hygiene + secret gate | **done** | `test_public_tree_hygiene`, `scripts/check_secrets.py` |
-| CI deterministic gates | **done** | `.github/workflows/ci.yml` on **ubuntu-latest** and **macos-latest** |
+| CI deterministic gates | **done** | `.github/workflows/ci.yml` on **ubuntu-latest** and **macos-latest** (3.11+3.12) |
 | Multi-seat independent review | **partial** | summary only in `docs/evidence-summary.md` |
 
 ## What is not done (honest)

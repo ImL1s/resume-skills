@@ -13,7 +13,7 @@ FORBIDDEN = [
     re.compile(r"/" + r"home" + r"/[A-Za-z][A-Za-z0-9._-]{1,32}/"),
     re.compile(r"aa22306546@" + r"hotmail" + r"\.com"),
     re.compile(r"-----BEGIN (RSA |OPENSSH )?PRIVATE KEY-----"),
-    re.compile(r"sk-[A-Za-z0-9]{20,}"),
+    re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),
 ]
 

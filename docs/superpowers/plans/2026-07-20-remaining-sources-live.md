@@ -1,3 +1,5 @@
+> **Superseded by v0.2.0 (`bc7baf0`)**: remaining-source live list/show shipped. Remaining gates: host UI, dual-OS claim, Cursor full bubble graph. See `docs/STATUS.md` and root `plans/`.
+
 # Remaining Sources Live Parity Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended). Steps use checkbox (`- [ ]`) syntax.

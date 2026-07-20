@@ -265,15 +265,9 @@ def _mtime(read: StableRead) -> str:
 
 
 def _within(updated_at: str | None, minutes: int | None) -> bool:
-    if minutes is None:
-        minutes = DEFAULT_BOUNDS.listing_age_minutes
-    if updated_at is None:
-        return False
-    try:
-        stamp = datetime.fromisoformat(updated_at.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return False
-    return stamp >= time.time() - minutes * 60
+    from .common import within_age
+
+    return within_age(updated_at, minutes, default_minutes=DEFAULT_BOUNDS.listing_age_minutes)
 
 
 def _record_cwd(records: Iterable[Mapping[str, Any]]) -> str | None:
@@ -598,6 +592,7 @@ class ClaudeAdapter:
             exact_uuid=exact,
             cwd_scoped=bool(prefer) and exact is None,
         ):
+            # List still needs recorded cwd/title for collision safety; show does lineage.
             item = _summary(path, root, query, budget)
             if item is not None:
                 values.append(item)

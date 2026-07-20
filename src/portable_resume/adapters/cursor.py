@@ -121,7 +121,8 @@ def _mtime(read: StableRead) -> str:
 
 
 def _within(updated_at: str | None, query: Query, identifier: str) -> bool:
-    if query.ref == identifier:
+    ref_id = _exact_uuid_ref(query.ref)
+    if ref_id == identifier or (query.ref is not None and query.ref == identifier):
         return True
     minutes = query.within_min if query.within_min is not None else DEFAULT_BOUNDS.listing_age_minutes
     if minutes is not None and minutes <= 0:
@@ -337,7 +338,8 @@ def _parse_transcript(
 def _cli_summary(path: str, root: str, query: Query, budget: ReadBudget) -> SessionSummary | None:
     metadata_read, metadata = _metadata(path, root, budget)
     identifier = metadata["id"]
-    if (metadata["archived"] or metadata["composer_kind"] == "subagent") and query.ref != identifier:
+    ref_id = _exact_uuid_ref(query.ref)
+    if (metadata["archived"] or metadata["composer_kind"] == "subagent") and ref_id != identifier and query.ref != identifier:
         return None
     if query.cwd is not None and not same_cwd(metadata["cwd"], query.cwd):
         return None
@@ -460,7 +462,8 @@ def _desktop_summaries(path: str, root: str, query: Query, budget: ReadBudget) -
             continue
         if cwd_hash != _cwd_hash(cwd) or type(archived) is not int or archived not in {0, 1} or kind not in {"project", "subagent"}:
             raise DiagnosticError("E_CORRUPT_RECORD", source="cursor", provider=DESKTOP_FORMAT)
-        if (archived or kind == "subagent") and query.ref != identifier:
+        ref_id = _exact_uuid_ref(query.ref)
+        if (archived or kind == "subagent") and ref_id != identifier and query.ref != identifier:
             continue
         if query.cwd is not None and not same_cwd(cwd, query.cwd):
             continue
@@ -654,10 +657,15 @@ def _list_live_cli_stores(root: str, query: Query) -> list[SessionSummary]:
             title: str | None = None
             created_at: str | None = None
             updated_at: str | None = None
-            if os.path.isfile(meta_path) and not os.path.islink(meta_path):
+            if os.path.lexists(meta_path):
                 try:
-                    raw = open(meta_path, "rb").read(DEFAULT_BOUNDS.record_bytes)
-                    meta = json.loads(raw.decode("utf-8"))
+                    read = stable_read_bytes(
+                        meta_path,
+                        root=root,
+                        max_bytes=min(DEFAULT_BOUNDS.record_bytes, 256 * 1024),
+                        budget=None,
+                    )
+                    meta = json.loads(read.data.decode("utf-8"))
                     if isinstance(meta, dict):
                         if isinstance(meta.get("cwd"), str):
                             cwd = canonicalize_cwd(meta["cwd"])
@@ -719,9 +727,15 @@ def _show_live_cli_store(
     created_at: str | None = None
     updated_at: str | None = None
     meta_path = os.path.join(os.path.dirname(path), "meta.json")
-    if os.path.isfile(meta_path) and not os.path.islink(meta_path):
+    if os.path.lexists(meta_path):
         try:
-            meta = json.loads(open(meta_path, "rb").read(DEFAULT_BOUNDS.record_bytes).decode("utf-8"))
+            read = stable_read_bytes(
+                meta_path,
+                root=root,
+                max_bytes=min(DEFAULT_BOUNDS.record_bytes, 256 * 1024),
+                budget=budget,
+            )
+            meta = json.loads(read.data.decode("utf-8"))
             if isinstance(meta, dict):
                 if isinstance(meta.get("cwd"), str):
                     cwd = canonicalize_cwd(meta["cwd"])
@@ -735,8 +749,9 @@ def _show_live_cli_store(
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if "blobs" not in tables:
                 raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="cursor", provider=LIVE_CLI_FORMAT)
+            # Deterministic order: rowid insertion order (stable), then id.
             rows = connection.execute(
-                "SELECT id, data FROM blobs LIMIT ?",
+                "SELECT id, data FROM blobs ORDER BY rowid ASC, id ASC LIMIT ?",
                 (DEFAULT_BOUNDS.scanned_records,),
             ).fetchall()
         except sqlite3.Error as error:

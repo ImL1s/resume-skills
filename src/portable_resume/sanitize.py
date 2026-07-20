@@ -18,6 +18,9 @@ _SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+\-/]+=*"),
     re.compile(r"(?i)(\b(?:password|passwd|api[_-]?key|access[_-]?token|token|secret)\s*[:=]\s*)[^\s,;]+"),
+    re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----"),
+    re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b"),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b"),
 )
 _FORBIDDEN_ROLES = frozenset({"system", "developer", "reasoning", "thinking", "control", "internal"})
 _FORBIDDEN_KEYS = (

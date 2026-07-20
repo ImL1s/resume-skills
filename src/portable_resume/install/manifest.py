@@ -13,6 +13,18 @@ from .catalog import BUNDLE_VERSION, MANIFEST_SCHEMA
 OWNER_MARKER = "portable-resume-owned"
 
 
+def validate_rel_path(rel: str) -> str:
+    """Reject absolute paths, NUL, and parent escapes in manifest/install relative paths."""
+    from pathlib import Path
+
+    if not rel or rel.startswith("/") or rel.startswith("\\") or "\x00" in rel:
+        raise ValueError(f"unsafe relative path: {rel!r}")
+    parts = Path(rel).parts
+    if any(part in {"..", ""} for part in parts):
+        raise ValueError(f"unsafe relative path: {rel!r}")
+    return Path(*parts).as_posix()
+
+
 @dataclass(slots=True)
 class FileEntry:
     path: str
@@ -55,15 +67,15 @@ class Manifest:
     @classmethod
     def loads(cls, text: str) -> "Manifest":
         data = json.loads(text)
-        files = {
-            path: FileEntry(
-                path=path,
+        files: dict[str, FileEntry] = {}
+        for path, entry in data.get("files", {}).items():
+            safe = validate_rel_path(str(path))
+            files[safe] = FileEntry(
+                path=safe,
                 sha256=entry["sha256"],
                 claims=list(entry.get("claims", [])),
                 mode=int(entry.get("mode", 0o644)),
             )
-            for path, entry in data.get("files", {}).items()
-        }
         return cls(
             schema_version=data["schema_version"],
             bundle_version=data["bundle_version"],
@@ -79,14 +91,30 @@ def sha256_bytes(data: bytes) -> str:
 
 
 def sha256_file(path: str) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
+    """Hash a regular file without following symlinks when O_NOFOLLOW is available."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        # Fallback: refuse obvious symlinks, then follow-open (platforms without O_NOFOLLOW).
+        if os.path.islink(path):
+            raise
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        import stat as stat_mod
+
+        mode = os.fstat(fd).st_mode
+        if not stat_mod.S_ISREG(mode):
+            raise OSError("not a regular file")
+        digest = hashlib.sha256()
         while True:
-            chunk = handle.read(1024 * 1024)
+            chunk = os.read(fd, 1024 * 1024)
             if not chunk:
                 break
             digest.update(chunk)
-    return digest.hexdigest()
+        return digest.hexdigest()
+    finally:
+        os.close(fd)
 
 
 def claim_key(*, host: str, scope: str, root: str) -> str:
@@ -116,6 +144,7 @@ def build_manifest(
     for entry in file_map.values():
         entry.claims = [c for c in entry.claims if c != claim]
     for rel, data in files.items():
+        rel = validate_rel_path(rel)
         mode = 0o755 if rel.endswith("run_reader.py") else 0o644
         digest = sha256_bytes(data)
         if rel in file_map:

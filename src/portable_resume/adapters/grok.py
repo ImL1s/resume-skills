@@ -234,8 +234,8 @@ class GrokAdapter:
             except OSError as error:
                 raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
             for session_entry in session_entries:
-                if len(output) >= DEFAULT_BOUNDS.listed_sessions:
-                    return output
+                if len(output) >= DEFAULT_BOUNDS.scanned_records:
+                    break
                 if session_entry.is_symlink():
                     raise DiagnosticError.unsafe_path()
                 entry_mode = session_entry.stat(follow_symlinks=False).st_mode
@@ -251,6 +251,16 @@ class GrokAdapter:
                 updates = os.path.join(session_entry.path, "updates.jsonl")
                 if os.path.isfile(updates) and not os.path.islink(updates):
                     output.append((cwd_entry.path, updates))
+            if len(output) >= DEFAULT_BOUNDS.scanned_records:
+                break
+        # Rank by updates.jsonl mtime (newest first) so latest is not name-order capped.
+        def _mtime_key(item: tuple[str, str]) -> float:
+            try:
+                return -os.lstat(item[1]).st_mtime
+            except OSError:
+                return 0.0
+
+        output.sort(key=lambda item: (_mtime_key(item), item[1]))
         return output
 
     def probe(self, query: Query) -> CapabilityReport:
@@ -577,18 +587,31 @@ class GrokAdapter:
         warnings.extend(found)
         if turn is None:
             return
-        budget.consume_turns()
+        limit = DEFAULT_BOUNDS.normalized_content_bytes
         if turns and turns[-1].role == role and turns[-1].tool_name is None:
             prior = turns[-1]
+            room = limit - len(prior.content)
+            if room <= 0:
+                if not prior.truncated:
+                    turns[-1] = Turn(
+                        ordinal=prior.ordinal,
+                        role=role,
+                        content=prior.content,
+                        timestamp=prior.timestamp or turn.timestamp,
+                        truncated=True,
+                    )
+                return
+            chunk = turn.content[:room] if room < len(turn.content) else turn.content
             turns[-1] = Turn(
                 ordinal=prior.ordinal,
                 role=role,
-                content=prior.content + turn.content,
+                content=prior.content + chunk,
                 timestamp=prior.timestamp or turn.timestamp,
-                truncated=prior.truncated or turn.truncated,
+                truncated=prior.truncated or turn.truncated or len(turn.content) > room,
             )
-        else:
-            turns.append(turn)
+            return
+        budget.consume_turns()
+        turns.append(turn)
 
     @staticmethod
     def _append_tool(

@@ -215,8 +215,16 @@ class AntigravityAdapter:
                 continue
             if os.path.isfile(path):
                 paths.append(path)
-                if len(paths) >= DEFAULT_BOUNDS.listed_sessions:
+                if len(paths) >= DEFAULT_BOUNDS.scanned_records:
                     break
+        # Newest transcript first so list/latest is not directory-name order.
+        def _mtime_key(p: str) -> float:
+            try:
+                return -os.lstat(p).st_mtime
+            except OSError:
+                return 0.0
+
+        paths.sort(key=lambda p: (_mtime_key(p), p))
         return paths
 
     def _direct_transcript(self, root: str, brain: str, query: Query) -> str | None:

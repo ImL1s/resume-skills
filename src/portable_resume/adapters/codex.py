@@ -22,7 +22,7 @@ from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
 from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
 from ..sanitize import sanitize_turn_record
-from ..snapshot import StableRead, private_sqlite_connection, stable_read_bytes
+from ..snapshot import StableRead, private_sqlite_connection, query_only_live_sqlite, stable_read_bytes
 from .base import CapabilityReport, ResolvedRef
 
 ROLLOUT_FORMAT = "codex-rollout-jsonl-v1"
@@ -226,7 +226,8 @@ def _mtime(read: StableRead) -> str:
 
 
 def _within(updated_at: str | None, query: Query, session_id: str) -> bool:
-    if query.ref == session_id:
+    ref_id = _exact_uuid_ref(query.ref)
+    if ref_id == session_id or (query.ref is not None and query.ref == session_id):
         return True
     minutes = query.within_min if query.within_min is not None else DEFAULT_BOUNDS.listing_age_minutes
     # Grok resume-session: within_min <= 0 means no age filter.
@@ -559,9 +560,13 @@ def _rollout_summary(path: str, root: str, query: Query, budget: ReadBudget) -> 
     updated = _mtime(observation)
     if not _within(updated, query, identifier):
         return None
-    turns, _turn_warnings = _normalized_turns(records)
-    warnings = tuple(dict.fromkeys((*warnings, *_turn_warnings)))
-    first_user = next((turn["content"] for turn in turns if turn["role"] == "user"), None)
+    # List path: title from first user-ish record without full turn normalization.
+    first_user = None
+    for record in records:
+        turn = _raw_turn(record)
+        if turn is not None and turn.get("role") == "user" and isinstance(turn.get("content"), str):
+            first_user = turn["content"]
+            break
     branch = None
     git = metadata.get("git")
     if isinstance(git, Mapping) and isinstance(git.get("branch"), str):
@@ -647,10 +652,10 @@ def _resolve_rollout_path(root: str, raw: str, identifier: str) -> str | None:
 
 
 def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) -> tuple[bool, list[SessionSummary]]:
-    with private_sqlite_connection(path, root=root, provider=SQLITE_FORMAT) as connection:
+    def _fetch_rows(connection: sqlite3.Connection) -> tuple[bool, str | None, list[tuple]]:
         supported, updated_column = _table_signature(connection)
         if not supported or updated_column is None:
-            return False, []
+            return False, None, []
         try:
             info = connection.execute("PRAGMA table_info(threads)").fetchall()
             present = {row[1] for row in info if isinstance(row[1], str)}
@@ -662,7 +667,6 @@ def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) 
                 f"{title_expr}, {first_expr}, archived, {branch_expr} "
                 "FROM threads"
             )
-            # Prefer cwd-scoped query so large home DBs (5k+ threads) stay within bounds.
             params: list[Any] = []
             clauses: list[str] = []
             exact = _exact_uuid_ref(query.ref)
@@ -677,7 +681,6 @@ def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) 
             select += f" ORDER BY {updated_column} DESC, id ASC LIMIT ?"
             params.append(DEFAULT_BOUNDS.listed_sessions)
             rows = connection.execute(select, tuple(params)).fetchall()
-            # Fallback: canonical cwd mismatch (symlink/trailing slash) — scan a bounded window.
             if not rows and query.cwd and exact is None:
                 rows = connection.execute(
                     f"SELECT id, rollout_path, {updated_column}, source, cwd, "
@@ -687,6 +690,21 @@ def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) 
                 ).fetchall()
         except sqlite3.Error as error:
             raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=SQLITE_FORMAT) from error
+        return True, updated_column, rows
+
+    try:
+        size = os.path.getsize(path)
+    except OSError as error:
+        raise DiagnosticError("E_SOURCE_BUSY", source="codex", provider=SQLITE_FORMAT) from error
+    if size > DEFAULT_BOUNDS.sqlite_snapshot_bytes:
+        with query_only_live_sqlite(path, root=root, provider=SQLITE_FORMAT) as connection:
+            supported, _updated_column, rows = _fetch_rows(connection)
+    else:
+        with private_sqlite_connection(path, root=root, provider=SQLITE_FORMAT) as connection:
+            supported, _updated_column, rows = _fetch_rows(connection)
+    if not supported:
+        return False, []
+
     values: list[SessionSummary] = []
     exact = _exact_uuid_ref(query.ref)
     for row in rows:
@@ -710,7 +728,6 @@ def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) 
             or (isinstance(first_user, str) and len(first_user.encode("utf-8")) > 64 * 1024)
             or (isinstance(branch, str) and len(branch.encode("utf-8")) > 4096)
         ):
-            # Skip oversized rows instead of aborting the whole DB list.
             continue
         try:
             budget.consume_bytes(sum(encoded_sizes))
@@ -727,7 +744,8 @@ def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) 
         archived_flag = int(archived) if archived_ok else -1
         if source not in {"cli", "vscode"} or archived_flag not in {0, 1}:
             continue
-        if archived_flag and query.ref != identifier:
+        ref_id = _exact_uuid_ref(query.ref)
+        if archived_flag and ref_id != identifier and query.ref != identifier:
             continue
         if query.cwd is not None and not same_cwd(cwd, query.cwd):
             continue

@@ -13,13 +13,37 @@ A provider may change from **planned** to **supported (fixture/parser)** only af
 | Antigravity | `antigravity-transcript-jsonl-v1` (index may be probed as hints) | Official Antigravity skills/CLI docs + fixtures | supported (fixture/parser) | Index preferred when valid; missing index uses bounded `brain/<id>/…/transcript.jsonl` scan. Live AGY JSONL schema often differs from fixtures (list may skip unreadable files). Exact id/path still works when parseable. |
 | Grok Build | `grok-updates-jsonl-v1` | Public Apache-2.0 Grok Build tree + fixtures | supported (fixture/parser) | Installed bundled reader is prohibited as an implementation source |
 
-## Foundation-only anchor
+## foundation-only
 
 `#foundation-only` is the provenance anchor used by tests of the reusable fixture-manifest validator. It represents synthetic contract data only and is not evidence for a source adapter.
 
 ## Provenance anchors
 
-Fixture `provenance_ref` values should point at anchors in this file (for example `docs/source-formats.md#foundation-only`) or other **shipped** docs. Do not require gitignored private planning directories for builds or tests.
+Fixture `provenance_ref` values should point at anchors in this file (for example `docs/source-formats.md#foundation-only`) or the per-format headings below. Do not require gitignored private planning directories for builds or tests.
+
+### claude-claude-jsonl-v1
+
+Claude Code projects JSONL (`claude-jsonl-v1`). Synthetic fixtures under `tests/fixtures/claude/`.
+
+### codex-codex-state-sqlite-v1
+
+Codex state SQLite + rollout JSONL/zstd families. Synthetic fixtures under `tests/fixtures/codex/`.
+
+### cursor-cursor-cli-chat-v1
+
+Cursor CLI chats metadata/transcript fixtures and live `store.db` / desktop composer families. Synthetic fixtures under `tests/fixtures/cursor/`.
+
+### opencode-opencode-sqlite-v1
+
+OpenCode SQLite / file-store / export providers. Synthetic fixtures under `tests/fixtures/opencode/`.
+
+### antigravity-antigravity-transcript-jsonl-v1
+
+Antigravity transcript JSONL (+ optional index). Synthetic fixtures under `tests/fixtures/antigravity/`.
+
+### grok-grok-updates-jsonl-v1
+
+Grok Build session `updates.jsonl`. Synthetic fixtures under `tests/fixtures/grok/`.
 
 ## Clean-room note
 

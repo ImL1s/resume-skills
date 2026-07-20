@@ -135,6 +135,43 @@ class InstallerTransactionTests(unittest.TestCase):
         self.assertIsNotNone(load_manifest(root_b))
         verify_root(root_b)
 
+    def test_manifest_path_escape_rejected_on_load_and_uninstall(self) -> None:
+        execute_install(plan_install(host="claude", scope="project", root=self.root))
+        outside = Path(self._tmpdir.name) / "escape-target.txt"
+        outside.write_text("keep-me", encoding="utf-8")
+        from portable_resume.install.manifest import sha256_file
+        from portable_resume.install.transaction import manifest_path
+
+        dig = sha256_file(str(outside))
+        man = load_manifest(self.root)
+        assert man is not None
+        data = man.to_dict()
+        data["files"]["../../escape-target.txt"] = {
+            "path": "../../escape-target.txt",
+            "sha256": dig,
+            "claims": [next(iter(man.claims))],
+            "mode": 0o644,
+            "owner": "portable-resume-owned",
+        }
+        # Corrupt on disk by writing raw JSON that loads must reject
+        import json
+
+        raw_path = manifest_path(self.root)
+        with open(raw_path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        with self.assertRaises(DiagnosticError) as ctx:
+            load_manifest(self.root)
+        self.assertEqual(ctx.exception.code, "E_VERIFY_MISMATCH")
+        self.assertTrue(outside.exists())
+        self.assertEqual(outside.read_text(encoding="utf-8"), "keep-me")
+
+    def test_uninstall_does_not_remove_foreign_empty_skill_dir(self) -> None:
+        execute_install(plan_install(host="claude", scope="project", root=self.root))
+        foreign = Path(self.root) / "other-skill"
+        foreign.mkdir(parents=True, exist_ok=True)
+        uninstall_claim(host="claude", scope="project", root=self.root)
+        self.assertTrue(foreign.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

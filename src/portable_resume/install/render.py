@@ -69,9 +69,15 @@ def materialize_plan(host: str) -> dict[str, bytes]:
 
 
 def _iter_runtime_files() -> Iterable[Path]:
-    skip_dirs = {"__pycache__"}
+    """Yield runtime modules needed by installed run_reader (exclude install/)."""
+    skip_dirs = {"__pycache__", "install"}
     for root, dirs, names in os.walk(_RUNTIME_SRC):
         dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
+        # Never ship the installer package into skill roots.
+        rel_root = Path(root).relative_to(_RUNTIME_SRC)
+        if rel_root.parts and rel_root.parts[0] == "install":
+            dirs[:] = []
+            continue
         for name in names:
             if name.endswith(".pyc") or name.startswith("."):
                 continue
