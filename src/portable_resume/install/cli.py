@@ -9,7 +9,7 @@ import sys
 from typing import Any, Sequence
 
 from ..diagnostics import DiagnosticError, SOURCE_KEYS, emit_diagnostic
-from .catalog import HOST_KEYS, HOST_PROFILES, resolve_skill_root
+from .catalog import HOST_KEYS, hosts_report, resolve_skill_root
 from .transaction import (
     execute_install,
     matrix_report,
@@ -39,6 +39,15 @@ def build_parser() -> argparse.ArgumentParser:
     m = sub.add_parser("matrix")
     m.add_argument("--json", action="store_true")
 
+    h = sub.add_parser(
+        "hosts",
+        help="list each destination host's skill roots, install methods, and activation notes",
+    )
+    h.add_argument("--host", default="all", help="host key or 'all' (default)")
+    h.add_argument("--project", default=None, help="resolve project roots against this path")
+    h.add_argument("--home", default=os.path.expanduser("~"))
+    h.add_argument("--json", action="store_true")
+
     r = sub.add_parser("recover")
     r.add_argument("--root", required=True)
     r.add_argument("--json", action="store_true")
@@ -60,11 +69,53 @@ def _root_for(host: str, scope: str, project: str | None, home: str, override: s
     return resolve_skill_root(host=host, scope=scope, project_dir=project, home_dir=home)
 
 
-def _print(value: Any, *, as_json: bool, stream=sys.stdout) -> None:
+def _print(value: Any, *, as_json: bool, stream=None) -> None:
+    out = sys.stdout if stream is None else stream
     if as_json:
-        stream.write(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+        out.write(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
     else:
-        stream.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
+        out.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _print_hosts_human(report: dict[str, Any], stream=None) -> None:
+    out = sys.stdout if stream is None else stream
+    stream = out
+    stream.write(f"Destination hosts: {report['host_count']}\n")
+    stream.write(f"Full guide: {report.get('docs', 'docs/install-hosts.md')}\n\n")
+    for pair in report.get("shared_root_pairs") or []:
+        hosts = "+".join(pair.get("hosts") or [])
+        stream.write(f"Shared-root warning ({hosts}): {pair.get('path')} — {pair.get('note')}\n")
+    stream.write("\n")
+    for rec in report.get("hosts") or []:
+        stream.write(f"## {rec['host']} ({rec.get('display_name', '')})\n")
+        defaults = rec.get("installer_defaults") or {}
+        stream.write(f"  project: {defaults.get('project_rel')} → {defaults.get('project_root_resolved')}\n")
+        stream.write(f"  global:  {defaults.get('global_rel')} → {defaults.get('global_root_resolved')}\n")
+        layouts = rec.get("official_layouts") or {}
+        if layouts.get("project"):
+            stream.write(f"  layout:  {layouts['project']}\n")
+        if layouts.get("global"):
+            stream.write(f"  layout:  {layouts['global']}\n")
+        for alt in rec.get("alternate_project_roots") or []:
+            stream.write(f"  alt project: {alt}\n")
+        for alt in rec.get("alternate_global_roots") or []:
+            stream.write(f"  alt global:  {alt}\n")
+        stream.write("  install:\n")
+        for method in rec.get("install_methods") or []:
+            stream.write(f"    - {method}\n")
+        cmds = rec.get("installer_commands") or {}
+        if cmds.get("project"):
+            stream.write(f"  cmd: {cmds['project']}\n")
+        stream.write(f"  activate: {rec.get('activation_help', '')}\n")
+        for ex in rec.get("activation_examples") or []:
+            stream.write(f"    e.g. {ex}\n")
+        stream.write(f"  args: {rec.get('arguments_note', '')}\n")
+        for caveat in rec.get("caveats") or []:
+            stream.write(f"  caveat: {caveat}\n")
+        docs = rec.get("official_docs") or []
+        if docs:
+            stream.write(f"  docs: {'; '.join(docs)}\n")
+        stream.write(f"  packaging: {rec.get('evidence_level')} | live_ui: {rec.get('live_ui')}\n\n")
 
 
 def run(argv: Sequence[str] | None = None) -> int:
@@ -75,6 +126,18 @@ def run(argv: Sequence[str] | None = None) -> int:
             report = matrix_report()
             _print(report, as_json=True)
             return 0 if report["ok"] else 7
+        if ns.command == "hosts":
+            selected = None if ns.host == "all" else _hosts(ns.host)
+            report = hosts_report(
+                project_dir=ns.project,
+                home_dir=ns.home,
+                hosts=selected,
+            )
+            if ns.json:
+                _print(report, as_json=True)
+            else:
+                _print_hosts_human(report)
+            return 0
         if ns.command == "recover":
             result = recover_root(ns.root)
             _print(result, as_json=bool(ns.json) or True)

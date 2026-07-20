@@ -47,12 +47,18 @@ PYTHONPATH=src python3 scripts/portable-resume claude show latest \
   --source-root tests/fixtures/claude/s-cla-01-ordered-parent-chain/root \
   --format handoff
 
+# Per-host roots, install methods, activation notes
+PYTHONPATH=src python3 scripts/install-resume-skills hosts
+PYTHONPATH=src python3 scripts/install-resume-skills hosts --json
+
 # Install into a project skill root
 PYTHONPATH=src python3 scripts/install-resume-skills install \
   --host claude --scope project --project "$PWD" --dry-run --json
 PYTHONPATH=src python3 scripts/install-resume-skills install \
   --host claude --scope project --project "$PWD" --json
 ```
+
+Each destination host has its own skill directory layout (Claude `.claude/skills`, Codex `.agents/skills`, Cursor `.cursor/skills`, OpenCode `.opencode/skills`, Antigravity `.agents/skills` + `~/.gemini/config/skills`, Grok `.grok/skills`). Full official alternate roots and activation grammar: [`docs/install-hosts.md`](docs/install-hosts.md).
 
 When Codex and Antigravity would share `.agents/skills` with non-identical skill bodies, use distinct `--root` values or expect `E_INSTALL_CONFLICT`.
 
@@ -95,6 +101,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the same deterministic gates on
 | Doc | Purpose |
 |---|---|
 | [`docs/STATUS.md`](docs/STATUS.md) | Done / not-done gates |
+| [`docs/install-hosts.md`](docs/install-hosts.md) | **Per-host install methods, roots, activation** |
 | [`docs/host-support.md`](docs/host-support.md) | Roots and evidence levels |
 | [`docs/source-formats.md`](docs/source-formats.md) | Format IDs |
 | [`docs/evidence-summary.md`](docs/evidence-summary.md) | Public verification notes |

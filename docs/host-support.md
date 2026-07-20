@@ -1,6 +1,9 @@
 # Host support matrix
 
 Status: packaging roots match `src/portable_resume/install/catalog.py` (2026-07-20).  
+**Full install methods, alternate roots, and activation examples:** [`docs/install-hosts.md`](install-hosts.md)  
+CLI: `PYTHONPATH=src python3 scripts/install-resume-skills hosts [--json]`
+
 Activation text below is **documented / planning-era guidance**, not a live host smoke. Re-verify against current host docs when upgrading.
 
 Evidence levels:
@@ -17,14 +20,38 @@ Evidence levels:
 
 | Profile | Project root (installer default) | Global root (installer default) | Notes / alternate roots | Activation (documented guidance) | Packaging | Live UI |
 |---|---|---|---|---|---|---|
-| `claude-v1` | `<project>/.claude/skills` | `~/.claude/skills` | — | `/resume-<source> ...`; `$ARGUMENTS` is prompt substitution only | `verified-filesystem` (install/verify; installed `run_reader` handoff against fixtures) | `not-run` |
-| `codex-v1` | `<project>/.agents/skills` | `~/.agents/skills` | Admin `/etc/codex/skills` only if chosen explicitly; some setups also mention `.codex/skills` (not default here) | `$resume-<source>` + labeled text; no skill argv API claimed | `verified-filesystem` (use distinct `--root` if sharing with antigravity) | `not-run` |
-| `cursor-v1` | `<project>/.cursor/skills` | `~/.cursor/skills` | Cursor also documents `.agents/skills` compatibility roots; this installer default is the native `.cursor/skills` path | explicit `/resume-<source>` + labels; no promised tail→argv | `verified-filesystem` | `not-run` |
-| `opencode-v1` | `<project>/.opencode/skills` | `~/.config/opencode/skills` | **Caveat:** native OpenCode skill discovery has varied by version; confirm your install actually loads this root before claiming host support | model/native skill selection + labels; custom commands are a separate surface | `verified-filesystem` (directory packaging only) | `not-run` |
-| `antigravity-v1` | `<project>/.agents/skills` | `~/.gemini/config/skills` | Multi-flavor installs may differ; freeze is for current documented agy roots | name mention; `/skills` lists skills — do not invent slash argv grammar | `verified-filesystem` (distinct root when conflicting with codex) | `not-run` |
-| `grok-v1` | `<project>/.grok/skills` | `~/.grok/skills` | May also scan `.agents`/compat roots depending on version | `/resume-<source> ...`; `$ARGUMENTS` prompt-only (source-verified in planning notes, not a live claim) | `verified-filesystem` | `not-run` |
+| `claude-v1` | `<project>/.claude/skills` | `~/.claude/skills` | Nested monorepo + plugins | `/resume-<source> ...`; `$ARGUMENTS` is prompt substitution only | `verified-filesystem` (install/verify; request-file runner unit/e2e — **not** live UI) | `not-run` |
+| `codex-v1` | `<project>/.agents/skills` | `~/.agents/skills` | Admin `/etc/codex/skills` via `--root`; some setups also use `~/.codex/skills` (not default) | `$resume-<source>` + labeled text; no skill argv API claimed | `verified-filesystem` (use distinct `--root` if sharing with antigravity) | `not-run` |
+| `cursor-v1` | `<project>/.cursor/skills` | `~/.cursor/skills` | **Also first-class:** `.agents/skills` + `~/.agents/skills`; compat `.claude`/`.codex` | explicit `/resume-<source>` + labels; no promised tail→argv | `verified-filesystem` (primary = native `.cursor/skills`, not sole official root) | `not-run` |
+| `opencode-v1` | `<project>/.opencode/skills` | `~/.config/opencode/skills` | Compat: `.claude/skills`, `.agents/skills` (+ home). **Caveat:** some builds may only discover compat roots — confirm | model `skill({name})` + labels; custom commands are a separate surface | `verified-filesystem` (directory packaging only) | `not-run` |
+| `antigravity-v1` | `<project>/.agents/skills` | `~/.gemini/config/skills` | Legacy `.agent/skills`; multi-flavor globals (`~/.gemini/skills`, antigravity-cli paths) differ — prefer `config/skills` for global | name mention; `/skills` lists skills — do not invent slash argv grammar | `verified-filesystem` (distinct root when conflicting with codex) | `not-run` |
+| `grok-v1` | `<project>/.grok/skills` | `~/.grok/skills` | Also `.agents`, Claude/Cursor compat, plugins, `[skills].paths` | `/resume-<source> ...`; `$ARGUMENTS` prompt-only (user-guide + source-verified) | `verified-filesystem` | `not-run` |
 
 Portable frontmatter for all profiles: only `name` + `description` in the core skill body.
+
+## Install one-liners
+
+```bash
+# List every host's roots + methods
+PYTHONPATH=src python3 scripts/install-resume-skills hosts
+
+# Examples
+PYTHONPATH=src python3 scripts/install-resume-skills install \
+  --host claude --scope project --project "$PWD" --json
+PYTHONPATH=src python3 scripts/install-resume-skills install \
+  --host codex --scope project --project "$PWD" \
+  --root "$PWD/.agents/skills-codex" --json   # avoid antigravity clash
+PYTHONPATH=src python3 scripts/install-resume-skills install \
+  --host cursor --scope global --json
+PYTHONPATH=src python3 scripts/install-resume-skills install \
+  --host opencode --scope project --project "$PWD" --json
+PYTHONPATH=src python3 scripts/install-resume-skills install \
+  --host antigravity --scope global --json
+PYTHONPATH=src python3 scripts/install-resume-skills install \
+  --host grok --scope project --project "$PWD" --json
+```
+
+See [`install-hosts.md`](install-hosts.md) for official docs links, alternate roots, and activation examples per host.
 
 ## Shared-root note
 
@@ -32,7 +59,7 @@ Codex project/global `.agents/skills` and Antigravity project `.agents/skills` c
 
 ## Official evidence
 
-Public product documentation for Agent Skills and each host’s skills pages informed the roots/activation guidance. Local planning extracts are **not shipped** with this repository. Re-check upstream docs when host versions change.
+Public product documentation for Agent Skills and each host’s skills pages informed the roots/activation guidance (Claude, Codex Build skills, Cursor skills, OpenCode skills, Antigravity skills, Grok user-guide). Local planning extracts are **not shipped** with this repository. Re-check upstream docs when host versions change. Multi-agent audit notes: `docs/audit-host-docs-evidence.md`.
 
 ## Platform runners
 
@@ -46,5 +73,6 @@ Live interactive host UI walks remain `not-run`.
 
 ## Related
 
+- `docs/install-hosts.md` — **per-host install methods (canonical)**
 - `docs/STATUS.md` — done / not-done gates  
 - `docs/evidence-summary.md` — public evidence notes  

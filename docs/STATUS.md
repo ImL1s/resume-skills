@@ -38,6 +38,7 @@ python3 scripts/check_secrets.py
 ## Related docs
 
 - `docs/evidence-summary.md`
+- `docs/install-hosts.md` — per-host install methods (canonical)
 - `docs/host-support.md`
 - `docs/source-formats.md`
 - `docs/audit-docs-vs-code.md` / `docs/audit-host-docs-evidence.md` / `docs/audit-security-docs.md` (multi-agent doc audits)
