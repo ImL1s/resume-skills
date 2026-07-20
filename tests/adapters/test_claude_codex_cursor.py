@@ -368,10 +368,15 @@ class CodexAdapterTests(unittest.TestCase):
         fake.chmod(0o755)
         with mock.patch.object(codex, "TRUSTED_ZSTD_PATHS", ()), mock.patch.dict(os.environ, {"PATH": str(self.root)}):
             capability = codex.ADAPTER.probe(self.query())
+            listed_absent = codex.ADAPTER.list(self.query(compressed), ReadBudget())
         self.assertEqual(capability.state, "partial")
         self.assertIn("W_OPTIONAL_ZSTD_UNAVAILABLE", capability.warnings)
         self.assertFalse(marker.exists())
-        self.assertEqual(codex.ADAPTER.list(self.query(compressed), ReadBudget()), [])
+        self.assertEqual(listed_absent, [])
+        # When a trusted decoder exists, corrupt/malicious compressed payloads still
+        # degrade only this session (empty list), not fail the whole provider list.
+        listed_corrupt = codex.ADAPTER.list(self.query(compressed), ReadBudget())
+        self.assertEqual(listed_corrupt, [])
 
     def test_s_cod_08_decoder_uses_fixed_argv_no_shell_timeout_surface(self) -> None:
         with mock.patch.object(codex, "_trusted_zstd", return_value="/trusted/zstd"), mock.patch.object(

@@ -417,7 +417,17 @@ def _rollout_summary(path: str, root: str, query: Query, budget: ReadBudget) -> 
         return None
     if path.endswith(".zst") and _trusted_zstd() is None:
         return None
-    observation, records, warnings, provider = _read_rollout(path, root, budget)
+    try:
+        observation, records, warnings, provider = _read_rollout(path, root, budget)
+    except DiagnosticError as error:
+        # Optional compressed provider: corrupt/unavailable zstd must not fail whole list().
+        if path.endswith(".zst") and error.code in {
+            "E_CORRUPT_RECORD",
+            "E_CAPABILITY_UNAVAILABLE",
+            "E_LIMIT_EXCEEDED",
+        }:
+            return None
+        raise
     metadata = _session_meta(records, identifier, provider)
     try:
         cwd = canonicalize_cwd(metadata["cwd"])
