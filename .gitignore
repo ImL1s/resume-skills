@@ -18,3 +18,10 @@ htmlcov/
 
 # Local agent research / dual-review artifacts — do not publish
 .omc/research/
+
+# Local skill install roots (installer output under a checkout)
+.grok/
+.claude/skills/resume-*/
+.cursor/skills/resume-*/
+.agents/skills/resume-*/
+.opencode/skills/resume-*/

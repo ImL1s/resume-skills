@@ -14,9 +14,9 @@ Invoke one of six source skills inside any of six destination hosts, read a boun
 
 This is **not** live process/session restoration.
 
-**Status:** deterministic V1 bar is green on macOS. Live host UI activation and Linux peer-OS release evidence are still **not claimed**. See [`docs/STATUS.md`](docs/STATUS.md).
+**Status:** **v0.2.0** — packaging 36/36 + partial live list/show for all six sources. Live host UI activation still **not claimed**. See [`docs/STATUS.md`](docs/STATUS.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
-**Maturity label:** `Deterministic V1 (macOS) — experimental` · Packaging 36/36 · Live UI 0 · Dual-OS not claimed.
+**Maturity label:** `0.2.0 experimental` · Packaging 36/36 · Source live partial · Host UI 0 · Dual-OS not claimed.
 
 ## Sources and destinations
 

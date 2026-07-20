@@ -9,7 +9,7 @@ from ..diagnostics import SOURCE_KEYS
 
 HOST_KEYS = frozenset({"claude", "codex", "cursor", "opencode", "antigravity", "grok"})
 SOURCE_SKILL_NAMES = tuple(f"resume-{key}" for key in sorted(SOURCE_KEYS))
-BUNDLE_VERSION = "0.1.0"
+BUNDLE_VERSION = "0.2.0"
 MANIFEST_SCHEMA = "portable-resume/install-manifest-v1"
 
 # Portable skill layout under any skill root (Agent Skills standard):
