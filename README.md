@@ -1,5 +1,13 @@
 # portable-resume-skills
 
+<p align="center">
+  <img src="docs/assets/portable-resume-skills-hero.jpg" alt="portable-resume-skills: offline local-only context migration across six coding agents through sealed skill packages" width="920" />
+</p>
+
+<p align="center">
+  <em>Offline, local-only context migration · 6 sources × 6 hosts · inert handoff, not live restore</em>
+</p>
+
 Clean-room-oriented, offline-friendly Agent Skills package for **context migration** across coding agents.
 
 Invoke one of six source skills inside any of six destination hosts, read a bounded local session store **without** calling the source CLI, and emit an inert handoff for a **fresh** session.
