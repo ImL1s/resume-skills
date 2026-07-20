@@ -47,3 +47,18 @@ def within_age(updated_at: str | None, minutes: int | None, *, default_minutes: 
     except ValueError:
         return False
     return stamp >= time.time() - minutes * 60
+
+
+def within_query_age(
+    updated_at: str | None,
+    *,
+    query_ref: str | None,
+    session_id: str,
+    within_min: int | None,
+    default_minutes: int,
+) -> bool:
+    """Age window with exact-id bypass (UUID-normalized)."""
+    ref_id = exact_uuid_ref(query_ref)
+    if ref_id == session_id or (query_ref is not None and query_ref == session_id):
+        return True
+    return within_age(updated_at, within_min, default_minutes=default_minutes)

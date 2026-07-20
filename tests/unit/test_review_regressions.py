@@ -120,6 +120,16 @@ class ReviewRegressionTests(unittest.TestCase):
             assert selected.selected is not None
             self.assertEqual(selected.selected.session_id, newest)
 
+    def test_dest_under_root_rejects_escape(self) -> None:
+        from portable_resume.diagnostics import DiagnosticError
+        from portable_resume.install.transaction import _dest_under_root
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = str(Path(tmp) / "skills")
+            Path(root).mkdir()
+            with self.assertRaises(DiagnosticError):
+                _dest_under_root(root, "../../escape")
+
     def test_install_upgrade_removes_owned_orphan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = str(Path(tmp) / "skills")

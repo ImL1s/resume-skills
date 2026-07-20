@@ -190,7 +190,8 @@ def plan_install(
     backups: list[str] = []
     retains: list[str] = []
     for rel, data in sorted(files.items()):
-        dest = os.path.join(root, rel)
+        # Containment matches execute path (reject escapes before planning).
+        dest = _dest_under_root(root, rel)
         if not os.path.lexists(dest):
             creates.append(rel)
             continue
@@ -378,7 +379,9 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                 journal["paths"][safe]["state"] = "committed"
                 _write_journal(root, journal)
             # Remove owned orphans (in old manifest, not in new plan, sole claim released).
+            # Journal orphan targets *before* delete so crash recovery can reason about them.
             orphan_removed: list[str] = []
+            orphan_pending: list[tuple[str, str, str]] = []  # rel, abs_path, sha256
             if existing is not None:
                 for rel, entry in list(existing.files.items()):
                     if rel in plan.files:
@@ -394,10 +397,26 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                         continue
                     try:
                         if sha256_file(abs_path) == entry.sha256:
-                            os.remove(abs_path)
-                            orphan_removed.append(rel)
+                            orphan_pending.append((rel, abs_path, entry.sha256))
                     except OSError:
                         continue
+            if orphan_pending:
+                journal["orphans"] = {
+                    rel: {"path": abs_path, "sha256": digest, "state": "pending"}
+                    for rel, abs_path, digest in orphan_pending
+                }
+                journal["state"] = "orphaning"
+                _write_journal(root, journal)
+                for rel, abs_path, digest in orphan_pending:
+                    try:
+                        if sha256_file(abs_path) == digest:
+                            os.remove(abs_path)
+                            orphan_removed.append(rel)
+                            journal["orphans"][rel]["state"] = "removed"
+                            _write_journal(root, journal)
+                    except OSError:
+                        journal["orphans"][rel]["state"] = "skipped"
+                        _write_journal(root, journal)
             # write manifest last
             Path(manifest_path(root)).write_text(plan.manifest.dumps(), encoding="utf-8")
             journal["state"] = "complete"
