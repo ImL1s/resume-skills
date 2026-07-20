@@ -77,15 +77,17 @@ Each `run_reader.py` hard-binds its expected source (host overrides are stripped
 - Installer refuses non-owned collisions unless `--force-with-backup`
 - Shared destination roots require byte-identical renders or distinct roots
 
-## Tests
+## Tests and CI
 
 ```bash
 python3 scripts/self_verify.py
+python3 scripts/check_secrets.py
 # or
 python3 -m compileall -q src scripts tests
 PYTHONPATH=src python3 -m unittest discover -s tests -q
 ```
 
+GitHub Actions (`.github/workflows/ci.yml`) runs the same deterministic gates on Ubuntu and macOS for every push/PR. There is **no CD/publish pipeline** yet (no PyPI auto-release).
 ## Docs
 
 | Doc | Purpose |

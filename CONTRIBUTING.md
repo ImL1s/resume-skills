@@ -11,6 +11,7 @@ Thanks for helping improve portable-resume-skills.
 
 ```bash
 python3 scripts/self_verify.py
+python3 scripts/check_secrets.py
 ```
 
 Or:
@@ -20,6 +21,7 @@ python3 -m compileall -q src scripts tests
 PYTHONPATH=src python3 -m unittest discover -s tests -q
 ```
 
+CI will also run these on pull requests (Ubuntu + macOS).
 ## Fixture rules
 
 - Every adapter fixture directory needs a `fixture.json` with `"synthetic": true`.

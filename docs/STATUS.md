@@ -25,7 +25,17 @@
 
 ```bash
 python3 scripts/self_verify.py
+python3 scripts/check_secrets.py
 ```
+
+## CI/CD
+
+| Layer | Needed? | What we have |
+|---|---|---|
+| **CI** (test + secret scan on PR/push) | **Yes** for a public repo | `.github/workflows/ci.yml` — Ubuntu + macOS, unittest, `check_secrets.py`, self-check/matrix |
+| **CD** (auto PyPI / GitHub Release) | **Not yet** | No package publish pipeline; stdlib source tree is enough until a release process is defined |
+
+CI is the useful part now: it re-proves the deterministic bar and blocks accidental path/secret commits. Full CD can wait until you want tagged PyPI/GitHub Releases.
 
 ## Related docs
 

@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile
+        run: python -m compileall -q src scripts tests
+
+      - name: Secret / path gate
+        run: python scripts/check_secrets.py
+
+      - name: Unit tests
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -q
+
+      - name: Self-check + matrix
+        env:
+          PYTHONPATH: src
+        run: |
+          python scripts/portable-resume self-check --json
+          python scripts/install-resume-skills matrix --json
+
+      - name: Self verify
+        run: python scripts/self_verify.py
