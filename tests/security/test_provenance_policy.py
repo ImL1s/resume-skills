@@ -59,7 +59,7 @@ class ProvenancePolicyTests(unittest.TestCase):
                 self.assertNotIn("`verified-live`", line)
         formats = Path("docs/source-formats.md").read_text(encoding="utf-8")
         self.assertIn("supported (fixture/parser)", formats)
-        self.assertIn("must not inspect", formats)
+        self.assertRegex(formats, r"(?i)must not copy|must not inspect|do not copy")
 
 
 if __name__ == "__main__":

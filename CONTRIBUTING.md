@@ -36,7 +36,7 @@ CI will also run these on pull requests (Ubuntu + macOS).
 
 - Do not mark host rows as live-verified without real activation smoke evidence (`docs/host-support.md`).
 - Do not claim dual-OS release completeness without archived Linux + macOS green runs.
-- Prefer `docs/evidence-summary.md` for public evidence; do not commit local research logs under `.omc/research/`.
+- Prefer `docs/evidence-summary.md` for public evidence; do not commit local agent research logs (ignored under `.omc/research/`).
 
 ## Code style
 

@@ -25,7 +25,7 @@ Destination profiles: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity CLI,
 
 ## Requirements
 
-- Python 3.11+ recommended
+- Python 3.11+ recommended (CI currently runs **3.12** on Ubuntu and macOS)
 - **stdlib only** (no third-party runtime packages)
 - Optional: host `zstd` binary only for compressed Codex rollouts
 
@@ -71,11 +71,13 @@ Each `run_reader.py` hard-binds its expected source (host overrides are stripped
 
 ## Safety invariants
 
-- Recovered content is inert/untrusted and sanitized
+- Recovered content is **marked** inert/untrusted and **partially** sanitized (not complete DLP)
 - Source stores must not change
 - Source CLIs are never invoked by the reader
-- Installer refuses non-owned collisions unless `--force-with-backup`
+- Installer refuses non-owned collisions unless `--force-with-backup` (backups land under `.portable-resume/backups/`)
+- `--scope global` writes into user skill roots — review untrusted forks first (`SECURITY.md`)
 - Shared destination roots require byte-identical renders or distinct roots
+- Optional Codex zstd uses a **trusted-path child process** only (not a source agent CLI)
 
 ## Tests and CI
 

@@ -1,24 +1,39 @@
 # Evidence summary (public)
 
-## Deterministic bar (macOS last verified)
+## Deterministic bar
 
-- `python3 -m unittest discover -s tests -q` → green
-- `scripts/portable-resume self-check --json` → `ok: true`, six adapters
-- `scripts/install-resume-skills matrix --json` → packaging cells 36; live cells 0
-- Install lifecycle: dry-run pure; verify drift fails closed; uninstall removes claim
-- One-shot: `python3 scripts/self_verify.py` → `OVERALL_SELF_VERIFY PASS`
+Commands (also run in CI on Ubuntu + macOS):
 
-## Multi-seat review (summary only)
+```bash
+python3 scripts/check_secrets.py
+python3 scripts/self_verify.py
+```
 
-Independent review seats were run during private development. High-level outcomes:
+Expected:
 
-- Multiple external/CLI seats returned APPROVE WITH MINOR FIXES or requested claim honesty
-- Codex seat may be quota-blocked in some environments; do not invent APPROVE
-- Residual product risks are tracked in `docs/STATUS.md` (live UI / dual-OS)
+- unittest suite green
+- `self-check --json` → `ok: true`, six adapters
+- matrix → packaging cells **36**, live cells **0**
+- fixture list/show handoff contains untrusted/stale markers
+- secret/path gate **CLEAN**
 
-Raw dual-review logs are **not** shipped in this repository (local research only).
+## Packaging vs live
 
-## Not claimed
+| Claim | Status |
+|---|---|
+| 36 skill packages render/install with strict frontmatter | **yes** (filesystem) |
+| Host UI discovers skill + user activation + request→handoff inside host | **not-run** |
+| CI Linux + macOS deterministic jobs | **yes** (GitHub Actions) |
+| Formal dual-OS *release* marketing claim | **not claimed** without archived release evidence |
 
-- Live host UI activation for 36 cells
-- Linux peer clean-runner dual-OS release completeness
+## Multi-seat review
+
+During private development, multiple independent review seats ran. High-level outcomes were mixed APPROVE-WITH-FIXES and honesty/request-changes on live/Linux claims. Raw logs are **not** shipped. Do not invent a Codex APPROVE if that seat was quota-blocked.
+
+## Doc audits (2026-07-20)
+
+Multi-agent audits of documentation accuracy:
+
+- `docs/audit-docs-vs-code.md`
+- `docs/audit-host-docs-evidence.md`
+- `docs/audit-security-docs.md`

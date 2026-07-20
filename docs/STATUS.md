@@ -6,20 +6,20 @@
 |---|---|---|
 | Six source adapters | **done** | `src/portable_resume/adapters/*`, `tests/adapters/*`, synthetic fixtures |
 | Shared core (sanitize, snapshot, handoff, request-v1) | **done** | `src/portable_resume/*`, unit/security suites |
-| 36-cell packaging matrix | **done (filesystem)** | `install-resume-skills matrix --json` → packaging 36, live 0 |
-| Installer dry-run / install / verify / drift / uninstall | **done** | `tests/integration/*`, `scripts/self_verify.py` |
+| 36-cell packaging matrix | **done (filesystem)** | `matrix --json` → packaging 36, **live 0** |
+| Installer dry-run / install / verify / drift / uninstall | **done** | integration tests + `scripts/self_verify.py` |
 | Source CLI isolation + immutability | **done** | `tests/security/*` |
-| macOS clean gate | **done** | full unittest green on darwin |
-| Public-tree hygiene gate | **done** | `tests/security/test_public_tree_hygiene.py` |
-| Multi-seat independent review | **partial** | external seats during private development; see `docs/evidence-summary.md` |
+| Public-tree hygiene + secret gate | **done** | `test_public_tree_hygiene`, `scripts/check_secrets.py` |
+| CI deterministic gates | **done** | `.github/workflows/ci.yml` on **ubuntu-latest** and **macos-latest** |
+| Multi-seat independent review | **partial** | summary only in `docs/evidence-summary.md` |
 
 ## What is not done (honest)
 
 | Area | Status | Notes |
 |---|---|---|
-| Live host UI activation (AC-10 live 36) | **not-run** | Packaging + installed runtime handoff proven; host picker/NL activation not claimed |
-| Linux peer clean runner (AC-18) | **not-run** | Requires a real Linux runner/container archive |
-| Full PRD “V1 release complete” claim | **no** | Requires live smokes + dual-OS evidence |
+| Live host UI activation (36 cells) | **not-run** | Packaging + installed `run_reader` fixture handoff ≠ host picker/NL activation |
+| Dual-OS **release claim** archive | **not claimed** | CI already runs Linux+macOS jobs; a formal dual-OS *release* still needs intentional archived green runs if you want that marketing claim |
+| Full PRD “V1 release complete” | **no** | Needs live UI evidence + explicit release process |
 
 ## How to re-verify
 
@@ -30,15 +30,15 @@ python3 scripts/check_secrets.py
 
 ## CI/CD
 
-| Layer | Needed? | What we have |
+| Layer | Needed? | Status |
 |---|---|---|
-| **CI** (test + secret scan on PR/push) | **Yes** for a public repo | `.github/workflows/ci.yml` — Ubuntu + macOS, unittest, `check_secrets.py`, self-check/matrix |
-| **CD** (auto PyPI / GitHub Release) | **Not yet** | No package publish pipeline; stdlib source tree is enough until a release process is defined |
-
-CI is the useful part now: it re-proves the deterministic bar and blocks accidental path/secret commits. Full CD can wait until you want tagged PyPI/GitHub Releases.
+| **CI** | Yes for public repo | Active: Ubuntu + macOS, unittest, secrets, self-check, matrix, self_verify |
+| **CD** | Not yet | No PyPI / auto-release pipeline |
 
 ## Related docs
 
-- `docs/evidence-summary.md` — public evidence notes
-- `docs/host-support.md` — host roots and evidence levels
-- `SECURITY.md` / `CONTRIBUTING.md` — security and contribution policy
+- `docs/evidence-summary.md`
+- `docs/host-support.md`
+- `docs/source-formats.md`
+- `docs/audit-docs-vs-code.md` / `docs/audit-host-docs-evidence.md` / `docs/audit-security-docs.md` (multi-agent doc audits)
+- `SECURITY.md` / `CONTRIBUTING.md`
