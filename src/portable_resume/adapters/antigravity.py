@@ -313,6 +313,14 @@ class AntigravityAdapter:
                     stale = True
                     continue
                 candidates.append((path, entry))
+            # Newest transcript first (index order is not authoritative for latest).
+            def _cand_mtime(item: tuple[str, Mapping[str, Any] | None]) -> float:
+                try:
+                    return -os.lstat(item[0]).st_mtime
+                except OSError:
+                    return 0.0
+
+            candidates.sort(key=lambda item: (_cand_mtime(item), item[0]))
         elif not query.ref:
             # No valid index: bounded directory discovery (Grok/Codex-style).
             for path in self._scan_brain_transcripts(brain, root):

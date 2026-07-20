@@ -640,8 +640,8 @@ def _list_live_cli_stores(root: str, query: Query) -> list[SessionSummary]:
         except OSError:
             continue
         for session_name in session_names:
-            if len(values) >= DEFAULT_BOUNDS.listed_sessions:
-                return values
+            if len(values) >= DEFAULT_BOUNDS.scanned_records:
+                break
             try:
                 session_id = str(uuid.UUID(session_name))
             except ValueError:
@@ -702,6 +702,17 @@ def _list_live_cli_stores(root: str, query: Query) -> list[SessionSummary]:
                     provider=LIVE_CLI_FORMAT,
                 )
             )
+        if len(values) >= DEFAULT_BOUNDS.scanned_records:
+            break
+    # Rank newest first so latest is not UUID/name-order capped.
+    values.sort(
+        key=lambda item: (
+            item.updated_at is None,
+            item.updated_at or "",
+            item.session_id,
+        ),
+        reverse=True,
+    )
     return values
 
 

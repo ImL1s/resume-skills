@@ -45,7 +45,7 @@ Redaction is **best-effort**, not complete DLP. The tracked-tree secret gate (`s
 - Simple `label=value` secret-looking pairs
 - Some metadata field names (`system_prompt`, signatures, etc.)
 
-**Not guaranteed:** arbitrary JWTs, PEM blocks, uncommon cloud tokens, free-form passwords, secrets split across turns. Assume residual secrets may remain in handoff text and host logs.
+**Not guaranteed:** arbitrary JWTs, uncommon cloud tokens, free-form passwords, secrets split across turns or obfuscated. PEM / Slack / AIza shapes are best-effort covered above but residual secrets may still remain in handoff text and host logs.
 
 ### Residual risks
 

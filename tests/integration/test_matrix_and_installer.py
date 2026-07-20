@@ -54,6 +54,13 @@ class MatrixTests(unittest.TestCase):
             self.assertIn(".portable-resume/resources/handoff-policy.md", files)
             self.assertTrue(any(path.startswith(".portable-resume/runtime/portable_resume/") for path in files))
             self.assertIn(".portable-resume/runtime/portable_resume/reader.py", files)
+            # Plan 025: installer package must not ship into skill runtime trees.
+            install_runtime = [
+                path
+                for path in files
+                if path.startswith(".portable-resume/runtime/portable_resume/install/")
+            ]
+            self.assertEqual(install_runtime, [])
             for source in sorted(SOURCE_KEYS):
                 self.assertIn(f"resume-{source}/SKILL.md", files)
                 self.assertIn(f"resume-{source}/scripts/run_reader.py", files)

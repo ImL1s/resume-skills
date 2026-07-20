@@ -73,7 +73,31 @@ def select_session(
             raise DiagnosticError("E_NO_MATCH")
         return SelectionResult(ordered[0])
 
-    exact_id = [value for value in eligible if value.session_id == normalized_ref]
+    # Prefer canonical UUID equality (uppercase paste still matches).
+    import uuid as _uuid
+
+    ref_uuid: str | None = None
+    try:
+        ref_uuid = str(_uuid.UUID(normalized_ref))
+    except ValueError:
+        ref_uuid = None
+    exact_id = [
+        value
+        for value in eligible
+        if value.session_id == normalized_ref
+        or (ref_uuid is not None and value.session_id == ref_uuid)
+    ]
+    # Dedupe if both branches matched the same row.
+    if exact_id:
+        seen: set[str] = set()
+        unique: list[SessionSummary] = []
+        for value in exact_id:
+            key = f"{value.source}:{value.session_id}:{value.source_path or ''}"
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(value)
+        exact_id = unique
     if len(exact_id) == 1:
         return SelectionResult(exact_id[0])
     if len(exact_id) > 1:

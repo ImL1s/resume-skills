@@ -654,10 +654,10 @@ def _cleanup_empty_dirs(root: str, *, removed_paths: list[str] | None = None) ->
                 continue
             if os.listdir(path):
                 continue
-            # Only rmdir under resume-* package dirs, .portable-resume, or ancestors of removed files.
+            # Candidates are only ancestors of owned removals + .portable-resume walk.
             rel = os.path.relpath(path, root_real)
             top = rel.split(os.sep, 1)[0]
-            if top == SUPPORT_DIR or top.startswith("resume-") or path in candidates:
+            if top == SUPPORT_DIR or top.startswith("resume-") or os.sep in rel:
                 os.rmdir(path)
         except OSError:
             pass
