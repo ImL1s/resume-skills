@@ -8,7 +8,7 @@
 **Local re-verify note:** This pass is static/source-evidence based. Public readiness notes claim full unittest + `self_verify` green (~153 tests). Re-run before release:
 
 ```bash
-cd /Users/iml1s/Documents/mine/resume-skills
+cd REPO_ROOT
 PYTHONPATH=src python3 -m unittest discover -s tests -q
 python3 scripts/check_secrets.py
 python3 scripts/self_verify.py
