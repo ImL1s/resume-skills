@@ -3,7 +3,17 @@ Copyright 2026 Portable Resume Skills contributors
 
 Licensed under the Apache License, Version 2.0.
 
-This independently authored project was inspired by the publicly documented
-cross-agent context-migration behavior of xAI Grok Build. No code, fixture, or
-skill body from the untracked installed Grok bundle (`~/.grok/bundled/skills/**`)
-is included or derived.
+This project is an independently authored, stdlib-only reimplementation of
+cross-agent context-migration *behavior* inspired by publicly documented
+Agent Skills patterns and public product documentation.
+
+Planning-time observation of installed tooling may have informed *requirements*,
+but this repository does not redistribute, copy, or ship skill bodies from
+any untracked installed bundle (including ~/.grok/bundled/skills/**).
+
+Fixtures under tests/fixtures are synthetic. Trademarks of Claude, Codex,
+Cursor, OpenCode, Antigravity, and Grok remain with their owners; this project
+is not affiliated with or endorsed by those vendors.
+
+Optional decompression, when used, relies on a host-provided zstd binary and
+is not a required runtime dependency of this package.

@@ -22,7 +22,7 @@ Evidence levels used here:
 | `antigravity-v1` | `<project>/.agents/skills` | `~/.gemini/config/skills` | `name`+`description` only | name mention; `/skills` lists only | `verified-filesystem` (isolated install+verify on distinct root) | `not-run` |
 | `grok-v1` | `<project>/.grok/skills` | `~/.grok/skills` | `name`+`description` only | `/resume-<source> ...`; `$ARGUMENTS` prompt-only | `verified-filesystem` (isolated install+verify) | `not-run` |
 
-Evidence log: `.omc/research/live-smoke-report.md` (36/36 cells materialize; binaries version-probed: claude/codex/opencode/agy/grok/cursor-agent present).
+Public evidence notes: `docs/evidence-summary.md` (packaging 36/36; live UI not-run).
 
 ## Shared-root note
 
@@ -45,6 +45,4 @@ Live interactive host UI walks remain `not-run` in this environment.
 ## Related status
 
 - Project status and open gates: `docs/STATUS.md`
-- Multi-seat review synthesis: `.omc/research/dual-review-synthesis.md`
-- Last packaging smoke log: `.omc/research/live-smoke-report.md`
-- Linux gate log: `.omc/research/linux-gate-report.md`
+- Public evidence notes: `docs/evidence-summary.md`

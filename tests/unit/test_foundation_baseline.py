@@ -42,7 +42,7 @@ class FoundationBaselineTests(unittest.TestCase):
         self.assertEqual(planned + supported, 6)
         self.assertGreaterEqual(supported, 1)
         attestation = Path("docs/clean-room-attestation.md").read_text()
-        self.assertIn("No excluded source was opened", attestation)
+        self.assertIn("do **not** contain copied installed-bundle", attestation)
 
     def test_fixture_manifest_accepts_strict_synthetic_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

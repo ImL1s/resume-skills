@@ -237,8 +237,11 @@ def _dest_under_root(root: str, rel: str) -> str:
     safe = _safe_rel_path(rel)
     dest = os.path.realpath(os.path.join(root, safe))
     root_real = os.path.realpath(root)
-    if dest != root_real and not dest.startswith(root_real + os.sep):
-        raise DiagnosticError("E_INSTALL_CONFLICT")
+    try:
+        if os.path.commonpath((dest, root_real)) != root_real:
+            raise DiagnosticError("E_INSTALL_CONFLICT")
+    except ValueError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
     return dest
 
 

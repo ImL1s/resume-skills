@@ -2,36 +2,40 @@
 
 ## Scope
 
-This repository implements a new, host-neutral context-migration contract. It does not restore a live agent process and it does not redistribute vendor session readers or private transcripts.
+This repository implements a host-neutral context-migration contract. It does not restore a live agent process and it does not redistribute vendor session readers or private transcripts.
 
 ## Allowed implementation references
 
 Implementation and fixture authors may use only:
 
-1. the approved repository-local requirements and plans under `.omx/specs/`, `.omx/plans/`, and the frozen official-evidence context;
-2. tracked, publicly licensed source in the upstream [xAI Grok Build repository](https://github.com/xai-org/grok-build), including its Apache-2.0 license;
-3. official public product documentation enumerated in `docs/clean-room-attestation.md`; and
-4. independently authored synthetic fixtures containing no real user transcript.
+1. Repository plans and specs shipped in this tree under `docs/` (and, when present on a developer machine, local planning notes that are **not** required to build or test);
+2. Tracked, publicly licensed source such as the Apache-2.0 [xAI Grok Build](https://github.com/xai-org/grok-build) repository, used only as *behavioral* reference;
+3. Official public product documentation for Agent Skills and host skill roots; and
+4. Independently authored synthetic fixtures containing no real user transcript.
 
-Public behavior is requirements evidence only. Vendor implementation bodies are not mechanically translated.
+Public behavior is requirements evidence only. Vendor implementation bodies are not mechanically translated into this tree.
 
 ## Prohibited references and data
 
-Implementation and test work must not open, inspect, hash-match, copy, translate, or derive code/fixtures from `~/.grok/bundled/skills/**`. It must not read a real Claude, Codex, Cursor, OpenCode, Antigravity, or Grok session store. Private transcripts, credentials, account identifiers, and absolute developer home paths are forbidden in fixtures.
+**Hard prohibition for product code and fixtures:** do not copy, paste, translate, or ship bodies from `~/.grok/bundled/skills/**` or private user transcripts. Do not embed credentials, account identifiers, or absolute developer home paths in fixtures.
 
-## Author attestation (G001–G005 / deterministic V1)
+## Author attestation (deterministic V1)
 
-The foundation, six source adapters, packaging/installer, deterministic integration/e2e suites, and post-review hardening (installer lock re-check, journal path sandbox, expected-source hard-bind, source-read budget split) were authored from the approved plans, public/official evidence under `.omx/context/`, and independently written synthetic fixtures only. Implementation/test authors did not inspect `~/.grok/bundled/skills/**`, did not copy private transcripts into fixtures, and did not use source CLIs as recovery backends.
+Implementation is an independently written **compatibility reimplementation**.
 
-This attestation covers **deterministic V1 implementation and packaging proof**. It does **not** claim:
+Planning-time observation of installed tools may have informed *requirements*. That is not a license to redistribute those files. Public clones must not require private bundles.
 
-- live installed-version host UI activation smokes (`docs/host-support.md` live column remains `not-run`);
-- dual-OS clean-runner evidence beyond the OS that actually executed the gate;
-- Codex dual-review APPROVE when that seat is quota-blocked (see `.omc/research/dual-review-synthesis.md`).
+Product sources, tests, and fixtures in this repository:
+
+- are independently authored or synthetic;
+- do not contain copied installed-bundle skill bodies;
+- do not invoke source agent CLIs as recovery backends.
+
+This attestation covers **deterministic packaging and reader behavior**. It does **not** claim live host UI activation completeness or dual-OS release completeness (see `docs/STATUS.md` and `docs/evidence-summary.md`).
 
 ## Fixture policy
 
-Every future adapter fixture must have a strict `fixture.json` manifest validated by `tests/helpers/fixture_manifest.py`. `synthetic` must be literal `true`; source, provider ID, case, expected operation/code, warnings, and a `docs/source-formats.md#...` provenance anchor are mandatory. Unknown keys, duplicate keys, private-looking paths, and unsupported warning/source values fail closed.
+Every adapter fixture must have a strict `fixture.json` manifest validated by `tests/helpers/fixture_manifest.py`. `synthetic` must be literal `true`; source, provider ID, case, expected operation/code, warnings, and a `docs/source-formats.md#...` provenance anchor are mandatory. Unknown keys, duplicate keys, private-looking paths, and unsupported warning/source values fail closed.
 
 ## Schema extension for the normalized-content budget
 
