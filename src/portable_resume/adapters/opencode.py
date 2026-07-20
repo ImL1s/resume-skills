@@ -535,12 +535,21 @@ class OpenCodeAdapter:
         if ref.source_path is None or not is_within(ref.source_path, root):
             raise DiagnosticError.unsafe_path()
         try:
-            with private_sqlite_connection(
-                ref.source_path,
-                root=root,
-                hook=self._sqlite_hook,
-                provider=SQLITE_FORMAT,
-            ) as connection:
+            size = os.path.getsize(ref.source_path)
+        except OSError as error:
+            raise DiagnosticError("E_SOURCE_BUSY", source=self.key, provider=SQLITE_FORMAT) from error
+        try:
+            ctx = (
+                query_only_live_sqlite(ref.source_path, root=root, provider=SQLITE_FORMAT)
+                if size > DEFAULT_BOUNDS.sqlite_snapshot_bytes
+                else private_sqlite_connection(
+                    ref.source_path,
+                    root=root,
+                    hook=self._sqlite_hook,
+                    provider=SQLITE_FORMAT,
+                )
+            )
+            with ctx as connection:
                 self._require_schema(connection)
                 summary_row = connection.execute(
                     'SELECT id,directory,title,time_created,time_updated FROM "session" WHERE id=?',

@@ -426,6 +426,17 @@ def query_only_live_sqlite(
     safe, _base = require_regular_no_symlinks(database, root)
     if os.path.exists(f"{safe}-journal") or os.path.lexists(f"{safe}-journal"):
         raise DiagnosticError("E_SQLITE_HOT_JOURNAL", provider=provider)
+    # Match private-snapshot family policy: wal/shm must not be symlinks.
+    for suffix in ("-wal", "-shm"):
+        member = f"{safe}{suffix}"
+        if not os.path.lexists(member):
+            continue
+        try:
+            mode = os.lstat(member).st_mode
+        except OSError as error:
+            raise DiagnosticError("E_SOURCE_BUSY", provider=provider) from error
+        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+            raise DiagnosticError.unsafe_path(provider=provider)
     uri = f"file:{quote(safe)}?mode=ro"
     connection = sqlite3.connect(uri, uri=True)
     try:

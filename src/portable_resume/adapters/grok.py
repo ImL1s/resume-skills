@@ -199,6 +199,7 @@ class GrokAdapter:
         except OSError as error:
             raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
         preferred_name = None
+        seen_preferred = False
         if prefer_cwd:
             from urllib.parse import quote
 
@@ -209,8 +210,15 @@ class GrokAdapter:
                 key=lambda entry: (0 if entry.name == preferred_name else 1, entry.name),
             )
         for cwd_entry in cwd_entries:
-            if preferred_name is not None and cwd_entry.name != preferred_name and output:
-                # Already collected preferred cwd sessions — stop early.
+            if preferred_name is not None and cwd_entry.name == preferred_name:
+                seen_preferred = True
+            # Only stop early after the preferred bucket was actually visited.
+            if (
+                preferred_name is not None
+                and seen_preferred
+                and cwd_entry.name != preferred_name
+                and output
+            ):
                 break
             if cwd_entry.is_symlink():
                 raise DiagnosticError.unsafe_path()

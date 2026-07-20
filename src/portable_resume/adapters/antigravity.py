@@ -322,7 +322,11 @@ class AntigravityAdapter:
             except DiagnosticError as error:
                 # Live AGY transcripts may use a different schema; skip only when
                 # directory-scanning without a trusted index entry.
-                if scan_mode and error.code in {"E_UNSUPPORTED_FORMAT", "E_CORRUPT_RECORD"}:
+                if scan_mode and error.code in {
+                    "E_UNSUPPORTED_FORMAT",
+                    "E_CORRUPT_RECORD",
+                    "E_UNSAFE_PATH",
+                }:
                     continue
                 raise
             merged = list(summary.warnings)

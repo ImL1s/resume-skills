@@ -10,7 +10,7 @@ A provider may change from **planned** to **supported (fixture/parser)** only af
 | Codex | `codex-state-sqlite-v1`, `codex-rollout-jsonl-v1`, optional `codex-rollout-zstd-v1` | Public Codex/app-server docs + fixtures | supported (fixture/parser) | Missing zstd → partial capability; hot rollback journal fails closed |
 | Cursor | `cursor-cli-chat-v1`, `cursor-desktop-vscdb-v1` | Official Cursor skills docs + fixtures | supported (fixture/parser) | Missing blobs warn without fabrication; native picker parity not claimed |
 | OpenCode | `opencode-sqlite-v1`, `opencode-file-store-v1`, `opencode-export-file-v1` | Official OpenCode docs + fixtures | supported (fixture/parser) | Unknown schema fails closed; export is a separate provider |
-| Antigravity | `antigravity-transcript-jsonl-v1` (index may be probed as hints) | Official Antigravity skills/CLI docs + fixtures | supported (fixture/parser) | Missing index degrades to exact id/path; optional index format is not a full content provider |
+| Antigravity | `antigravity-transcript-jsonl-v1` (index may be probed as hints) | Official Antigravity skills/CLI docs + fixtures | supported (fixture/parser) | Index preferred when valid; missing index uses bounded `brain/<id>/…/transcript.jsonl` scan. Live AGY JSONL schema often differs from fixtures (list may skip unreadable files). Exact id/path still works when parseable. |
 | Grok Build | `grok-updates-jsonl-v1` | Public Apache-2.0 Grok Build tree + fixtures | supported (fixture/parser) | Installed bundled reader is prohibited as an implementation source |
 
 ## Foundation-only anchor
