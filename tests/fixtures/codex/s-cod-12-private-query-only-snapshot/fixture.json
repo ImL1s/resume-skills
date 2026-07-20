@@ -1,0 +1,10 @@
+{
+  "case": "s-cod-12-private-query-only-snapshot",
+  "expected_code": 0,
+  "expected_operation": "list",
+  "expected_warnings": [],
+  "format_id": "codex-state-sqlite-v1",
+  "provenance_ref": "docs/source-formats.md#codex-codex-state-sqlite-v1",
+  "source": "codex",
+  "synthetic": true
+}

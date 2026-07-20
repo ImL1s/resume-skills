@@ -1,0 +1,3 @@
+{"type":"session_meta","timestamp":"2026-07-20T00:00:00Z","payload":{"id":"cbb068e8-9496-5268-8c07-fce6cbd81a64","cwd":"/workspace/project","source":"cli","git":{"branch":"main"}}}
+{"type":"response_item","timestamp":"2026-07-20T00:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"synthetic request"}]}}
+{"type":"response_item","timestamp":"2026-07-20T00:00:00Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"synthetic response"}]}}

@@ -1,0 +1,2 @@
+{"timestamp":1767225600,"method":"session/update","params":{"sessionId":"grok-one","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Grok prompt"}}}}
+{"timestamp":1767225600,"method":"session/update","params":{"sessionId":"grok-one","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Grok answer"}}}}

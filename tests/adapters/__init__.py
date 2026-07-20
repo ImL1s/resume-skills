@@ -1,0 +1,1 @@
+"""Concrete source-adapter tests."""

@@ -1,0 +1,10 @@
+{
+  "case": "s-gro-01",
+  "expected_code": 0,
+  "expected_operation": "list",
+  "expected_warnings": [],
+  "format_id": "grok-updates-jsonl-v1",
+  "provenance_ref": "docs/source-formats.md#source-format-evidence-registry",
+  "source": "grok",
+  "synthetic": true
+}

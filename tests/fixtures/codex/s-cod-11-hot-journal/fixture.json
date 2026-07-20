@@ -1,0 +1,10 @@
+{
+  "case": "s-cod-11-hot-journal",
+  "expected_code": 6,
+  "expected_operation": "error",
+  "expected_warnings": [],
+  "format_id": "codex-state-sqlite-v1",
+  "provenance_ref": "docs/source-formats.md#codex-codex-state-sqlite-v1",
+  "source": "codex",
+  "synthetic": true
+}

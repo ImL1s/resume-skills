@@ -1,0 +1,5 @@
+{"type":"session_meta","timestamp":"2026-07-20T00:00:00Z","payload":{"id":"494d9f52-592c-5950-b454-cd6f31b8861e","cwd":"/workspace/project","source":"cli","git":{"branch":"main"}}}
+{"type":"turn_context","timestamp":"2026-07-20T00:00:00Z","payload":{"developer":"omitted"}}
+{"type":"response_item","timestamp":"2026-07-20T00:00:00Z","payload":{"type":"reasoning","summary":"omitted","encrypted_content":"omitted"}}
+{"type":"response_item","timestamp":"2026-07-20T00:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"synthetic request"}]}}
+{"type":"response_item","timestamp":"2026-07-20T00:00:00Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"synthetic response"}]}}

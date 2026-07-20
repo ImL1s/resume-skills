@@ -1,0 +1,12 @@
+{
+  "case": "s-gro-02",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [
+    "W_MISSING_BLOB"
+  ],
+  "format_id": "grok-updates-jsonl-v1",
+  "provenance_ref": "docs/source-formats.md#source-format-evidence-registry",
+  "source": "grok",
+  "synthetic": true
+}

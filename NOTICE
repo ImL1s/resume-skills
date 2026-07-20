@@ -1,0 +1,9 @@
+Portable Resume Skills
+Copyright 2026 Portable Resume Skills contributors
+
+Licensed under the Apache License, Version 2.0.
+
+This independently authored project was inspired by the publicly documented
+cross-agent context-migration behavior of xAI Grok Build. No code, fixture, or
+skill body from the untracked installed Grok bundle (`~/.grok/bundled/skills/**`)
+is included or derived.

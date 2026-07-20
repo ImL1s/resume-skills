@@ -1,0 +1,12 @@
+{
+  "case": "s-cur-05-missing-content-blob",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [
+    "W_MISSING_BLOB"
+  ],
+  "format_id": "cursor-cli-chat-v1",
+  "provenance_ref": "docs/source-formats.md#cursor-cursor-cli-chat-v1",
+  "source": "cursor",
+  "synthetic": true
+}

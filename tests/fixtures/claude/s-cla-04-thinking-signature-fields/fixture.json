@@ -1,0 +1,10 @@
+{
+  "case": "s-cla-04-thinking-signature-fields",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "claude-jsonl-v1",
+  "provenance_ref": "docs/source-formats.md#claude-claude-jsonl-v1",
+  "source": "claude",
+  "synthetic": true
+}

@@ -1,0 +1,12 @@
+{
+  "case": "s-ant-05",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [
+    "W_PARTIAL_TAIL"
+  ],
+  "format_id": "antigravity-transcript-jsonl-v1",
+  "provenance_ref": "docs/source-formats.md#source-format-evidence-registry",
+  "source": "antigravity",
+  "synthetic": true
+}

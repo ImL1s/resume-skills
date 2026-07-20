@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""Install portable resume skills into host skill roots."""
+
+from __future__ import annotations
+
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+SRC = os.path.join(ROOT, "src")
+if SRC not in sys.path:
+    sys.path.insert(0, SRC)
+
+from portable_resume.install.cli import main
+
+raise SystemExit(main())

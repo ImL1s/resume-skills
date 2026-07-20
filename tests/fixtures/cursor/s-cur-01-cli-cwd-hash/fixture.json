@@ -1,0 +1,10 @@
+{
+  "case": "s-cur-01-cli-cwd-hash",
+  "expected_code": 0,
+  "expected_operation": "list",
+  "expected_warnings": [],
+  "format_id": "cursor-cli-chat-v1",
+  "provenance_ref": "docs/source-formats.md#cursor-cursor-cli-chat-v1",
+  "source": "cursor",
+  "synthetic": true
+}

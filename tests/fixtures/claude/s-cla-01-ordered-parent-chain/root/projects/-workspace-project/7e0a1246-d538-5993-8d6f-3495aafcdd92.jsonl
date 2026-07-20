@@ -1,0 +1,2 @@
+{"type":"user","uuid":"93efcefc-43bc-5677-87c1-96b663daec3f","parentUuid":null,"sessionId":"7e0a1246-d538-5993-8d6f-3495aafcdd92","cwd":"/workspace/project","timestamp":"2026-07-20T00:00:00Z","message":{"role":"user","content":"synthetic request"}}
+{"type":"assistant","uuid":"b13ddf02-4741-56bb-89fe-cb4eea9d5e5d","parentUuid":"93efcefc-43bc-5677-87c1-96b663daec3f","sessionId":"7e0a1246-d538-5993-8d6f-3495aafcdd92","cwd":"/workspace/project","timestamp":"2026-07-20T00:00:00Z","message":{"role":"assistant","content":"synthetic response"}}

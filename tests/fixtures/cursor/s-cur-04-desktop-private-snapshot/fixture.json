@@ -1,0 +1,10 @@
+{
+  "case": "s-cur-04-desktop-private-snapshot",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "cursor-desktop-vscdb-v1",
+  "provenance_ref": "docs/source-formats.md#cursor-cursor-desktop-vscdb-v1",
+  "source": "cursor",
+  "synthetic": true
+}

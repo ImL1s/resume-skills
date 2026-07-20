@@ -1,0 +1,10 @@
+{
+  "case": "s-cur-02-ordered-transcript-links",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "cursor-cli-chat-v1",
+  "provenance_ref": "docs/source-formats.md#cursor-cursor-cli-chat-v1",
+  "source": "cursor",
+  "synthetic": true
+}

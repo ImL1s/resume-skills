@@ -1,0 +1,12 @@
+{
+  "case": "s-cla-06-partial-final-jsonl-line",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [
+    "W_PARTIAL_TAIL"
+  ],
+  "format_id": "claude-jsonl-v1",
+  "provenance_ref": "docs/source-formats.md#claude-claude-jsonl-v1",
+  "source": "claude",
+  "synthetic": true
+}

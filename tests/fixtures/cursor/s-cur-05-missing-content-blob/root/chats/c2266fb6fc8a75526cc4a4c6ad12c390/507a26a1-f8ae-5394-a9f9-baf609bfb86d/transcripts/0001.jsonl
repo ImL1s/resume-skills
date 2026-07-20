@@ -1,0 +1,2 @@
+{"type":"message","role":"user","content":"visible"}
+{"type":"message","role":"assistant","content_blob":"blobs/missing.txt"}

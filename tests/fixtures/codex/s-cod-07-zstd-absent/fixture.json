@@ -1,0 +1,12 @@
+{
+  "case": "s-cod-07-zstd-absent",
+  "expected_code": 0,
+  "expected_operation": "list",
+  "expected_warnings": [
+    "W_OPTIONAL_ZSTD_UNAVAILABLE"
+  ],
+  "format_id": "codex-rollout-zstd-v1",
+  "provenance_ref": "docs/source-formats.md#codex-codex-rollout-zstd-v1",
+  "source": "codex",
+  "synthetic": true
+}

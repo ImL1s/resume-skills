@@ -1,0 +1,15 @@
+我會依 brief 做唯讀 review：先讀核心文件與程式結構，並同步跑指定驗證指令。驗證文件路徑可能不同；我接著深讀核心安全、合約與安裝程式碼。熱 journal fixture 的實際錯誤碼與預期不符，接著核對 adapter 測試與 journal path traversal。已掌握足夠證據，正在撰寫完整繁中 dual-review 報告。## 完成
+
+唯讀 dual-review 已寫入並印出：
+
+**路徑：** `/Users/iml1s/Documents/mine/resume-skills/.omc/research/dual-review-grok.md`
+
+**Verdict：`APPROVE WITH MINOR FIXES`**
+
+### 重點
+- **決定性面通過：** `compileall=0`、**146 tests OK**、`self-check` / 36-cell matrix 全綠；安全不變量（無 source CLI、inert handoff、路徑／SQLite fail-closed、非 owned collision refuse）成立。
+- **完整 V1 release 仍不可宣告：** live smoke 全為 `not-run`；僅 Darwin 閘道；matrix 的 `"supported": true` 語意偏寬。
+- **Important：** reader 把 hot-journal 重映射成 `E_UNSAFE_PATH`；journal recover 不完成交易；靜態 `Popen` 掃描可被 `getattr` 繞過；immutability 套件只覆蓋 3 源；缺 `SECURITY.md`。
+
+未改任何產品程式碼。
+GROK_DONE

@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Bootstrap the owned portable-resume runtime for source=${source_key}."""
+
+from __future__ import annotations
+
+import os
+import sys
+
+# <skill>/scripts/run_reader.py -> <skill-root>/.portable-resume/runtime
+_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+_ROOT = os.path.dirname(_SKILL_DIR)
+_RUNTIME = os.path.join(_ROOT, ".portable-resume", "runtime")
+if _RUNTIME not in sys.path:
+    sys.path.insert(0, _RUNTIME)
+
+from portable_resume.reader import main  # noqa: E402
+
+
+def _force_expected_source(argv: list[str]) -> list[str]:
+    """Hard-bind the skill source; strip any host-supplied override first."""
+    forced = "${source_key}"
+    cleaned: list[str] = []
+    skip_next = False
+    for item in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if item == "--expected-source":
+            skip_next = True
+            continue
+        if item.startswith("--expected-source="):
+            continue
+        cleaned.append(item)
+    cleaned.extend(["--expected-source", forced])
+    return cleaned
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(_force_expected_source(sys.argv[1:])))

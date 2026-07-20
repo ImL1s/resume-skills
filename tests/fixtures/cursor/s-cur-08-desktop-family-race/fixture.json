@@ -1,0 +1,10 @@
+{
+  "case": "s-cur-08-desktop-family-race",
+  "expected_code": 6,
+  "expected_operation": "error",
+  "expected_warnings": [],
+  "format_id": "cursor-desktop-vscdb-v1",
+  "provenance_ref": "docs/source-formats.md#cursor-cursor-desktop-vscdb-v1",
+  "source": "cursor",
+  "synthetic": true
+}

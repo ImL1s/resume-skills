@@ -1,0 +1,10 @@
+{
+  "case": "s-cod-06-rollout-fallback",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "codex-rollout-jsonl-v1",
+  "provenance_ref": "docs/source-formats.md#codex-codex-rollout-jsonl-v1",
+  "source": "codex",
+  "synthetic": true
+}

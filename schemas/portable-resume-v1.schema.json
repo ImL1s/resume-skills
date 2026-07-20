@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://portable-resume.invalid/schemas/portable-resume-v1.schema.json",
+  "title": "Portable Resume Inert Envelope V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "operation", "inert", "untrusted_content", "generated_at",
+    "query", "sessions", "candidates", "warnings"
+  ],
+  "properties": {
+    "schema_version": {"const": "portable-resume/v1"},
+    "operation": {"enum": ["list", "show"]},
+    "inert": {"const": true},
+    "untrusted_content": {"const": true},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "query": {"$ref": "#/$defs/query"},
+    "sessions": {
+      "type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/session"}
+    },
+    "candidates": {
+      "type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/candidate"}
+    },
+    "warnings": {"$ref": "#/$defs/warnings"}
+  },
+  "$defs": {
+    "source": {
+      "enum": ["claude", "codex", "cursor", "opencode", "antigravity", "grok"]
+    },
+    "nullableString": {"type": ["string", "null"]},
+    "timestamp": {
+      "oneOf": [
+        {"type": "string", "format": "date-time"},
+        {"type": "null"}
+      ]
+    },
+    "warning": {
+      "enum": [
+        "W_TRUNCATED", "W_PARTIAL_TAIL", "W_BROKEN_CHAIN", "W_MISSING_BLOB",
+        "W_STALE_INDEX", "W_OPTIONAL_ZSTD_UNAVAILABLE", "W_METADATA_REDACTED",
+        "W_CONTROLS_REMOVED", "W_BINARY_OMITTED", "W_HOST_DISCOVERY_UNPROVEN",
+        "W_LIVE_SMOKE_NOT_RUN"
+      ]
+    },
+    "warnings": {
+      "type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/warning"}
+    },
+    "query": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "ref", "cwd", "within_min"],
+      "properties": {
+        "source": {"$ref": "#/$defs/source"},
+        "ref": {"type": ["string", "null"], "maxLength": 1024},
+        "cwd": {"type": ["string", "null"], "maxLength": 4096},
+        "within_min": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "turn": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "ordinal", "role", "content", "timestamp", "tool_name", "truncated",
+        "inert", "untrusted_content"
+      ],
+      "properties": {
+        "ordinal": {"type": "integer", "minimum": 0},
+        "role": {"enum": ["user", "assistant", "tool"]},
+        "content": {"type": "string", "maxLength": 8388608},
+        "timestamp": {"$ref": "#/$defs/timestamp"},
+        "tool_name": {"type": ["string", "null"], "maxLength": 256},
+        "truncated": {"type": "boolean"},
+        "inert": {"const": true},
+        "untrusted_content": {"const": true}
+      }
+    },
+    "session": {
+      "type": "object", "additionalProperties": false,
+      "x-portable-resume-max-total-utf8-bytes": {
+        "limit": 8388608,
+        "stringFields": ["last_user_request", "last_assistant_action"],
+        "arrayField": "turns",
+        "arrayStringField": "content"
+      },
+      "required": [
+        "source", "session_id", "source_path", "title", "cwd", "branch",
+        "created_at", "updated_at", "source_repo_root", "inert", "untrusted_content",
+        "last_user_request", "last_assistant_action", "turns", "warnings"
+      ],
+      "properties": {
+        "source": {"$ref": "#/$defs/source"},
+        "session_id": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "source_path": {"type": ["string", "null"], "maxLength": 4096},
+        "title": {"type": ["string", "null"], "maxLength": 200},
+        "cwd": {"type": ["string", "null"], "maxLength": 4096},
+        "branch": {"type": ["string", "null"], "maxLength": 512},
+        "created_at": {"$ref": "#/$defs/timestamp"},
+        "updated_at": {"$ref": "#/$defs/timestamp"},
+        "source_repo_root": {"type": ["string", "null"], "maxLength": 4096},
+        "inert": {"const": true},
+        "untrusted_content": {"const": true},
+        "last_user_request": {"type": ["string", "null"], "maxLength": 8388608},
+        "last_assistant_action": {"type": ["string", "null"], "maxLength": 8388608},
+        "turns": {
+          "type": "array", "maxItems": 2000, "items": {"$ref": "#/$defs/turn"}
+        },
+        "warnings": {"$ref": "#/$defs/warnings"}
+      }
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "source", "session_id", "title", "cwd", "branch", "updated_at",
+        "inert", "untrusted_content"
+      ],
+      "properties": {
+        "source": {"$ref": "#/$defs/source"},
+        "session_id": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "title": {"type": ["string", "null"], "maxLength": 200},
+        "cwd": {"type": ["string", "null"], "maxLength": 4096},
+        "branch": {"type": ["string", "null"], "maxLength": 512},
+        "updated_at": {"$ref": "#/$defs/timestamp"},
+        "inert": {"const": true},
+        "untrusted_content": {"const": true}
+      }
+    }
+  }
+}

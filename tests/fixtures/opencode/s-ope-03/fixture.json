@@ -1,0 +1,12 @@
+{
+  "case": "s-ope-03",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [
+    "W_BINARY_OMITTED"
+  ],
+  "format_id": "opencode-sqlite-v1",
+  "provenance_ref": "docs/source-formats.md#source-format-evidence-registry",
+  "source": "opencode",
+  "synthetic": true
+}
