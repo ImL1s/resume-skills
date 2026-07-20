@@ -200,8 +200,8 @@ class AntigravityAdapter:
             names = sorted(os.listdir(brain))
         except OSError as error:
             raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
-        if len(names) > DEFAULT_BOUNDS.scanned_records:
-            raise DiagnosticError.limit_exceeded()
+        # Cap name scan without hard-failing large live brain trees.
+        names = names[: DEFAULT_BOUNDS.scanned_records]
         paths: list[str] = []
         for name in names:
             if name in {".", "..", "index.json"}:
@@ -326,6 +326,7 @@ class AntigravityAdapter:
                     "E_UNSUPPORTED_FORMAT",
                     "E_CORRUPT_RECORD",
                     "E_UNSAFE_PATH",
+                    "E_LIMIT_EXCEEDED",
                 }:
                     continue
                 raise
@@ -425,12 +426,14 @@ class AntigravityAdapter:
         turns: list[Turn] = []
         created_values: list[str] = []
         updated_values: list[str] = []
+        live_stream = False
         for record in records:
             kind = record.get("type")
             if not isinstance(kind, str):
                 raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+            raw_kind = kind
             kind = kind.casefold()
-            timestamp = _rfc3339(record.get("timestamp"))
+            timestamp = _rfc3339(record.get("timestamp")) or _rfc3339(record.get("created_at"))
             if timestamp is not None:
                 created_values.append(timestamp)
                 updated_values.append(timestamp)
@@ -440,6 +443,76 @@ class AntigravityAdapter:
                 if _session_id(record.get("conversation_id")) != path_id:
                     raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
                 header = record
+                continue
+            # Live AGY step stream (uppercase USER_INPUT / PLANNER_RESPONSE / tools).
+            if kind == "user_input":
+                live_stream = True
+                content = record.get("content")
+                if not isinstance(content, str):
+                    continue
+                if include_turns:
+                    self._append_turn(
+                        turns,
+                        {"role": "user", "content": content, "timestamp": timestamp},
+                        query,
+                        budget,
+                        warnings,
+                    )
+                continue
+            if kind == "planner_response":
+                live_stream = True
+                content = record.get("content")
+                text = content if isinstance(content, str) else ""
+                if not text:
+                    tools = record.get("tool_calls")
+                    if isinstance(tools, list) and tools:
+                        names = []
+                        for tool in tools[:8]:
+                            if isinstance(tool, Mapping) and isinstance(tool.get("name"), str):
+                                names.append(tool["name"])
+                            elif isinstance(tool, Mapping) and isinstance(tool.get("tool"), str):
+                                names.append(tool["tool"])
+                        text = f"planned inert foreign tool(s): {', '.join(names)}" if names else ""
+                if text and include_turns:
+                    self._append_turn(
+                        turns,
+                        {"role": "assistant", "content": text, "timestamp": timestamp},
+                        query,
+                        budget,
+                        warnings,
+                    )
+                continue
+            if kind in {
+                "system_message",
+                "checkpoint",
+                "error_message",
+                "generic",
+            }:
+                live_stream = True
+                continue
+            if kind in {
+                "view_file",
+                "list_directory",
+                "grep_search",
+                "code_action",
+                "run_command",
+                "invoke_subagent",
+            }:
+                live_stream = True
+                content = record.get("content")
+                if include_turns and isinstance(content, str) and content.strip():
+                    self._append_turn(
+                        turns,
+                        {
+                            "role": "tool",
+                            "content": content,
+                            "tool_name": raw_kind,
+                            "timestamp": timestamp,
+                        },
+                        query,
+                        budget,
+                        warnings,
+                    )
                 continue
             if kind in _FILTERED_TYPES:
                 continue
@@ -485,6 +558,9 @@ class AntigravityAdapter:
                         warnings,
                     )
                 continue
+            if live_stream:
+                # Unknown live step types: skip without failing the whole transcript.
+                continue
             if any(key in record for key in ("role", "content", "message", "prompt", "output")):
                 raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
             warnings.append("W_BROKEN_CHAIN")
@@ -503,6 +579,15 @@ class AntigravityAdapter:
             title = header.get("title") if isinstance(header.get("title"), str) else None
             created_at = _rfc3339(header.get("created_at")) or created_at
             updated_at = _rfc3339(header.get("updated_at")) or updated_at
+        elif live_stream:
+            # Live streams lack a session header; path id is authoritative.
+            header = {"conversation_id": path_id}
+            if query.cwd:
+                try:
+                    cwd = canonicalize_cwd(query.cwd)
+                except DiagnosticError:
+                    cwd = None
+            title = f"antigravity:{path_id[:8]}"
         if hint is not None:
             if hint.get("id") != path_id:
                 warnings.append("W_STALE_INDEX")

@@ -44,8 +44,9 @@ python3 scripts/check_secrets.py
 | Codex live list | **partial live** | SQLite column superset + cwd-scoped query + within-min≤0 |
 | Grok source live list | **partial live** | skip co-located files; cwd-prefer; oversized updates → summary-only list |
 | OpenCode live list | **partial live** | large DB via query-only live SQLite; cwd-scoped LIMIT |
-| Antigravity | **partial discovery** | no-index brain scan; live transcript schema often not fixture-compatible |
-| Cursor live | **deferred** | store.db / App Support vscdb ≠ synthetic fixtures |
+| Antigravity live list/show | **partial live** | no-index brain scan + USER_INPUT/PLANNER_RESPONSE step stream |
+| Cursor CLI live list/show | **partial live** | `chats/*/store.db` + meta.json blobs as turns |
+| Cursor Desktop live list/show | **partial live** | `composerHeaders` list; show best-effort composerData text only |
 | Live host UI activation | **not-run** | unchanged |
 
 Plans: `docs/superpowers/plans/2026-07-20-grok-resume-parity.md`, `docs/superpowers/plans/2026-07-20-remaining-sources-live.md`

@@ -436,7 +436,7 @@ def query_only_live_sqlite(
         except OSError as error:
             raise DiagnosticError("E_SOURCE_BUSY", provider=provider) from error
         if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
-            raise DiagnosticError.unsafe_path(provider=provider)
+            raise DiagnosticError.unsafe_path()
     uri = f"file:{quote(safe)}?mode=ro"
     connection = sqlite3.connect(uri, uri=True)
     try:
