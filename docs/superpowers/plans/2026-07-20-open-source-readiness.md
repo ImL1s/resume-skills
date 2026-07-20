@@ -37,7 +37,7 @@
 - Create: `tests/security/test_public_tree_hygiene.py`
 - Modify: git index (untrack `.omc/research/*` except nothing — all research ignored)
 
-- [ ] **Step 1: Write the failing hygiene test**
+- [x] **Step 1: Write the failing hygiene test**
 
 Create `tests/security/test_public_tree_hygiene.py`:
 
@@ -86,12 +86,12 @@ class PublicTreeHygieneTests(unittest.TestCase):
         self.assertEqual(bad, [])
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `PYTHONPATH=src python3 -m unittest tests.security.test_public_tree_hygiene -v`  
 Expected: FAIL with hits under `.omc/research/` absolute paths.
 
-- [ ] **Step 3: Update `.gitignore` and untrack research**
+- [x] **Step 3: Update `.gitignore` and untrack research**
 
 Append to `.gitignore` (keep existing entries):
 
@@ -108,12 +108,12 @@ git rm -r --cached .omc/research 2>/dev/null || true
 
 Move only the self-verify helper later in Task 3; do not re-add research logs.
 
-- [ ] **Step 4: Re-run hygiene test**
+- [x] **Step 4: Re-run hygiene test**
 
 Run: `PYTHONPATH=src python3 -m unittest tests.security.test_public_tree_hygiene -v`  
 Expected: PASS (no tracked research logs; product tree has no home absolute paths).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .gitignore tests/security/test_public_tree_hygiene.py
@@ -130,7 +130,7 @@ git commit -m "chore: ignore local research artifacts and gate public-tree hygie
 - Modify: `docs/clean-room-attestation.md`
 - Create: `tests/unit/test_provenance_honesty.py` (lightweight string checks)
 
-- [ ] **Step 1: Write failing honesty tests**
+- [x] **Step 1: Write failing honesty tests**
 
 Create `tests/unit/test_provenance_honesty.py`:
 
@@ -162,11 +162,11 @@ class ProvenanceHonestyTests(unittest.TestCase):
         self.assertRegex(text, r"(?i)(foundation|G001|scope|limited)")
 ```
 
-- [ ] **Step 2: Run tests — expect FAIL** on current absolute language if present.
+- [x] **Step 2: Run tests — expect FAIL** on current absolute language if present.
 
 Run: `PYTHONPATH=src python3 -m unittest tests.unit.test_provenance_honesty -v`
 
-- [ ] **Step 3: Rewrite docs honestly**
+- [x] **Step 3: Rewrite docs honestly**
 
 **`NOTICE`** full content:
 
@@ -215,9 +215,9 @@ This attestation covers deterministic packaging and reader behavior. It does **n
 
 **`docs/clean-room-attestation.md`** — ensure scope is explicit (foundation + adapters + installer as independently authored; planning observation ≠ code derivation). Keep "No excluded source was opened" only if still true for *implementation* lane; otherwise rephrase to "Product sources and fixtures do not contain copied installed-bundle bodies."
 
-- [ ] **Step 4: Run honesty tests — PASS**
+- [x] **Step 4: Run honesty tests — PASS**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add NOTICE docs/provenance.md docs/clean-room-attestation.md tests/unit/test_provenance_honesty.py
@@ -233,7 +233,7 @@ git commit -m "docs: honest compatibility reimplementation provenance"
 - Modify: `README.md`, `docs/STATUS.md`, `docs/host-support.md`
 - Create: `docs/evidence-summary.md`
 
-- [ ] **Step 1: Write failing test that public docs do not link raw research logs**
+- [x] **Step 1: Write failing test that public docs do not link raw research logs**
 
 Add to `tests/unit/test_provenance_honesty.py` (or new `tests/unit/test_public_docs_links.py`):
 
@@ -248,7 +248,7 @@ class PublicDocsLinkTests(unittest.TestCase):
 
 Run and expect FAIL while README still points at `.omc/research/`.
 
-- [ ] **Step 2: Implement `scripts/self_verify.py`**
+- [x] **Step 2: Implement `scripts/self_verify.py`**
 
 Portable version of self-verify:
 
@@ -320,7 +320,7 @@ if __name__ == "__main__":
 
 Make executable: `chmod +x scripts/self_verify.py`
 
-- [ ] **Step 3: Write `docs/evidence-summary.md`** (no absolute paths)
+- [x] **Step 3: Write `docs/evidence-summary.md`** (no absolute paths)
 
 ```markdown
 # Evidence summary (public)
@@ -344,9 +344,9 @@ Make executable: `chmod +x scripts/self_verify.py`
 - Linux peer clean-runner AC-18 dual-OS release
 ```
 
-- [ ] **Step 4: Update README/STATUS/host-support** to use `scripts/self_verify.py` and `docs/evidence-summary.md` only (no `.omc/research/`, no `.omx/` required links for public readers). For provenance references to planning, say "local planning notes (not shipped)" instead of `.omx/...` paths.
+- [x] **Step 4: Update README/STATUS/host-support** to use `scripts/self_verify.py` and `docs/evidence-summary.md` only (no `.omc/research/`, no `.omx/` required links for public readers). For provenance references to planning, say "local planning notes (not shipped)" instead of `.omx/...` paths.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```bash
 PYTHONPATH=src python3 -m unittest tests.unit.test_provenance_honesty tests.security.test_public_tree_hygiene -v
@@ -355,7 +355,7 @@ python3 scripts/self_verify.py
 
 Expected: all PASS / OVERALL_SELF_VERIFY PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/self_verify.py README.md docs/STATUS.md docs/host-support.md docs/evidence-summary.md tests/unit/test_provenance_honesty.py tests/unit/test_public_docs_links.py 2>/dev/null || true
@@ -371,7 +371,7 @@ git commit -m "docs: public self-verify path and path-free evidence summary"
 - Create: `CONTRIBUTING.md`
 - Modify: `README.md` (link both)
 
-- [ ] **Step 1: Write tests that required public policy files exist**
+- [x] **Step 1: Write tests that required public policy files exist**
 
 ```python
 # tests/unit/test_public_policy_files.py
@@ -392,7 +392,7 @@ class PublicPolicyFilesTests(unittest.TestCase):
 
 Run → FAIL until files exist.
 
-- [ ] **Step 2: Create `SECURITY.md`**
+- [x] **Step 2: Create `SECURITY.md`**
 
 Must include:
 - Threat model: local untrusted session stores; prompt injection in recovered text; installer can write skill roots
@@ -401,7 +401,7 @@ Must include:
 - Report vulnerabilities via GitHub private security advisories / issues labeled security
 - Secret redaction is best-effort
 
-- [ ] **Step 3: Create `CONTRIBUTING.md`**
+- [x] **Step 3: Create `CONTRIBUTING.md`**
 
 Must include:
 - Python 3.11+ recommended; stdlib only
@@ -410,15 +410,15 @@ Must include:
 - Forbidden: real transcripts, credentials, absolute home paths, copying `~/.grok/bundled/skills/**`
 - Honest docs: do not mark live host rows verified without smoke evidence
 
-- [ ] **Step 4: Link from README** under License section
+- [x] **Step 4: Link from README** under License section
 
-- [ ] **Step 5: Run policy tests + full unittest subset**
+- [x] **Step 5: Run policy tests + full unittest subset**
 
 ```bash
 PYTHONPATH=src python3 -m unittest tests.unit.test_public_policy_files tests.security.test_public_tree_hygiene -v
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add SECURITY.md CONTRIBUTING.md README.md tests/unit/test_public_policy_files.py
@@ -433,11 +433,11 @@ git commit -m "docs: add SECURITY and CONTRIBUTING for public project"
 - Modify: `src/portable_resume/install/transaction.py` (`_dest_under_root`)
 - Modify: `tests/integration/test_installer_transaction.py` (already has path escape test; ensure still passes)
 
-- [ ] **Step 1: Confirm existing escape test still present**
+- [x] **Step 1: Confirm existing escape test still present**
 
 `tests/integration/test_installer_transaction.py::test_journal_path_escape_is_ignored_on_recover` must remain.
 
-- [ ] **Step 2: Change `_dest_under_root` to commonpath**
+- [x] **Step 2: Change `_dest_under_root` to commonpath**
 
 Replace prefix `startswith` check with:
 
@@ -455,7 +455,7 @@ def _dest_under_root(root: str, rel: str) -> str:
     return dest
 ```
 
-- [ ] **Step 3: Run**
+- [x] **Step 3: Run**
 
 ```bash
 PYTHONPATH=src python3 -m unittest tests.integration.test_installer_transaction tests.integration.test_matrix_and_installer -v
@@ -463,7 +463,7 @@ PYTHONPATH=src python3 -m unittest tests.integration.test_installer_transaction 
 
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/portable_resume/install/transaction.py
@@ -476,7 +476,7 @@ git commit -m "fix: contain install destinations with commonpath"
 
 **Files:** none required beyond verification output
 
-- [ ] **Step 1: Full suite**
+- [x] **Step 1: Full suite**
 
 ```bash
 python3 -m compileall -q src scripts tests
@@ -486,7 +486,7 @@ python3 scripts/self_verify.py
 
 Expected: OK / PASS
 
-- [ ] **Step 2: Tracked-tree hard gate**
+- [x] **Step 2: Tracked-tree hard gate**
 
 ```bash
 git ls-files | python3 -c "import sys; print(sum(1 for _ in sys.stdin))"
@@ -495,13 +495,13 @@ git ls-files | rg -n '/Users/[A-Za-z]|@hotmail\\.com|BEGIN PRIVATE|sk-[A-Za-z0-9
 
 Expected: `CLEAN`
 
-- [ ] **Step 3: Push commits to origin**
+- [x] **Step 3: Push commits to origin**
 
 ```bash
 git push origin HEAD
 ```
 
-- [ ] **Step 4: Public visibility (only if Step 2 CLEAN and user wanted open source)**
+- [x] **Step 4: Public visibility (only if Step 2 CLEAN and user wanted open source)**
 
 ```bash
 gh repo edit ImL1s/resume-skills --visibility public --accept-visibility-change-consequences
@@ -525,7 +525,7 @@ export GIT_COMMITTER_NAME="ImL1s"
 
 For this plan prefer: **if only two commits exist and remote is private**, rewrite then force-push is acceptable for open-source prep when user already requested public.
 
-- [ ] **Step 5: Final commit only if docs needed for STATUS after public**
+- [x] **Step 5: Final commit only if docs needed for STATUS after public**
 
 Update `docs/STATUS.md` open-source line to note public readiness date if flipped.
 
