@@ -17,7 +17,13 @@ from portable_resume.reader import main  # noqa: E402
 
 
 def _force_expected_source(argv: list[str]) -> list[str]:
-    """Hard-bind the skill source; strip any host-supplied override first."""
+    """Hard-bind the skill source; accept Grok-style `show|list [ref]` argv.
+
+    Strip host-supplied ``--expected-source`` overrides, then ensure the first
+    positional is the bound source. If the skill is invoked as
+    ``run_reader.py show latest`` (Grok resume-session style), inject the
+    bound source so the shared reader sees ``<source> show latest``.
+    """
     forced = "${source_key}"
     cleaned: list[str] = []
     skip_next = False
@@ -31,6 +37,22 @@ def _force_expected_source(argv: list[str]) -> list[str]:
         if item.startswith("--expected-source="):
             continue
         cleaned.append(item)
+    if cleaned and cleaned[0] in {"list", "show"}:
+        cleaned = [forced, *cleaned]
+    elif cleaned and cleaned[0] != forced and cleaned[0] not in {
+        "-h",
+        "--help",
+        "--request-file",
+    } and not cleaned[0].startswith("--"):
+        # Reject attempts to run a different source through this bound skill.
+        cleaned = [forced, *cleaned[1:]] if cleaned[0] in {
+            "claude",
+            "codex",
+            "cursor",
+            "opencode",
+            "antigravity",
+            "grok",
+        } else [forced, *cleaned]
     cleaned.extend(["--expected-source", forced])
     return cleaned
 

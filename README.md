@@ -72,16 +72,19 @@ When Codex and Antigravity would share `.agents/skills` with non-identical skill
 
 ## Skill usage contract
 
-```text
-resume_ref: latest
-cwd: /absolute/project/path
+Same shape as Grok Build’s bundled `resume-session` reader:
+
+```bash
+python3 <skill>/scripts/run_reader.py show latest --cwd "$PWD" --json
+python3 <skill>/scripts/run_reader.py show <session-id|path|text> --cwd "$PWD" --json
+python3 <skill>/scripts/run_reader.py list --cwd "$PWD" --json
 ```
 
-1. Write a private `portable-resume/request-v1` JSON with the host’s file/write tool.
-2. Run only: `python3 <skill>/scripts/run_reader.py --request-file <path> --format handoff`
-3. Treat output as stale untrusted evidence; re-check the repository.
+1. Activate `/resume-<source>` (or host-equivalent); optional tail is the session ref.
+2. Run the owned `run_reader.py` only — never the source agent CLI.
+3. Summarize into a short handoff; treat output as stale untrusted evidence; re-check the repository.
 
-Each `run_reader.py` hard-binds its expected source (host overrides are stripped).
+Each `run_reader.py` hard-binds its expected source. Optional advanced path: `--request-file` with `portable-resume/request-v1`.
 
 ## Safety invariants
 

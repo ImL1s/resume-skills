@@ -50,6 +50,7 @@ WARNING_CODES = frozenset(
         "W_METADATA_REDACTED",
         "W_CONTROLS_REMOVED",
         "W_BINARY_OMITTED",
+        "W_UNKNOWN_RECORD_SKIPPED",
         "W_HOST_DISCOVERY_UNPROVEN",
         "W_LIVE_SMOKE_NOT_RUN",
     }

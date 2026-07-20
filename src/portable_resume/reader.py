@@ -68,7 +68,9 @@ def _resolve_invocation(namespace: argparse.Namespace) -> tuple[str, str, str | 
             raise DiagnosticError.invalid()
         request = load_request(namespace.request_file, expected_source=namespace.expected_source)
         return request.source, request.action, request.resume_ref, request.cwd, None
-    if namespace.expected_source is not None:
+    # Grok-build style: skill-bound runners may pass --expected-source with
+    # positional `source action [ref]` (source injected by the wrapper).
+    if namespace.expected_source is not None and namespace.source != namespace.expected_source:
         raise DiagnosticError.invalid()
     if namespace.source not in SOURCE_KEYS or namespace.action not in {"list", "show"}:
         raise DiagnosticError.invalid()
@@ -280,7 +282,11 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
             )
             return emit_diagnostic(error, stream=stderr)
         assert selection.selected is not None
-        session = sanitize_session(adapter.show(ResolvedRef.from_summary(selection.selected), query, budget))
+        # Fresh budget for show: list already consumed scan/read counters on the
+        # same large live transcripts (Grok-style real sessions often >1k records).
+        session = sanitize_session(
+            adapter.show(ResolvedRef.from_summary(selection.selected), query, ReadBudget())
+        )
         if session.source != source or session.session_id != selection.selected.session_id:
             raise DiagnosticError("E_INVARIANT", source=source)
         envelope = Envelope.create(

@@ -26,12 +26,44 @@ from ..snapshot import StableRead, stable_read_bytes
 from .base import CapabilityReport, ResolvedRef
 
 FORMAT_ID = "claude-jsonl-v1"
-_PROJECT_DIR_LIMIT = 64
+# Grok-build style: prefer cwd slug project dir; allow large ~/.claude/projects trees.
+_PROJECT_DIR_LIMIT = 1_024
 _UUID_RECORD_TYPES = frozenset({"user", "assistant", "system"})
+# Structural families we understand or safely ignore without payload interpretation.
+# Unknown types are skipped with W_UNKNOWN_RECORD_SKIPPED (Grok resume-session parity).
 _KNOWN_RECORD_TYPES = frozenset(
-    {"user", "assistant", "system", "summary", "custom-title", "meta", "queue-operation"}
+    {
+        "user",
+        "assistant",
+        "system",
+        "summary",
+        "custom-title",
+        "ai-title",
+        "meta",
+        "queue-operation",
+        "last-prompt",
+        "tag",
+        "agent-name",
+        "agent-color",
+        "agent-setting",
+        "mode",
+        "permission-mode",
+        "worktree-state",
+        "progress",
+        "file-history-snapshot",
+        "attribution-snapshot",
+        "content-replacement",
+        "context-collapse-commit",
+        "context-collapse-snapshot",
+        "attachment",
+    }
 )
 _COMPACTION_SUBTYPES = frozenset({"compact_boundary", "compaction", "compact"})
+
+
+def _slugify_cwd(cwd: str) -> str:
+    """Match Claude Code project dir naming: non-alnum → '-' (same as Grok resume-session)."""
+    return "".join(char if char.isalnum() else "-" for char in cwd)
 
 
 class _DuplicateKey(ValueError):
@@ -80,29 +112,58 @@ def _regular_directory(path: str, root: str) -> bool:
         return False
 
 
-def _project_dirs(root: str) -> list[str]:
+def _project_dirs(root: str, *, prefer_slugs: tuple[str, ...] = ()) -> list[str]:
     projects = os.path.join(root, "projects")
     if not _regular_directory(projects, root):
         return []
+    preferred: list[str] = []
+    seen: set[str] = set()
+    for slug in prefer_slugs:
+        if not slug or slug in seen:
+            continue
+        candidate = os.path.join(projects, slug)
+        if _regular_directory(candidate, root):
+            preferred.append(candidate)
+            seen.add(slug)
     try:
         names = sorted(os.listdir(projects))
     except OSError as error:
         raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
     if len(names) > DEFAULT_BOUNDS.scanned_records:
         raise DiagnosticError.limit_exceeded()
-    values: list[str] = []
+    others: list[str] = []
     for name in names:
+        if name in seen:
+            continue
         candidate = os.path.join(projects, name)
         if _regular_directory(candidate, root):
-            values.append(candidate)
-            if len(values) > _PROJECT_DIR_LIMIT:
+            others.append(candidate)
+            if len(preferred) + len(others) > _PROJECT_DIR_LIMIT:
                 raise DiagnosticError.limit_exceeded()
-    return values
+    # Preferred (cwd slug) first — same discovery order as Grok resume-session.
+    return preferred + others
 
 
-def _session_paths(root: str) -> list[str]:
+def _session_paths(
+    root: str,
+    *,
+    prefer_slugs: tuple[str, ...] = (),
+    exact_uuid: str | None = None,
+    cwd_scoped: bool = False,
+) -> list[str]:
+    """Enumerate session JSONL paths.
+
+    When *cwd_scoped* and a preferred slug directory exists, only that project
+    directory is scanned (Grok-build list behavior for a concrete cwd). Exact
+    UUID lookup still falls back to a broader scan when the slug dir misses.
+    """
+    project_dirs = _project_dirs(root, prefer_slugs=prefer_slugs)
+    if cwd_scoped and prefer_slugs:
+        scoped = [path for path in project_dirs if os.path.basename(path) in prefer_slugs]
+        if scoped:
+            project_dirs = scoped
     values: list[str] = []
-    for project in _project_dirs(root):
+    for project in project_dirs:
         try:
             names = sorted(os.listdir(project))
         except OSError as error:
@@ -117,6 +178,8 @@ def _session_paths(root: str) -> list[str]:
                 uuid.UUID(stem)
             except ValueError:
                 continue
+            if exact_uuid is not None and stem != exact_uuid:
+                continue
             candidate = os.path.join(project, name)
             try:
                 current = os.lstat(candidate)
@@ -126,7 +189,19 @@ def _session_paths(root: str) -> list[str]:
                 values.append(candidate)
                 if len(values) > DEFAULT_BOUNDS.scanned_records:
                     raise DiagnosticError.limit_exceeded()
+    if cwd_scoped and prefer_slugs and exact_uuid is not None and not values:
+        # UUID not under the cwd slug — scan remaining projects (Grok _find_claude_id).
+        return _session_paths(root, prefer_slugs=prefer_slugs, exact_uuid=exact_uuid, cwd_scoped=False)
     return values
+
+
+def _prefer_slugs_for(query: Query) -> tuple[str, ...]:
+    if not query.cwd:
+        return ()
+    try:
+        return (_slugify_cwd(canonicalize_cwd(query.cwd)),)
+    except DiagnosticError:
+        return (_slugify_cwd(query.cwd),)
 
 
 def _exact_uuid_ref(value: str | None) -> str | None:
@@ -159,9 +234,15 @@ def _parse_lines(data: bytes, budget: ReadBudget) -> tuple[list[dict[str, Any]],
         if not isinstance(value, dict):
             raise DiagnosticError("E_CORRUPT_RECORD", source="claude", provider=FORMAT_ID)
         record_type = value.get("type")
-        if not isinstance(record_type, str) or record_type not in _KNOWN_RECORD_TYPES:
-            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="claude", provider=FORMAT_ID)
+        if not isinstance(record_type, str):
+            raise DiagnosticError("E_CORRUPT_RECORD", source="claude", provider=FORMAT_ID)
+        if record_type not in _KNOWN_RECORD_TYPES:
+            # Skip unknown structural families; do not interpret payloads (Grok parity).
+            warnings.append("W_UNKNOWN_RECORD_SKIPPED")
+            continue
         records.append(value)
+    if not records:
+        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="claude", provider=FORMAT_ID)
     return records, tuple(dict.fromkeys(warnings))
 
 
@@ -401,8 +482,13 @@ class ClaudeAdapter:
             root = _existing_root(query)
             if root is None:
                 return CapabilityReport(self.key, FORMAT_ID, "unavailable")
-            paths = _session_paths(root)
+            prefer = _prefer_slugs_for(query)
+            paths = _session_paths(root, prefer_slugs=prefer, cwd_scoped=bool(prefer))
             if not paths:
+                # Empty cwd-scoped dir is still a supported store layout if projects exists.
+                projects = os.path.join(root, "projects")
+                if _regular_directory(projects, root):
+                    return CapabilityReport(self.key, FORMAT_ID, "supported", root=root, evidence=(FORMAT_ID,))
                 return CapabilityReport(self.key, FORMAT_ID, "unavailable", root=root)
             for path in paths:
                 try:
@@ -414,7 +500,7 @@ class ClaudeAdapter:
                     if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"}:
                         return CapabilityReport(self.key, FORMAT_ID, "unsafe", root=root)
                     continue
-            return CapabilityReport(self.key, FORMAT_ID, "unsupported", root=root)
+            return CapabilityReport(self.key, FORMAT_ID, "supported", root=root, evidence=(FORMAT_ID,))
         except DiagnosticError as error:
             state = "unsafe" if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"} else "unsupported"
             return CapabilityReport(self.key, FORMAT_ID, state)
@@ -425,9 +511,13 @@ class ClaudeAdapter:
             raise DiagnosticError("E_CAPABILITY_UNAVAILABLE", source=self.key, provider=FORMAT_ID)
         values: list[SessionSummary] = []
         exact = _exact_uuid_ref(query.ref)
-        for path in _session_paths(root):
-            if exact is not None and Path(path).stem != exact:
-                continue
+        prefer = _prefer_slugs_for(query)
+        for path in _session_paths(
+            root,
+            prefer_slugs=prefer,
+            exact_uuid=exact,
+            cwd_scoped=bool(prefer) and exact is None,
+        ):
             item = _summary(path, root, query, budget)
             if item is not None:
                 values.append(item)
@@ -440,7 +530,13 @@ class ClaudeAdapter:
             raise DiagnosticError("E_CAPABILITY_UNAVAILABLE", source=self.key, provider=FORMAT_ID)
         path = ref.source_path
         if path is None:
-            matches = [candidate for candidate in _session_paths(root) if Path(candidate).stem == ref.session_id]
+            prefer = _prefer_slugs_for(query)
+            matches = _session_paths(
+                root,
+                prefer_slugs=prefer,
+                exact_uuid=ref.session_id,
+                cwd_scoped=bool(prefer),
+            )
             if len(matches) != 1:
                 raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
             path = matches[0]
