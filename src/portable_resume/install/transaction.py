@@ -291,6 +291,8 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
             if existing.generation + 1 != plan.generation:
                 raise DiagnosticError("E_INSTALL_BUSY")
         # Re-evaluate ownership under the lock (close plan/execute TOCTOU window).
+        # force is per-path: only paths that were planned as backups (or global flag).
+        planned_backups = set(plan.backups)
         backups: list[str] = []
         for rel, data in plan.files.items():
             kind = _classify_dest(
@@ -299,7 +301,7 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                 data=data,
                 existing=existing,
                 claim=plan.claim,
-                force_with_backup=force_with_backup or bool(plan.backups),
+                force_with_backup=force_with_backup or rel in planned_backups,
             )
             if kind == "backup":
                 backups.append(rel)
@@ -345,9 +347,9 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                     data=plan.files[rel],
                     existing=existing,
                     claim=plan.claim,
-                    force_with_backup=force_with_backup or safe in backups,
+                    force_with_backup=force_with_backup or safe in planned_backups or safe in backups,
                 )
-                if kind == "backup" and safe not in backups:
+                if kind == "backup" and safe not in backups and not force_with_backup and safe not in planned_backups:
                     raise DiagnosticError("E_INSTALL_CONFLICT")
                 src = os.path.join(stage_dir, safe)
                 dest = _dest_under_root(root, safe)
