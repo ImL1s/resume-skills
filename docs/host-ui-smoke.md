@@ -1,38 +1,56 @@
 # Host UI live activation smoke protocol
 
-Packaging 36/36 proves filesystem install + `run_reader` against fixtures.
-**Host UI live** means a human (or host-native automation) invoked the skill
-*inside* the destination host and obtained an inert handoff.
+## Layers (do not conflate)
 
-Status remains **not-run** until rows are filled with evidence.
+| Layer | What it proves | Status |
+|---|---|---|
+| Packaging matrix | 36 skill bodies render + install files | **done** |
+| Installed runner smoke | Host skill root + `run_reader` list/show on fixtures | **done** — `scripts/smoke_installed_matrix.py` (36/36) |
+| Host UI NL / picker | User invokes skill **inside** host UI and gets handoff | **not-run** |
 
-## Evidence schema
+Packaging + installed runner ≠ host NL activation.
+
+## Installed runner smoke (automated)
+
+```bash
+PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
+# optional JSON:
+PYTHONPATH=src python3 scripts/smoke_installed_matrix.py --json
+```
+
+Uses distinct `--root skills-<host>` per host (avoids Codex/Antigravity shared-root conflict) and `--within-min 0` for synthetic fixture ages.
+
+## Host UI NL activation (manual / host automation)
+
+**Host UI live** means a human (or host-native automation) invoked the skill *inside* the destination host and obtained an inert handoff.
+
+### Evidence schema
 
 | Field | Description |
 |-------|-------------|
-| host | One of: claude, codex, cursor, opencode, antigravity, grok |
+| host | claude, codex, cursor, opencode, antigravity, grok |
 | source | resume skill source key |
 | host_version | Host app/CLI version string |
-| activation | Exact command / slash path used |
+| activation | Exact slash command / picker path |
 | result | pass / fail / blocked |
 | notes | Short, no secrets |
 | date | ISO date |
 
-## Minimal procedure (per host)
+### Procedure
 
-1. From a project tree:
+1. Install into the host’s real skill root (see `docs/install-hosts.md`):
 
    ```bash
    PYTHONPATH=src python3 scripts/install-resume-skills install \
      --host <host> --scope project --project "$PWD" --json
    ```
 
-2. Open the host; invoke `/resume-claude` (or host-equivalent from `docs/install-hosts.md`).
-3. Confirm the host runs the installed `run_reader.py` (not the source agent CLI).
-4. Confirm handoff includes the untrusted security banner; treat content as stale.
-5. Record a row in the evidence table below (or in `docs/evidence-summary.md`).
+2. Open the host; invoke `/resume-claude` (or host-equivalent).
+3. Confirm the host runs installed `run_reader.py` (not the source agent CLI).
+4. Confirm handoff includes the untrusted security banner.
+5. Record a row below.
 
-## Evidence table (template)
+### Evidence table (NL activation — empty until run)
 
 | host | source | host_version | activation | result | notes | date |
 |------|--------|--------------|------------|--------|-------|------|
@@ -40,5 +58,5 @@ Status remains **not-run** until rows are filled with evidence.
 
 ## Policy
 
-- Do not set matrix `live_cells_supported` above 0 without filled rows.
-- Failures are useful evidence; mark `fail`/`blocked` rather than inventing pass.
+- Do not set matrix `live_cells_supported` / host UI live above 0 without **NL activation** rows.
+- Installed-runner smoke may be green while host UI remains not-run.

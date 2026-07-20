@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.2.1] — 2026-07-21
+
+Improve-deep hardening + installed-runner matrix smoke (still experimental).
+
+### Added
+- `scripts/smoke_installed_matrix.py` — **36/36** installed skill `run_reader` smoke (not host UI NL)
+- `pyproject.toml` (stdlib package metadata, requires-python ≥3.11)
+- `AGENTS.md`, `docs/host-ui-smoke.md`, `docs/release-claim.md`, `docs/research/cursor-bubble-schema.md`
+- `plans/` improve-deep index (001–025)
+- Adapter splits: `cursor_live.py`, `codex_sqlite.py`, `adapters/common.py`
+- Cursor Desktop: best-effort multi-turn extraction from `composerData` (bubble **graph** still not claimed)
+- Dual-OS **release claim** archive for CI run on SHA `2245516` (Ubuntu+macOS × 3.11/3.12)
+
+### Fixed / hardened
+- Install: path containment on verify/uninstall; orphan journal; no-follow hash/backup; empty-dir scope; runtime whitelist (exclude `install/`)
+- Live: Cursor meta `stable_read_bytes` + blob `ORDER BY`; Cursor/Grok/AGY latest ranking; Codex large-DB query-only; ReadBudget record accounting; Grok coalesce cap; UUID case selection
+- CI: Python **3.11 + 3.12** on Ubuntu and macOS
+- Secrets: broader `check_secrets` + runtime PEM/Slack/AIza redaction patterns
+
+### Honesty (unchanged gates)
+- Host UI **NL/picker** activation: **not-run**
+- Cursor full bubble graph: **not claimed**
+- No PyPI CD
+
+### Verification
+```bash
+python3 scripts/self_verify.py
+python3 scripts/check_secrets.py
+PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
+```
+
 ## [0.2.0] — 2026-07-21
 
 First public multi-source **live list/show** release (experimental).

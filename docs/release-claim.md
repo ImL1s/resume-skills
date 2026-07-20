@@ -25,5 +25,16 @@ git tag -a vX.Y.Z -m "release vX.Y.Z"
 
 ## After claim
 
-Update `docs/STATUS.md` dual-OS row to **claimed** with links.
-Do **not** claim host UI live in the same edit unless host-ui evidence exists.
+Update `docs/STATUS.md` and `docs/evidence-summary.md` dual-OS rows to **claimed** with links.
+
+### Current claim (0.2.1 era)
+
+| Field | Value |
+|---|---|
+| SHA | `2245516` (`22455167d60af92c1b0c995036f421a0309c369c`) |
+| Run | https://github.com/ImL1s/resume-skills/actions/runs/29763469462 |
+| Jobs | ubuntu/macOS × py3.11/3.12 all success |
+
+Re-claim when cutting a new version tag if the tip SHA differs.
+
+Do **not** claim host UI NL live in the same edit unless `docs/host-ui-smoke.md` NL table has evidence.

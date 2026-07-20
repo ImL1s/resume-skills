@@ -14,9 +14,9 @@ Invoke one of six source skills inside any of six destination hosts, read a boun
 
 This is **not** live process/session restoration.
 
-**Status:** **v0.2.0** — packaging 36/36 + partial live list/show for all six sources. Live host UI activation still **not claimed**. See [`docs/STATUS.md`](docs/STATUS.md) and [`CHANGELOG.md`](CHANGELOG.md).
+**Status:** **v0.2.1** — packaging 36/36 + partial live list/show for all six sources + installed-runner smoke 36/36. Host UI **NL** activation still **not-run**. Dual-OS CI **claimed** (archived Actions run). See [`docs/STATUS.md`](docs/STATUS.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
-**Maturity label:** `0.2.0 experimental` · Packaging 36/36 · Source live partial · Host UI 0 · Dual-OS not claimed.
+**Maturity label:** `0.2.1 experimental` · Packaging 36/36 · Source live partial · Installed-runner 36 · Host UI NL 0 · Dual-OS claimed.
 
 ## Sources and destinations
 
@@ -33,9 +33,10 @@ Destination profiles: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity CLI,
 
 ## Requirements
 
-- Python 3.11+ recommended (CI currently runs **3.12** on Ubuntu and macOS)
+- Python **3.11+** (CI runs **3.11 and 3.12** on Ubuntu and macOS)
 - **stdlib only** (no third-party runtime packages)
 - Optional: host `zstd` binary only for compressed Codex rollouts
+- Optional dev install: `pip install -e .` (still stdlib runtime)
 
 ## Quick start
 
@@ -101,24 +102,30 @@ Each `run_reader.py` hard-binds its expected source. Optional advanced path: `--
 ```bash
 python3 scripts/self_verify.py
 python3 scripts/check_secrets.py
+PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 # or
 python3 -m compileall -q src scripts tests
 PYTHONPATH=src python3 -m unittest discover -s tests -q
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs the same deterministic gates on Ubuntu and macOS for every push/PR. There is **no CD/publish pipeline** yet (no PyPI auto-release).
+GitHub Actions (`.github/workflows/ci.yml`) runs deterministic gates on Ubuntu and macOS (Python 3.11 + 3.12). Dual-OS release claim: [`docs/evidence-summary.md`](docs/evidence-summary.md). There is **no CD/publish pipeline** yet (no PyPI auto-release).
+
 ## Docs
 
 | Doc | Purpose |
 |---|---|
 | [`docs/STATUS.md`](docs/STATUS.md) | Done / not-done gates |
 | [`docs/install-hosts.md`](docs/install-hosts.md) | **Per-host install methods, roots, activation** |
+| [`docs/host-ui-smoke.md`](docs/host-ui-smoke.md) | Installed-runner vs host UI NL layers |
+| [`docs/release-claim.md`](docs/release-claim.md) | Dual-OS claim checklist |
 | [`docs/host-support.md`](docs/host-support.md) | Roots and evidence levels |
 | [`docs/source-formats.md`](docs/source-formats.md) | Format IDs |
-| [`docs/evidence-summary.md`](docs/evidence-summary.md) | Public verification notes |
+| [`docs/evidence-summary.md`](docs/evidence-summary.md) | Public verification + dual-OS archive |
 | [`docs/provenance.md`](docs/provenance.md) | Provenance policy |
+| [`AGENTS.md`](AGENTS.md) | Agent contributor rules |
 | [`SECURITY.md`](SECURITY.md) | Threat model and reporting |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contributor rules |
+| [`plans/README.md`](plans/README.md) | Improve-deep plan index |
 
 ## License
 
@@ -130,6 +137,7 @@ This project is not affiliated with Claude, Codex, Cursor, OpenCode, Antigravity
 
 ## Limitations (honest)
 
-- Live host UI activation is **not-run** until proven per host.
-- Dual-OS release claim needs archived macOS **and** Linux clean runs.
+- Host UI **NL/picker** activation is **not-run** (installed-runner 36/36 is a separate layer).
+- Cursor full bubble graph is **not claimed** (multi-turn text may still be recovered).
 - Secret redaction is best-effort, not complete DLP.
+- Dual-OS release claim is CI-archive based; re-claim on new tags if SHA changes.

@@ -414,22 +414,41 @@ def _show_live_desktop(
             pass
     turns: list[Turn] = []
     turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=max_tool_chars)
+    structured = False
     if text_blob and isinstance(text_blob[0], (str, bytes)):
         raw = text_blob[0].decode("utf-8") if isinstance(text_blob[0], bytes) else text_blob[0]
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
             data = None
-        if isinstance(data, dict) and isinstance(data.get("text"), str) and data["text"].strip():
-            turn, tw = sanitize_turn_record(
-                {"role": "user", "content": data["text"]},
-                ordinal=0,
-                bounds=turn_bounds,
-            )
-            warnings.extend(tw)
-            if turn is not None:
-                budget.consume_turns()
-                turns.append(turn)
+        if isinstance(data, dict):
+            extracted = _composer_data_turns(data)
+            if extracted:
+                structured = True
+                for raw_turn in extracted:
+                    if len(turns) >= DEFAULT_BOUNDS.normalized_turns:
+                        warnings.append("W_TRUNCATED")
+                        break
+                    turn, tw = sanitize_turn_record(raw_turn, ordinal=len(turns), bounds=turn_bounds)
+                    warnings.extend(tw)
+                    if turn is not None:
+                        budget.consume_turns()
+                        turns.append(turn)
+            elif isinstance(data.get("text"), str) and data["text"].strip():
+                turn, tw = sanitize_turn_record(
+                    {"role": "user", "content": data["text"]},
+                    ordinal=0,
+                    bounds=turn_bounds,
+                )
+                warnings.extend(tw)
+                if turn is not None:
+                    budget.consume_turns()
+                    turns.append(turn)
+    # Full bubble graph / parent links still not claimed even when multi-turn text is recovered.
+    if not structured:
+        warnings = ["W_MISSING_BLOB", *warnings]
+    else:
+        warnings = ["W_MISSING_BLOB", *warnings]  # graph not claimed; multi-turn text is best-effort
     return Session(
         source="cursor",
         session_id=session_id,
@@ -439,9 +458,88 @@ def _show_live_desktop(
         created_at=_ms_to_rfc3339(row[1]),
         updated_at=_ms_to_rfc3339(row[2]),
         last_user_request=next((turn.content for turn in reversed(turns) if turn.role == "user"), None),
-        last_assistant_action=None,
+        last_assistant_action=next(
+            (turn.content for turn in reversed(turns) if turn.role == "assistant"), None
+        ),
         turns=tuple(turns),
         warnings=tuple(dict.fromkeys(warnings)),
     )
+
+
+def _composer_data_turns(data: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Best-effort multi-turn extraction from composerData JSON (no full bubble graph)."""
+
+    def _role(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        lowered = value.casefold()
+        if lowered in {"user", "human", "humanity"}:
+            return "user"
+        if lowered in {"assistant", "ai", "bot", "model"}:
+            return "assistant"
+        if lowered in {"tool", "function"}:
+            return "tool"
+        return None
+
+    def _text(value: object) -> str | None:
+        return _content_to_text(value)
+
+    candidates: list[Any] = []
+    for key in (
+        "conversation",
+        "messages",
+        "bubbles",
+        "fullConversationHeadersMaybe",
+        "conversationMap",
+        "tabs",
+    ):
+        if key in data:
+            candidates.append(data[key])
+    # Nested common shapes
+    for key in ("composerState", "state", "data"):
+        nested = data.get(key)
+        if isinstance(nested, Mapping):
+            for sub in ("conversation", "messages", "bubbles"):
+                if sub in nested:
+                    candidates.append(nested[sub])
+
+    values: list[dict[str, Any]] = []
+    seen_content: set[str] = set()
+
+    def _append(role: str, content: str) -> None:
+        content = content.strip()
+        if not content:
+            return
+        fingerprint = f"{role}:{content[:200]}"
+        if fingerprint in seen_content:
+            return
+        seen_content.add(fingerprint)
+        values.append({"role": role, "content": content})
+
+    def _walk(node: object, depth: int = 0) -> None:
+        if depth > 8 or len(values) >= DEFAULT_BOUNDS.normalized_turns:
+            return
+        if isinstance(node, list):
+            for item in node:
+                _walk(item, depth + 1)
+            return
+        if not isinstance(node, Mapping):
+            return
+        role = _role(node.get("role") or node.get("type") or node.get("bubbleType") or node.get("sender"))
+        text = _text(node.get("text") or node.get("content") or node.get("richText") or node.get("rawText"))
+        if role and text:
+            _append(role, text)
+        # Map of id → bubble
+        if all(isinstance(v, Mapping) for v in node.values()) and len(node) <= 500:
+            for v in node.values():
+                _walk(v, depth + 1)
+            return
+        for key in ("messages", "bubbles", "children", "items", "conversation"):
+            if key in node:
+                _walk(node[key], depth + 1)
+
+    for candidate in candidates:
+        _walk(candidate)
+    return values
 
 

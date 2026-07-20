@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "portable-resume"
-version = "0.2.0"
+version = "0.2.1"
 description = "Offline, local-only portable resume skills across coding agents"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -71,6 +71,20 @@ class CursorLiveStoreTests(unittest.TestCase):
         if session.turns:
             self.assertEqual(session.turns[0].role, "user")
 
+    def test_composer_data_multi_turn_extraction(self) -> None:
+        from portable_resume.adapters.cursor_live import _composer_data_turns
+
+        data = {
+            "messages": [
+                {"role": "user", "text": "first question"},
+                {"role": "assistant", "content": "first answer"},
+                {"role": "user", "text": "follow up"},
+            ]
+        }
+        turns = _composer_data_turns(data)
+        self.assertEqual([t["role"] for t in turns], ["user", "assistant", "user"])
+        self.assertIn("first question", turns[0]["content"])
+
     def test_symlink_meta_not_followed(self) -> None:
         secret = Path(self._tmp.name) / "secret.txt"
         secret.write_text("should-not-leak", encoding="utf-8")

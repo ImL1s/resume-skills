@@ -9,11 +9,11 @@
 |------|-----------|------------------|
 | CLI live `chats/*/store.db` | `cursor-cli-store-v1` | `blobs` rows ordered by `rowid`, JSON `{role,content}` |
 | CLI meta | side-car `meta.json` | cwd/title/timestamps via stable no-follow read |
-| Desktop live | `cursor-desktop-composer-v1` | `composerHeaders` list; optional `cursorDiskKV` `composerData:{id}` text as a single user turn |
+| Desktop live | `cursor-desktop-composer-v1` | `composerHeaders` list; `composerData:{id}` best-effort multi-turn via `_composer_data_turns` (messages/bubbles/conversation walks) |
 
 ## Not claimed
 
-- Full multi-bubble conversation graph / parent links
+- Full multi-bubble conversation graph / parent links (still emit `W_MISSING_BLOB`)
 - Picker parity with Cursor UI
 - Assistant tool-call tree reconstruction from composer state
 

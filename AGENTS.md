@@ -15,15 +15,17 @@ Offline, local-only **context migration** across six coding-agent sources × six
 python3 scripts/self_verify.py
 python3 scripts/check_secrets.py
 PYTHONPATH=src python3 -m unittest discover -s tests -q
+PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
 Scripts under `scripts/` inject `src` onto `sys.path`. Unittest still needs `PYTHONPATH=src` (or `pip install -e .`).
 
 ## Honesty gates
 
-- **Host UI live activation** (36 cells): stay `not-run` until per-host evidence exists (`docs/STATUS.md`, `docs/host-ui-smoke.md`).
-- **Dual-OS release claim**: CI dual-OS green ≠ claimed; see `docs/release-claim.md`.
-- **Cursor full bubble graph**: not claimed until fixtures + restore prove it.
+- **Installed-runner smoke** (36 cells): `smoke_installed_matrix.py` — packaging + installed `run_reader` only.
+- **Host UI NL/picker activation**: stay `not-run` until rows exist in `docs/host-ui-smoke.md` NL table.
+- **Dual-OS release claim**: archive Actions URL + SHA in `docs/evidence-summary.md` / `docs/release-claim.md`.
+- **Cursor full bubble graph**: not claimed; multi-turn composerData is best-effort only.
 - Do not copy `~/.grok/bundled/skills/**` into this tree (clean-room).
 
 ## Fixtures
