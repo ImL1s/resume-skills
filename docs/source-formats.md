@@ -1,6 +1,6 @@
 # Source-format evidence registry
 
-Status: G002 adapters implemented against independently authored synthetic fixtures. Live host/store claims remain out of scope until G004 platform evidence.
+Status: Adapters implemented against independently authored synthetic fixtures (deterministic bar green). Live host UI activation and peer-OS release evidence remain separate gates — see `docs/STATUS.md` and `docs/host-support.md`.
 
 A provider may change from **planned** to **supported** only after its public structural evidence, independently authored synthetic fixture, probe test, parser tests, stable-read proof, and limitations are recorded here.
 

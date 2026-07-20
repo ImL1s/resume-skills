@@ -19,11 +19,15 @@ Public behavior is requirements evidence only. Vendor implementation bodies are 
 
 Implementation and test work must not open, inspect, hash-match, copy, translate, or derive code/fixtures from `~/.grok/bundled/skills/**`. It must not read a real Claude, Codex, Cursor, OpenCode, Antigravity, or Grok session store. Private transcripts, credentials, account identifiers, and absolute developer home paths are forbidden in fixtures.
 
-## Author attestation (G001–G004)
+## Author attestation (G001–G005 / deterministic V1)
 
-The foundation, six source adapters, packaging/installer, and deterministic integration/e2e suites were authored from the approved plans, public/official evidence under `.omx/context/`, and independently written synthetic fixtures only. Implementation/test authors did not inspect `~/.grok/bundled/skills/**`, did not copy private transcripts into fixtures, and did not use source CLIs as recovery backends.
+The foundation, six source adapters, packaging/installer, deterministic integration/e2e suites, and post-review hardening (installer lock re-check, journal path sandbox, expected-source hard-bind, source-read budget split) were authored from the approved plans, public/official evidence under `.omx/context/`, and independently written synthetic fixtures only. Implementation/test authors did not inspect `~/.grok/bundled/skills/**`, did not copy private transcripts into fixtures, and did not use source CLIs as recovery backends.
 
-This attestation covers deterministic V1 implementation and packaging proof. It does **not** claim live installed-version host activation smokes (`docs/host-support.md` rows remain `not-run` until proven) and does **not** claim dual-OS clean-runner evidence beyond the OS that actually executed the gate.
+This attestation covers **deterministic V1 implementation and packaging proof**. It does **not** claim:
+
+- live installed-version host UI activation smokes (`docs/host-support.md` live column remains `not-run`);
+- dual-OS clean-runner evidence beyond the OS that actually executed the gate;
+- Codex dual-review APPROVE when that seat is quota-blocked (see `.omc/research/dual-review-synthesis.md`).
 
 ## Fixture policy
 

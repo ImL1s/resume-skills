@@ -41,3 +41,10 @@ See `.omx/context/host-profile-official-evidence-20260720.md` for URLs, versions
 | Windows | fixture/docs only | not a V1 release blocker per AC-19 |
 
 Live interactive host UI walks remain `not-run` in this environment.
+
+## Related status
+
+- Project status and open gates: `docs/STATUS.md`
+- Multi-seat review synthesis: `.omc/research/dual-review-synthesis.md`
+- Last packaging smoke log: `.omc/research/live-smoke-report.md`
+- Linux gate log: `.omc/research/linux-gate-report.md`
