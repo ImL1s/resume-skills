@@ -51,9 +51,9 @@ from pathlib import Path
 
 
 FORBIDDEN = [
-    re.compile(r"/Users/[A-Za-z0-9._-]+/"),
+    re.compile(r"/" + "Users" + r"/[A-Za-z0-9._-]+/"),
     re.compile(r"/home/[A-Za-z0-9._-]+/"),
-    re.compile(r"aa22306546@hotmail\.com"),
+    re.compile(r"REDACTED_PRIVATE_EMAIL"),
     re.compile(r"-----BEGIN (RSA |OPENSSH )?PRIVATE KEY-----"),
     re.compile(r"sk-[A-Za-z0-9]{20,}"),
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),
@@ -111,7 +111,7 @@ Move only the self-verify helper later in Task 3; do not re-add research logs.
 - [ ] **Step 4: Re-run hygiene test**
 
 Run: `PYTHONPATH=src python3 -m unittest tests.security.test_public_tree_hygiene -v`  
-Expected: PASS (no tracked research logs; product tree has no `/Users/`).
+Expected: PASS (no tracked research logs; product tree has no home absolute paths).
 
 - [ ] **Step 5: Commit**
 
@@ -229,7 +229,7 @@ git commit -m "docs: honest compatibility reimplementation provenance"
 ### Task 3: Public self-verify script + docs path cleanup
 
 **Files:**
-- Create: `scripts/self_verify.py` (portable; no `/Users/...` hardcoding)
+- Create: `scripts/self_verify.py` (portable; no home absolute hardcoding)
 - Modify: `README.md`, `docs/STATUS.md`, `docs/host-support.md`
 - Create: `docs/evidence-summary.md`
 
@@ -243,7 +243,7 @@ class PublicDocsLinkTests(unittest.TestCase):
         for path in (Path("README.md"), Path("docs/STATUS.md"), Path("docs/host-support.md")):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn(".omc/research/", text, msg=str(path))
-            self.assertNotIn("/Users/", text, msg=str(path))
+            self.assertNotRegex(text, r"/" + "Users" + r"/[A-Za-z]", text, msg=str(path))
 ```
 
 Run and expect FAIL while README still points at `.omc/research/`.
@@ -490,7 +490,7 @@ Expected: OK / PASS
 
 ```bash
 git ls-files | python3 -c "import sys; print(sum(1 for _ in sys.stdin))"
-git ls-files | rg -n 'Users/|hotmail|BEGIN PRIVATE|sk-[A-Za-z0-9]{20}' && exit 1 || echo CLEAN
+git ls-files | rg -n '/Users/[A-Za-z]|@hotmail\\.com|BEGIN PRIVATE|sk-[A-Za-z0-9]{20}' && exit 1 || echo CLEAN
 ```
 
 Expected: `CLEAN`

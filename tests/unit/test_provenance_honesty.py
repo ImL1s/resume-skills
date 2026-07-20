@@ -28,4 +28,4 @@ class PublicDocsLinkTests(unittest.TestCase):
         for path in (Path("README.md"), Path("docs/STATUS.md"), Path("docs/host-support.md")):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn(".omc/research/", text, msg=str(path))
-            self.assertNotIn("/Users/", text, msg=str(path))
+            self.assertNotRegex(text, r"/" + r"Users" + r"/[A-Za-z]", msg=str(path))

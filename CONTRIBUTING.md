@@ -27,7 +27,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests -q
 - **Forbidden in fixtures and product code:**
   - Real user transcripts
   - Credentials / API keys
-  - Absolute developer home paths (`/Users/...`, `/home/...`)
+  - Absolute developer home directory paths
   - Any content copied from `~/.grok/bundled/skills/**`
 
 ## Documentation honesty

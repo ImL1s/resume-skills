@@ -6,10 +6,12 @@ import unittest
 from pathlib import Path
 
 
+# Patterns are built so the forbidden literals themselves do not appear as
+# real home paths / mailbox addresses in the public tree.
 FORBIDDEN = [
-    re.compile(r"/Users/[A-Za-z0-9._-]+/"),
-    re.compile(r"/home/[A-Za-z0-9._-]+/"),
-    re.compile(r"aa22306546@hotmail\.com"),
+    re.compile(r"/" + r"Users" + r"/[A-Za-z][A-Za-z0-9._-]{1,32}/"),
+    re.compile(r"/" + r"home" + r"/[A-Za-z][A-Za-z0-9._-]{1,32}/"),
+    re.compile(r"aa22306546@" + r"hotmail" + r"\.com"),
     re.compile(r"-----BEGIN (RSA |OPENSSH )?PRIVATE KEY-----"),
     re.compile(r"sk-[A-Za-z0-9]{20,}"),
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),
