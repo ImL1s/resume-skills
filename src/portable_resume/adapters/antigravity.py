@@ -105,6 +105,8 @@ def _eligible(summary: SessionSummary, query: Query) -> bool:
         if canonicalize_cwd(ref) == canonicalize_cwd(summary.source_path):
             return True
     minutes = query.within_min if query.within_min is not None else DEFAULT_BOUNDS.listing_age_minutes
+    if minutes is not None and minutes <= 0:
+        return True
     if summary.updated_at is None:
         return False
     try:
@@ -187,6 +189,35 @@ class AntigravityAdapter:
     @staticmethod
     def _conversation_path(brain: str, session_id: str) -> str:
         return os.path.join(brain, session_id, ".system_generated", "logs", "transcript.jsonl")
+
+    def _scan_brain_transcripts(self, brain: str, root: str) -> list[str]:
+        """When index is missing, discover fixed transcript paths under brain/<id>/…"""
+        if not os.path.isdir(brain) or os.path.islink(brain):
+            return []
+        if not is_within(brain, root):
+            return []
+        try:
+            names = sorted(os.listdir(brain))
+        except OSError as error:
+            raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
+        if len(names) > DEFAULT_BOUNDS.scanned_records:
+            raise DiagnosticError.limit_exceeded()
+        paths: list[str] = []
+        for name in names:
+            if name in {".", "..", "index.json"}:
+                continue
+            try:
+                session_id = _session_id(name)
+            except DiagnosticError:
+                continue
+            path = self._conversation_path(brain, session_id)
+            if os.path.islink(path) or not is_within(path, root):
+                continue
+            if os.path.isfile(path):
+                paths.append(path)
+                if len(paths) >= DEFAULT_BOUNDS.listed_sessions:
+                    break
+        return paths
 
     def _direct_transcript(self, root: str, brain: str, query: Query) -> str | None:
         direct_root = os.path.join(root, ".system_generated", "logs", "transcript.jsonl")
@@ -274,12 +305,26 @@ class AntigravityAdapter:
                     stale = True
                     continue
                 candidates.append((path, entry))
+        elif not query.ref:
+            # No valid index: bounded directory discovery (Grok/Codex-style).
+            for path in self._scan_brain_transcripts(brain, root):
+                candidates.append((path, None))
         direct = self._direct_transcript(root, brain, query)
         if direct is not None and all(path != direct for path, _ in candidates):
             candidates.append((direct, None))
         output: list[SessionSummary] = []
+        scan_mode = entries is None and not query.ref
         for path, hint in candidates:
-            summary, _, warnings = self._read_transcript(path, root, query, budget, include_turns=False, hint=hint)
+            try:
+                summary, _, warnings = self._read_transcript(
+                    path, root, query, budget, include_turns=False, hint=hint
+                )
+            except DiagnosticError as error:
+                # Live AGY transcripts may use a different schema; skip only when
+                # directory-scanning without a trusted index entry.
+                if scan_mode and error.code in {"E_UNSUPPORTED_FORMAT", "E_CORRUPT_RECORD"}:
+                    continue
+                raise
             merged = list(summary.warnings)
             merged.extend(warnings)
             if stale:

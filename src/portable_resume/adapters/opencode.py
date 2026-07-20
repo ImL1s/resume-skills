@@ -30,7 +30,7 @@ from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
 from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
 from ..sanitize import sanitize_turn_record
-from ..snapshot import private_sqlite_connection, stable_read_bytes
+from ..snapshot import private_sqlite_connection, query_only_live_sqlite, stable_read_bytes
 
 SQLITE_FORMAT = "opencode-sqlite-v1"
 FILE_FORMAT = "opencode-file-store-v1"
@@ -156,6 +156,8 @@ def _time_container(value: object, field: str) -> str | None:
 
 
 def _within_window(updated_at: str | None, minutes: int) -> bool:
+    if minutes is not None and minutes <= 0:
+        return True
     if updated_at is None:
         return False
     try:
@@ -261,18 +263,26 @@ class OpenCodeAdapter:
 
     def _sqlite_supported(self, database: str, root: str) -> bool:
         try:
-            with private_sqlite_connection(
-                database,
-                root=root,
-                hook=self._sqlite_hook,
-                provider=SQLITE_FORMAT,
-            ) as connection:
-                self._require_schema(connection)
+            size = os.path.getsize(database)
+        except OSError:
+            return False
+        try:
+            if size > DEFAULT_BOUNDS.sqlite_snapshot_bytes:
+                with query_only_live_sqlite(database, root=root, provider=SQLITE_FORMAT) as connection:
+                    self._require_schema(connection)
+            else:
+                with private_sqlite_connection(
+                    database,
+                    root=root,
+                    hook=self._sqlite_hook,
+                    provider=SQLITE_FORMAT,
+                ) as connection:
+                    self._require_schema(connection)
             return True
         except sqlite3.DatabaseError:
             return False
         except DiagnosticError as error:
-            if error.code == "E_UNSUPPORTED_FORMAT":
+            if error.code in {"E_UNSUPPORTED_FORMAT", "E_LIMIT_EXCEEDED"}:
                 return False
             raise
 
@@ -342,7 +352,7 @@ class OpenCodeAdapter:
         supported_database = False
         for database in databases:
             try:
-                summaries = self._list_sqlite(database, root, budget)
+                summaries = self._list_sqlite(database, root, budget, query=query)
                 supported_database = True
                 output.extend(item for item in summaries if _eligible(item, query))
             except DiagnosticError as error:
@@ -361,24 +371,52 @@ class OpenCodeAdapter:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key)
         return output
 
-    def _list_sqlite(self, database: str, root: str, budget: ReadBudget) -> list[SessionSummary]:
-        try:
-            with private_sqlite_connection(
-                database,
-                root=root,
-                hook=self._sqlite_hook,
-                provider=SQLITE_FORMAT,
-            ) as connection:
-                self._require_schema(connection)
+    def _list_sqlite(
+        self, database: str, root: str, budget: ReadBudget, *, query: Query | None = None
+    ) -> list[SessionSummary]:
+        def _fetch(connection: sqlite3.Connection) -> list[tuple]:
+            self._require_schema(connection)
+            # Prefer cwd-scoped list (Codex-style) so large live DBs stay bounded.
+            limit = DEFAULT_BOUNDS.listed_sessions
+            if query is not None and query.cwd:
                 rows = connection.execute(
                     'SELECT id,directory,title,time_created,time_updated FROM "session" '
-                    "ORDER BY time_updated DESC,id ASC LIMIT ?",
-                    (DEFAULT_BOUNDS.scanned_records + 1,),
+                    "WHERE directory = ? ORDER BY time_updated DESC,id ASC LIMIT ?",
+                    (query.cwd, limit),
                 ).fetchall()
+                if not rows:
+                    rows = connection.execute(
+                        'SELECT id,directory,title,time_created,time_updated FROM "session" '
+                        "ORDER BY time_updated DESC,id ASC LIMIT ?",
+                        (DEFAULT_BOUNDS.scanned_records,),
+                    ).fetchall()
+                return rows
+            return connection.execute(
+                'SELECT id,directory,title,time_created,time_updated FROM "session" '
+                "ORDER BY time_updated DESC,id ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+
+        try:
+            size = os.path.getsize(database)
+        except OSError as error:
+            raise DiagnosticError("E_SOURCE_BUSY", source=self.key, provider=SQLITE_FORMAT) from error
+        try:
+            if size > DEFAULT_BOUNDS.sqlite_snapshot_bytes:
+                # Avoid multi-GiB private copies for list; readonly live query.
+                with query_only_live_sqlite(database, root=root, provider=SQLITE_FORMAT) as connection:
+                    rows = _fetch(connection)
+            else:
+                with private_sqlite_connection(
+                    database,
+                    root=root,
+                    hook=self._sqlite_hook,
+                    provider=SQLITE_FORMAT,
+                ) as connection:
+                    rows = _fetch(connection)
         except sqlite3.DatabaseError as error:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=SQLITE_FORMAT) from error
-        if len(rows) > DEFAULT_BOUNDS.scanned_records:
-            raise DiagnosticError.limit_exceeded()
+        # Do not hard-fail when the DB has more sessions than LIMIT (live homes).
         budget.consume_records(len(rows))
         output: list[SessionSummary] = []
         seen: set[str] = set()
@@ -389,13 +427,17 @@ class OpenCodeAdapter:
             seen.add(session_id)
             if not isinstance(row[1], str):
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=SQLITE_FORMAT)
+            try:
+                cwd = canonicalize_cwd(row[1])
+            except DiagnosticError:
+                continue
             output.append(
                 SessionSummary(
                     source=self.key,
                     session_id=session_id,
                     source_path=database,
                     title=row[2] if isinstance(row[2], str) else None,
-                    cwd=canonicalize_cwd(row[1]),
+                    cwd=cwd,
                     created_at=_timestamp(row[3]),
                     updated_at=_timestamp(row[4]),
                     provider=SQLITE_FORMAT,

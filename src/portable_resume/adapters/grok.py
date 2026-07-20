@@ -125,6 +125,8 @@ def _eligible(summary: SessionSummary, query: Query) -> bool:
         if canonicalize_cwd(ref) == canonicalize_cwd(summary.source_path):
             return True
     minutes = query.within_min if query.within_min is not None else DEFAULT_BOUNDS.listing_age_minutes
+    if minutes is not None and minutes <= 0:
+        return True
     if summary.updated_at is None:
         return False
     try:
@@ -185,27 +187,38 @@ class GrokAdapter:
         root = self._root(query)
         return (root,) if root is not None else ()
 
-    def _session_paths(self, root: str) -> list[tuple[str, str]]:
+    def _session_paths(self, root: str, *, prefer_cwd: str | None = None) -> list[tuple[str, str]]:
         sessions = os.path.join(root, "sessions")
         if os.path.islink(sessions):
             raise DiagnosticError.unsafe_path()
         if not os.path.isdir(sessions):
             return []
         output: list[tuple[str, str]] = []
-        observed = 0
         try:
             cwd_entries = sorted(os.scandir(sessions), key=lambda entry: entry.name)
         except OSError as error:
             raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
+        preferred_name = None
+        if prefer_cwd:
+            from urllib.parse import quote
+
+            preferred_name = quote(prefer_cwd, safe="")
+            # Prefer exact bucket first for live homes with many projects.
+            cwd_entries = sorted(
+                cwd_entries,
+                key=lambda entry: (0 if entry.name == preferred_name else 1, entry.name),
+            )
         for cwd_entry in cwd_entries:
-            observed += 1
-            if observed > DEFAULT_BOUNDS.scanned_records:
-                raise DiagnosticError.limit_exceeded()
+            if preferred_name is not None and cwd_entry.name != preferred_name and output:
+                # Already collected preferred cwd sessions — stop early.
+                break
             if cwd_entry.is_symlink():
                 raise DiagnosticError.unsafe_path()
             mode = cwd_entry.stat(follow_symlinks=False).st_mode
             if not stat.S_ISDIR(mode):
-                if stat.S_ISREG(mode) and cwd_entry.name == ".DS_Store":
+                # Live Grok co-locates session_search.sqlite and similar files next
+                # to cwd buckets — skip regular files; only dirs are session trees.
+                if stat.S_ISREG(mode):
                     continue
                 raise DiagnosticError.unsafe_path()
             try:
@@ -213,17 +226,20 @@ class GrokAdapter:
             except OSError as error:
                 raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
             for session_entry in session_entries:
-                observed += 1
-                if observed > DEFAULT_BOUNDS.scanned_records:
-                    raise DiagnosticError.limit_exceeded()
+                if len(output) >= DEFAULT_BOUNDS.listed_sessions:
+                    return output
                 if session_entry.is_symlink():
                     raise DiagnosticError.unsafe_path()
                 entry_mode = session_entry.stat(follow_symlinks=False).st_mode
-                if stat.S_ISREG(entry_mode) and session_entry.name == ".cwd":
-                    continue
+                # Skip .cwd markers and prompt_history.jsonl / other co-located files.
                 if not stat.S_ISDIR(entry_mode):
+                    if stat.S_ISREG(entry_mode):
+                        continue
                     raise DiagnosticError.unsafe_path()
-                _identifier(session_entry.name)
+                try:
+                    _identifier(session_entry.name)
+                except DiagnosticError:
+                    continue
                 updates = os.path.join(session_entry.path, "updates.jsonl")
                 if os.path.isfile(updates) and not os.path.islink(updates):
                     output.append((cwd_entry.path, updates))
@@ -233,7 +249,8 @@ class GrokAdapter:
         root = self._root(query)
         if root is None:
             return CapabilityReport(self.key, None, "unavailable")
-        paths = self._session_paths(root)
+        prefer = query.cwd
+        paths = self._session_paths(root, prefer_cwd=prefer)
         if not paths:
             return CapabilityReport(self.key, FORMAT_ID, "unsupported", root=root)
         missing_summary = any(not os.path.isfile(os.path.join(os.path.dirname(path), "summary.json")) for _, path in paths)
@@ -249,21 +266,28 @@ class GrokAdapter:
     def list(self, query: Query, budget: ReadBudget) -> list[SessionSummary]:
         root = self._root(query, required=True)
         assert root is not None
-        paths = self._session_paths(root)
+        paths = self._session_paths(root, prefer_cwd=query.cwd)
         if not paths:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
         output: list[SessionSummary] = []
         for cwd_dir, updates in paths:
             session_id = _identifier(os.path.basename(os.path.dirname(updates)))
             cwd = self._decode_cwd(cwd_dir, root, budget)
-            event_meta, _, event_warnings = self._parse_updates(
-                updates,
-                root,
-                query,
-                budget,
-                include_turns=False,
-                expected_id=session_id,
-            )
+            try:
+                event_meta, _, event_warnings = self._parse_updates(
+                    updates,
+                    root,
+                    query,
+                    budget,
+                    include_turns=False,
+                    expected_id=session_id,
+                )
+            except DiagnosticError as error:
+                # Oversized live updates.jsonl: still list via path + summary.json.
+                # Corrupt/unsupported content stays fail-closed (fixture contract).
+                if error.code != "E_LIMIT_EXCEEDED":
+                    raise
+                event_meta, event_warnings = {}, ("W_TRUNCATED",)
             summary, summary_warnings = self._summary(
                 os.path.dirname(updates),
                 root,
@@ -275,6 +299,12 @@ class GrokAdapter:
             summary_cwd = summary.get("cwd") if isinstance(summary.get("cwd"), str) else cwd
             branch = summary.get("branch") if isinstance(summary.get("branch"), str) else None
             warnings = tuple(dict.fromkeys((*event_warnings, *summary_warnings)))
+            created = summary.get("created_at") if isinstance(summary.get("created_at"), str) else None
+            updated = summary.get("updated_at") if isinstance(summary.get("updated_at"), str) else None
+            if created is None and isinstance(event_meta, tuple) and len(event_meta) > 0:
+                created = event_meta[0]
+            if updated is None and isinstance(event_meta, tuple) and len(event_meta) > 1:
+                updated = event_meta[1]
             item = SessionSummary(
                 source=self.key,
                 session_id=session_id,
@@ -282,8 +312,8 @@ class GrokAdapter:
                 title=title,
                 cwd=summary_cwd,
                 branch=branch,
-                created_at=summary.get("created_at") if isinstance(summary.get("created_at"), str) else event_meta[0],
-                updated_at=summary.get("updated_at") if isinstance(summary.get("updated_at"), str) else event_meta[1],
+                created_at=created,
+                updated_at=updated,
                 source_repo_root=summary.get("source_repo_root") if isinstance(summary.get("source_repo_root"), str) else None,
                 provider=FORMAT_ID,
                 warnings=warnings,

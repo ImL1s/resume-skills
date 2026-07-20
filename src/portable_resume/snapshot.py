@@ -321,7 +321,8 @@ def snapshot_sqlite_family(
                 read = stable_read_bytes(
                     source,
                     root=base,
-                    max_bytes=min(bounds.record_bytes if label == "wal" else bounds.sqlite_snapshot_bytes, remaining),
+                    # WAL may exceed a single transcript bound; use the SQLite family cap.
+                    max_bytes=min(bounds.sqlite_snapshot_bytes, remaining),
                     attempts=1,
                     membership_limit=bounds.scanned_records,
                 )
@@ -404,6 +405,37 @@ def private_sqlite_connection(
             connection.close()
     finally:
         snapshot.close()
+
+
+@contextlib.contextmanager
+def query_only_live_sqlite(
+    database: str | os.PathLike[str],
+    *,
+    root: str | os.PathLike[str],
+    provider: str | None = None,
+) -> Iterator[sqlite3.Connection]:
+    """Read-only connection to the live DB without a private multi-hundred-MB copy.
+
+    Used when the main DB exceeds ``sqlite_snapshot_bytes`` (e.g. OpenCode homes
+    >1GiB). Still refuses rollback ``-journal`` hot files and enables
+    ``query_only``. Concurrent WAL writers may cause ``E_SOURCE_BUSY``-class
+    failures; callers treat those as degraded, not silent success.
+    """
+    from urllib.parse import quote
+
+    safe, _base = require_regular_no_symlinks(database, root)
+    if os.path.exists(f"{safe}-journal") or os.path.lexists(f"{safe}-journal"):
+        raise DiagnosticError("E_SQLITE_HOT_JOURNAL", provider=provider)
+    uri = f"file:{quote(safe)}?mode=ro"
+    connection = sqlite3.connect(uri, uri=True)
+    try:
+        connection.execute("PRAGMA query_only=ON")
+        value = connection.execute("PRAGMA query_only").fetchone()
+        if value is None or value[0] != 1:
+            raise DiagnosticError("E_INVARIANT", provider=provider)
+        yield connection
+    finally:
+        connection.close()
 
 
 def sha256_file(path: str | os.PathLike[str]) -> str:
