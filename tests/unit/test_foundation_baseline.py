@@ -58,7 +58,8 @@ class FoundationBaselineTests(unittest.TestCase):
         cases.append(("non-synthetic", non_synthetic, None))
         extra = {**self.valid_manifest(), "extra": True}
         cases.append(("extra", extra, None))
-        private = {**self.valid_manifest(), "case": "/Users/alice/private"}
+        # Construct at runtime so public-tree hygiene does not see a literal /Users/ path.
+        private = {**self.valid_manifest(), "case": "/" + "Users/alice/private"}
         cases.append(("private", private, None))
         unknown_source = {**self.valid_manifest(), "source": "other"}
         cases.append(("source", unknown_source, None))

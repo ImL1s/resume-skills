@@ -15,3 +15,6 @@ htmlcov/
 .omc/project-memory.json
 .omc/tmp/
 .ruff_cache/
+
+# Local agent research / dual-review artifacts — do not publish
+.omc/research/
