@@ -34,6 +34,15 @@ _ROLLOUT = re.compile(
     r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-([0-9a-fA-F-]{36})\.jsonl(?P<zst>\.zst)?$"
 )
 _OUTER_TYPES = frozenset({"session_meta", "response_item", "event_msg", "turn_context", "compacted"})
+# Present in live rollouts; skipped without interpreting payloads (Grok resume-session parity).
+_SKIP_OUTER_TYPES = frozenset(
+    {
+        "world_state",
+        "inter_agent_communication",
+        "inter_agent_communication_metadata",
+        "turn_context",  # also in _OUTER_TYPES; kept for explicit skip of empty-payload variants
+    }
+)
 _SQLITE_COLUMNS_MS = {
     "id": "TEXT",
     "rollout_path": "TEXT",
@@ -131,8 +140,11 @@ def _walk_rollouts(container: str, root: str, *, max_depth: int = 4) -> list[str
             raise DiagnosticError.source_busy(provider=ROLLOUT_FORMAT) from error
         visited += len(names)
         if visited > DEFAULT_BOUNDS.scanned_records:
-            raise DiagnosticError.limit_exceeded()
+            # Stop walking large trees; do not fail the whole provider.
+            return
         for name in names:
+            if visited > DEFAULT_BOUNDS.scanned_records:
+                return
             path = os.path.join(directory, name)
             try:
                 current = os.lstat(path)
@@ -144,6 +156,8 @@ def _walk_rollouts(container: str, root: str, *, max_depth: int = 4) -> list[str
                 visit(path, depth + 1)
             elif stat.S_ISREG(current.st_mode) and _ROLLOUT.fullmatch(name):
                 output.append(path)
+                if len(output) >= DEFAULT_BOUNDS.scanned_records:
+                    return
 
     visit(container, 0)
     return output
@@ -215,6 +229,9 @@ def _within(updated_at: str | None, query: Query, session_id: str) -> bool:
     if query.ref == session_id:
         return True
     minutes = query.within_min if query.within_min is not None else DEFAULT_BOUNDS.listing_age_minutes
+    # Grok resume-session: within_min <= 0 means no age filter.
+    if minutes is not None and minutes <= 0:
+        return True
     if updated_at is None:
         return False
     try:
@@ -331,9 +348,23 @@ def _parse_lines(data: bytes, budget: ReadBudget, provider: str) -> tuple[list[d
                 warnings.append("W_PARTIAL_TAIL")
                 break
             raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider) from error
-        if not isinstance(value, dict) or value.get("type") not in _OUTER_TYPES or not isinstance(value.get("payload"), dict):
+        if not isinstance(value, dict):
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
+        outer = value.get("type")
+        payload = value.get("payload")
+        if outer in _SKIP_OUTER_TYPES or (
+            isinstance(outer, str)
+            and outer not in _OUTER_TYPES
+        ):
+            # Skip unknown / non-rendered outer families; do not abort the file.
+            warnings.append("W_UNKNOWN_RECORD_SKIPPED")
+            continue
+        if outer not in _OUTER_TYPES or not isinstance(payload, dict):
+            # Malformed known family → fail closed for this file.
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
         output.append(value)
+    if not output:
+        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
     return output, tuple(dict.fromkeys(warnings))
 
 
@@ -349,20 +380,28 @@ def _read_rollout(path: str, root: str, budget: ReadBudget) -> tuple[StableRead,
 
 def _session_meta(records: list[dict[str, Any]], expected_id: str, provider: str) -> dict[str, Any]:
     values = [record for record in records if record.get("type") == "session_meta"]
-    if len(values) != 1:
+    if not values:
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
-    payload = values[0]["payload"]
-    identifier = payload.get("id")
-    try:
-        normalized = str(uuid.UUID(identifier)) if isinstance(identifier, str) else None
-    except ValueError:
-        normalized = None
-    if normalized != expected_id or not isinstance(payload.get("cwd"), str):
+    # Prefer the first meta whose id matches the rollout filename (extras warned later).
+    chosen: dict[str, Any] | None = None
+    for record in values:
+        payload = record.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        identifier = payload.get("id")
+        try:
+            normalized = str(uuid.UUID(identifier)) if isinstance(identifier, str) else None
+        except ValueError:
+            normalized = None
+        if normalized == expected_id and isinstance(payload.get("cwd"), str):
+            chosen = dict(payload)
+            break
+    if chosen is None:
         raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider)
-    source = payload.get("source")
+    source = chosen.get("source")
     if source not in {"cli", "vscode"}:
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
-    return payload
+    return chosen
 
 
 def _content_text(value: object) -> str | None:
@@ -379,6 +418,20 @@ def _content_text(value: object) -> str | None:
     return "\n".join(chunks) if chunks else None
 
 
+def _tool_output_text(value: object) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Mapping):
+        for key in ("output", "text", "body", "content"):
+            item = value.get(key)
+            if isinstance(item, str):
+                return item
+            text = _content_text(item)
+            if text is not None:
+                return text
+    return _content_text(value)
+
+
 def _raw_turn(record: Mapping[str, Any]) -> dict[str, Any] | None:
     outer = record.get("type")
     payload = record.get("payload")
@@ -390,15 +443,29 @@ def _raw_turn(record: Mapping[str, Any]) -> dict[str, Any] | None:
         if kind == "message" and payload.get("role") in {"user", "assistant"}:
             text = _content_text(payload.get("content"))
             return {"role": payload["role"], "content": text, "timestamp": timestamp} if text is not None else None
-        if kind in {"function_call_output", "custom_tool_call_output"} and isinstance(payload.get("output"), str):
+        if kind in {"function_call", "local_shell_call", "custom_tool_call"}:
+            name = payload.get("name") if isinstance(payload.get("name"), str) else kind
+            args = payload.get("arguments")
+            if args is None:
+                args = payload.get("params")
+            preview = _tool_output_text(args) or ""
+            return {
+                "role": "assistant",
+                "content": f"called inert foreign tool: {name}" + (f" ({preview[:200]})" if preview else ""),
+                "tool_name": name if isinstance(name, str) else None,
+                "timestamp": timestamp,
+            }
+        if kind in {"function_call_output", "custom_tool_call_output", "local_shell_call_output"}:
+            text = _tool_output_text(payload.get("output"))
+            if text is None:
+                return None
             return {
                 "role": "tool",
-                "content": payload["output"],
+                "content": text,
                 "tool_name": payload.get("name") if isinstance(payload.get("name"), str) else None,
                 "timestamp": timestamp,
             }
-        # Reasoning, encrypted content, function arguments, and control items
-        # are deliberately not normalized.
+        # Reasoning, encrypted content, and other control items are not normalized.
         return None
     if outer == "event_msg" and payload.get("type") in {"user_message", "agent_message"}:
         message = payload.get("message")
@@ -409,6 +476,65 @@ def _raw_turn(record: Mapping[str, Any]) -> dict[str, Any] | None:
                 "timestamp": timestamp,
             }
     return None
+
+
+def _drop_last_user_turns(turns: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
+    if count <= 0 or not turns:
+        return turns
+    remaining = count
+    output = list(turns)
+    index = len(output) - 1
+    while index >= 0 and remaining > 0:
+        if output[index].get("role") == "user":
+            del output[index]
+            remaining -= 1
+        index -= 1
+    return output
+
+
+def _normalized_turns(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
+    """Apply compacted.replacement_history and thread_rolled_back like Grok reader."""
+    turns: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for record in records:
+        outer = record.get("type")
+        payload = record.get("payload")
+        if outer == "compacted" and isinstance(payload, Mapping):
+            history = payload.get("replacement_history")
+            if isinstance(history, list):
+                rebuilt: list[dict[str, Any]] = []
+                for item in history:
+                    if not isinstance(item, Mapping):
+                        continue
+                    # History entries may be bare response_item payloads or full records.
+                    if item.get("type") in {"message", "function_call", "function_call_output"}:
+                        synthetic = {"type": "response_item", "payload": item, "timestamp": record.get("timestamp")}
+                    elif "payload" in item:
+                        synthetic = item  # type: ignore[assignment]
+                    else:
+                        continue
+                    turn = _raw_turn(synthetic) if isinstance(synthetic, Mapping) else None
+                    if turn is not None:
+                        rebuilt.append(turn)
+                turns = rebuilt
+                warnings.append("W_TRUNCATED")  # post-compact view is partial by definition
+            continue
+        if outer == "event_msg" and isinstance(payload, Mapping):
+            if payload.get("type") in {"thread_rolled_back", "turn_aborted"}:
+                raw_n = payload.get("num_turns")
+                if raw_n is None:
+                    raw_n = payload.get("turns")
+                try:
+                    n = int(raw_n) if raw_n is not None else 0
+                except (TypeError, ValueError):
+                    n = 0
+                if n > 0:
+                    turns = _drop_last_user_turns(turns, n)
+                continue
+        turn = _raw_turn(record)
+        if turn is not None:
+            turns.append(turn)
+    return turns, tuple(dict.fromkeys(warnings))
 
 
 def _rollout_summary(path: str, root: str, query: Query, budget: ReadBudget) -> SessionSummary | None:
@@ -433,7 +559,8 @@ def _rollout_summary(path: str, root: str, query: Query, budget: ReadBudget) -> 
     updated = _mtime(observation)
     if not _within(updated, query, identifier):
         return None
-    turns = [turn for record in records if (turn := _raw_turn(record)) is not None]
+    turns, _turn_warnings = _normalized_turns(records)
+    warnings = tuple(dict.fromkeys((*warnings, *_turn_warnings)))
     first_user = next((turn["content"] for turn in turns if turn["role"] == "user"), None)
     branch = None
     git = metadata.get("git")
@@ -457,6 +584,13 @@ def _rollout_summary(path: str, root: str, query: Query, budget: ReadBudget) -> 
 
 
 def _table_signature(connection: sqlite3.Connection) -> tuple[bool, str | None]:
+    """Accept pinned column *supersets* (live Codex adds optional columns).
+
+    Required: id, rollout_path, source, cwd, archived, plus one of updated_at_ms
+    / updated_at. Optional title/first_user_message/git_branch may be absent
+    (SQL SELECT still names them — missing optional columns fail later; require
+    the optional trio when present or use COALESCE-compatible fixed SELECT).
+    """
     try:
         rows = connection.execute("PRAGMA table_info(threads)").fetchall()
     except sqlite3.Error:
@@ -466,11 +600,24 @@ def _table_signature(connection: sqlite3.Connection) -> tuple[bool, str | None]:
         if len(row) < 3 or not isinstance(row[1], str) or not isinstance(row[2], str):
             return False, None
         columns[row[1]] = row[2].upper().split("(", 1)[0]
-    if columns == _SQLITE_COLUMNS_MS:
-        return True, "updated_at_ms"
-    if columns == _SQLITE_COLUMNS_SECONDS:
-        return True, "updated_at"
-    return False, None
+    required = {"id", "rollout_path", "source", "cwd", "archived"}
+    if not required.issubset(columns):
+        return False, None
+    # Prefer millisecond column when both exist (live state_5 has both).
+    if "updated_at_ms" in columns and columns["updated_at_ms"] in {"INTEGER", "INT", "BIGINT", "NUM", "NUMERIC"}:
+        updated = "updated_at_ms"
+    elif "updated_at" in columns and columns["updated_at"] in {"INTEGER", "INT", "BIGINT", "NUM", "NUMERIC"}:
+        updated = "updated_at"
+    else:
+        return False, None
+    for name in ("id", "rollout_path", "source", "cwd"):
+        if columns.get(name) not in {"TEXT", "VARCHAR", "CHAR", "NVARCHAR", "CLOB"}:
+            # SQLite type affinity is loose; allow empty declared types.
+            if columns.get(name) not in {"", "ANY"}:
+                # Still accept common live TEXT-ish declarations only when present.
+                if not str(columns.get(name, "")).startswith("TEXT"):
+                    pass  # do not hard-fail on affinity; Grok only checks presence
+    return True, updated
 
 
 def _resolve_rollout_path(root: str, raw: str, identifier: str) -> str | None:
@@ -505,15 +652,41 @@ def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) 
         if not supported or updated_column is None:
             return False, []
         try:
-            rows = connection.execute(
-                f"SELECT id, rollout_path, {updated_column}, source, cwd, title, first_user_message, archived, git_branch "
-                "FROM threads ORDER BY " + updated_column + " DESC, id ASC LIMIT ?",
-                (DEFAULT_BOUNDS.scanned_records + 1,),
-            ).fetchall()
+            info = connection.execute("PRAGMA table_info(threads)").fetchall()
+            present = {row[1] for row in info if isinstance(row[1], str)}
+            title_expr = "title" if "title" in present else "NULL"
+            first_expr = "first_user_message" if "first_user_message" in present else "NULL"
+            branch_expr = "git_branch" if "git_branch" in present else "NULL"
+            select = (
+                f"SELECT id, rollout_path, {updated_column}, source, cwd, "
+                f"{title_expr}, {first_expr}, archived, {branch_expr} "
+                "FROM threads"
+            )
+            # Prefer cwd-scoped query so large home DBs (5k+ threads) stay within bounds.
+            params: list[Any] = []
+            clauses: list[str] = []
+            exact = _exact_uuid_ref(query.ref)
+            if exact is not None:
+                clauses.append("id = ?")
+                params.append(exact)
+            elif query.cwd:
+                clauses.append("cwd = ?")
+                params.append(query.cwd)
+            if clauses:
+                select += " WHERE " + " AND ".join(clauses)
+            select += f" ORDER BY {updated_column} DESC, id ASC LIMIT ?"
+            params.append(DEFAULT_BOUNDS.listed_sessions)
+            rows = connection.execute(select, tuple(params)).fetchall()
+            # Fallback: canonical cwd mismatch (symlink/trailing slash) — scan a bounded window.
+            if not rows and query.cwd and exact is None:
+                rows = connection.execute(
+                    f"SELECT id, rollout_path, {updated_column}, source, cwd, "
+                    f"{title_expr}, {first_expr}, archived, {branch_expr} "
+                    f"FROM threads ORDER BY {updated_column} DESC, id ASC LIMIT ?",
+                    (DEFAULT_BOUNDS.scanned_records,),
+                ).fetchall()
         except sqlite3.Error as error:
             raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=SQLITE_FORMAT) from error
-    if len(rows) > DEFAULT_BOUNDS.scanned_records:
-        raise DiagnosticError.limit_exceeded()
     values: list[SessionSummary] = []
     exact = _exact_uuid_ref(query.ref)
     for row in rows:
@@ -537,18 +710,24 @@ def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) 
             or (isinstance(first_user, str) and len(first_user.encode("utf-8")) > 64 * 1024)
             or (isinstance(branch, str) and len(branch.encode("utf-8")) > 4096)
         ):
-            raise DiagnosticError.limit_exceeded()
-        budget.consume_bytes(sum(encoded_sizes))
+            # Skip oversized rows instead of aborting the whole DB list.
+            continue
+        try:
+            budget.consume_bytes(sum(encoded_sizes))
+        except DiagnosticError:
+            break
         try:
             identifier = str(uuid.UUID(identifier))
             cwd = canonicalize_cwd(cwd_raw)
-        except (ValueError, DiagnosticError) as error:
-            raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=SQLITE_FORMAT) from error
+        except (ValueError, DiagnosticError):
+            continue
         if exact is not None and identifier != exact:
             continue
-        if source not in {"cli", "vscode"} or type(archived) is not int or archived not in {0, 1}:
+        archived_ok = archived in {0, 1} or archived in {False, True}
+        archived_flag = int(archived) if archived_ok else -1
+        if source not in {"cli", "vscode"} or archived_flag not in {0, 1}:
             continue
-        if archived and query.ref != identifier:
+        if archived_flag and query.ref != identifier:
             continue
         if query.cwd is not None and not same_cwd(cwd, query.cwd):
             continue
@@ -655,7 +834,8 @@ class CodexAdapter:
                 database_supported = True
                 values = rows
                 break
-        if not database_supported or not values:
+        # Prefer DB rows for list; only scan rollouts when DB absent or no matches.
+        if not values:
             for path in _rollout_paths(root, query):
                 item = _rollout_summary(path, root, query, budget)
                 if item is not None:
@@ -698,13 +878,11 @@ class CodexAdapter:
         elif isinstance(metadata.get("git_branch"), str):
             branch = metadata["git_branch"]
         turns: list[Turn] = []
-        all_warnings = list(warnings)
+        raw_turns, norm_warnings = _normalized_turns(records)
+        all_warnings = list((*warnings, *norm_warnings))
         last_fingerprint: tuple[str, str] | None = None
         turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
-        for record in records:
-            raw = _raw_turn(record)
-            if raw is None:
-                continue
+        for raw in raw_turns:
             fingerprint = (str(raw.get("role")), str(raw.get("content")))
             if fingerprint == last_fingerprint:
                 continue

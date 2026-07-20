@@ -56,7 +56,7 @@ def test_skill_template_argv_primary_not_request_file_required(self) -> None:
 - [ ] **Step 2: Run test — expect FAIL**
 
 ```bash
-cd /Users/iml1s/Documents/mine/resume-skills
+cd <repo>
 PYTHONPATH=src python3 -m unittest tests.unit.test_grok_parity_cli.SkillBoundArgvTests.test_skill_template_argv_primary_not_request_file_required -v
 ```
 
@@ -123,7 +123,7 @@ Do **not** emit attachment/hook payloads as turns.
 ```bash
 PYTHONPATH=src python3 -m unittest tests.adapters.test_claude_codex_cursor tests.unit.test_claude_bridge -q
 # optional live:
-PYTHONPATH=src python3 scripts/portable-resume claude show latest --cwd /Users/iml1s/Documents/mine --format handoff | head -40
+PYTHONPATH=src python3 scripts/portable-resume claude show latest --cwd <project> --format handoff | head -40
 ```
 
 - [ ] **Step 5: Commit**
@@ -159,7 +159,7 @@ git commit -m "fix(claude): bridge parent chain through non-conversation nodes"
 - [ ] **Step 4: Live smoke**
 
 ```bash
-PYTHONPATH=src python3 scripts/portable-resume codex list --cwd /Users/iml1s/Documents/mine/resume-skills --within-min 0 --json
+PYTHONPATH=src python3 scripts/portable-resume codex list --cwd <project> --within-min 0 --json
 # should not be E_UNSUPPORTED_FORMAT solely due to unknown outer types
 ```
 
@@ -233,7 +233,7 @@ git commit -m "docs: record Grok-parity live evidence and remaining limits"
 - [ ] **Step 1: Run full suite**
 
 ```bash
-cd /Users/iml1s/Documents/mine/resume-skills
+cd <repo>
 python3 scripts/self_verify.py
 python3 scripts/check_secrets.py
 PYTHONPATH=src python3 -m unittest discover -s tests -q

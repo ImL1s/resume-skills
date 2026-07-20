@@ -19,7 +19,7 @@ from portable_resume.install.render import materialize_plan
 
 class SlugifyTests(unittest.TestCase):
     def test_slugify_matches_claude_project_dirs(self) -> None:
-        self.assertEqual(_slugify_cwd("/Users/iml1s/Documents/mine"), "-Users-iml1s-Documents-mine")
+        self.assertEqual(_slugify_cwd("/var/app/project"), "-var-app-project")
         self.assertEqual(_slugify_cwd("/tmp/foo_bar"), "-tmp-foo-bar")
 
 

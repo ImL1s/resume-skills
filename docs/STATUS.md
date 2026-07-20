@@ -35,6 +35,19 @@ python3 scripts/check_secrets.py
 | **CI** | Yes for public repo | Active: Ubuntu + macOS, unittest, secrets, self-check, matrix, self_verify |
 | **CD** | Not yet | No PyPI / auto-release pipeline |
 
+## Grok resume-session parity (2026-07-20)
+
+| Area | Status | Notes |
+|---|---|---|
+| Skill UX (show/list argv primary) | **done** | request-v1 optional; catalog/docs aligned |
+| Claude live list/show | **partial live** | cwd-slug + attachment parent bridge on real stores |
+| Codex live list | **partial live** | SQLite column superset + cwd-scoped query + within-min≤0 |
+| Cursor live | **not-run** | synthetic fixtures only |
+| OpenCode / Antigravity / Grok adapters | **fixture** | packaging only |
+| Live host UI activation | **not-run** | unchanged |
+
+Plan: `docs/superpowers/plans/2026-07-20-grok-resume-parity.md`
+
 ## Related docs
 
 - `docs/evidence-summary.md`

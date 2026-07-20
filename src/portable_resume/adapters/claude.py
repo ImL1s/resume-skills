@@ -325,9 +325,71 @@ def _title_and_branch(records: Iterable[Mapping[str, Any]]) -> tuple[str | None,
     return next((item for item in (custom, ai, summary, last_prompt, first_user) if item and item.strip()), None), branch
 
 
+def _parent_bridge_map(records: list[dict[str, Any]]) -> dict[str, str | None]:
+    """Map every uuid → parentUuid for hop-through non-conversation nodes.
+
+    Live Claude transcripts often parent user/assistant rows to *attachment*
+    (hooks, skill listings, …). Those UUIDs are not conversation-renderable but
+    must not break the walk (Grok-style main-line recovery).
+    """
+    bridge: dict[str, str | None] = {}
+    for record in records:
+        identifier = record.get("uuid")
+        if not isinstance(identifier, str):
+            continue
+        try:
+            uuid.UUID(identifier)
+        except ValueError:
+            continue
+        parent = record.get("parentUuid")
+        if parent is None:
+            bridge[identifier] = None
+        elif isinstance(parent, str):
+            bridge[identifier] = parent
+        # Non-string parentUuid is ignored for bridging only.
+    return bridge
+
+
+def _resolve_parent_id(
+    parent: object,
+    *,
+    nodes: Mapping[str, tuple[int, dict[str, Any]]],
+    bridge: Mapping[str, str | None],
+    record: Mapping[str, Any],
+) -> tuple[str | None, bool]:
+    """Return (next_conversation_or_missing_id, broken).
+
+    When *parent* is a non-conversation uuid present only in *bridge*, hop
+    until a conversation node, a null parent, a cycle, or a truly missing id.
+    """
+    if parent is None:
+        return None, False
+    if not isinstance(parent, str):
+        raise DiagnosticError("E_CORRUPT_RECORD", source="claude", provider=FORMAT_ID)
+    hop_seen: set[str] = set()
+    current: str | None = parent
+    while current is not None:
+        if current in nodes:
+            return current, False
+        if current in hop_seen:
+            return current, True
+        hop_seen.add(current)
+        if current not in bridge:
+            # Optional logicalParentUuid on the *current conversation record*
+            # only applies once at the start; after hops we only use bridge.
+            if current == parent:
+                logical = record.get("logicalParentUuid")
+                if isinstance(logical, str) and logical and logical != parent:
+                    current = logical
+                    continue
+            return current, True
+        current = bridge[current]
+    return None, False
+
+
 def _logical_lineage(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
     nodes: dict[str, tuple[int, dict[str, Any]]] = {}
-    parent_ids: set[str] = set()
+    bridge = _parent_bridge_map(records)
     for index, record in enumerate(records):
         if record.get("type") not in _UUID_RECORD_TYPES or record.get("isSidechain") is True:
             continue
@@ -341,11 +403,23 @@ def _logical_lineage(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
         if identifier in nodes:
             raise DiagnosticError("E_CORRUPT_RECORD", source="claude", provider=FORMAT_ID)
         nodes[identifier] = (index, record)
-        parent = record.get("parentUuid")
-        if isinstance(parent, str):
-            parent_ids.add(parent)
     if not nodes:
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="claude", provider=FORMAT_ID)
+    # Leaf = conversation node never referenced as a *resolved* parent of another
+    # conversation node (bridge hops through attachment/etc. first).
+    parent_ids: set[str] = set()
+    for _identifier, (_index, record) in nodes.items():
+        parent = record.get("parentUuid")
+        resolved, _ = _resolve_parent_id(parent, nodes=nodes, bridge=bridge, record=record)
+        if resolved is not None:
+            parent_ids.add(resolved)
+        elif parent is None:
+            logical = record.get("logicalParentUuid")
+            resolved_logical, _ = _resolve_parent_id(
+                logical, nodes=nodes, bridge=bridge, record=record
+            )
+            if resolved_logical is not None:
+                parent_ids.add(resolved_logical)
     leaves = [(index, identifier, record) for identifier, (index, record) in nodes.items() if identifier not in parent_ids]
     if not leaves:
         raise DiagnosticError("E_CORRUPT_RECORD", source="claude", provider=FORMAT_ID)
@@ -369,11 +443,17 @@ def _logical_lineage(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
             break
         reverse.append(record)
         parent = record.get("parentUuid")
+        if parent is None and isinstance(record.get("logicalParentUuid"), str):
+            parent = record.get("logicalParentUuid")
         if parent is None:
             break
-        if not isinstance(parent, str):
-            raise DiagnosticError("E_CORRUPT_RECORD", source="claude", provider=FORMAT_ID)
-        current_id = parent
+        next_id, broken = _resolve_parent_id(parent, nodes=nodes, bridge=bridge, record=record)
+        if broken:
+            warnings.append("W_BROKEN_CHAIN")
+            break
+        if next_id is None:
+            break
+        current_id = next_id
     reverse.reverse()
     return reverse, tuple(dict.fromkeys(warnings))
 
