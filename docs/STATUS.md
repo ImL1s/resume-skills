@@ -42,13 +42,11 @@
 | Field | Value |
 |---|---|
 | Status | **claimed** (CI archive) |
-| Reference SHA (pre-0.2.1 harden tip) | `2245516` |
-| Actions run | https://github.com/ImL1s/resume-skills/actions/runs/29763469462 |
+| Tag / SHA | `v0.2.1` / `d255050` |
+| Actions run | https://github.com/ImL1s/resume-skills/actions/runs/29763939263 |
 | Jobs green | `ubuntu-latest` py3.11 + py3.12; `macos-latest` py3.11 + py3.12 |
-| Local gates | `self_verify` + `check_secrets` on release machine |
+| Local gates | `self_verify` + `check_secrets` + `smoke_installed_matrix` |
 | Policy | See `docs/release-claim.md` — re-claim each tag |
-
-After `v0.2.1` is tagged, attach that tag’s green Actions URL in `docs/evidence-summary.md` if different from the SHA above.
 
 ## Source live parity
 

@@ -35,12 +35,13 @@ Expected:
 | Field | Value |
 |---|---|
 | Claimed | **yes** (2026-07-21) |
-| SHA | `22455167d60af92c1b0c995036f421a0309c369c` (`2245516`) |
+| Tag | `v0.2.1` → `d2550507b69b3f2749b88f3486471fffb7a44cf0` |
 | Workflow | `ci` |
-| Run URL | https://github.com/ImL1s/resume-skills/actions/runs/29763469462 |
+| Run URL (tag tip) | https://github.com/ImL1s/resume-skills/actions/runs/29763939263 |
+| Prior harden tip | `2245516` / https://github.com/ImL1s/resume-skills/actions/runs/29763469462 |
 | Jobs | ubuntu py3.11, ubuntu py3.12, macos py3.11, macos py3.12 — all **success** |
-| Local | `self_verify` + `check_secrets` PASS on maintainer machine prior to claim |
-| Sign-off | Maintainer: dual-OS CI archive for improve-deep tip; re-claim on each release tag |
+| Local | `self_verify` + `check_secrets` + `smoke_installed_matrix` PASS |
+| Sign-off | Maintainer: dual-OS CI archive for v0.2.1; re-claim on each release tag |
 
 ## Improve-deep hardening (0.2.1)
 
