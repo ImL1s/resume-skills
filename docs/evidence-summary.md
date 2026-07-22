@@ -34,14 +34,14 @@ Expected:
 
 | Field | Value |
 |---|---|
-| Claimed | **yes** (2026-07-21) |
-| Tag | `v0.2.1` → `d2550507b69b3f2749b88f3486471fffb7a44cf0` |
+| Claimed | **yes** (2026-07-22) |
+| Tag | `v0.2.2` → `9f283942bb2ef63717a304f79ec44030082bb0b7` |
 | Workflow | `ci` |
-| Run URL (tag tip) | https://github.com/ImL1s/resume-skills/actions/runs/29763939263 |
-| Prior harden tip | `2245516` / https://github.com/ImL1s/resume-skills/actions/runs/29763469462 |
+| Run URL (tag tip) | https://github.com/ImL1s/resume-skills/actions/runs/29886518842 |
+| Prior release claim | `v0.2.1` / https://github.com/ImL1s/resume-skills/actions/runs/29763939263 |
 | Jobs | ubuntu py3.11, ubuntu py3.12, macos py3.11, macos py3.12 — all **success** |
-| Local | `self_verify` + `check_secrets` + `smoke_installed_matrix` PASS |
-| Sign-off | Maintainer: dual-OS CI archive for v0.2.1; re-claim on each release tag |
+| Local | `self_verify` + `check_secrets` + 196 unittests + `smoke_installed_matrix` PASS |
+| Sign-off | Maintainer: dual-OS CI archive for v0.2.2; re-claim on each release tag |
 
 ## Improve-deep hardening (0.2.1)
 

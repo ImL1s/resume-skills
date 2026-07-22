@@ -10,7 +10,7 @@
 | Installed skill runner smoke | **36/36** (`scripts/smoke_installed_matrix.py`) |
 | Host UI NL / picker activation | **not-run** |
 | Dual-OS CI | **green** (Ubuntu + macOS × Python 3.11/3.12) |
-| Dual-OS **release claim** | **pending** for v0.2.2; latest archived claim is v0.2.1 |
+| Dual-OS **release claim** | **claimed** for v0.2.2 SHA with archived Actions run |
 | Cursor full bubble graph | **not claimed** (multi-turn composerData best-effort) |
 
 ## What is done (deterministic bar)
@@ -42,10 +42,10 @@
 | Field | Value |
 |---|---|
 | Status | **claimed** (CI archive) |
-| Tag / SHA | `v0.2.1` / `d255050` |
-| Actions run | https://github.com/ImL1s/resume-skills/actions/runs/29763939263 |
+| Tag / SHA | `v0.2.2` / `9f28394` |
+| Actions run | https://github.com/ImL1s/resume-skills/actions/runs/29886518842 |
 | Jobs green | `ubuntu-latest` py3.11 + py3.12; `macos-latest` py3.11 + py3.12 |
-| Local gates | `self_verify` + `check_secrets` + `smoke_installed_matrix` |
+| Local gates | `self_verify` + `check_secrets` + 196 unittests + `smoke_installed_matrix` |
 | Policy | See `docs/release-claim.md` — re-claim each tag |
 
 ## Source live parity

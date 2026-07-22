@@ -16,7 +16,7 @@ This is **not** live process/session restoration.
 
 **Status:** **v0.2.2** — packaging 36/36 + partial live list/show for all six sources + installed-runner smoke 36/36, with safer multi-host install preflight and resilient live Codex SQLite reads. Host UI **NL** activation still **not-run**. See [`docs/STATUS.md`](docs/STATUS.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
-**Maturity label:** `0.2.2 experimental` · Packaging 36/36 · Source live partial · Installed-runner 36 · Host UI NL 0 · Dual-OS release claim pending CI archive for this tag.
+**Maturity label:** `0.2.2 experimental` · Packaging 36/36 · Source live partial · Installed-runner 36 · Host UI NL 0 · Dual-OS release claim archived for v0.2.2.
 
 ## Sources and destinations
 
