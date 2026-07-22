@@ -54,7 +54,9 @@ PYTHONPATH=src python3 scripts/install-resume-skills uninstall \
   --host claude --scope project --project "$PWD" --json
 ```
 
-`--host all` installs every host profile (watch for shared-root conflicts).
+`--host all` installs every host profile. It preflights all destinations before
+the first write and rejects divergent profiles whose roots resolve to the same
+physical directory, including symlink aliases.
 
 ### Shared-root conflict
 
@@ -63,7 +65,11 @@ PYTHONPATH=src python3 scripts/install-resume-skills uninstall \
 | Codex | `.agents/skills` | `~/.agents/skills` |
 | Antigravity | `.agents/skills` | `~/.gemini/config/skills` |
 
-Project (and Codex global) paths can be **the same directory**. Host-rendered skill bodies are **not** byte-identical → installer returns `E_INSTALL_CONFLICT` unless you pass a distinct `--root` (or force after backup when intentionally overwriting owned claims).
+Project (and customized global) paths can be **the same physical directory**,
+including through symlinks. Host-rendered skill bodies are **not** byte-identical
+→ installer returns `E_INSTALL_CONFLICT` before mutation unless you pass a
+distinct `--root`. `--force-with-backup` does not make divergent simultaneous
+claims compatible; it is for intentional replacement of non-owned files.
 
 ---
 
@@ -237,6 +243,10 @@ Project paths are discovered walking CWD → git worktree root.
 ### Caveats
 
 - Local probes of some OpenCode versions have only proven **compat** discovery — always confirm with your version after install.
+- OpenCode scans the native, Claude-compatible, and agent-compatible roots together
+  and requires skill names to be unique across them. Installing several
+  host-rendered global profiles can therefore make one compatible copy shadow
+  another; inspect the selected paths with `opencode debug skill --pure`.
 - Live UI: **not-run**.
 
 ---

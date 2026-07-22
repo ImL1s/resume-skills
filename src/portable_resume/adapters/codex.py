@@ -22,7 +22,7 @@ from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
 from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
 from ..sanitize import sanitize_turn_record
-from ..snapshot import StableRead, private_sqlite_connection, query_only_live_sqlite, stable_read_bytes
+from ..snapshot import StableRead, stable_read_bytes
 from .base import CapabilityReport, ResolvedRef
 
 ROLLOUT_FORMAT = "codex-rollout-jsonl-v1"
@@ -585,6 +585,7 @@ def _rollout_summary(path: str, root: str, query: Query, budget: ReadBudget) -> 
 
 
 from .codex_sqlite import (  # noqa: E402
+    _database_connection,
     _database_summaries,
     _resolve_rollout_path,
     _table_signature,
@@ -605,7 +606,7 @@ class CodexAdapter:
                 return CapabilityReport(self.key, None, "unavailable")
             for database in _state_databases(root):
                 try:
-                    with private_sqlite_connection(database, root=root, provider=SQLITE_FORMAT) as connection:
+                    with _database_connection(database, root) as connection:
                         if _table_signature(connection)[0]:
                             warnings = self._zstd_warnings(root, query)
                             return CapabilityReport(

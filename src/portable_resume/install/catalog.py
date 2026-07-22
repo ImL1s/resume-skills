@@ -205,6 +205,8 @@ HOST_PROFILES: dict[str, HostProfile] = {
         caveats=(
             "Some OpenCode builds have only proven .claude/.agents discovery in local probes; "
             "confirm native .opencode/skills loads before claiming host support.",
+            "OpenCode scans its native, Claude-compatible, and agent-compatible roots together; "
+            "keep each skill name unique across those roots or inspect which copy won.",
             "No stable user-facing /skill-name grammar for skills (commands are separate).",
             "permission.skill patterns in opencode.json can hide skills.",
         ),

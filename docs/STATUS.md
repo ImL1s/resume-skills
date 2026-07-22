@@ -1,16 +1,16 @@
-# Project status (2026-07-21)
+# Project status (2026-07-22)
 
 ## Maturity snapshot
 
 | Gate | Status |
 |---|---|
-| Version | **0.2.1** experimental |
+| Version | **0.2.2** experimental |
 | Packaging cells | **36/36** |
 | Source live list/show | **partial** (all six sources) |
 | Installed skill runner smoke | **36/36** (`scripts/smoke_installed_matrix.py`) |
 | Host UI NL / picker activation | **not-run** |
 | Dual-OS CI | **green** (Ubuntu + macOS × Python 3.11/3.12) |
-| Dual-OS **release claim** | **claimed** for SHA with archived Actions run (see below) |
+| Dual-OS **release claim** | **pending** for v0.2.2; latest archived claim is v0.2.1 |
 | Cursor full bubble graph | **not claimed** (multi-turn composerData best-effort) |
 
 ## What is done (deterministic bar)

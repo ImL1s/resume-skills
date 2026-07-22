@@ -14,9 +14,9 @@ Invoke one of six source skills inside any of six destination hosts, read a boun
 
 This is **not** live process/session restoration.
 
-**Status:** **v0.2.1** — packaging 36/36 + partial live list/show for all six sources + installed-runner smoke 36/36. Host UI **NL** activation still **not-run**. Dual-OS CI **claimed** (archived Actions run). See [`docs/STATUS.md`](docs/STATUS.md) and [`CHANGELOG.md`](CHANGELOG.md).
+**Status:** **v0.2.2** — packaging 36/36 + partial live list/show for all six sources + installed-runner smoke 36/36, with safer multi-host install preflight and resilient live Codex SQLite reads. Host UI **NL** activation still **not-run**. See [`docs/STATUS.md`](docs/STATUS.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
-**Maturity label:** `0.2.1 experimental` · Packaging 36/36 · Source live partial · Installed-runner 36 · Host UI NL 0 · Dual-OS claimed.
+**Maturity label:** `0.2.2 experimental` · Packaging 36/36 · Source live partial · Installed-runner 36 · Host UI NL 0 · Dual-OS release claim pending CI archive for this tag.
 
 ## Sources and destinations
 

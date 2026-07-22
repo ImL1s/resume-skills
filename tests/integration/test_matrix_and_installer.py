@@ -7,10 +7,14 @@ import os
 import stat
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from portable_resume.diagnostics import DiagnosticError, SOURCE_KEYS
+from portable_resume.install.cli import run as install_cli_run
 from portable_resume.install.catalog import HOST_KEYS, HOST_PROFILES, matrix_cells, resolve_skill_root
+from portable_resume.install.manifest import claim_key
 from portable_resume.install.render import frontmatter_keys, materialize_plan, render_skill_markdown
 from portable_resume.install.transaction import (
     execute_install,
@@ -176,6 +180,90 @@ class InstallerTests(unittest.TestCase):
         with self.assertRaises(DiagnosticError) as ctx:
             plan_install(host="antigravity", scope="project", root=root)
         self.assertEqual(ctx.exception.code, "E_INSTALL_CONFLICT")
+
+    def test_all_host_install_preflights_shared_realpath_before_mutation(self) -> None:
+        shared = self.home / ".claude" / "skills"
+        shared.mkdir(parents=True)
+        antigravity_parent = self.home / ".gemini" / "config"
+        antigravity_parent.mkdir(parents=True)
+        os.symlink(shared, antigravity_parent / "skills")
+
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = install_cli_run(
+                [
+                    "install",
+                    "--host",
+                    "all",
+                    "--scope",
+                    "global",
+                    "--home",
+                    str(self.home),
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(code, 6)
+        diagnostic = json.loads(stderr.getvalue())
+        self.assertEqual(diagnostic["code"], "E_INSTALL_CONFLICT")
+        self.assertEqual(set(diagnostic["family"]), {"antigravity", "claude"})
+        self.assertFalse((shared / ".portable-resume").exists())
+        self.assertFalse(any(shared.glob("resume-*")))
+
+    def test_all_host_install_preflights_later_root_conflict_before_mutation(self) -> None:
+        grok_root = Path(self._root("grok", scope="global"))
+        conflict = grok_root / "resume-grok" / "SKILL.md"
+        conflict.parent.mkdir(parents=True)
+        conflict.write_text("user owned\n", encoding="utf-8")
+
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = install_cli_run(
+                [
+                    "install",
+                    "--host",
+                    "all",
+                    "--scope",
+                    "global",
+                    "--home",
+                    str(self.home),
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(code, 6)
+        self.assertEqual(json.loads(stderr.getvalue())["code"], "E_INSTALL_CONFLICT")
+        antigravity_root = Path(self._root("antigravity", scope="global"))
+        self.assertFalse((antigravity_root / ".portable-resume").exists())
+        self.assertEqual(conflict.read_text(encoding="utf-8"), "user owned\n")
+
+    def test_cli_verify_requires_the_requested_host_claim(self) -> None:
+        root = self._root("claude", scope="global")
+        execute_install(plan_install(host="antigravity", scope="global", root=root))
+        requested_claim = claim_key(host="claude", scope="global", root=root)
+        with self.assertRaises(DiagnosticError) as ctx:
+            verify_root(root, claim=requested_claim)
+        self.assertEqual(ctx.exception.code, "E_VERIFY_MISMATCH")
+
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = install_cli_run(
+                [
+                    "verify",
+                    "--host",
+                    "claude",
+                    "--scope",
+                    "global",
+                    "--home",
+                    str(self.home),
+                    "--json",
+                ]
+            )
+        self.assertEqual(code, 7)
+        self.assertEqual(json.loads(stderr.getvalue())["code"], "E_VERIFY_MISMATCH")
 
 
 if __name__ == "__main__":

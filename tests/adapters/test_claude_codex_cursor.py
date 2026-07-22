@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from portable_resume.adapters import claude, codex, cursor
+from portable_resume.adapters import claude, codex, codex_sqlite, cursor
 from portable_resume.adapters.base import ResolvedRef
 from portable_resume.bounds import Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
@@ -341,6 +341,27 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertEqual(values[0].session_id, identifier)
         self.assertEqual(before, tree_snapshot(self.root))
         connection.close()
+
+    def test_busy_snapshot_probe_falls_back_to_query_only_path_used_by_list(self) -> None:
+        identifier, rollout = self.rollout()
+        database = self.database(9, [self.db_row(identifier, rollout)])
+        before = tree_snapshot(self.root)
+        with mock.patch.object(
+            codex_sqlite.os.path,
+            "getsize",
+            return_value=codex_sqlite.DEFAULT_BOUNDS.sqlite_snapshot_bytes,
+        ), mock.patch.object(
+            codex_sqlite,
+            "private_sqlite_connection",
+            side_effect=DiagnosticError.source_busy(provider=codex.SQLITE_FORMAT),
+        ):
+            capability = codex.ADAPTER.probe(self.query())
+            values = codex.ADAPTER.list(self.query(), ReadBudget())
+
+        self.assertEqual(capability.state, "supported")
+        self.assertEqual(capability.format_id, codex.SQLITE_FORMAT)
+        self.assertEqual([item.session_id for item in values], [identifier])
+        self.assertEqual(before, tree_snapshot(self.root))
 
     def test_s_cod_06_09_rollout_fallback_omits_reasoning_encrypted_and_control(self) -> None:
         identifier = str(uuid.uuid4())

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sqlite3
 import stat
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
@@ -92,6 +93,33 @@ def _resolve_rollout_path(root: str, raw: str, identifier: str) -> str | None:
     return canonical
 
 
+@contextlib.contextmanager
+def _database_connection(path: str, root: str) -> Iterator[sqlite3.Connection]:
+    """Prefer a bounded snapshot, then safely fall back when it stays busy."""
+    try:
+        size = os.path.getsize(path)
+    except OSError as error:
+        raise DiagnosticError("E_SOURCE_BUSY", source="codex", provider=SQLITE_FORMAT) from error
+
+    with contextlib.ExitStack() as stack:
+        if size > DEFAULT_BOUNDS.sqlite_snapshot_bytes:
+            connection = stack.enter_context(
+                query_only_live_sqlite(path, root=root, provider=SQLITE_FORMAT)
+            )
+        else:
+            try:
+                connection = stack.enter_context(
+                    private_sqlite_connection(path, root=root, provider=SQLITE_FORMAT)
+                )
+            except DiagnosticError as error:
+                if error.code != "E_SOURCE_BUSY":
+                    raise
+                connection = stack.enter_context(
+                    query_only_live_sqlite(path, root=root, provider=SQLITE_FORMAT)
+                )
+        yield connection
+
+
 def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) -> tuple[bool, list[SessionSummary]]:
     def _fetch_rows(connection: sqlite3.Connection) -> tuple[bool, str | None, list[tuple]]:
         supported, updated_column = _table_signature(connection)
@@ -133,16 +161,8 @@ def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) 
             raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=SQLITE_FORMAT) from error
         return True, updated_column, rows
 
-    try:
-        size = os.path.getsize(path)
-    except OSError as error:
-        raise DiagnosticError("E_SOURCE_BUSY", source="codex", provider=SQLITE_FORMAT) from error
-    if size > DEFAULT_BOUNDS.sqlite_snapshot_bytes:
-        with query_only_live_sqlite(path, root=root, provider=SQLITE_FORMAT) as connection:
-            supported, _updated_column, rows = _fetch_rows(connection)
-    else:
-        with private_sqlite_connection(path, root=root, provider=SQLITE_FORMAT) as connection:
-            supported, _updated_column, rows = _fetch_rows(connection)
+    with _database_connection(path, root) as connection:
+        supported, _updated_column, rows = _fetch_rows(connection)
     if not supported:
         return False, []
 

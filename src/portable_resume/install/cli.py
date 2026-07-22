@@ -10,6 +10,8 @@ from typing import Any, Sequence
 
 from ..diagnostics import DiagnosticError, SOURCE_KEYS, emit_diagnostic
 from .catalog import HOST_KEYS, hosts_report, resolve_skill_root
+from .manifest import claim_key
+from .render import materialize_plan, package_identity
 from .transaction import (
     execute_install,
     matrix_report,
@@ -67,6 +69,19 @@ def _root_for(host: str, scope: str, project: str | None, home: str, override: s
     if override:
         return os.path.realpath(override)
     return resolve_skill_root(host=host, scope=scope, project_dir=project, home_dir=home)
+
+
+def _reject_divergent_shared_roots(targets: list[tuple[str, str]]) -> None:
+    """Reject host profiles that resolve to one directory but render differently."""
+    groups: dict[str, list[str]] = {}
+    for host, root in targets:
+        groups.setdefault(os.path.realpath(root), []).append(host)
+    for hosts in groups.values():
+        if len(hosts) < 2:
+            continue
+        identities = {package_identity(materialize_plan(host)) for host in hosts}
+        if len(identities) > 1:
+            raise DiagnosticError("E_INSTALL_CONFLICT", family=tuple(sorted(hosts)))
 
 
 def _print(value: Any, *, as_json: bool, stream=None) -> None:
@@ -142,24 +157,53 @@ def run(argv: Sequence[str] | None = None) -> int:
             result = recover_root(ns.root)
             _print(result, as_json=bool(ns.json) or True)
             return 0
+        hosts = _hosts(ns.host)
+        targets = [
+            (host, _root_for(host, ns.scope, ns.project, ns.home, ns.root))
+            for host in hosts
+        ]
         results = []
-        for host in _hosts(ns.host):
-            root = _root_for(host, ns.scope, ns.project, ns.home, ns.root)
-            if ns.command == "install":
-                plan = plan_install(
+        if ns.command == "install":
+            _reject_divergent_shared_roots(targets)
+            # Plan every target before the first mutation so a deterministic
+            # conflict in a later root cannot leave an earlier root installed.
+            plans = [
+                plan_install(
                     host=host,
                     scope=ns.scope,
                     root=root,
                     dry_run=ns.dry_run,
                     force_with_backup=ns.force_with_backup,
                 )
-                results.append(execute_install(plan, force_with_backup=ns.force_with_backup))
-            elif ns.command == "verify":
-                results.append(verify_root(root))
-            elif ns.command == "uninstall":
-                results.append(
-                    uninstall_claim(host=host, scope=ns.scope, root=root, dry_run=ns.dry_run)
-                )
+                for host, root in targets
+            ]
+            if ns.dry_run:
+                results = [
+                    execute_install(plan, force_with_backup=ns.force_with_backup)
+                    for plan in plans
+                ]
+            else:
+                # Re-plan under the latest manifest generation. This matters
+                # when byte-identical host profiles intentionally share a root.
+                for host, root in targets:
+                    plan = plan_install(
+                        host=host,
+                        scope=ns.scope,
+                        root=root,
+                        force_with_backup=ns.force_with_backup,
+                    )
+                    results.append(
+                        execute_install(plan, force_with_backup=ns.force_with_backup)
+                    )
+        else:
+            for host, root in targets:
+                if ns.command == "verify":
+                    claim = claim_key(host=host, scope=ns.scope, root=root)
+                    results.append(verify_root(root, claim=claim))
+                elif ns.command == "uninstall":
+                    results.append(
+                        uninstall_claim(host=host, scope=ns.scope, root=root, dry_run=ns.dry_run)
+                    )
         payload: Any = results[0] if len(results) == 1 else {"results": results}
         _print(payload, as_json=True)
         return 0

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+## [0.2.2] — 2026-07-22
+
+### Fixed
+- `install --host all` now preflights every destination and rejects divergent host profiles that resolve to one physical directory (including symlink aliases) before writing any files.
+- `verify --host <host>` now requires and verifies that host's exact ownership claim instead of accepting another host's manifest in a shared directory.
+- Codex probing and listing now fall back from a repeatedly busy bounded SQLite snapshot to the same read-only, query-only live path used for oversized databases.
+- OpenCode install guidance now calls out duplicate-name shadowing across its native, Claude-compatible, and agent-compatible discovery roots.
+- Package metadata now reports the repository's actual Apache-2.0 license instead of MIT.
+
+### Verification
+- Local release gates: 196 tests, secret/path gate clean, and installed-runner smoke 36/36.
+
 ## [0.2.1] — 2026-07-21
 
 Improve-deep hardening + installed-runner matrix smoke (still experimental).

@@ -536,6 +536,8 @@ def verify_root(root: str, *, claim: str | None = None) -> dict[str, Any]:
     manifest = load_manifest(root)
     if manifest is None:
         raise DiagnosticError("E_VERIFY_MISMATCH")
+    if claim is not None and claim not in manifest.claims:
+        raise DiagnosticError("E_VERIFY_MISMATCH")
     mismatches: list[str] = []
     for rel, entry in sorted(manifest.files.items()):
         if claim is not None and claim not in entry.claims:
