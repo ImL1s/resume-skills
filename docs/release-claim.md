@@ -27,12 +27,12 @@ git tag -a vX.Y.Z -m "release vX.Y.Z"
 
 Update `docs/STATUS.md` and `docs/evidence-summary.md` dual-OS rows to **claimed** with links.
 
-### Current claim (v0.2.2)
+### Current claim (v0.2.3)
 
 | Field | Value |
 |---|---|
-| Tag / SHA | `v0.2.2` / `9f283942bb2ef63717a304f79ec44030082bb0b7` |
-| Run | https://github.com/ImL1s/resume-skills/actions/runs/29886518842 |
+| Tag / SHA | `v0.2.3` / `5ff9eba503e28971e5044015cd0666c2807a3d89` |
+| Run | https://github.com/ImL1s/resume-skills/actions/runs/29890453185 |
 | Jobs | ubuntu/macOS × py3.11/3.12 all success |
 
 Re-claim when cutting a new version tag if the tip SHA differs.
