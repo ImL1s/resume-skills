@@ -7,8 +7,15 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from portable_resume.bounds import Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
-from portable_resume.snapshot import private_sqlite_connection, snapshot_sqlite_family, stable_read_bytes
+from portable_resume.snapshot import (
+    private_sqlite_connection,
+    snapshot_regular_file,
+    snapshot_sqlite_family,
+    stable_read_bytes,
+    stable_read_windows,
+)
 from tests.helpers.core import tree_snapshot
 
 
@@ -103,6 +110,94 @@ class StableSnapshotTests(unittest.TestCase):
             os.mkfifo(fifo)
             with self.assertRaises(DiagnosticError):
                 stable_read_bytes(fifo, root=self.store)
+
+    def test_metadata_windows_are_bounded_non_overlapping_and_not_full_hashes(self) -> None:
+        path = self.store / "large.jsonl"
+        path.write_bytes(b"0123456789")
+        budget = ReadBudget(Bounds(source_read_bytes=10))
+        result = stable_read_windows(
+            path,
+            root=self.store,
+            head_bytes=8,
+            tail_bytes=6,
+            max_bytes=10,
+            budget=budget,
+        )
+        self.assertEqual(result.head, b"01234567")
+        self.assertEqual(result.tail, b"89")
+        self.assertEqual(result.tail_offset, 8)
+        self.assertEqual(budget.bytes_read, 10)
+        self.assertIsNone(result.fingerprint.content_sha256)
+        self.assertEqual(len(result.window_sha256), 64)
+
+    def test_membership_enumeration_stops_at_limit_without_listdir_materialization(self) -> None:
+        path = self.store / "session.jsonl"
+        path.write_bytes(b"{}\n")
+        (self.store / "second").write_bytes(b"x")
+        with mock.patch(
+            "portable_resume.snapshot.os.listdir",
+            side_effect=AssertionError("bounded enumeration must not use listdir"),
+        ):
+            with self.assertRaises(DiagnosticError) as caught:
+                stable_read_windows(path, root=self.store, membership_limit=1)
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_regular_file_snapshot_is_private_stable_and_cleans_up(self) -> None:
+        path = self.store / "session.jsonl"
+        path.write_bytes(b"synthetic\n")
+        before = tree_snapshot(self.store)
+        private_dir: str | None = None
+        private_path: str | None = None
+        with snapshot_regular_file(path, root=self.store) as snapshot:
+            private_dir = snapshot.directory
+            private_path = snapshot.path
+            self.assertEqual(Path(snapshot.path).read_bytes(), b"synthetic\n")
+            self.assertEqual(os.stat(snapshot.directory).st_mode & 0o777, 0o700)
+            self.assertEqual(os.stat(snapshot.path).st_mode & 0o777, 0o600)
+            self.assertEqual(tree_snapshot(self.store), before)
+            path.write_bytes(b"changed!!\n")
+            self.assertEqual(Path(snapshot.path).read_bytes(), b"synthetic\n")
+        self.assertIsNotNone(private_dir)
+        self.assertIsNotNone(private_path)
+        self.assertFalse(Path(private_dir).exists())
+        self.assertEqual(path.read_bytes(), b"changed!!\n")
+
+    def test_regular_file_snapshot_retries_mutation_and_cleans_failed_attempts(self) -> None:
+        path = self.store / "session.jsonl"
+        path.write_bytes(b"before")
+        initial = set(Path(tempfile.gettempdir()).glob("portable-resume-file-*"))
+
+        def mutate_once(stage: str, attempt: int, _: str) -> None:
+            if stage == "after-copy" and attempt == 1:
+                path.write_bytes(b"after!")
+
+        with snapshot_regular_file(path, root=self.store, hook=mutate_once) as snapshot:
+            self.assertEqual(snapshot.attempts, 2)
+            self.assertEqual(Path(snapshot.path).read_bytes(), b"after!")
+        self.assertEqual(initial, set(Path(tempfile.gettempdir()).glob("portable-resume-file-*")))
+
+        def mutate_every_time(stage: str, attempt: int, _: str) -> None:
+            if stage == "after-copy":
+                path.write_bytes(str(attempt).encode().ljust(6, b"!"))
+
+        with self.assertRaises(DiagnosticError) as caught:
+            snapshot_regular_file(path, root=self.store, hook=mutate_every_time)
+        self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+        self.assertEqual(initial, set(Path(tempfile.gettempdir()).glob("portable-resume-file-*")))
+
+    def test_regular_file_snapshot_enforces_exact_and_lowered_bounds(self) -> None:
+        path = self.store / "session.jsonl"
+        path.write_bytes(b"1234")
+        exact = Bounds(source_read_bytes=4, scanned_records=1, snapshot_attempts=1)
+        with snapshot_regular_file(path, root=self.store, bounds=exact) as snapshot:
+            self.assertEqual(Path(snapshot.path).read_bytes(), b"1234")
+        path.write_bytes(b"12345")
+        with self.assertRaises(DiagnosticError) as over:
+            snapshot_regular_file(path, root=self.store, bounds=exact)
+        self.assertEqual(over.exception.code, "E_LIMIT_EXCEEDED")
+        with self.assertRaises(DiagnosticError) as raised_membership:
+            snapshot_regular_file(path, root=self.store, bounds=exact, membership_limit=2)
+        self.assertEqual(raised_membership.exception.code, "E_INVALID_INPUT")
 
     def create_database(self) -> Path:
         database = self.store / "synthetic db.sqlite"

@@ -4,13 +4,13 @@
 
 | Gate | Status |
 |---|---|
-| Version | **0.2.2** experimental |
+| Version | **0.2.3** experimental |
 | Packaging cells | **36/36** |
 | Source live list/show | **partial** (all six sources) |
 | Installed skill runner smoke | **36/36** (`scripts/smoke_installed_matrix.py`) |
 | Host UI NL / picker activation | **not-run** |
 | Dual-OS CI | **green** (Ubuntu + macOS × Python 3.11/3.12) |
-| Dual-OS **release claim** | **claimed** for v0.2.2 SHA with archived Actions run |
+| Dual-OS **release claim** | **claimed** for v0.2.2; v0.2.3 re-claim pending tag CI archive |
 | Cursor full bubble graph | **not claimed** (multi-turn composerData best-effort) |
 
 ## What is done (deterministic bar)
@@ -53,7 +53,7 @@
 | Area | Status | Notes |
 |---|---|---|
 | Skill UX (show/list argv) | **done** | Grok-style; request-v1 optional |
-| Claude | **partial live** | cwd-slug, attachment parent bridge, within_min≤0 |
+| Claude | **partial live** | bounded metadata windows; stable private snapshot; ≤50k-line streaming graph; semantic replay + primary cwd |
 | Codex | **partial live** | SQLite superset, large-DB query-only, cwd-scoped list |
 | Grok | **partial live** | mtime-ranked discovery, coalesce cap, skip co-located files |
 | OpenCode | **partial live** | multi-GiB query-only live SQLite |

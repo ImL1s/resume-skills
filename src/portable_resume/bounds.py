@@ -14,9 +14,13 @@ class Bounds:
     listing_age_minutes: int = 30 * 24 * 60
     # Logical source rows (JSONL lines / SQLite rows). File open is not a record.
     scanned_records: int = 2_000
+    # Full transcript readers use a separate line budget so metadata discovery
+    # remains conservative while large persisted sessions stay recoverable.
+    transcript_records: int = 50_000
     record_bytes: int = 16 * 1024 * 1024
     sqlite_snapshot_bytes: int = 256 * 1024 * 1024
-    # Aggregate raw bytes read from source stores for one list/show (not output size).
+    # Aggregate admitted source payload for one list/show (not output size).
+    # Stability verification may re-read those same bytes without charging them again.
     source_read_bytes: int = 256 * 1024 * 1024
     normalized_turns: int = 2_000
     # Cap for non-tool turn content (character count in sanitize_text; UTF-8 re-checked later).
@@ -39,6 +43,7 @@ class ReadBudget:
 
     limits: Bounds = DEFAULT_BOUNDS
     records: int = 0
+    transcript_records_read: int = 0
     bytes_read: int = 0
     turns: int = 0
     _lock: Lock = field(default_factory=Lock, repr=False)
@@ -46,8 +51,11 @@ class ReadBudget:
     def consume_records(self, amount: int = 1) -> None:
         self._consume("records", amount, self.limits.scanned_records)
 
+    def consume_transcript_records(self, amount: int = 1) -> None:
+        self._consume("transcript_records_read", amount, self.limits.transcript_records)
+
     def consume_bytes(self, amount: int) -> None:
-        # Aggregate raw-read budget for source store I/O (distinct from output UTF-8 budget).
+        # Admitted source payload budget (distinct from verification I/O and output UTF-8).
         self._consume("bytes_read", amount, self.limits.source_read_bytes)
 
     def consume_turns(self, amount: int = 1) -> None:

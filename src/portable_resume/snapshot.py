@@ -36,6 +36,39 @@ class StableRead:
     attempts: int
 
 
+@dataclass(frozen=True, slots=True)
+class StableWindows:
+    """Repeatedly verified metadata windows from one no-follow descriptor."""
+
+    head: bytes
+    tail: bytes
+    tail_offset: int
+    fingerprint: FileFingerprint
+    window_sha256: str
+    attempts: int
+
+
+@dataclass(slots=True)
+class FileSnapshot:
+    """Private stable copy of one regular source file."""
+
+    directory: str
+    path: str
+    source_name: str
+    fingerprint: FileFingerprint
+    attempts: int
+    _temporary: tempfile.TemporaryDirectory[str]
+
+    def close(self) -> None:
+        self._temporary.cleanup()
+
+    def __enter__(self) -> "FileSnapshot":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.close()
+
+
 @dataclass(slots=True)
 class SQLiteSnapshot:
     """Private copied SQLite family; call ``connect`` rather than opening source."""
@@ -115,20 +148,20 @@ def _directory_fingerprint(
     try:
         if root is not None:
             descriptor = _open_directory_beneath(directory, root)
-            names = sorted(os.listdir(descriptor))
+            target: str | int = descriptor
         else:
-            names = sorted(os.listdir(directory))
-        if len(names) > limit:
-            raise DiagnosticError.limit_exceeded()
+            target = directory
         output: list[tuple[str, FileFingerprint]] = []
-        for name in names:
-            if "/" in name or "\x00" in name:
-                raise DiagnosticError.unsafe_path()
-            if descriptor is None:
-                current = os.lstat(os.path.join(directory, name))
-            else:
-                current = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-            output.append((name, _fingerprint(current)))
+        with os.scandir(target) as entries:
+            for entry in entries:
+                if len(output) >= limit:
+                    raise DiagnosticError.limit_exceeded()
+                name = entry.name
+                if "/" in name or "\x00" in name:
+                    raise DiagnosticError.unsafe_path()
+                current = entry.stat(follow_symlinks=False)
+                output.append((name, _fingerprint(current)))
+        output.sort(key=lambda item: item[0])
         return tuple(output)
     except DiagnosticError:
         raise
@@ -223,6 +256,218 @@ def stable_read_bytes(
     raise DiagnosticError.source_busy(attempts=attempts, family=family)
 
 
+def stable_read_windows(
+    path: str | os.PathLike[str],
+    *,
+    root: str | os.PathLike[str],
+    head_bytes: int = 4 * 1024 * 1024,
+    tail_bytes: int = 64 * 1024,
+    max_bytes: int = DEFAULT_BOUNDS.source_read_bytes,
+    attempts: int = DEFAULT_BOUNDS.snapshot_attempts,
+    membership_limit: int = DEFAULT_BOUNDS.scanned_records,
+    budget: ReadBudget | None = None,
+    hook: AttemptHook | None = None,
+) -> StableWindows:
+    """Read bounded head/tail metadata without copying or loading a transcript."""
+
+    if (
+        head_bytes < 0
+        or head_bytes > 4 * 1024 * 1024
+        or tail_bytes < 0
+        or tail_bytes > 64 * 1024
+        or max_bytes < 0
+        or max_bytes > DEFAULT_BOUNDS.source_read_bytes
+        or not 1 <= attempts <= DEFAULT_BOUNDS.snapshot_attempts
+        or not 0 <= membership_limit <= DEFAULT_BOUNDS.scanned_records
+    ):
+        raise DiagnosticError.invalid()
+    safe, base = require_regular_no_symlinks(path, root)
+    parent = os.path.dirname(safe)
+    for attempt in range(1, attempts + 1):
+        try:
+            before_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+            descriptor = _open_no_follow(safe, base)
+            try:
+                before_stat = os.fstat(descriptor)
+                if before_stat.st_size > max_bytes:
+                    raise DiagnosticError.limit_exceeded()
+                if hook:
+                    hook("before-read", attempt, safe)
+                first = _read_descriptor_windows(
+                    descriptor,
+                    size=before_stat.st_size,
+                    head_bytes=head_bytes,
+                    tail_bytes=tail_bytes,
+                )
+                if hook:
+                    hook("after-read", attempt, safe)
+                second = _read_descriptor_windows(
+                    descriptor,
+                    size=before_stat.st_size,
+                    head_bytes=head_bytes,
+                    tail_bytes=tail_bytes,
+                )
+                second_stat = os.fstat(descriptor)
+                if hook:
+                    hook("after-verify-read", attempt, safe)
+                middle_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+                third = _read_descriptor_windows(
+                    descriptor,
+                    size=before_stat.st_size,
+                    head_bytes=head_bytes,
+                    tail_bytes=tail_bytes,
+                )
+                final_stat = os.fstat(descriptor)
+            finally:
+                os.close(descriptor)
+            after_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+        except DiagnosticError as error:
+            if error.code == "E_SOURCE_BUSY":
+                continue
+            raise
+        window_hash = hashlib.sha256(first[0] + b"\0" + first[1]).hexdigest()
+        observed = _fingerprint(before_stat)
+        verified = _fingerprint(second_stat)
+        final = _fingerprint(final_stat)
+        if (
+            observed == verified == final
+            and first == second == third
+            and before_membership == middle_membership == after_membership
+        ):
+            head, tail, tail_offset, unique_bytes = first
+            if budget is not None:
+                budget.consume_bytes(unique_bytes)
+            return StableWindows(
+                head=head,
+                tail=tail,
+                tail_offset=tail_offset,
+                fingerprint=observed,
+                window_sha256=window_hash,
+                attempts=attempt,
+            )
+    raise DiagnosticError.source_busy(attempts=attempts, family=(os.path.basename(safe),))
+
+
+def snapshot_regular_file(
+    path: str | os.PathLike[str],
+    *,
+    root: str | os.PathLike[str],
+    bounds: Bounds = DEFAULT_BOUNDS,
+    attempts: int | None = None,
+    membership_limit: int | None = None,
+    budget: ReadBudget | None = None,
+    hook: AttemptHook | None = None,
+    provider: str | None = None,
+) -> FileSnapshot:
+    """Stream a stable regular file into a private 0700/0600 snapshot."""
+
+    maximum_attempts = attempts if attempts is not None else bounds.snapshot_attempts
+    member_limit = membership_limit if membership_limit is not None else bounds.scanned_records
+    if (
+        bounds.source_read_bytes < 0
+        or bounds.source_read_bytes > DEFAULT_BOUNDS.source_read_bytes
+        or bounds.snapshot_attempts < 1
+        or bounds.snapshot_attempts > DEFAULT_BOUNDS.snapshot_attempts
+        or bounds.scanned_records < 0
+        or bounds.scanned_records > DEFAULT_BOUNDS.scanned_records
+        or not 1 <= maximum_attempts <= bounds.snapshot_attempts
+        or not 0 <= member_limit <= bounds.scanned_records
+    ):
+        raise DiagnosticError.invalid()
+    safe, base = require_regular_no_symlinks(path, root)
+    parent = os.path.dirname(safe)
+    family = (os.path.basename(safe),)
+    for attempt in range(1, maximum_attempts + 1):
+        descriptor: int | None = None
+        temporary: tempfile.TemporaryDirectory[str] | None = None
+        try:
+            before_membership = _directory_fingerprint(parent, limit=member_limit, root=base)
+            descriptor = _open_no_follow(safe, base)
+            temporary = tempfile.TemporaryDirectory(prefix="portable-resume-file-")
+            os.chmod(temporary.name, 0o700)
+            destination = os.path.join(temporary.name, os.path.basename(safe))
+            before_stat = os.fstat(descriptor)
+            if before_stat.st_size > bounds.source_read_bytes:
+                raise DiagnosticError.limit_exceeded()
+            if hook:
+                hook("before-copy", attempt, safe)
+            try:
+                copied_hash, copied_size = _copy_bounded_descriptor(
+                    descriptor,
+                    destination,
+                    maximum=bounds.source_read_bytes,
+                )
+            except DiagnosticError as error:
+                if error.code == "E_LIMIT_EXCEEDED":
+                    raise DiagnosticError.source_busy(
+                        attempts=attempt,
+                        family=family,
+                        provider=provider,
+                    ) from error
+                raise
+            observed = _fingerprint(before_stat, copied_hash)
+            if copied_size != before_stat.st_size:
+                raise DiagnosticError.source_busy(
+                    attempts=attempt,
+                    family=family,
+                    provider=provider,
+                )
+            if hook:
+                hook("after-copy", attempt, safe)
+            try:
+                verified = _hash_descriptor(descriptor, maximum=bounds.source_read_bytes)
+            except DiagnosticError as error:
+                if error.code == "E_LIMIT_EXCEEDED":
+                    raise DiagnosticError.source_busy(
+                        attempts=attempt,
+                        family=family,
+                        provider=provider,
+                    ) from error
+                raise
+            verified_fingerprint = _fingerprint(os.fstat(descriptor), verified[0])
+            if hook:
+                hook("after-verify-read", attempt, safe)
+            middle_membership = _directory_fingerprint(parent, limit=member_limit, root=base)
+            try:
+                final = _hash_descriptor(descriptor, maximum=bounds.source_read_bytes)
+            except DiagnosticError as error:
+                if error.code == "E_LIMIT_EXCEEDED":
+                    raise DiagnosticError.source_busy(
+                        attempts=attempt,
+                        family=family,
+                        provider=provider,
+                    ) from error
+                raise
+            final_fingerprint = _fingerprint(os.fstat(descriptor), final[0])
+            after_membership = _directory_fingerprint(parent, limit=member_limit, root=base)
+            if (
+                observed == verified_fingerprint == final_fingerprint
+                and copied_size == verified[1] == final[1] == before_stat.st_size
+                and before_membership == middle_membership == after_membership
+            ):
+                if budget is not None:
+                    budget.consume_bytes(copied_size)
+                result = FileSnapshot(
+                    directory=temporary.name,
+                    path=destination,
+                    source_name=os.path.basename(safe),
+                    fingerprint=observed,
+                    attempts=attempt,
+                    _temporary=temporary,
+                )
+                temporary = None
+                return result
+        except DiagnosticError as error:
+            if error.code != "E_SOURCE_BUSY":
+                raise
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+            if temporary is not None:
+                temporary.cleanup()
+    raise DiagnosticError.source_busy(attempts=maximum_attempts, family=family, provider=provider)
+
+
 def _read_bounded_descriptor(descriptor: int, maximum: int) -> bytes:
     chunks: list[bytes] = []
     remaining = maximum + 1
@@ -236,6 +481,81 @@ def _read_bounded_descriptor(descriptor: int, maximum: int) -> bytes:
     if len(data) > maximum:
         raise DiagnosticError.limit_exceeded()
     return data
+
+
+def _read_descriptor_windows(
+    descriptor: int,
+    *,
+    size: int,
+    head_bytes: int,
+    tail_bytes: int,
+) -> tuple[bytes, bytes, int, int]:
+    head_size = min(size, head_bytes)
+    tail_offset = max(0, size - tail_bytes)
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    head = _read_exact_descriptor(descriptor, head_size)
+    os.lseek(descriptor, tail_offset, os.SEEK_SET)
+    tail = _read_exact_descriptor(descriptor, size - tail_offset)
+    overlap = max(0, min(head_size, size) - tail_offset)
+    if overlap:
+        tail = tail[overlap:]
+        tail_offset += overlap
+    return head, tail, tail_offset, len(head) + len(tail)
+
+
+def _read_exact_descriptor(descriptor: int, amount: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = amount
+    while remaining:
+        chunk = os.read(descriptor, min(64 * 1024, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    if remaining:
+        raise DiagnosticError.source_busy()
+    return b"".join(chunks)
+
+
+def _copy_bounded_descriptor(descriptor: int, destination: str, *, maximum: int) -> tuple[str, int]:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    digest = hashlib.sha256()
+    total = 0
+    target = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        while True:
+            block = os.read(descriptor, 64 * 1024)
+            if not block:
+                break
+            total += len(block)
+            if total > maximum:
+                raise DiagnosticError.limit_exceeded()
+            digest.update(block)
+            view = memoryview(block)
+            while view:
+                written = os.write(target, view)
+                if written <= 0:
+                    raise DiagnosticError.source_busy()
+                view = view[written:]
+        os.fsync(target)
+    finally:
+        os.close(target)
+    return digest.hexdigest(), total
+
+
+def _hash_descriptor(descriptor: int, *, maximum: int) -> tuple[str, int]:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    digest = hashlib.sha256()
+    total = 0
+    while True:
+        block = os.read(descriptor, 64 * 1024)
+        if not block:
+            break
+        total += len(block)
+        if total > maximum:
+            raise DiagnosticError.limit_exceeded()
+        digest.update(block)
+    return digest.hexdigest(), total
 
 
 def _family_paths(database: str) -> dict[str, str]:

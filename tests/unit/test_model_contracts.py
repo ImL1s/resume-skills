@@ -94,16 +94,42 @@ class ModelContractTests(unittest.TestCase):
             self.assertIsNone(value[key])
 
     def test_u017_exact_bounds_accepted(self) -> None:
-        custom = Bounds(scanned_records=1, source_read_bytes=1, normalized_turns=1)
+        custom = Bounds(
+            scanned_records=1,
+            transcript_records=1,
+            source_read_bytes=1,
+            normalized_turns=1,
+        )
         budget = ReadBudget(custom)
         budget.consume_records(1)
+        budget.consume_transcript_records(1)
         budget.consume_bytes(1)
         budget.consume_turns(1)
-        self.assertEqual((budget.records, budget.bytes_read, budget.turns), (1, 1, 1))
+        self.assertEqual(
+            (
+                budget.records,
+                budget.transcript_records_read,
+                budget.bytes_read,
+                budget.turns,
+            ),
+            (1, 1, 1, 1),
+        )
 
     def test_u018_one_over_each_budget_fails(self) -> None:
-        for method in ("consume_records", "consume_bytes", "consume_turns"):
-            budget = ReadBudget(Bounds(scanned_records=0, source_read_bytes=0, normalized_turns=0))
+        for method in (
+            "consume_records",
+            "consume_transcript_records",
+            "consume_bytes",
+            "consume_turns",
+        ):
+            budget = ReadBudget(
+                Bounds(
+                    scanned_records=0,
+                    transcript_records=0,
+                    source_read_bytes=0,
+                    normalized_turns=0,
+                )
+            )
             with self.subTest(method=method), self.assertRaises(DiagnosticError) as caught:
                 getattr(budget, method)(1)
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")

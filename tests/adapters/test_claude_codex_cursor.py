@@ -196,6 +196,256 @@ class ClaudeAdapterTests(unittest.TestCase):
         values = claude.ADAPTER.list(self.query(), ReadBudget())
         self.assertEqual([value.session_id for value in values], [wanted])
 
+    def test_primary_cwd_ignores_later_worktree_cwds(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id, assistant_id = (str(uuid.uuid4()) for _ in range(2))
+        worktree = self.root / "worktree"
+        worktree.mkdir()
+        first = self.turn("user", user_id, None, "main request", -2, sessionId=session_id)
+        second = self.turn(
+            "assistant",
+            assistant_id,
+            user_id,
+            "worktree answer",
+            -1,
+            sessionId=session_id,
+        )
+        second["cwd"] = str(worktree)
+        self.session([first, second], identifier=session_id)
+
+        summaries = claude.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual([item.session_id for item in summaries], [session_id])
+        session = claude.ADAPTER.show(
+            ResolvedRef.from_summary(summaries[0]),
+            self.query(),
+            ReadBudget(),
+        )
+        self.assertEqual(session.cwd, str(self.cwd))
+        self.assertEqual([turn.content for turn in session.turns], ["main request", "worktree answer"])
+        self.assertEqual(claude.ADAPTER.list(self.query(cwd=worktree), ReadBudget()), [])
+
+    def test_semantic_replay_uses_latest_parent_and_conflicts_fail_closed(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id, stale_id, attachment_id, leaf_id = (str(uuid.uuid4()) for _ in range(4))
+        base_attachment = {
+            "type": "attachment",
+            "uuid": attachment_id,
+            "parentUuid": stale_id,
+            "sessionId": session_id,
+            "cwd": str(self.cwd),
+            "timestamp": stamp(-2),
+            "payload": {"kind": "synthetic"},
+        }
+        replay = dict(base_attachment)
+        replay.update({"parentUuid": user_id, "cwd": str(self.root / "bridge-worktree")})
+        records = [
+            self.turn("user", user_id, None, "start", -4, sessionId=session_id),
+            self.turn("assistant", stale_id, user_id, "stale branch", -3, sessionId=session_id),
+            base_attachment,
+            replay,
+            self.turn("user", leaf_id, attachment_id, "selected leaf", -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        summary = claude.ADAPTER.list(self.query(), ReadBudget())[0]
+        session = claude.ADAPTER.show(ResolvedRef.from_summary(summary), self.query(), ReadBudget())
+        self.assertEqual([turn.content for turn in session.turns], ["start", "selected leaf"])
+        self.assertNotIn("W_BROKEN_CHAIN", session.warnings)
+
+        conflicting = dict(replay)
+        conflicting["payload"] = {"kind": "changed"}
+        write_jsonl(path, [*records, conflicting])
+        with self.assertRaises(DiagnosticError) as caught:
+            claude.ADAPTER.show(ResolvedRef(session_id, str(path)), self.query(), ReadBudget())
+        self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
+    def test_cross_type_uuid_replay_fails_closed(self) -> None:
+        session_id = str(uuid.uuid4())
+        shared_id = str(uuid.uuid4())
+        user = self.turn("user", shared_id, None, "request", -2, sessionId=session_id)
+        attachment = {
+            "type": "attachment",
+            "uuid": shared_id,
+            "parentUuid": None,
+            "sessionId": session_id,
+            "cwd": str(self.cwd),
+            "timestamp": stamp(-2),
+        }
+        _, path = self.session([user, attachment], identifier=session_id)
+        with self.assertRaises(DiagnosticError) as caught:
+            claude.ADAPTER.show(ResolvedRef(session_id, str(path)), self.query(), ReadBudget())
+        self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
+    def test_replay_usage_reset_is_envelope_but_content_change_is_corrupt(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id, assistant_id, leaf_id = (str(uuid.uuid4()) for _ in range(3))
+        assistant = self.turn(
+            "assistant",
+            assistant_id,
+            user_id,
+            "stable answer",
+            -2,
+            sessionId=session_id,
+        )
+        assistant["message"]["usage"] = {
+            "input_tokens": 12,
+            "output_tokens": 3,
+            "cache_creation_input_tokens": 4,
+            "cache_read_input_tokens": 5,
+        }
+        replay = json.loads(json.dumps(assistant))
+        replay["message"]["usage"] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+        }
+        records = [
+            self.turn("user", user_id, None, "request", -3, sessionId=session_id),
+            assistant,
+            replay,
+            self.turn("user", leaf_id, assistant_id, "follow-up", -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        session = claude.ADAPTER.show(ResolvedRef(session_id, str(path)), self.query(), ReadBudget())
+        self.assertEqual(
+            [turn.content for turn in session.turns],
+            ["request", "stable answer", "follow-up"],
+        )
+
+        conflicting = json.loads(json.dumps(replay))
+        conflicting["message"]["content"] = "changed answer"
+        write_jsonl(path, [*records, conflicting])
+        with self.assertRaises(DiagnosticError) as caught:
+            claude.ADAPTER.show(ResolvedRef(session_id, str(path)), self.query(), ReadBudget())
+        self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
+    def test_large_listing_uses_metadata_windows_not_a_full_snapshot(self) -> None:
+        session_id = str(uuid.uuid4())
+        record = self.turn("user", str(uuid.uuid4()), None, "large listing", -1, sessionId=session_id)
+        _, path = self.session([record], identifier=session_id)
+        target_size = 17 * 1024 * 1024
+        with path.open("ab") as handle:
+            handle.write(b" " * (target_size - path.stat().st_size))
+        self.assertGreater(path.stat().st_size, 16 * 1024 * 1024)
+        with mock.patch.object(
+            claude,
+            "snapshot_regular_file",
+            side_effect=AssertionError("list must not copy the full transcript"),
+        ):
+            summaries = claude.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual([item.session_id for item in summaries], [session_id])
+
+    def test_streaming_show_has_independent_line_and_record_byte_bounds(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id, assistant_id = (str(uuid.uuid4()) for _ in range(2))
+        records = [
+            self.turn("user", user_id, None, "request", -2, sessionId=session_id),
+            *({"type": "meta"} for _ in range(2_001)),
+            self.turn("assistant", assistant_id, user_id, "answer", -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        enough = Bounds(transcript_records=len(records), scanned_records=1)
+        session = claude.ADAPTER.show(
+            ResolvedRef(session_id, str(path)),
+            self.query(),
+            ReadBudget(enough),
+        )
+        self.assertEqual([turn.content for turn in session.turns], ["request", "answer"])
+        with self.assertRaises(DiagnosticError) as lines:
+            claude.ADAPTER.show(
+                ResolvedRef(session_id, str(path)),
+                self.query(),
+                ReadBudget(Bounds(transcript_records=len(records) - 1, scanned_records=1)),
+            )
+        self.assertEqual(lines.exception.code, "E_LIMIT_EXCEEDED")
+
+        one_record = self.turn(
+            "user",
+            str(uuid.uuid4()),
+            None,
+            "bounded record",
+            -1,
+            sessionId=session_id,
+        )
+        encoded = json.dumps(one_record, separators=(",", ":")).encode() + b"\n"
+        write_jsonl(path, [one_record])
+        exact = Bounds(record_bytes=len(encoded), transcript_records=1, scanned_records=1)
+        claude.ADAPTER.show(
+            ResolvedRef(session_id, str(path)),
+            self.query(),
+            ReadBudget(exact),
+        )
+        with self.assertRaises(DiagnosticError) as record_bytes:
+            claude.ADAPTER.show(
+                ResolvedRef(session_id, str(path)),
+                self.query(),
+                ReadBudget(
+                    Bounds(
+                        record_bytes=len(encoded) - 1,
+                        transcript_records=1,
+                        scanned_records=1,
+                    )
+                ),
+            )
+        self.assertEqual(record_bytes.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_replay_cycle_fails_closed(self) -> None:
+        session_id = str(uuid.uuid4())
+        first_id, second_id = (str(uuid.uuid4()) for _ in range(2))
+        records = [
+            self.turn("user", first_id, second_id, "first", -2, sessionId=session_id),
+            self.turn("assistant", second_id, first_id, "second", -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        with self.assertRaises(DiagnosticError) as caught:
+            claude.ADAPTER.show(ResolvedRef(session_id, str(path)), self.query(), ReadBudget())
+        self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
+    def test_nonfinite_or_pathological_json_numbers_are_corrupt(self) -> None:
+        for raw in (
+            b'{"type":"user","value":NaN}\n',
+            b'{"type":"user","value":1e400}\n',
+            b'{"type":"user","value":' + (b"9" * 5_000) + b"}\n",
+        ):
+            with self.subTest(size=len(raw)), self.assertRaises(DiagnosticError) as caught:
+                claude._decode_record(raw, terminal_partial=False)
+            self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
+    def test_discovery_enumeration_is_bounded_before_sorting(self) -> None:
+        directory = self.root / "many"
+        directory.mkdir()
+        (directory / "a").touch()
+        (directory / "b").touch()
+        with mock.patch.object(
+            claude.os,
+            "listdir",
+            side_effect=AssertionError("bounded discovery must not use listdir"),
+        ):
+            with self.assertRaises(DiagnosticError) as caught:
+                claude._bounded_names(str(directory), limit=1)
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_conversation_record_without_uuid_fails_closed(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        missing = self.turn(
+            "assistant",
+            str(uuid.uuid4()),
+            user_id,
+            "must not disappear",
+            -1,
+            sessionId=session_id,
+        )
+        missing.pop("uuid")
+        records = [
+            self.turn("user", user_id, None, "request", -2, sessionId=session_id),
+            missing,
+        ]
+        _, path = self.session(records, identifier=session_id)
+        with self.assertRaises(DiagnosticError) as caught:
+            claude.ADAPTER.show(ResolvedRef(session_id, str(path)), self.query(), ReadBudget())
+        self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
     def test_common_selection_ambiguity_path_injection_bounds_and_busy(self) -> None:
         for index in range(2):
             identifier = str(uuid.uuid4())
@@ -229,7 +479,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         with self.assertRaises(DiagnosticError) as bounded:
             claude.ADAPTER.list(self.query(), ReadBudget(Bounds(scanned_records=1)))
         self.assertEqual(bounded.exception.code, "E_LIMIT_EXCEEDED")
-        with mock.patch.object(claude, "stable_read_bytes", side_effect=DiagnosticError.source_busy()):
+        with mock.patch.object(claude, "stable_read_windows", side_effect=DiagnosticError.source_busy()):
             with self.assertRaises(DiagnosticError) as busy:
                 claude.ADAPTER.list(self.query(), ReadBudget())
         self.assertEqual(busy.exception.code, "E_SOURCE_BUSY")

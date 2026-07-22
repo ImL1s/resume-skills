@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## [0.2.3] — 2026-07-22
+
+### Added
+- Claude large-session reads now use bounded head/tail metadata windows for listing and a private `0700`/`0600` stable snapshot for full recovery.
+- Full Claude transcripts are streamed into a lightweight graph index with a separate 50,000-record ceiling; only the selected lineage is loaded for rendering.
+
+### Fixed
+- Claude sessions larger than the former 16 MiB single-record bound can now resume without fixed-tail truncation or a false `W_BROKEN_CHAIN`.
+- Replay duplicates are accepted only when semantic content matches; envelope-only changes use the latest physical parent, while cross-type or content conflicts fail closed.
+- Session qualification uses the first recorded primary cwd, so subagent and worktree cwd values do not reject the parent session or create false matches.
+
+### Security
+- Regular-file snapshots use descriptor-relative no-follow opens, repeated content/stat/membership verification, bounded retries, unconditional temporary cleanup, and immutable caller ceilings.
+- Metadata window hashes are explicitly distinct from full-file content hashes, and overlapping head/tail bytes are deduplicated.
+
+### Verification
+- **211 tests**, secret/path gate, self-verify, real large-session structural E2E, and installed-runner smoke **36/36** pass locally.
+
 ## [0.2.2] — 2026-07-22
 
 ### Fixed

@@ -6,7 +6,7 @@ A provider may change from **planned** to **supported (fixture/parser)** only af
 
 | Source | Format ID(s) in code | Evidence baseline | Status | Known limitation |
 |---|---|---|---|---|
-| Claude Code | `claude-jsonl-v1` | Official Claude Code skills/session docs + synthetic fixtures | supported (fixture/parser) | List may include null titles; multi-slug collision uses recorded cwd |
+| Claude Code | `claude-jsonl-v1` | Official Claude Code skills/session docs + synthetic fixtures | supported (fixture/parser) | List uses bounded metadata windows; show snapshots and streams up to 50k records; first recorded cwd is authoritative |
 | Codex | `codex-state-sqlite-v1`, `codex-rollout-jsonl-v1`, optional `codex-rollout-zstd-v1` | Public Codex/app-server docs + fixtures | supported (fixture/parser) | Missing zstd → partial capability; hot rollback journal fails closed |
 | Cursor | `cursor-cli-chat-v1`, `cursor-desktop-vscdb-v1`, live `cursor-cli-store-v1`, `cursor-desktop-composer-v1` | Official Cursor skills docs + fixtures + live store shapes | supported (fixture/parser) | Live CLI `store.db`/`meta.json` + Desktop composerHeaders partial; full bubble graph not claimed; missing blobs warn without fabrication |
 | OpenCode | `opencode-sqlite-v1`, `opencode-file-store-v1`, `opencode-export-file-v1` | Official OpenCode docs + fixtures | supported (fixture/parser) | Unknown schema fails closed; export is a separate provider |
