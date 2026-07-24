@@ -47,7 +47,6 @@ REQUIRED_COMMANDS = (
 )
 REQUIRED_LINKS = (
     "../install-hosts.md",
-    "../network-integrations.md",
     "../STATUS.md",
 )
 

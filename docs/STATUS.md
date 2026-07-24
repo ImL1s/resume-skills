@@ -1,6 +1,6 @@
 # Project status (2026-07-24)
 
-## Published release: 0.3.0
+## Current tree: 0.3.1 correction candidate
 
 | Gate | Status |
 |---|---|
@@ -8,15 +8,24 @@
 | Destination profiles | 8 |
 | Packaging matrix | **64/64 pass locally** |
 | Installed runner matrix | **64/64 pass locally** |
-| Python test suite | **264 pass locally** |
+| Python test suite | **265 pass locally** |
 | Wheel + sdist smoke | **pass outside checkout**, including verified quick-install |
 | Native local plugin/extension install | **6/7 pass**; Cursor live load not-run |
 | Host UI / picker activation | **not-run** |
 | Public marketplace installation | **not-run** |
 | CI | **pass**: Ubuntu + macOS × Python 3.11–3.14 |
-| `v0.3.0` release workflow | **pass**: annotated tag through GitHub Release and PyPI |
-| Public PyPI installation | **pass**: isolated install, 64-cell matrix, Qwen install/verify |
+| `v0.3.1` release workflow | **not-run remotely** |
+| Published `v0.3.0` workflow | **pass**: annotated tag through GitHub Release and PyPI |
+| Public PyPI installation | **pass for 0.3.0**: isolated install, 64-cell matrix, Qwen install/verify |
 | Cursor full bubble graph | **not claimed** |
+
+## Corrected in 0.3.1
+
+- Removed mistakenly scoped destination-host network/documentation-tool
+  guidance from generated Skills and public documentation.
+- Clarified that Qwen/Kimi support covers offline context migration and
+  destination installation only.
+- Added regression tests that reject the removed product claim.
 
 ## Implemented in 0.3.0
 
@@ -25,24 +34,25 @@
 - Explicit installed-runtime allowlist and packaged schema.
 - Deterministic eight direct Skill archives plus seven plugin/marketplace archives.
 - CI gates, exact wheel/sdist smoke, annotated-tag release validation, checksums, artifact attestations, staged GitHub Release, and PyPI Trusted Publishing.
-- Optional host-side web/Context7 guidance; the reader remains offline.
+- Qwen and Kimi source adapters plus destination installation profiles; readers remain offline.
 
 ## Honest open gates
 
 | Area | Status | Required evidence |
 |---|---|---|
 | Current local release gates | pass | four canonical commands, 2026-07-24 |
-| `v0.3.0` dual-OS release | **pass** | [release run 30084711240](https://github.com/ImL1s/resume-skills/actions/runs/30084711240), SHA `78c2acd0f9841d90d87f85eff151b842a80dc011` |
-| PyPI publication | **pass** | [portable-resume 0.3.0](https://pypi.org/project/portable-resume/0.3.0/) via Trusted Publishing |
+| `v0.3.1` dual-OS release | not-run | tagged Actions URL + immutable SHA + successful release jobs |
+| `v0.3.1` PyPI publication | not-run | published project/version URL |
 | Host activation | not-run | rows in `docs/host-ui-smoke.md` |
 | Cursor native plugin load | not-run | accepted local package in current Cursor host |
 | Public marketplace publication | not-run | public listing/install evidence |
 | Cursor graph completeness | not claimed | upstream schema/recovery work beyond current best effort |
 
-The published GitHub release is
-[`v0.3.0`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.0).
-PyPI publication is a package-distribution claim, not evidence of any host's
-marketplace listing or picker activation.
+The latest published GitHub release remains
+[`v0.3.0`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.0) until
+the 0.3.1 release evidence is archived. PyPI publication is a
+package-distribution claim, not evidence of any host's marketplace listing or
+picker activation.
 
 ## Historical release evidence
 

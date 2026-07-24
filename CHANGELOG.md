@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## [0.3.1] — 2026-07-24
+
+### Fixed
+- Removed mistakenly scoped destination-host network and documentation-tool
+  guidance. Those tools were used to research Qwen/Kimi behavior; they are not
+  Portable Resume product features.
+- Kept Qwen/Kimi scope explicit: offline context migration, destination
+  installation, and inert handoff generation only.
+- Added regression coverage so generated Skills and product documentation do
+  not reintroduce the mistaken integration claim.
+
 ## [0.3.0] — 2026-07-24
 
 ### Added
@@ -13,8 +24,6 @@
 - Tag-gated release CI/CD with exact wheel/sdist smoke tests, host bundle
   assets, checksums, provenance evidence, GitHub attestations, GitHub Releases,
   and optional PyPI Trusted Publishing.
-- Optional host-side web search and Context7 setup guidance; recovered content
-  remains local unless the user deliberately sends a sanitized question.
 - A `quick-install` command for one or all destination hosts, plus 12
   release-checked localized quick-start guides (English, Traditional/Simplified
   Chinese, Japanese, Korean, Spanish, Brazilian Portuguese, French, German,

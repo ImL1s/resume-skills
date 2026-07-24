@@ -12,10 +12,11 @@
 
 Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
-**Published:** [`v0.3.0`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.0)
-on [PyPI](https://pypi.org/project/portable-resume/0.3.0/) · 64/64 packaging
-cells · 64/64 installed-runner cells · six native local plugin/extension
-installs verified · host UI activation still **not-run**.
+**Current version:** `0.3.1` · 64/64 packaging cells · 64/64
+installed-runner cells · six native local plugin/extension installs verified ·
+host UI activation still **not-run**. This patch removes mistakenly scoped
+destination-host network/documentation-tool guidance; Qwen/Kimi support remains
+offline context migration and installation only.
 
 ## Sources and destinations
 
@@ -98,10 +99,6 @@ python3 <skill>/scripts/run_reader.py list --cwd "$PWD" --json
 
 Activate `resume-<source>` using the host's documented grammar, run only the installed reader, and summarize its inert output after re-checking the repository. `portable-resume/request-v1` files remain an optional advanced interface.
 
-## Optional web search and Context7
-
-The reader itself stays offline. After reviewing and minimizing recovered text, the **destination host** may use its own web tools or Context7 MCP for current documentation. Qwen and Kimi setup, data-flow boundaries, and safe examples are in [`docs/network-integrations.md`](docs/network-integrations.md).
-
 ## Safety invariants
 
 - Source stores are immutable; stable no-follow reads fail closed on races.
@@ -124,7 +121,7 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 `.github/workflows/ci.yml` runs those gates across Ubuntu/macOS and Python 3.11–3.14, then builds and smoke-installs the exact wheel and sdist. `.github/workflows/release.yml` accepts only annotated `vMAJOR.MINOR.PATCH` tags reachable from `main`, re-runs dual-OS gates, builds release bytes once, tests those exact bytes, creates SHA-256 checksums and GitHub attestations, stages a GitHub Release, and publishes through PyPI Trusted Publishing.
 
-The published `v0.3.0` claim is backed by the immutable
+The latest archived release claim is `v0.3.0`, backed by the immutable
 [release run](https://github.com/ImL1s/resume-skills/actions/runs/30084711240),
 commit `78c2acd0f9841d90d87f85eff151b842a80dc011`, and archived details in
 [`docs/evidence-summary.md`](docs/evidence-summary.md).
@@ -144,4 +141,4 @@ commit `78c2acd0f9841d90d87f85eff151b842a80dc011`, and archived details in
 
 Apache-2.0. This project is not affiliated with the host vendors. Do not copy `~/.grok/bundled/skills/**` into this tree.
 
-Host UI/picker activation is still **not-run**; Cursor's full bubble graph is not claimed; redaction is not complete DLP; Qwen/Kimi web or MCP calls are optional host-side actions and never implicit reader behavior.
+Host UI/picker activation is still **not-run**; Cursor's full bubble graph is not claimed; redaction is not complete DLP.

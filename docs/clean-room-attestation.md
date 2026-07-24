@@ -16,7 +16,7 @@ These references are used to understand formats and public interfaces; vendor co
 
 Scope: shared core, eight source adapters, eight destination profiles, installer/package builders, and deterministic tests in this repository.
 
-Product sources and fixtures are compatibility implementations over public shapes. Readers produce inert, untrusted handoffs for a fresh session; they do not restore a live process, invoke source CLIs, or add a network path. Qwen/Kimi web and Context7 use is optional destination-host behavior and is not part of the reader.
+Product sources and fixtures are compatibility implementations over public shapes. Readers produce inert, untrusted handoffs for a fresh session; they do not restore a live process, invoke source CLIs, or add a network path.
 
 The product sources and synthetic fixtures do **not** contain copied installed-bundle content or real vendor transcripts.
 

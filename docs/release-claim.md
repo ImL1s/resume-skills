@@ -55,6 +55,8 @@ Host UI/picker and marketplace UI claims remain separate and require rows in [`h
 
 ### Current state
 
+- `v0.3.1`: correction prepared locally; **not-run remotely** and not yet
+  published.
 - `v0.3.0`: **published** from annotated tag object
   `6afb60448e20f4b2d9ba38485a6bdbdbfa6a7e87` at commit
   `78c2acd0f9841d90d87f85eff151b842a80dc011`.

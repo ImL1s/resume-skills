@@ -1,5 +1,18 @@
 # Evidence summary
 
+## Current 0.3.1 correction candidate
+
+The current tree removes the mistakenly scoped destination-host
+network/documentation-tool guidance from generated Skills and product
+documentation. Qwen/Kimi support remains offline context migration and
+destination installation only.
+
+Fresh local verification passed all four canonical gates: **265** Python tests,
+**64/64** package cells, and **64/64** installed-reader cells. Fresh 0.3.1
+wheel and sdist builds also passed isolated 64-cell smoke and Qwen
+quick-install verification. No dual-OS, GitHub Release, or PyPI claim is made
+for 0.3.1 until an immutable release run is archived here.
+
 ## Published archive: v0.3.0
 
 | Field | Evidence |

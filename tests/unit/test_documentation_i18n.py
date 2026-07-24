@@ -26,6 +26,19 @@ class DocumentationI18nTests(unittest.TestCase):
         self.assertEqual(len(report["checked_locales"]), 12)
         self.assertEqual(report["failures"], [])
 
+    def test_context7_is_not_a_product_feature(self) -> None:
+        product_docs = [
+            REPO / "README.md",
+            REPO / "docs" / "STATUS.md",
+            REPO / "docs" / "clean-room-attestation.md",
+            REPO / "docs" / "i18n" / "README.md",
+            REPO / "src" / "portable_resume" / "resources" / "skill" / "SKILL.md.tmpl",
+        ]
+        product_docs.extend(sorted((REPO / "docs" / "i18n").glob("*.md")))
+        for path in product_docs:
+            self.assertNotIn("context7", path.read_text(encoding="utf-8").lower(), str(path))
+        self.assertFalse((REPO / "docs" / "network-integrations.md").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

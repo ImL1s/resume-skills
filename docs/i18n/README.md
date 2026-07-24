@@ -19,4 +19,4 @@ Choose a localized quick-start below. English technical specifications in `docs/
 
 ## Translation maintenance
 
-Localized guides cover the product boundary, safe installation, all destination hosts, verification, and optional network integrations. `python3 scripts/check_docs.py` rejects a release when a required locale, version marker, host name, canonical command, or reference link is missing.
+Localized guides cover the product boundary, safe installation, all destination hosts, and verification. `python3 scripts/check_docs.py` rejects a release when a required locale, version marker, host name, canonical command, or reference link is missing.

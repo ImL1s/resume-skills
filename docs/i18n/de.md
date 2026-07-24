@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: de v0.3.0 -->
+<!-- portable-resume-i18n: de v0.3.1 -->
 # Portable Resume — deutscher Schnellstart
 
 Portable Resume überträgt begrenzten lokalen Kontext aus Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen oder Kimi in eine **neue** Coding-Agent-Sitzung. Laufende Prozesse oder Sitzungen werden nicht wiederhergestellt. Die Reader arbeiten offline, verwenden nur die Python-Standardbibliothek, starten niemals die Quell-CLI und kennzeichnen wiederhergestellten Text als inert und nicht vertrauenswürdig.
@@ -38,4 +38,4 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 Aktivieren Sie `resume-<source>` mit der Syntax des Ziel-host und prüfen Sie das aktuelle repository erneut, bevor Sie den handoff ausführen.
 
-Optionale Websuche und Context7 sind unter [Netzwerkintegrationen](../network-integrations.md) beschrieben; der Reader bleibt offline. Der [Projektstatus](../STATUS.md) trennt verifizierte Aussagen von noch nicht ausgeführten UI／release-Gates.
+Der [Projektstatus](../STATUS.md) trennt verifizierte Aussagen von noch nicht ausgeführten UI／release-Gates.
