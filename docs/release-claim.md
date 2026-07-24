@@ -58,19 +58,22 @@ Host UI/picker and marketplace UI claims remain separate and require rows in [`h
 
 ### Current state
 
-- `v0.3.2`: **local release candidate**. It fixes the v0.3.1 checksum path
-  layout, rejects duplicate asset basenames, and adds dual-OS flat-download
-  verification. Its immutable tag, Actions run, GitHub Release, and PyPI
-  evidence remain pending until the tagged workflow completes.
-- `v0.3.1`: **published** from annotated tag object
+- `v0.3.2`: **published** from annotated tag object
+  `a1a17fc21a7ea65bd2717b2ce3faa89fe21d0b5a` at commit
+  `284865a4dc8c1c3dca16ee40f5204053cabb3a92`.
+  [Release run 30093776529, attempt 1](https://github.com/ImL1s/resume-skills/actions/runs/30093776529)
+  passed 14 jobs: dual-OS gates, exact-byte smoke, flat-download checksum
+  verification, attestation, PyPI Trusted Publishing, and GitHub Release
+  publication.
+- Published outputs:
+  [GitHub Release](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
+  and [PyPI](https://pypi.org/project/portable-resume/0.3.2/).
+- `v0.3.1`: archived published release from annotated tag object
   `bf483ebd503143faa1ce73bc5aa95fac95bc0648` at commit
   `d50a1e33db2824830dabc469b7d566031aa45697`.
   [Release run 30089194956](https://github.com/ImL1s/resume-skills/actions/runs/30089194956)
   passed all dual-OS gates, exact-byte smoke, attestation, PyPI Trusted
   Publishing, and GitHub Release publication.
-- Published outputs:
-  [GitHub Release](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.1)
-  and [PyPI](https://pypi.org/project/portable-resume/0.3.1/).
 - `v0.3.0`: archived published release from annotated tag object
   `6afb60448e20f4b2d9ba38485a6bdbdbfa6a7e87` at commit
   `78c2acd0f9841d90d87f85eff151b842a80dc011`.

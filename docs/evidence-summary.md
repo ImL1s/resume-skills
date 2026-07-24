@@ -1,24 +1,51 @@
 # Evidence summary
 
-## Local release candidate: v0.3.2
+## Published archive: v0.3.2
 
-Local release work on 2026-07-24 corrected `SHA256SUMS` to use flat GitHub
-Release asset basenames. Two regression tests cover flat verification and
-duplicate-basename rejection. The release workflow now simulates a flat
-download and runs `sha256sum --check` on Ubuntu or `shasum -a 256 --check` on
-macOS before publication.
+| Field | Evidence |
+|---|---|
+| Date / maintainer | 2026-07-24 / `ImL1s` |
+| Annotated tag | `v0.3.2`; tag object `a1a17fc21a7ea65bd2717b2ce3faa89fe21d0b5a` |
+| Release commit | `284865a4dc8c1c3dca16ee40f5204053cabb3a92` |
+| Main CI | [run 30093652499](https://github.com/ImL1s/resume-skills/actions/runs/30093652499) |
+| Release CI/CD | [run 30093776529, attempt 1](https://github.com/ImL1s/resume-skills/actions/runs/30093776529) |
+| GitHub Release | [Portable Resume v0.3.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2) |
+| PyPI | [portable-resume 0.3.2](https://pypi.org/project/portable-resume/0.3.2/) |
 
-Fresh host evidence also records:
+The nine-job main CI run passed Ubuntu and macOS on Python 3.11, 3.12, 3.13,
+and 3.14 plus exact distribution smoke. The 14-job release run passed
+annotated-tag validation; dual-OS release gates on Python 3.11 and 3.14;
+one-time artifact build; exact wheel/sdist smoke on all four release cells;
+artifact attestation; PyPI Trusted Publishing; and staged GitHub Release
+publication.
 
-- **8/8** host-native headless Skill invocations passed against the same
-  synthetic Claude fixture.
-- **7/7** exact `0.3.1` plugin/extension archives installed locally on their
-  supported current host surfaces.
-- Cursor loaded the exact plugin archive and executed its bundled reader.
+The release corrects `SHA256SUMS` to use flat GitHub Release asset basenames,
+rejects duplicate basenames, and verifies a simulated flat download on Ubuntu
+and macOS before publication. A fresh public download verified all 20 manifest
+entries with `shasum -a 256 --check`. GitHub attestation verification passed
+for the 20 intended attested assets; the 21st asset,
+`host-packages-build.json`, is checksum-covered and byte-identical to the
+attested `host-packages.json`.
 
-The immutable `v0.3.2` tag, Actions URL, release asset digests, and PyPI URL
-remain pending until the release workflow completes. Exact host rows and
-boundaries are in [`host-ui-smoke.md`](host-ui-smoke.md).
+### Published Python artifacts
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `portable_resume-0.3.2-py3-none-any.whl` | 139222 | `299f57415955d705e7124c735417f3a2e4525c30d35b4df6b4e499575851c510` |
+| `portable_resume-0.3.2.tar.gz` | 118968 | `ec7ed14bd4ca59bc1e2c4dc7d9ab0c98f46ecaf106104c1fd2b4d00c0ba9f256` |
+
+PyPI and GitHub Release bytes match for both Python artifacts. An isolated
+public PyPI install reported version `0.3.2`, no runtime dependencies, and
+passed `self-check` for all eight adapters and 64 cells. Separate temporary
+roots quick-installed and verified all eight destination profiles with 43
+owned files each.
+
+Fresh post-release checks installed all seven exact `0.3.2` native
+plugin/extension archives on their current host surfaces. Cursor loaded the
+plugin and executed its bundled reader; Kimi's TUI listed Portable Resume
+`0.3.2` with eight Skills. Host-native headless Skill invocation remains **8/8
+pass** from the recorded CLI rows. Exact commands, hashes, and proof boundaries
+are in [`host-ui-smoke.md`](host-ui-smoke.md).
 
 ## Published archive: v0.3.1
 
@@ -64,7 +91,7 @@ prefixed paths. A basename-aware local check verified all 20 referenced
 artifacts. `v0.3.2` supersedes this manifest layout and adds dual-OS regression
 coverage; the immutable `v0.3.1` assets are not replaced.
 
-## Fresh verification
+## Fresh local verification
 
 Local verification on 2026-07-24 used:
 
@@ -75,22 +102,14 @@ PYTHONPATH=src python3 -m unittest discover -s tests -q
 PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
-Results: **265** Python tests, **64/64** package cells, and **64/64**
+Results: **267** Python tests, **64/64** package cells, and **64/64**
 installed-reader cells passed. Fresh wheel and sdist builds also passed
 isolated 64-cell smoke.
 
-A separate empty virtual environment installed `portable-resume==0.3.1` from
-public PyPI and passed `self-check` with all eight adapters and 64 matrix cells.
-It quick-installed Qwen and Kimi into temporary user roots, and installer
-verification confirmed 43 owned files for each host. The installed Skills
-contain the offline-reader invariant and no removed external-tool guidance.
-
-Fresh post-release checks installed all seven exact `0.3.1` native
-plugin/extension archives, including Cursor, and completed host-native headless
-Skill invocation on all eight CLIs. Visual picker interaction and public host
-marketplace installation remain **not-run**. Cursor's full bubble graph remains
-**not claimed**. PyPI publication does not satisfy those separate host evidence
-gates.
+Visual picker interaction and public host marketplace installation remain
+**not-run**. Cursor's full bubble graph remains **not claimed**. PyPI
+publication and local native-package acceptance do not satisfy those separate
+host evidence gates.
 
 ## Historical archive: v0.3.0
 

@@ -1,6 +1,8 @@
 <!-- portable-resume-i18n: ja v0.3.2 -->
 # Portable Resume — 日本語クイックスタート
 
+**現在の公開版：** [`0.3.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
+
 Portable Resume は、Claude、Codex、Cursor、OpenCode、Antigravity、Grok、Qwen、Kimi の限定されたローカル文脈を**新しい**コーディングエージェントのセッションへ移行します。実行中プロセスやセッションの復元ではありません。リーダーはオフラインかつ Python 標準ライブラリのみで動作し、元の CLI を起動せず、復元テキストを不活性・未信頼として扱います。
 
 ## インストール
@@ -38,6 +40,6 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 宛先 host の構文で `resume-<source>` を有効化し、handoff に従う前に現在の repository を再確認してください。
 
-現在のローカル host スモークでは、8/8 の CLI 呼び出しと、対応する 7/7 のネイティブ plugin／extension 導入が成功しました。視覚的な picker 操作と公開 marketplace への掲載は、別個の未実行項目です。
+現在のローカル host スモークでは 8/8 の CLI 呼び出しが成功し、正確な `0.3.2` パッケージでは対応する 7/7 のネイティブ plugin／extension 導入が成功しました。視覚的な picker 操作と公開 marketplace への掲載は、別個の未実行項目です。
 
 検証済み事項と未実行の UI／release ゲートは[プロジェクト状況](../STATUS.md)を参照してください。

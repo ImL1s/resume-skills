@@ -1,6 +1,8 @@
 <!-- portable-resume-i18n: de v0.3.2 -->
 # Portable Resume — deutscher Schnellstart
 
+**Aktuelle veröffentlichte Version:** [`0.3.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
+
 Portable Resume überträgt begrenzten lokalen Kontext aus Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen oder Kimi in eine **neue** Coding-Agent-Sitzung. Laufende Prozesse oder Sitzungen werden nicht wiederhergestellt. Die Reader arbeiten offline, verwenden nur die Python-Standardbibliothek, starten niemals die Quell-CLI und kennzeichnen wiederhergestellten Text als inert und nicht vertrauenswürdig.
 
 ## Installation
@@ -38,6 +40,6 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 Aktivieren Sie `resume-<source>` mit der Syntax des Ziel-host und prüfen Sie das aktuelle repository erneut, bevor Sie den handoff ausführen.
 
-Der lokale Host-Smoke-Test bestand 8/8 CLI-Aufrufe und 7/7 unterstützte native plugin／extension-Installationen. Visuelle Picker-Interaktionen und Veröffentlichungen in öffentlichen Marketplaces bleiben getrennte, noch nicht ausgeführte Prüfungen.
+Der lokale Host-Smoke-Test bestand 8/8 CLI-Aufrufe; die exakten `0.3.2`-Pakete bestanden 7/7 unterstützte native plugin／extension-Installationen. Visuelle Picker-Interaktionen und Veröffentlichungen in öffentlichen Marketplaces bleiben getrennte, noch nicht ausgeführte Prüfungen.
 
 Der [Projektstatus](../STATUS.md) trennt verifizierte Aussagen von noch nicht ausgeführten UI／release-Gates.

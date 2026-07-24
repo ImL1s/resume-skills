@@ -35,7 +35,7 @@ The harness uses a distinct root per host and never launches a source agent CLI.
 |---|---|---|---|---|---|---|---|
 | claude | claude | 2.1.218 | `/resume-claude` | pass | `8a5c1050af154d4cc5dce9499e4f2dd93a3b19a880aa0c26d9ac18956e7765b8` | Public PyPI 0.3.1 project install; event result matched the synthetic session and inert/untrusted flags | 2026-07-24 |
 | codex | claude | 0.145.0 | `$resume-claude` | pass | `8a5c1050af154d4cc5dce9499e4f2dd93a3b19a880aa0c26d9ac18956e7765b8` | Ephemeral `codex exec` read the project Skill and executed its reader | 2026-07-24 |
-| cursor | claude | 2026.07.23-e383d2b | `/resume-claude` with `--plugin-dir` | pass | `c3dc56b428612d2a99ef407bdb6f0560a3b6a28f5c11ae2660ad698a44267aa2` | Exact 0.3.1 Cursor archive loaded; tool event used the extracted plugin reader | 2026-07-24 |
+| cursor | claude | 2026.07.23-e383d2b | `/resume-claude` with `--plugin-dir` | pass | `efd1befeb5b7f40965e77b7b1c47a48bab813c6f6b89df4a63e4206347075724` | Exact 0.3.2 Cursor archive loaded; tool event used the extracted plugin reader | 2026-07-24 |
 | opencode | claude | 1.15.10 | model loads `resume-claude` by name | pass | `8a5c1050af154d4cc5dce9499e4f2dd93a3b19a880aa0c26d9ac18956e7765b8` | Isolated config/data roots; Skill loader and bash event both resolved to the project install | 2026-07-24 |
 | antigravity | claude | 1.1.6 | name mention in `agy --print` | pass | `8a5c1050af154d4cc5dce9499e4f2dd93a3b19a880aa0c26d9ac18956e7765b8` | Print mode ran the exact project reader and verified the structured result | 2026-07-24 |
 | grok | claude | 0.2.111 | `/resume-claude` | pass | `8a5c1050af154d4cc5dce9499e4f2dd93a3b19a880aa0c26d9ac18956e7765b8` | Exported transcript records Skill read, exact reader command, and pass marker | 2026-07-24 |
@@ -55,13 +55,13 @@ prove non-interactive native discovery/invocation, not a visual picker click.
 
 | host | host_version | package_type | install_path_or_ui | result | artifact_sha256 | notes | date |
 |---|---|---|---|---|---|---|---|
-| claude | 2.1.218 | marketplace + plugin | `claude plugin marketplace add`; `claude plugin install --scope user` | pass | `c1fafa5ec05d974657552cb40366824b2d7b473efc713eceaed26138ee206d39` | Exact 0.3.1 archive passed strict validation and isolated install; listed enabled as 0.3.1 | 2026-07-24 |
-| codex | 0.145.0 | marketplace + plugin | `codex plugin marketplace add`; `codex plugin add` | pass | `755083cf5aa8fd6e9375ebed058f0f3b0a92e2b90b30e2eabbfe3453ee48b8f7` | Exact 0.3.1 archive installed in isolated `CODEX_HOME`; listed enabled as 0.3.1 | 2026-07-24 |
-| cursor | 2026.07.23-e383d2b | plugin | `cursor-agent --plugin-dir <plugin>` | pass | `c3dc56b428612d2a99ef407bdb6f0560a3b6a28f5c11ae2660ad698a44267aa2` | Exact 0.3.1 plugin loaded and executed its bundled reader | 2026-07-24 |
-| qwen | 0.20.1 | extension | `qwen extensions install --consent --scope user` | pass | `3a53e9b5af42cdc0516bae113c34edb5fb74190fa883e50c7d2041c455d031ab` | Exact 0.3.1 ZIP installed in isolated home; list reports eight Skills | 2026-07-24 |
-| grok | 0.2.111 | plugin | `grok plugin validate`; `grok plugin install --trust` | pass | `c3fb0b33bf1f5a601fd26e5a666d33b556934aa87b5a378c005842514826f2f9` | Exact 0.3.1 local path validated and installed in isolated `GROK_HOME` | 2026-07-24 |
-| antigravity | 1.1.6 | plugin | `agy plugin validate`; `agy plugin install` | pass | `86466f51590810a39d6e56400a5dfd671be6b3ae86d7c35a5ec6341c8f56868a` | Exact 0.3.1 archive extracted; isolated install reports eight Skills | 2026-07-24 |
-| kimi | 0.29.0 | plugin | TUI `/plugins install <local-path>`; `/plugins list` | pass | `4212ef946019e149fc627c0ec7b0e0cc1752601a0ecc523138dca4e57774b7a6` | Exact 0.3.1 local-path install in isolated `KIMI_CODE_HOME`; list reports eight Skills | 2026-07-24 |
+| claude | 2.1.218 | marketplace + plugin | `claude plugin marketplace add`; `claude plugin install --scope user` | pass | `ef3d85aaf08e5e157cb390fa589f52f5461b20e537dccea995325fff51b01a2e` | Exact 0.3.2 archive passed strict validation and isolated install; listed enabled as 0.3.2 | 2026-07-24 |
+| codex | 0.145.0 | marketplace + plugin | `codex plugin marketplace add`; `codex plugin add` | pass | `70d15c769f647ffa74dcfb694313c98a297ffc48077b6fa5ba12297834bce446` | Exact 0.3.2 archive installed in isolated `CODEX_HOME`; listed enabled as 0.3.2 | 2026-07-24 |
+| cursor | 2026.07.23-e383d2b | plugin | `cursor-agent --plugin-dir <plugin>` | pass | `efd1befeb5b7f40965e77b7b1c47a48bab813c6f6b89df4a63e4206347075724` | Exact 0.3.2 plugin loaded and executed its bundled reader | 2026-07-24 |
+| qwen | 0.20.1 | extension | `qwen extensions install --consent --scope user` | pass | `7667180e708f831be15f3a4b56fb3c585c0cddcb2058836c774e77c3d1df2000` | Exact 0.3.2 ZIP installed in isolated home; list reports eight Skills | 2026-07-24 |
+| grok | 0.2.111 | plugin | `grok plugin validate`; `grok plugin install --trust` | pass | `ccbe3ac70bebb19ce135aa6b3878be7ef232eb54b582e62b146ca60b309a8083` | Exact 0.3.2 local path validated and installed in isolated `GROK_HOME` | 2026-07-24 |
+| antigravity | 1.1.6 | plugin | `agy plugin validate`; `agy plugin install` | pass | `9ae1339f767ab57a58054b363ece2ddce8136b1451850531da67844dc80104cd` | Exact 0.3.2 archive extracted; isolated install reports eight Skills | 2026-07-24 |
+| kimi | 0.29.0 | plugin | TUI `/plugins install <local-path>`; `/plugins list` | pass | `4b85bf855022411b8a94c727c26ad4f2536c6e9487eff6faee404dc99b119f5b` | Exact 0.3.2 local-path install in isolated `KIMI_CODE_HOME`; list reports Portable Resume 0.3.2 and eight Skills | 2026-07-24 |
 
 Valid hosts: `claude`, `codex`, `cursor`, `opencode`, `antigravity`, `grok`, `qwen`, `kimi`. OpenCode has no plugin-package row because this project intentionally uses its data-only Skill surface.
 

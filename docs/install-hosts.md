@@ -89,7 +89,7 @@ For direct archives, extract the archive contents into the selected Skill root. 
 ## Evidence boundary
 
 Filesystem render/install/verify and installed `run_reader` behavior cover
-**64/64** cells. Exact `0.3.1` local package installation passed on all seven
+**64/64** cells. Exact `0.3.2` local package installation passed on all seven
 supported native plugin/extension surfaces, including Cursor. Host-native
 headless Skill invocation passed on all eight destination CLIs. Versions,
 commands, and archive digests are recorded in

@@ -1,6 +1,8 @@
 <!-- portable-resume-i18n: hi v0.3.2 -->
 # Portable Resume — हिन्दी त्वरित शुरुआत
 
+**वर्तमान प्रकाशित संस्करण:** [`0.3.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
+
 Portable Resume, Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen या Kimi के सीमित स्थानीय context को एक **नई** coding-agent session में ले जाता है। यह चलती process या session को restore नहीं करता। reader offline और केवल Python standard library पर चलता है, source CLI कभी नहीं चलाता, तथा मिले हुए text को inert और untrusted चिह्नित करता है।
 
 ## स्थापना
@@ -38,6 +40,6 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 destination host की documented syntax से `resume-<source>` सक्रिय करें और handoff पर काम करने से पहले वर्तमान repository दोबारा जाँचें।
 
-वर्तमान स्थानीय host smoke में 8/8 CLI invocation और 7/7 समर्थित native plugin／extension installation सफल रहे। Visual picker interaction और public marketplace publication अलग, अभी न चलाए गए प्रमाण हैं।
+वर्तमान स्थानीय host smoke में 8/8 CLI invocation सफल रहे; सटीक `0.3.2` packages ने 7/7 समर्थित native plugin／extension installation पूरे किए। Visual picker interaction और public marketplace publication अलग, अभी न चलाए गए प्रमाण हैं।
 
 सत्यापित दावों और अभी न चले UI／release gates के लिए [project status](../STATUS.md) देखें।

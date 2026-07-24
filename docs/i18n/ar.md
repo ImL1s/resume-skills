@@ -1,6 +1,8 @@
 <!-- portable-resume-i18n: ar v0.3.2 -->
 # Portable Resume — دليل البدء السريع بالعربية
 
+**الإصدار الحالي المنشور:** [`0.3.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
+
 ينقل Portable Resume سياقًا محليًا محدودًا من Claude وCodex وCursor وOpenCode وAntigravity وGrok وQwen وKimi إلى جلسة وكيل برمجي **جديدة**. لا يستعيد عملية أو جلسة عاملة. تعمل أدوات القراءة دون شبكة وبمكتبة Python القياسية فقط، ولا تشغّل CLI المصدر، وتوسم النص المستعاد بأنه خامل وغير موثوق.
 
 ## التثبيت
@@ -38,6 +40,6 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 فعّل `resume-<source>` بصيغة host الوجهة، وأعد فحص repository الحالي قبل تنفيذ handoff.
 
-نجح اختبار host المحلي في 8/8 من استدعاءات CLI وفي 7/7 من عمليات تثبيت صيغ plugin／extension الأصلية المدعومة. يظل التفاعل مع أداة الاختيار المرئية والنشر في marketplace العامة اختبارين منفصلين لم يُنفّذا بعد.
+نجح اختبار host المحلي في 8/8 من استدعاءات CLI، ونجح تثبيت حزم `0.3.2` الدقيقة في 7/7 من صيغ plugin／extension الأصلية المدعومة. يظل التفاعل مع أداة الاختيار المرئية والنشر في marketplace العامة اختبارين منفصلين لم يُنفّذا بعد.
 
 يوضح [حالة المشروع](../STATUS.md) الأدلة المثبتة وبوابات UI／release التي لم تُشغّل بعد.

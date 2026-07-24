@@ -12,10 +12,12 @@
 
 Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
-**Current release candidate:** `0.3.2` · 64/64 packaging cells · 64/64
-installed-runner cells · 7/7 native local plugin/extension installs verified ·
-8/8 host-native headless Skill invocations verified. Visual picker interaction
-and public marketplace listings remain separate **not-run** claims.
+**Current release:** [`0.3.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
+· [PyPI](https://pypi.org/project/portable-resume/0.3.2/) · 64/64 packaging
+cells · 64/64 installed-runner cells · 7/7 exact native local
+plugin/extension installs verified · 8/8 host-native headless Skill
+invocations verified. Visual picker interaction and public marketplace
+listings remain separate **not-run** claims.
 
 ## Sources and destinations
 
@@ -120,11 +122,12 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 `.github/workflows/ci.yml` runs those gates across Ubuntu/macOS and Python 3.11–3.14, then builds and smoke-installs the exact wheel and sdist. `.github/workflows/release.yml` accepts only annotated `vMAJOR.MINOR.PATCH` tags reachable from `main`, re-runs dual-OS gates, builds release bytes once, tests those exact bytes, creates SHA-256 checksums and GitHub attestations, stages a GitHub Release, and publishes through PyPI Trusted Publishing.
 
-Release candidate `v0.3.2` also verifies the GitHub Release layout itself: every
-`SHA256SUMS` entry is a flat asset basename, and both Ubuntu and macOS validate
-a simulated flat download before publication. After publication, the immutable
-run, commit, GitHub Release, and PyPI evidence will be archived in
-[`docs/evidence-summary.md`](docs/evidence-summary.md).
+Published release `v0.3.2` also verifies the GitHub Release layout itself:
+every `SHA256SUMS` entry is a flat asset basename, and both Ubuntu and macOS
+validate a simulated flat download before publication. The immutable
+[release run](https://github.com/ImL1s/resume-skills/actions/runs/30093776529),
+commit, public artifact checks, GitHub Release, and PyPI evidence are archived
+in [`docs/evidence-summary.md`](docs/evidence-summary.md).
 
 ## Key documentation
 

@@ -35,12 +35,12 @@ Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, and current/legacy Kim
 |---|---|
 | Local packaging matrix | 64/64 pass |
 | Installed runner matrix | 64/64 pass |
-| Native local plugin/extension installs | 7/7 pass with exact 0.3.1 release assets |
+| Native local plugin/extension installs | 7/7 pass with exact 0.3.2 release assets |
 | Host-native headless Skill invocation | 8/8 pass |
 | Visual picker interaction | not-run |
 | CI definition | Ubuntu/macOS × Python 3.11–3.14 |
-| Latest archived remote CI/release | `v0.3.1` pass; `v0.3.2` pending its immutable release run |
-| Historical release proof | `v0.3.0` and `v0.2.3` archived separately |
+| Latest archived remote CI/release | `v0.3.2` pass: main CI and 14-job release run archived |
+| Historical release proof | `v0.3.1`, `v0.3.0`, and `v0.2.3` archived separately |
 | Windows | fixture/docs only; not a stated V1 release gate |
 
 Official host references and alternate roots are linked from the machine-readable `hosts --json` output and [`install-hosts.md`](install-hosts.md).
