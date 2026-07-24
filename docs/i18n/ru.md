@@ -28,6 +28,21 @@ install-resume-skills quick-install qwen --project "$PWD"
 
 Поддерживаются Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code и Kimi Code CLI. Точные команды для Skill, extension, plugin и marketplace приведены в [руководстве по установке](../install-hosts.md). Перед доверием к plugin проверьте его содержимое и SHA-256 release.
 
+## Публичный marketplace
+
+Публичный
+[`portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
+предоставляет нативную установку для шести совместимых host:
+
+```bash
+claude plugin marketplace add ImL1s/portable-resume-marketplace
+claude plugin install portable-resume@portable-resume --scope user
+codex plugin marketplace add ImL1s/portable-resume-marketplace
+codex plugin add portable-resume@portable-resume
+```
+
+В руководстве приведены проверенные способы для Cursor, Qwen, Grok и Kimi, а также прямые варианты для Antigravity и OpenCode.
+
 ## Проверка и использование
 
 В checkout:
@@ -40,6 +55,6 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 Активируйте `resume-<source>` по правилам целевого host и заново проверьте текущий repository перед выполнением handoff.
 
-Локальная проверка host успешно выполнила 8/8 вызовов CLI; точные пакеты `0.3.2` прошли 7/7 установок поддерживаемых нативных plugin／extension. Взаимодействие с визуальным picker и публикация в открытых marketplace остаются отдельными невыполненными проверками.
+Проверка host успешно выполнила 8/8 вызовов CLI и 7/7 точных локальных установок нативных пакетов. Установка из публичного marketplace прошла на 6/6 совместимых host; marketplace picker Cursor и Kimi также проверены. Остальные визуальные Skill picker и курируемые поставщиками каталоги не заявлены как завершённые.
 
 [Статус проекта](../STATUS.md) отделяет подтверждённые результаты от ещё не запущенных UI／release-проверок.

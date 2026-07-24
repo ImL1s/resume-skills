@@ -12,8 +12,10 @@
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
 | Host-native headless Skill activation | **8/8 pass** |
-| Visual host picker activation | **not-run** |
-| Public marketplace installation | **not-run** |
+| Public marketplace installation | **6/6 compatible hosts pass** |
+| Visual marketplace picker | **Cursor and Kimi pass** |
+| Other visual Skill picker activation | **not-run** |
+| Vendor-curated directory listing | **not submitted** |
 | CI | **pass**: [Ubuntu + macOS × Python 3.11–3.14](https://github.com/ImL1s/resume-skills/actions/runs/30093652499) |
 | `v0.3.2` release workflow | **pass**: [14 jobs through GitHub Release and PyPI](https://github.com/ImL1s/resume-skills/actions/runs/30093776529) |
 | Published release | **pass**: [GitHub Release v0.3.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2) |
@@ -28,6 +30,10 @@
   Skill and ran the expected reader against a synthetic fixture.
 - All seven native plugin/extension formats accepted the exact 0.3.2 release
   archive in an isolated local install; Cursor also executed the bundled reader.
+- The independent public
+  [`portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
+  installed on Claude, Codex, Cursor, Qwen, Grok, and Kimi. Cursor and Kimi
+  were verified through their marketplace pickers.
 
 ## Corrected in 0.3.1
 
@@ -57,14 +63,17 @@
 | `v0.3.1` PyPI publication | pass | [portable-resume 0.3.1](https://pypi.org/project/portable-resume/0.3.1/) |
 | Host-native headless activation | 8/8 pass | rows in `docs/host-ui-smoke.md` |
 | Native plugin/extension install | 7/7 pass | exact 0.3.2 rows in `docs/host-ui-smoke.md` |
-| Visual picker activation | not-run | interactive picker selection evidence |
-| Public marketplace publication | not-run | public listing/install evidence |
+| Public marketplace publication/install | 6/6 compatible hosts pass | public repository plus install rows in `docs/host-ui-smoke.md` |
+| Visual marketplace picker | Cursor and Kimi pass | interactive selection rows in `docs/host-ui-smoke.md` |
+| Other visual Skill pickers | not-run | per-host interactive picker evidence |
+| Vendor-curated directory listing | not submitted | authenticated vendor submission/readback |
 | Cursor graph completeness | not claimed | upstream schema/recovery work beyond current best effort |
 
 The latest published GitHub release is
 [`v0.3.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2).
-PyPI publication is a package-distribution claim, not evidence of any host's
-public marketplace listing or visual picker activation.
+The independent public marketplace is published separately at
+[`ImL1s/portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace).
+PyPI and marketplace evidence remain distinct claims.
 
 ## Historical release evidence
 

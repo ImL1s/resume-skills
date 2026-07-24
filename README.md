@@ -16,8 +16,9 @@ Clean-room-oriented Agent Skills for migrating bounded local coding-agent contex
 · [PyPI](https://pypi.org/project/portable-resume/0.3.2/) · 64/64 packaging
 cells · 64/64 installed-runner cells · 7/7 exact native local
 plugin/extension installs verified · 8/8 host-native headless Skill
-invocations verified. Visual picker interaction and public marketplace
-listings remain separate **not-run** claims.
+invocations verified · 6/6 compatible public marketplace installs verified.
+Cursor and Kimi marketplace pickers were also exercised; other visual Skill
+picker paths remain separate **not-run** claims.
 
 ## Sources and destinations
 
@@ -57,6 +58,22 @@ or one project:
 install-resume-skills quick-install qwen
 install-resume-skills quick-install qwen --project "$PWD"
 ```
+
+For a host-native public marketplace install, add the
+[`portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace):
+
+```bash
+# Claude Code
+claude plugin marketplace add ImL1s/portable-resume-marketplace
+claude plugin install portable-resume@portable-resume --scope user
+
+# Codex
+codex plugin marketplace add ImL1s/portable-resume-marketplace
+codex plugin add portable-resume@portable-resume
+```
+
+Verified Cursor, Qwen, Grok, and Kimi commands plus direct Antigravity/OpenCode
+fallbacks are in [`docs/install-hosts.md`](docs/install-hosts.md).
 
 The lower-level transactional command remains available for previews, custom
 roots, verification, and uninstall:
@@ -144,6 +161,8 @@ in [`docs/evidence-summary.md`](docs/evidence-summary.md).
 
 Apache-2.0. This project is not affiliated with the host vendors. Do not copy `~/.grok/bundled/skills/**` into this tree.
 
-Headless slash/name activation is verified on all eight hosts. Visual picker
-interaction and public marketplace publication remain **not-run**; Cursor's
-full bubble graph is not claimed; redaction is not complete DLP.
+Headless slash/name activation is verified on all eight hosts. Public
+marketplace installation is verified on all six compatible hosts, including
+Cursor and Kimi picker flows. Other visual Skill pickers and vendor-curated
+directory listings are not claimed; Cursor's full bubble graph is not claimed;
+redaction is not complete DLP.

@@ -28,6 +28,21 @@ install-resume-skills quick-install qwen --project "$PWD"
 
 支援的目的端為 Claude Code、Codex、Cursor、OpenCode、Antigravity、Grok Build、Qwen Code、Kimi Code CLI。每個 host 的直接 Skill、extension、plugin 與 marketplace 正確指令請見[安裝指南](../install-hosts.md)。信任第三方 plugin 前，請先檢查內容與 release SHA-256。
 
+## 公開 marketplace
+
+公開的
+[`portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
+提供六個相容 host 的原生安裝方式：
+
+```bash
+claude plugin marketplace add ImL1s/portable-resume-marketplace
+claude plugin install portable-resume@portable-resume --scope user
+codex plugin marketplace add ImL1s/portable-resume-marketplace
+codex plugin add portable-resume@portable-resume
+```
+
+Cursor、Qwen、Grok、Kimi 的已驗證指令，以及 Antigravity／OpenCode 的直接安裝替代方案，請見安裝指南。
+
 ## 驗證與使用
 
 在 checkout 中執行：
@@ -40,6 +55,6 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 依目的 host 的語法啟用 `resume-<source>`，並在採取行動前重新確認目前 repository 狀態。
 
-目前的本機 host 煙霧測試已通過 8/8 個 CLI 呼叫；精確的 `0.3.2` 套件已通過 7/7 種支援的原生 plugin／extension 安裝。視覺化選擇器互動與公開 marketplace 發布仍是分開且尚未執行的證據項目。
+目前 host 煙霧測試已通過 8/8 個 CLI 呼叫與 7/7 種精確的本機原生套件安裝。公開 marketplace 安裝已通過 6/6 個相容 host，Cursor 與 Kimi 的 marketplace 選擇器也已通過。其他視覺化 Skill 選擇器與廠商精選目錄仍未宣稱完成。
 
 已驗證項目與尚未執行的 UI／release 門檻請見[專案狀態](../STATUS.md)。

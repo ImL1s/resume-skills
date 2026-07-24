@@ -47,6 +47,32 @@ plugin and executed its bundled reader; Kimi's TUI listed Portable Resume
 pass** from the recorded CLI rows. Exact commands, hashes, and proof boundaries
 are in [`host-ui-smoke.md`](host-ui-smoke.md).
 
+## Public marketplace publication: v0.3.2
+
+| Field | Evidence |
+|---|---|
+| Public repository | [`ImL1s/portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace) |
+| Publication commit | `4997715cd8f2680ab9e196ba43ec4af323a56bd1` |
+| Current marketplace commit | `3179288bb25ee96f9eb1315cca39d65821439d3d` |
+| Annotated tag | `v0.3.2`; tag object `29a583bbe6017ec3934d8504b1a5e5ae636329dc` |
+| Marketplace release | [`v0.3.2`](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.2) |
+| Initial publication CI | [marketplace run 30097511787](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30097511787); [release run 30097512849](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30097512849) |
+| Current CI / sync | [marketplace run 30099827015](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30099827015); [manual network sync 30098926042](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30098926042) |
+
+Fresh isolated installs from the public catalogs passed on all six compatible
+hosts: Claude 2.1.218, Codex 0.145.0, Cursor Agent
+2026.07.23-e383d2b, Qwen 0.20.1, Grok 0.2.111, and Kimi 0.29.1. Cursor and Kimi
+were installed through their visual marketplace pickers; all six readbacks
+confirmed the installed plugin. Version-reporting surfaces showed `0.3.2`, and
+the applicable hosts reported eight Skills. Antigravity and OpenCode have no
+compatible public catalog for this package shape and retain their
+release/direct installation paths.
+
+This proves an independently maintained public marketplace and real host
+installation. It does not prove inclusion in the vendors' curated Claude or
+Cursor directories; those authenticated submission/readback gates remain
+separate.
+
 ## Published archive: v0.3.1
 
 | Field | Evidence |
@@ -106,10 +132,11 @@ Results: **267** Python tests, **64/64** package cells, and **64/64**
 installed-reader cells passed. Fresh wheel and sdist builds also passed
 isolated 64-cell smoke.
 
-Visual picker interaction and public host marketplace installation remain
-**not-run**. Cursor's full bubble graph remains **not claimed**. PyPI
-publication and local native-package acceptance do not satisfy those separate
-host evidence gates.
+Public marketplace installation passed **6/6** compatible hosts, and the Cursor
+and Kimi marketplace pickers passed. Other visual Skill pickers and
+vendor-curated directory listings remain unclaimed. Cursor's full bubble graph
+remains **not claimed**. PyPI publication and local native-package acceptance
+remain separate evidence gates.
 
 ## Historical archive: v0.3.0
 

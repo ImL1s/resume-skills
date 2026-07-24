@@ -8,8 +8,9 @@
 | Installed runner | Installed `run_reader` list/show works on fixtures | **64/64** |
 | Native package install | Host CLI/TUI accepts the generated local plugin/extension | **7/7 tested** |
 | Host-native headless activation | Host discovers/invokes the Skill and runs its owned reader | **8/8 tested** |
-| Visual picker interaction | A human-visible picker was opened and selected | **not-run** |
-| Public marketplace install | Host installs a published listing | **not-run** |
+| Public marketplace install | Host installs a published listing | **6/6 compatible hosts tested** |
+| Visual marketplace picker | A human-visible marketplace picker was opened and selected | **Cursor and Kimi tested** |
+| Other visual Skill pickers | Host-specific Skill picker selection | **not-run** |
 
 Run the automated layer with:
 
@@ -49,9 +50,11 @@ prove non-interactive native discovery/invocation, not a visual picker click.
 
 | host | picker | result | notes | date |
 |---|---|---|---|---|
-| all | native visual Skill picker | not-run | No screenshot/interactive selection evidence is archived | 2026-07-24 |
+| cursor | `/plugin` → Marketplace → `portable-resume` → user install | pass | Installed tab showed Portable Resume 0.3.2 with eight Skills | 2026-07-24 |
+| kimi | `/plugins marketplace <catalog-url>` → Portable Resume → Trust and install | pass | `/plugins list` showed Portable Resume 0.3.2 with eight Skills | 2026-07-24 |
+| remaining hosts | native visual Skill picker | not-run | Claude, Codex, OpenCode, Antigravity, Grok, and Qwen visual Skill pickers were not exercised | 2026-07-24 |
 
-## Marketplace/plugin install evidence
+## Local native package install evidence
 
 | host | host_version | package_type | install_path_or_ui | result | artifact_sha256 | notes | date |
 |---|---|---|---|---|---|---|---|
@@ -65,10 +68,30 @@ prove non-interactive native discovery/invocation, not a visual picker click.
 
 Valid hosts: `claude`, `codex`, `cursor`, `opencode`, `antigravity`, `grok`, `qwen`, `kimi`. OpenCode has no plugin-package row because this project intentionally uses its data-only Skill surface.
 
+## Public marketplace install evidence
+
+Public catalog:
+[`ImL1s/portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace),
+publication commit `4997715cd8f2680ab9e196ba43ec4af323a56bd1`.
+
+| host | host_version | public route | result | upstream_artifact_sha256 | notes | date |
+|---|---|---|---|---|---|---|
+| claude | 2.1.218 | `claude plugin marketplace add ImL1s/portable-resume-marketplace`; install `portable-resume@portable-resume` | pass | `ef3d85aaf08e5e157cb390fa589f52f5461b20e537dccea995325fff51b01a2e` | Isolated config listed version 0.3.2 enabled | 2026-07-24 |
+| codex | 0.145.0 | `codex plugin marketplace add ImL1s/portable-resume-marketplace`; add `portable-resume@portable-resume` | pass | `70d15c769f647ffa74dcfb694313c98a297ffc48077b6fa5ba12297834bce446` | Isolated `CODEX_HOME` listed version 0.3.2 enabled | 2026-07-24 |
+| cursor | 2026.07.23-e383d2b | public Git marketplace; `/plugin` picker | pass | `efd1befeb5b7f40965e77b7b1c47a48bab813c6f6b89df4a63e4206347075724` | Installed tab showed the marketplace name and eight Skills | 2026-07-24 |
+| qwen | 0.20.1 | public extension source; `extensions install ...:portable-resume` | pass | `7667180e708f831be15f3a4b56fb3c585c0cddcb2058836c774e77c3d1df2000` | Isolated home listed version 0.3.2 and eight Skills | 2026-07-24 |
+| grok | 0.2.111 | public marketplace; install `portable-resume@portable-resume-marketplace --trust` | pass | `ccbe3ac70bebb19ce135aa6b3878be7ef232eb54b582e62b146ca60b309a8083` | Isolated `GROK_HOME` listed the installed plugin | 2026-07-24 |
+| kimi | 0.29.1 | public JSON catalog; TUI Trust and install | pass | `4b85bf855022411b8a94c727c26ad4f2536c6e9487eff6faee404dc99b119f5b` | Managed install records the exact 0.3.2 GitHub Release ZIP; list showed eight Skills | 2026-07-24 |
+
+Antigravity and OpenCode have no compatible public catalog for this package
+shape, so their published release/direct routes remain the supported paths.
+The public repository is an independently maintained marketplace. A listing in
+a vendor-curated Claude or Cursor directory is not claimed.
+
 ## Policy
 
 Local CLI/TUI installation proves only that the native host accepted the local
-archive. It does not prove publication in a public marketplace or
-visual picker activation. Keep those claims at `not-run` until their own
-evidence rows exist. A green 64-cell filesystem/runner matrix is not evidence
-that a host picker or public marketplace worked.
+archive. Public marketplace and visual picker claims require their own rows;
+the six public installation rows and two picker rows above satisfy only those
+scoped claims. A green 64-cell filesystem/runner matrix is not substitute
+evidence for a host picker, a public catalog, or a vendor-curated directory.

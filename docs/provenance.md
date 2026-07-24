@@ -32,9 +32,10 @@ Product sources, tests, and fixtures in this repository:
 - do not invoke source agent CLIs as recovery backends.
 
 This attestation covers **deterministic packaging and reader behavior**. It
-does **not** claim visual picker completeness. Headless host invocation, local native
-package installation, and dual-OS release evidence are recorded separately in
-`docs/host-ui-smoke.md` and `docs/evidence-summary.md`.
+does **not** claim visual picker completeness. Headless host invocation,
+local/native and public marketplace installation, scoped picker checks, and
+dual-OS release evidence are recorded separately in `docs/host-ui-smoke.md`
+and `docs/evidence-summary.md`.
 
 ## Fixture policy
 

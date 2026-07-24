@@ -28,6 +28,22 @@ install-resume-skills quick-install qwen --project "$PWD"
 
 The supported destinations are Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, and Kimi Code CLI. Exact direct-Skill, extension, plugin, and marketplace commands are in the [host installation guide](../install-hosts.md). Inspect third-party plugin archives and verify release checksums before trusting them.
 
+## Public marketplace
+
+The public
+[`portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
+provides host-native installation for six compatible hosts:
+
+```bash
+claude plugin marketplace add ImL1s/portable-resume-marketplace
+claude plugin install portable-resume@portable-resume --scope user
+codex plugin marketplace add ImL1s/portable-resume-marketplace
+codex plugin add portable-resume@portable-resume
+```
+
+The host guide contains the verified Cursor, Qwen, Grok, and Kimi routes plus
+direct Antigravity/OpenCode fallbacks.
+
 ## Verify and use
 
 From a checkout:
@@ -40,9 +56,9 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 Activate `resume-<source>` using the destination host’s documented grammar. Re-check the current repository before acting on a handoff.
 
-Current local host smoke passed 8/8 CLI invocations; the exact `0.3.2`
-packages passed 7/7 supported native plugin/extension installations. Visual
-picker interaction and public marketplace publication remain separate not-run
-claims.
+Current host smoke passed 8/8 CLI invocations and 7/7 exact local native
+package installs. Public marketplace installation passed 6/6 compatible
+hosts; Cursor and Kimi marketplace pickers also passed. Other visual Skill
+pickers and vendor-curated directories remain unclaimed.
 
 See [project status](../STATUS.md) for verified claims and explicit not-run UI/release gates.
