@@ -11,6 +11,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from portable_resume.diagnostics import SOURCE_KEYS
+from portable_resume.install.catalog import HOST_KEYS
+
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -38,8 +41,11 @@ class RelocatedBundleTests(unittest.TestCase):
             report = json.loads(completed.stdout)
             self.assertTrue(report["ok"])
             self.assertEqual(report["sources"], sorted(report["sources"]))
-            self.assertEqual(len(report["sources"]), 6)
-            self.assertEqual(report["matrix"]["cell_count"], 36)
+            self.assertEqual(len(report["sources"]), len(SOURCE_KEYS))
+            self.assertEqual(
+                report["matrix"]["cell_count"],
+                len(HOST_KEYS) * len(SOURCE_KEYS),
+            )
 
             project = Path(temporary) / "proj"
             project.mkdir()

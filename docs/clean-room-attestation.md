@@ -1,22 +1,23 @@
 # Allowed references and clean-room attestation
 
-## Allowed reference manifest (public)
+## Allowed public references
 
-- `docs/*` shipped with this repository (STATUS, host-support, provenance, source-formats, evidence-summary)
-- Official public host documentation for Agent Skills roots and frontmatter
-- `https://github.com/xai-org/grok-build` tracked Apache-2.0 source only (behavioral reference)
-- Synthetic data created specifically inside this repository's tests
+- Repository documentation and independently authored synthetic fixtures.
+- Official host documentation for Agent Skills, plugins, MCP, and data locations.
+- Public open-source trees at recorded immutable commits, including Qwen Code, current/legacy Kimi CLI, Cursor plugins, Codex, and Apache-2.0 Grok Build.
 
-Local planning notes (if present on a developer machine under private directories) may inform requirements but are **not** required to build, test, or use this package and are not shipped.
+These references are used to understand formats and public interfaces; vendor code or transcript content is not copied into fixtures.
 
-## Explicit exclusion
+## Explicit exclusions
 
-`~/.grok/bundled/skills/**`, all real user session stores, private exports, credentials, and copied vendor transcript content are excluded from product code and fixtures.
+`~/.grok/bundled/skills/**`, real user session stores, private exports, credentials, developer home paths, and copied vendor transcripts are excluded from product code and fixtures.
 
-## Attestation (scoped)
+## Scoped attestation
 
-**Scope:** foundation, six source adapters, packaging/installer, and deterministic test suites in this repository.
+Scope: shared core, eight source adapters, eight destination profiles, installer/package builders, and deterministic tests in this repository.
 
-Product sources and fixtures do **not** contain copied installed-bundle skill bodies. Implementation is a compatibility reimplementation of documented behavior, not a redistribution of untracked installed readers.
+Product sources and fixtures are compatibility implementations over public shapes. Readers produce inert, untrusted handoffs for a fresh session; they do not restore a live process, invoke source CLIs, or add a network path. Qwen/Kimi web and Context7 use is optional destination-host behavior and is not part of the reader.
 
-This statement makes no live-host UI activation claim and no dual-OS release claim (see `docs/STATUS.md`).
+The product sources and synthetic fixtures do **not** contain copied installed-bundle content or real vendor transcripts.
+
+This statement does not claim host UI activation, marketplace UI installation, a complete Cursor bubble graph, or a 0.3.0 dual-OS release until their separate evidence gates are satisfied.

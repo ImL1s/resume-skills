@@ -1,0 +1,41 @@
+<!-- portable-resume-i18n: ru v0.3.0 -->
+# Portable Resume — краткое руководство на русском
+
+Portable Resume переносит ограниченный локальный контекст из Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen или Kimi в **новую** сессию программного агента. Это не восстановление работающего процесса или сессии. Читатели работают без сети, используют только стандартную библиотеку Python, никогда не запускают исходный CLI и помечают восстановленный текст как инертный и недоверенный.
+
+## Установка
+
+Требуется Python 3.11+. После публикации в PyPI:
+
+```bash
+pipx install portable-resume
+install-resume-skills quick-install qwen
+```
+
+Из checkout используйте `pipx install .`. Установка всех восьми целевых host в пользовательские каталоги:
+
+```bash
+install-resume-skills quick-install all
+```
+
+Установка Qwen только для текущего проекта:
+
+```bash
+install-resume-skills quick-install qwen --project "$PWD"
+```
+
+Поддерживаются Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code и Kimi Code CLI. Точные команды для Skill, extension, plugin и marketplace приведены в [руководстве по установке](../install-hosts.md). Перед доверием к plugin проверьте его содержимое и SHA-256 release.
+
+## Проверка и использование
+
+В checkout:
+
+```bash
+python3 scripts/self_verify.py
+python3 scripts/check_secrets.py
+PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
+```
+
+Активируйте `resume-<source>` по правилам целевого host и заново проверьте текущий repository перед выполнением handoff.
+
+Необязательные веб-поиск и Context7 описаны в [сетевых интеграциях](../network-integrations.md); сам reader остаётся офлайн. [Статус проекта](../STATUS.md) отделяет подтверждённые результаты от ещё не запущенных UI／release-проверок.

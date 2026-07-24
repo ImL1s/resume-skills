@@ -27,6 +27,9 @@ def main() -> int:
     print("repo", REPO)
     c = run([sys.executable, "-m", "compileall", "-q", "src", "scripts", "tests"])
     print("compileall", c.returncode)
+    d = run([sys.executable, str(REPO / "scripts" / "check_docs.py"), "--json"])
+    print(d.stdout.strip())
+    print("docs", d.returncode)
     t = run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"])
     print((t.stderr or t.stdout)[-400:])
     print("unittest", t.returncode)
@@ -79,6 +82,7 @@ def main() -> int:
         x == 0
         for x in (
             c.returncode,
+            d.returncode,
             t.returncode,
             s.returncode,
             m.returncode,

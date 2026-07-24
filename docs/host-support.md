@@ -1,78 +1,42 @@
 # Host support matrix
 
-Status: packaging roots match `src/portable_resume/install/catalog.py` (2026-07-20).  
-**Full install methods, alternate roots, and activation examples:** [`docs/install-hosts.md`](install-hosts.md)  
-CLI: `PYTHONPATH=src python3 scripts/install-resume-skills hosts [--json]`
+Status date: **2026-07-24**. Installer truth lives in `src/portable_resume/install/catalog.py`; detailed commands are in [`install-hosts.md`](install-hosts.md).
 
-Activation text below is **documented / planning-era guidance**, not a live host smoke. Re-verify against current host docs when upgrading.
+## Evidence levels
 
-Evidence levels:
+- **`verified-filesystem`:** deterministic render, transactional install/verify, and installed-reader smoke.
+- **partial live source:** adapters parse synthetic fixtures and bounded local store shapes; vendor formats may change.
+- **`not-run`:** no real host UI/picker activation evidence is recorded.
 
-| Level | Meaning |
+## Destination profiles
+
+| Profile | Project root | User root | Primary activation | Package route | UI |
+|---|---|---|---|---|---|
+| `claude-v1` | `.claude/skills` | `~/.claude/skills` | `/resume-<source>` | direct + Claude marketplace | `not-run` |
+| `codex-v1` | `.agents/skills` | `~/.agents/skills` | `$resume-<source>` | direct + Codex marketplace | `not-run` |
+| `cursor-v1` | `.cursor/skills` | `~/.cursor/skills` | `/resume-<source>` | direct + Cursor marketplace | `not-run` |
+| `opencode-v1` | `.opencode/skills` | `~/.config/opencode/skills` | model loads Skill by name | direct only | `not-run` |
+| `antigravity-v1` | `.agents/skills` | `~/.gemini/config/skills` | name mention | direct + plugin | `not-run` |
+| `grok-v1` | `.grok/skills` | `~/.grok/skills` | `/resume-<source>` | direct + plugin | `not-run` |
+| `qwen-v1` | `.qwen/skills` | `~/.qwen/skills` | `/resume-<source>` | direct + Qwen extension | `not-run` |
+| `kimi-code-v1` | `.kimi-code/skills` | `$KIMI_CODE_HOME/skills` | `/skill:resume-<source>` | direct + Kimi plugin | `not-run` |
+
+Every profile packages all eight source readers. The portable Skill frontmatter contains only `name` and `description`; host invocation text is model context, not automatic process argv.
+
+## Source adapters
+
+Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, and current/legacy Kimi stores have fixture/parser coverage. Live store support is intentionally bounded and fail-closed. Cursor Desktop full bubble graph remains **not claimed**.
+
+## Platform and release scope
+
+| Layer | Current status |
 |---|---|
-| `verified-filesystem` | Roots/frontmatter/render/install/verify proven by deterministic harness |
-| `verified-live` | Installed host version actually discovered the skill and completed request→handoff in the host UI |
-| `partial` | Some providers or scopes work; gaps recorded |
-| `unsupported` | Not claimed |
-| `not-run` | Live smoke not executed |
+| Local packaging matrix | 64/64 pass |
+| Installed runner matrix | 64/64 pass |
+| Native local plugin/extension installs | 6/7 pass; Cursor live load not-run |
+| CI definition | Ubuntu/macOS × Python 3.11–3.14 |
+| `v0.3.0` remote CI/release | not-run until a tag is pushed |
+| Historical release proof | `v0.2.3` archived separately |
+| Windows | fixture/docs only; not a stated V1 release gate |
 
-## Profiles
-
-| Profile | Project root (installer default) | Global root (installer default) | Notes / alternate roots | Activation (documented guidance) | Packaging | Live UI |
-|---|---|---|---|---|---|---|
-| `claude-v1` | `<project>/.claude/skills` | `~/.claude/skills` | Nested monorepo + plugins | `/resume-<source> ...`; `$ARGUMENTS` is prompt substitution only | `verified-filesystem` (install/verify; request-file runner unit/e2e — **not** live UI) | `not-run` |
-| `codex-v1` | `<project>/.agents/skills` | `~/.agents/skills` | Admin `/etc/codex/skills` via `--root`; some setups also use `~/.codex/skills` (not default) | `$resume-<source>` + labeled text; no skill argv API claimed | `verified-filesystem` (use distinct `--root` if sharing with antigravity) | `not-run` |
-| `cursor-v1` | `<project>/.cursor/skills` | `~/.cursor/skills` | **Also first-class:** `.agents/skills` + `~/.agents/skills`; compat `.claude`/`.codex` | explicit `/resume-<source>` + labels; no promised tail→argv | `verified-filesystem` (primary = native `.cursor/skills`, not sole official root) | `not-run` |
-| `opencode-v1` | `<project>/.opencode/skills` | `~/.config/opencode/skills` | Compat: `.claude/skills`, `.agents/skills` (+ home). **Caveat:** some builds may only discover compat roots — confirm | model `skill({name})` + labels; custom commands are a separate surface | `verified-filesystem` (directory packaging only) | `not-run` |
-| `antigravity-v1` | `<project>/.agents/skills` | `~/.gemini/config/skills` | Legacy `.agent/skills`; multi-flavor globals (`~/.gemini/skills`, antigravity-cli paths) differ — prefer `config/skills` for global | name mention; `/skills` lists skills — do not invent slash argv grammar | `verified-filesystem` (distinct root when conflicting with codex) | `not-run` |
-| `grok-v1` | `<project>/.grok/skills` | `~/.grok/skills` | Also `.agents`, Claude/Cursor compat, plugins, `[skills].paths` | `/resume-<source> ...`; `$ARGUMENTS` prompt-only (user-guide + source-verified) | `verified-filesystem` | `not-run` |
-
-Portable frontmatter for all profiles: only `name` + `description` in the core skill body.
-
-## Install one-liners
-
-```bash
-# List every host's roots + methods
-PYTHONPATH=src python3 scripts/install-resume-skills hosts
-
-# Examples
-PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host claude --scope project --project "$PWD" --json
-PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host codex --scope project --project "$PWD" \
-  --root "$PWD/.agents/skills-codex" --json   # avoid antigravity clash
-PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host cursor --scope global --json
-PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host opencode --scope project --project "$PWD" --json
-PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host antigravity --scope global --json
-PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host grok --scope project --project "$PWD" --json
-```
-
-See [`install-hosts.md`](install-hosts.md) for official docs links, alternate roots, and activation examples per host.
-
-## Shared-root note
-
-Codex project/global `.agents/skills` and Antigravity project `.agents/skills` can resolve to the same path. Host-specific skill bodies are not byte-identical, so the installer returns `E_INSTALL_CONFLICT` unless an explicit distinct root is chosen or renders are made identical.
-
-## Official evidence
-
-Public product documentation for Agent Skills and each host’s skills pages informed the roots/activation guidance (Claude, Codex Build skills, Cursor skills, OpenCode skills, Antigravity skills, Grok user-guide). Local planning extracts are **not shipped** with this repository. Re-check upstream docs when host versions change. Multi-agent audit notes: `docs/audit-host-docs-evidence.md`.
-
-## Platform runners
-
-| OS | Deterministic gate | Notes |
-|---|---|---|
-| macOS (darwin) | Local + CI (`macos-latest`) | Primary development host |
-| Linux | CI (`ubuntu-latest`) runs the same unittest/self-check/matrix gates | CI green ≠ archived dual-OS **release** claim if you need offline artifacts |
-| Windows | Fixture/docs only | Not a V1 release blocker for this project’s stated scope |
-
-Live interactive host UI walks remain `not-run`.
-
-## Related
-
-- `docs/install-hosts.md` — **per-host install methods (canonical)**
-- `docs/STATUS.md` — done / not-done gates  
-- `docs/evidence-summary.md` — public evidence notes  
+Official host references and alternate roots are linked from the machine-readable `hosts --json` output and [`install-hosts.md`](install-hosts.md).

@@ -6,6 +6,10 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+build/
+dist/
+*.egg-info/
+host-packages/
 .DS_Store
 *.swp
 *~
@@ -25,3 +29,5 @@ htmlcov/
 .cursor/skills/resume-*/
 .agents/skills/resume-*/
 .opencode/skills/resume-*/
+.qwen/skills/resume-*/
+.kimi-code/skills/resume-*/

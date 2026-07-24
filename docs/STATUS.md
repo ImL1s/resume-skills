@@ -1,90 +1,54 @@
-# Project status (2026-07-22)
+# Project status (2026-07-24)
 
-## Maturity snapshot
+## Current tree: 0.3.0 local release candidate
 
 | Gate | Status |
 |---|---|
-| Version | **0.2.3** experimental |
-| Packaging cells | **36/36** |
-| Source live list/show | **partial** (all six sources) |
-| Installed skill runner smoke | **36/36** (`scripts/smoke_installed_matrix.py`) |
-| Host UI NL / picker activation | **not-run** |
-| Dual-OS CI | **green** (Ubuntu + macOS × Python 3.11/3.12) |
-| Dual-OS **release claim** | **claimed** for v0.2.3 SHA with archived Actions run |
-| Cursor full bubble graph | **not claimed** (multi-turn composerData best-effort) |
+| Source adapters | 8: Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi |
+| Destination profiles | 8 |
+| Packaging matrix | **64/64 pass locally** |
+| Installed runner matrix | **64/64 pass locally** |
+| Python test suite | **264 pass locally** |
+| Wheel + sdist smoke | **pass outside checkout**, including verified quick-install |
+| Native local plugin/extension install | **6/7 pass**; Cursor live load not-run |
+| Host UI / picker activation | **not-run** |
+| Public marketplace installation | **not-run** |
+| CI definition | Ubuntu + macOS × Python 3.11–3.14 |
+| `v0.3.0` release workflow | implemented locally; **not-run remotely** |
+| Cursor full bubble graph | **not claimed** |
 
-## What is done (deterministic bar)
+## Implemented in 0.3.0
 
-| Area | Status | Evidence |
+- Qwen Code chat/archive reader and current/legacy Kimi session readers.
+- Eight-host transactional installer with trusted verification, no-follow reads, rollback recovery, and cross-root compensation.
+- Explicit installed-runtime allowlist and packaged schema.
+- Deterministic eight direct Skill archives plus seven plugin/marketplace archives.
+- CI gates, exact wheel/sdist smoke, annotated-tag release validation, checksums, artifact attestations, staged GitHub Release, and PyPI Trusted Publishing.
+- Optional host-side web/Context7 guidance; the reader remains offline.
+
+## Honest open gates
+
+| Area | Status | Required evidence |
 |---|---|---|
-| Six source adapters | **done** | `src/portable_resume/adapters/*`, fixtures, unittests |
-| Shared core | **done** | sanitize, snapshot, handoff, request-v1, select |
-| 36-cell packaging matrix | **done** | `install-resume-skills matrix --json` |
-| Source live list/show (six) | **partial live** | STATUS parity table + CHANGELOG 0.2.0/0.2.1 |
-| Installer transaction | **done** | path containment, orphan journal, no-follow hash/backup |
-| Installed runner 36-cell smoke | **done** | `scripts/smoke_installed_matrix.py` → 36/36 |
-| Source CLI isolation | **done** | `tests/security/*` |
-| Public-tree secret gate | **done** | `scripts/check_secrets.py` |
-| CI dual-OS + dual-Python | **done** | `.github/workflows/ci.yml` |
-| Improve-deep hardening (001–025) | **done** | `plans/README.md`, commits `690b7d5`…`2245516`+ |
+| Current local release gates | pass | four canonical commands, 2026-07-24 |
+| `v0.3.0` dual-OS release | not-run | tagged Actions URL + immutable SHA + successful release jobs |
+| PyPI publication | not-run | protected `pypi` environment + Trusted Publisher + published project URL |
+| Host activation | not-run | rows in `docs/host-ui-smoke.md` |
+| Cursor native plugin load | not-run | accepted local package in current Cursor host |
+| Public marketplace publication | not-run | public listing/install evidence |
+| Cursor graph completeness | not claimed | upstream schema/recovery work beyond current best effort |
 
-## What is not done (honest)
+## Historical release evidence
 
-| Area | Status | Notes |
-|---|---|---|
-| Live host UI NL activation (36 cells) | **not-run** | Installed `run_reader` smoke ≠ host slash-command / picker activation inside Claude/Cursor/etc. |
-| Cursor full bubble graph | **not claimed** | Desktop may recover multi-turn text from `composerData`; parent/bubble graph incomplete (`W_MISSING_BLOB`) |
-| PyPI CD / auto-publish | **not yet** | `pyproject.toml` exists; no auto-release pipeline |
-| Full PRD “V1 complete” | **no** | Needs host UI NL evidence for primary hosts |
+`v0.2.3` remains an archived historical claim only: SHA `5ff9eba503e28971e5044015cd0666c2807a3d89`, [Actions run 29890453185](https://github.com/ImL1s/resume-skills/actions/runs/29890453185), Ubuntu/macOS × Python 3.11/3.12. It does not prove the 0.3.0 changes.
 
-## Dual-OS release claim
-
-| Field | Value |
-|---|---|
-| Status | **claimed** (CI archive) |
-| Tag / SHA | `v0.2.3` / `5ff9eba` |
-| Actions run | https://github.com/ImL1s/resume-skills/actions/runs/29890453185 |
-| Jobs green | `ubuntu-latest` py3.11 + py3.12; `macos-latest` py3.11 + py3.12 |
-| Local gates | `self_verify` + `check_secrets` + 211 unittests + `smoke_installed_matrix` |
-| Policy | See `docs/release-claim.md` — re-claim each tag |
-
-## Source live parity
-
-| Area | Status | Notes |
-|---|---|---|
-| Skill UX (show/list argv) | **done** | Grok-style; request-v1 optional |
-| Claude | **partial live** | bounded metadata windows; stable private snapshot; ≤50k-line streaming graph; semantic replay + primary cwd |
-| Codex | **partial live** | SQLite superset, large-DB query-only, cwd-scoped list |
-| Grok | **partial live** | mtime-ranked discovery, coalesce cap, skip co-located files |
-| OpenCode | **partial live** | multi-GiB query-only live SQLite |
-| Antigravity | **partial live** | no-index + index mtime rank, USER_INPUT/PLANNER_RESPONSE |
-| Cursor CLI | **partial live** | store.db + meta stable-read, blob ORDER BY, latest by updatedAt |
-| Cursor Desktop | **partial live** | composerHeaders list; composerData multi-turn best-effort |
-| Host UI NL activation | **not-run** | unchanged product gate |
-
-## How to re-verify
+## Required local verification
 
 ```bash
 python3 scripts/self_verify.py
 python3 scripts/check_secrets.py
+PYTHONPATH=src python3 -m unittest discover -s tests -q
 PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
-## CI/CD
-
-| Layer | Status |
-|---|---|
-| **CI** | Ubuntu + macOS; Python 3.11 + 3.12 |
-| **CD** | No PyPI auto-release |
-
-## Related docs
-
-- `docs/evidence-summary.md` — public verification + dual-OS archive links
-- `docs/host-ui-smoke.md` — NL host activation protocol (still open)
-- `docs/release-claim.md` — dual-OS claim checklist
-- `docs/install-hosts.md` — per-host install paths
-- `docs/source-formats.md` — format IDs + provenance anchors
-- `docs/research/cursor-bubble-schema.md` — bubble graph residual
-- `plans/README.md` — improve-deep plan index
-- `AGENTS.md` — agent contributor rules
-- `SECURITY.md` / `CONTRIBUTING.md`
+See [`evidence-summary.md`](evidence-summary.md), [`release-claim.md`](release-claim.md), and [`host-ui-smoke.md`](host-ui-smoke.md) for proof boundaries.

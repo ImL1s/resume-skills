@@ -6,41 +6,91 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: test (${{ matrix.os }} / py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Compile
-        run: python -m compileall -q src scripts tests
+      - name: Self verify
+        run: python scripts/self_verify.py
 
-      - name: Secret / path gate
+      - name: Multilingual documentation consistency
+        run: python scripts/check_docs.py
+
+      - name: Secret and path gate
         run: python scripts/check_secrets.py
 
-      - name: Unit tests
+      - name: Unit and integration tests
         env:
           PYTHONPATH: src
         run: python -m unittest discover -s tests -q
 
-      - name: Self-check + matrix
+      - name: Installed runner matrix
         env:
           PYTHONPATH: src
-        run: |
-          python scripts/portable-resume self-check --json
-          python scripts/install-resume-skills matrix --json
+        run: python scripts/smoke_installed_matrix.py
 
-      - name: Self verify
-        run: python scripts/self_verify.py
+  package:
+    name: build and smoke distributions
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install isolated release tooling
+        run: python -m pip install --disable-pip-version-check build==1.5.0 twine==6.2.0
+
+      - name: Build wheel and sdist
+        run: |
+          python -m build
+          python -m twine check dist/*
+
+      - name: Smoke exact distributions
+        run: |
+          VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          python scripts/smoke_distribution.py --dist-dir dist --version "$VERSION"
+
+      - name: Build deterministic host packages
+        run: python scripts/build_host_packages.py --output-dir host-packages
+
+      - name: Upload CI package evidence
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: ci-package-evidence
+          path: |
+            dist/*
+            host-packages/*
+          if-no-files-found: error
+          retention-days: 14

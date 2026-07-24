@@ -196,12 +196,20 @@ class AntigravityAdapter:
             return []
         if not is_within(brain, root):
             return []
+        names: list[str] = []
         try:
-            names = sorted(os.listdir(brain))
+            with os.scandir(brain) as entries:
+                for entry in entries:
+                    if len(names) >= DEFAULT_BOUNDS.scanned_records:
+                        # Returning a lexical prefix would make "latest"
+                        # silently depend on directory order.
+                        raise DiagnosticError.limit_exceeded()
+                    names.append(entry.name)
+        except DiagnosticError:
+            raise
         except OSError as error:
             raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
-        # Cap name scan without hard-failing large live brain trees.
-        names = names[: DEFAULT_BOUNDS.scanned_records]
+        names.sort()
         paths: list[str] = []
         for name in names:
             if name in {".", "..", "index.json"}:
@@ -215,8 +223,6 @@ class AntigravityAdapter:
                 continue
             if os.path.isfile(path):
                 paths.append(path)
-                if len(paths) >= DEFAULT_BOUNDS.scanned_records:
-                    break
         # Newest transcript first so list/latest is not directory-name order.
         def _mtime_key(p: str) -> float:
             try:

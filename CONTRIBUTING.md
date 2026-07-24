@@ -1,49 +1,38 @@
 # Contributing
 
-Thanks for helping improve portable-resume-skills.
+## Environment and layout
 
-## Environment
+Use Python 3.11+; the product runtime is stdlib-only. Core code is under `src/portable_resume/`, adapters under `src/portable_resume/adapters/`, installer code under `src/portable_resume/install/`, wrappers under `scripts/`, and tests/fixtures under `tests/`.
 
-- Python 3.11+ recommended (stdlib only; no third-party runtime deps).
-- macOS and Linux are the primary development targets.
+## Required checks
 
-## Before you open a PR
+Run all four before opening a pull request:
 
 ```bash
 python3 scripts/self_verify.py
 python3 scripts/check_secrets.py
-```
-
-Or:
-
-```bash
-python3 -m compileall -q src scripts tests
 PYTHONPATH=src python3 -m unittest discover -s tests -q
+PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
-CI will also run these on pull requests (Ubuntu + macOS).
-## Fixture rules
+For packaging/release changes, also build wheel/sdist, run `scripts/smoke_distribution.py`, and build host archives with `scripts/build_host_packages.py` in a temporary output directory.
 
-- Every adapter fixture directory needs a `fixture.json` with `"synthetic": true`.
-- Use `tests/helpers/fixture_manifest.py` validation patterns.
-- **Forbidden in fixtures and product code:**
-  - Real user transcripts
-  - Credentials / API keys
-  - Absolute developer home directory paths
-  - Any content copied from `~/.grok/bundled/skills/**`
+Run `python3 scripts/check_docs.py` after changing installation, version, host,
+or release guidance. It enforces all 12 localized quick-start files, canonical
+commands, host coverage, reference links, and version markers.
 
-## Documentation honesty
+## Code and fixture rules
 
-- Do not mark host rows as live-verified without real activation smoke evidence (`docs/host-support.md`).
-- Do not claim dual-OS release completeness without archived Linux + macOS green runs.
-- Prefer `docs/evidence-summary.md` for public evidence; do not commit local agent research logs (ignored under `.omc/research/`).
+- Use four-space Python indentation, type hints, `snake_case` functions/modules, and `PascalCase` classes.
+- Prefer existing bounds, stable-read, diagnostics, and transaction helpers; add no runtime dependency without explicit project approval.
+- Never invoke a source-agent CLI or mutate a source store.
+- Every fixture manifest must have `"synthetic": true`, a registered `format_id`, and a `docs/source-formats.md` provenance anchor.
+- Never commit real transcripts, credentials, absolute developer home paths, or content from `~/.grok/bundled/skills/**`.
 
-## Code style
+## Tests and documentation
 
-- Keep the reader process free of source-agent CLI invocation.
-- Prefer fail-closed diagnostics with stable error codes.
-- Keep diffs small and reviewable.
+Name unittest files `test_*.py` and methods `test_*`. Add focused parser/security tests before widening an adapter. Keep filesystem, installed-runner, host UI, marketplace, and remote-release claims separate; update `docs/STATUS.md` only with fresh evidence.
 
-## License
+## Commits and pull requests
 
-By contributing, you agree your contributions are licensed under Apache-2.0 (see `LICENSE`).
+Follow the existing imperative, scoped history style (for example, `fix: contain plugin install paths` or `docs: record release evidence`). Keep commits reviewable. Pull requests should explain behavior and security impact, list exact checks, link issues when applicable, and include UI screenshots only for real host-UI changes.

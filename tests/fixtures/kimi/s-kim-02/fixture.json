@@ -1,0 +1,10 @@
+{
+  "case": "s-kim-02",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "kimi-legacy-context-jsonl-v1",
+  "provenance_ref": "docs/source-formats.md#kimi-kimi-legacy-context-jsonl-v1",
+  "source": "kimi",
+  "synthetic": true
+}

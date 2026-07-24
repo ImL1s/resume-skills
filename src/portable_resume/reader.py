@@ -28,7 +28,11 @@ class DiagnosticArgumentParser(argparse.ArgumentParser):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = DiagnosticArgumentParser(prog="portable-resume", description="Read inert local session context without invoking a source CLI.")
-    parser.add_argument("source", nargs="?", help="claude|codex|cursor|opencode|antigravity|grok")
+    parser.add_argument(
+        "source",
+        nargs="?",
+        help="one of: " + "|".join(sorted(SOURCE_KEYS)),
+    )
     parser.add_argument("action", nargs="?", help="list|show")
     parser.add_argument("ref", nargs="?", help="latest, exact ID, approved exact path, or bounded text")
     parser.add_argument("--cwd")
@@ -159,13 +163,19 @@ def self_check(*, stdout: Any = sys.stdout) -> int:
             "cell_count": matrix.get("cell_count"),
             "expected": matrix.get("expected"),
         }
-        if not matrix.get("ok") or matrix.get("cell_count") != 36:
+        if (
+            not matrix.get("ok")
+            or matrix.get("cell_count") != matrix.get("expected")
+        ):
             report["ok"] = False
     except Exception as error:  # noqa: BLE001
         report["ok"] = False
         report["matrix"] = {"ok": False, "error": type(error).__name__}
-    schema_path = os.path.join(os.path.dirname(__file__), "..", "..", "schemas", "portable-resume-v1.schema.json")
-    schema_path = os.path.realpath(schema_path)
+    schema_path = os.path.join(
+        os.path.dirname(__file__),
+        "resources",
+        "portable-resume-v1.schema.json",
+    )
     if not os.path.isfile(schema_path):
         report["ok"] = False
         report["warnings"].append("W_SCHEMA_MISSING")

@@ -1,0 +1,327 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing annotated vMAJOR.MINOR.PATCH tag
+        required: true
+        type: string
+      publish_pypi:
+        description: Publish through the protected PyPI environment
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  validate:
+    name: validate annotated release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Fetch protected main reference
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Validate tag, versions, changelog, and ancestry
+        run: python scripts/check_release.py --tag "$RELEASE_TAG" --require-git --json
+
+      - name: Export immutable version
+        id: metadata
+        shell: bash
+        run: echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: release gates (${{ matrix.os }} / py${{ matrix.python-version }})
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.14"]
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Canonical release gates
+        env:
+          PYTHONPATH: src
+        run: |
+          python scripts/self_verify.py
+          python scripts/check_docs.py
+          python scripts/check_secrets.py
+          python -m unittest discover -s tests -q
+          python scripts/smoke_installed_matrix.py
+
+  build:
+    name: build release bytes once
+    needs: [validate, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install isolated release tooling
+        run: python -m pip install --disable-pip-version-check build==1.5.0 twine==6.2.0
+
+      - name: Build Python and host artifacts
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          python -m build
+          python -m twine check dist/*
+          mkdir -p release-assets
+          python scripts/build_host_packages.py \
+            --output-dir release-assets/hosts \
+            --json > release-assets/host-packages-build.json
+
+      - name: Generate release evidence
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          paths = sorted(
+              [
+                  *Path("dist").glob("*"),
+                  *Path("release-assets/hosts").glob("*"),
+                  Path("release-assets/host-packages-build.json"),
+              ]
+          )
+          evidence = {
+              "schema_version": "portable-resume/release-evidence-v1",
+              "tag": os.environ["RELEASE_TAG"],
+              "version": os.environ["RELEASE_VERSION"],
+              "commit_sha": subprocess.check_output(
+                  ["git", "rev-parse", "HEAD"], text=True
+              ).strip(),
+              "actions_run": (
+                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/"
+                  f"runs/{os.environ['GITHUB_RUN_ID']}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}"
+              ),
+              "verified_os": ["ubuntu-latest", "macos-latest"],
+              "verified_python": ["3.11", "3.14"],
+              "packaging_cells": 64,
+              "installed_runner_cells": 64,
+              "host_ui_nl": "not-run",
+              "marketplace_ui_install": "not-run",
+              "cursor_full_graph": "not-claimed",
+              "artifacts": [
+                  {
+                      "path": path.as_posix(),
+                      "size": path.stat().st_size,
+                      "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                  }
+                  for path in paths
+                  if path.is_file()
+              ],
+          }
+          Path("release-assets/release-evidence.json").write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+        shell: bash
+
+      - name: Write release checksums
+        shell: bash
+        run: |
+          {
+            find dist release-assets/hosts -type f -print0
+            printf '%s\0' \
+              release-assets/host-packages-build.json \
+              release-assets/release-evidence.json
+          } \
+            | sort -z \
+            | xargs -0 sha256sum > release-assets/SHA256SUMS
+
+      - name: Upload immutable release candidate
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: release-candidate
+          path: |
+            dist/*
+            release-assets/**
+          if-no-files-found: error
+          retention-days: 30
+
+  distribution-smoke:
+    name: exact distribution (${{ matrix.os }} / py${{ matrix.python-version }})
+    needs: [validate, build]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.14"]
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Download exact release candidate
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: release-candidate
+          path: .
+
+      - name: Install and smoke wheel and sdist
+        run: >-
+          python scripts/smoke_distribution.py
+          --dist-dir dist
+          --version "${{ needs.validate.outputs.version }}"
+
+  attest:
+    name: attest release artifacts
+    needs: [build, distribution-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download exact release candidate
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: release-candidate
+          path: .
+
+      - name: Create GitHub artifact attestations
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        with:
+          subject-path: |
+            dist/*
+            release-assets/hosts/*
+            release-assets/SHA256SUMS
+            release-assets/release-evidence.json
+
+  draft-release:
+    name: stage GitHub Release
+    needs: [validate, build, attest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download exact release candidate
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: release-candidate
+          path: .
+
+      - name: Create or refresh draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          files=(dist/* release-assets/hosts/* release-assets/SHA256SUMS \
+            release-assets/release-evidence.json release-assets/host-packages-build.json)
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
+            if [[ "$is_draft" != "true" ]]; then
+              echo "refusing to replace assets on an already-published release" >&2
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${files[@]}" \
+              --verify-tag --draft --generate-notes \
+              --title "Portable Resume ${RELEASE_TAG}"
+          fi
+
+  publish-pypi:
+    name: publish exact bytes to PyPI
+    if: github.event_name == 'push' || inputs.publish_pypi
+    needs: [validate, draft-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/portable-resume/${{ needs.validate.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download exact release candidate
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: release-candidate
+          path: .
+
+      - name: Publish with PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.13.0
+        with:
+          packages-dir: dist/
+          attestations: true
+
+  publish-release:
+    name: publish staged GitHub Release
+    if: >-
+      always() &&
+      needs.draft-release.result == 'success' &&
+      (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped')
+    needs: [draft-release, publish-pypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Publish draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest

@@ -1,64 +1,61 @@
-# Evidence summary (public)
+# Evidence summary
 
-## Deterministic bar
+## Current 0.3.0 local release candidate
 
-Commands (also run in CI on Ubuntu + macOS):
+The current tree defines eight source adapters × eight destination hosts.
+Fresh local verification on 2026-07-24 used:
 
 ```bash
-python3 scripts/check_secrets.py
 python3 scripts/self_verify.py
+python3 scripts/check_secrets.py
+PYTHONPATH=src python3 -m unittest discover -s tests -q
 PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
-Expected:
-
-- unittest suite green
-- `self-check --json` → `ok: true`, six adapters
-- matrix → packaging cells **36**, host-UI live cells **0**
-- installed-runner smoke → **36/36**
-- fixture list/show handoff contains untrusted/stale markers
-- secret/path gate **CLEAN**
-
-## Packaging vs live vs installed-runner
-
-| Claim | Status |
+| Claim | Current evidence |
 |---|---|
-| 36 skill packages render/install with strict frontmatter | **yes** (filesystem) |
-| Installed skill `run_reader` list/show against fixtures (6×6) | **yes** (`smoke_installed_matrix.py`) |
-| Host UI discovers skill + NL/picker activation inside host | **not-run** |
-| CI Linux + macOS × Python 3.11/3.12 | **yes** (GitHub Actions) |
-| Dual-OS release claim (archived green run) | **claimed** — see below |
+| 64 Skill packages render/install | **pass**, self-check and matrix |
+| 64 installed readers list/show fixtures | **pass**, exact synthetic identity/content checks |
+| Python test suite | **264 tests pass** |
+| Wheel and sdist import outside checkout | **pass**, both artifacts; 64 cells and verified Qwen quick-install |
+| Local candidate wheel SHA-256 | `748c74ba1726c3b6bdcadc7667f6d424709b8b536440c5cb1c8c67ad6f8381ae` |
+| Local candidate sdist SHA-256 | `7f7017e11889bff80bb6c583af60adfb8384cca10df1c6b120455d18d2d1071d` |
+| 8 direct + 7 plugin/marketplace archives | **pass**, deterministic build and structure tests |
+| Native local plugin/extension installation | **6/7 pass**: Claude, Codex, Qwen, Grok, Antigravity, Kimi |
+| Cursor native plugin load | **not-run**; archive structure only |
+| Host UI NL/picker activation | **not-run** |
+| Public marketplace installation | **not-run** |
+| `v0.3.0` dual-OS/tag release | **not-run** |
 | Cursor full bubble graph | **not claimed** |
 
-## Dual-OS release claim archive
+Native install versions, routes, and plugin digests are recorded in
+[`host-ui-smoke.md`](host-ui-smoke.md). These local checks do not prove a
+published marketplace listing or Skill activation through a host picker.
+
+The release workflow will write `release-evidence.json` containing the resolved tag commit, Actions run URL, verified OS/Python bounds, matrix counts, artifact sizes/digests, and explicit `not-run` UI fields. `SHA256SUMS` and GitHub artifact attestations cover the release candidate.
+
+## Historical archive: v0.2.3
 
 | Field | Value |
 |---|---|
-| Claimed | **yes** (2026-07-22) |
-| Tag | `v0.2.3` → `5ff9eba503e28971e5044015cd0666c2807a3d89` |
+| Date | 2026-07-22 |
+| Tag / SHA | `v0.2.3` / `5ff9eba503e28971e5044015cd0666c2807a3d89` |
 | Workflow | `ci` |
-| Run URL (tag tip) | https://github.com/ImL1s/resume-skills/actions/runs/29890453185 |
-| Prior release claim | `v0.2.2` / https://github.com/ImL1s/resume-skills/actions/runs/29886518842 |
-| Jobs | ubuntu py3.11, ubuntu py3.12, macos py3.11, macos py3.12 — all **success** |
-| Local | `self_verify` + `check_secrets` + 211 unittests + real large-session structural E2E + `smoke_installed_matrix` PASS |
-| Sign-off | Maintainer: dual-OS CI archive for v0.2.3; re-claim on each release tag |
+| Run | https://github.com/ImL1s/resume-skills/actions/runs/29890453185 |
+| Jobs | Ubuntu/macOS × Python 3.11/3.12 succeeded |
+| Scope | historical six-by-six release only |
 
-## Improve-deep hardening (0.2.1)
+Do not reuse that run as proof for 0.3.0.
 
-Shipped after v0.2.0 (see `plans/README.md` and git history `690b7d5`…tip):
+## Remote sign-off template
 
-- Install path containment; orphan journal; no-follow hash/backup; runtime whitelist (no `install/` in skill runtime)
-- Live latest ranking (Grok/AGY/Cursor CLI); Codex large-DB query-only; Cursor meta stable-read + blob order
-- Secret gate + redaction expansion; pyproject + CI 3.11; AGENTS.md; module split (`cursor_live`, `codex_sqlite`)
+After the new tag succeeds, append rather than pre-claim:
 
-## Multi-seat review
-
-Independent review seats ran during development. High-level outcomes mixed APPROVE-WITH-FIXES and honesty gates. Raw review logs are not shipped.
-
-## Doc audits (2026-07-20)
-
-Point-in-time audits (may be stale relative to 0.2.1):
-
-- `docs/audit-docs-vs-code.md`
-- `docs/audit-host-docs-evidence.md`
-- `docs/audit-security-docs.md`
+```text
+Tag: vX.Y.Z
+Commit: <40-hex SHA>
+Actions: <immutable run URL>
+GitHub Release: <release URL>
+PyPI: <project/version URL or explicitly skipped>
+Maintainer/date: <name>, <ISO date>
+```

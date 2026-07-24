@@ -11,7 +11,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from portable_resume.install.catalog import resolve_skill_root
+from portable_resume.diagnostics import SOURCE_KEYS
+from portable_resume.install.catalog import HOST_KEYS, resolve_skill_root
 from portable_resume.install.transaction import execute_install, plan_install, verify_root
 
 
@@ -107,7 +108,10 @@ class RelocationTests(unittest.TestCase):
             )
             report = json.loads(completed.stdout)
             self.assertTrue(report["ok"])
-            self.assertEqual(report["cell_count"], 36)
+            self.assertEqual(
+                report["cell_count"],
+                len(HOST_KEYS) * len(SOURCE_KEYS),
+            )
 
             project = Path(temporary) / "proj"
             project.mkdir()

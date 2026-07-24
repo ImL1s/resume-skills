@@ -194,64 +194,72 @@ class GrokAdapter:
         if not os.path.isdir(sessions):
             return []
         output: list[tuple[str, str]] = []
-        try:
-            cwd_entries = sorted(os.scandir(sessions), key=lambda entry: entry.name)
-        except OSError as error:
-            raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
+        scanned = [0]
+
+        def bounded_names(directory: str) -> list[str]:
+            names: list[str] = []
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        scanned[0] += 1
+                        if scanned[0] > DEFAULT_BOUNDS.scanned_records:
+                            # A partial lexical prefix cannot prove "latest".
+                            raise DiagnosticError.limit_exceeded()
+                        names.append(entry.name)
+            except DiagnosticError:
+                raise
+            except OSError as error:
+                raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
+            names.sort()
+            return names
+
         preferred_name = None
-        seen_preferred = False
         if prefer_cwd:
             from urllib.parse import quote
 
             preferred_name = quote(prefer_cwd, safe="")
-            # Prefer exact bucket first for live homes with many projects.
-            cwd_entries = sorted(
-                cwd_entries,
-                key=lambda entry: (0 if entry.name == preferred_name else 1, entry.name),
-            )
-        for cwd_entry in cwd_entries:
-            if preferred_name is not None and cwd_entry.name == preferred_name:
-                seen_preferred = True
-            # Only stop early after the preferred bucket was actually visited.
-            if (
-                preferred_name is not None
-                and seen_preferred
-                and cwd_entry.name != preferred_name
-                and output
-            ):
-                break
-            if cwd_entry.is_symlink():
+        preferred_path = os.path.join(sessions, preferred_name) if preferred_name else None
+        # Exact encoded cwd buckets are addressable without scanning unrelated
+        # projects. Fall back to a bounded scan for legacy/non-canonical names.
+        if preferred_path is not None and os.path.isdir(preferred_path) and not os.path.islink(preferred_path):
+            cwd_names = [preferred_name]
+        else:
+            cwd_names = bounded_names(sessions)
+        for cwd_name in cwd_names:
+            cwd_path = os.path.join(sessions, cwd_name)
+            try:
+                cwd_mode = os.lstat(cwd_path).st_mode
+            except OSError:
+                continue
+            if stat.S_ISLNK(cwd_mode):
                 raise DiagnosticError.unsafe_path()
-            mode = cwd_entry.stat(follow_symlinks=False).st_mode
-            if not stat.S_ISDIR(mode):
+            if not stat.S_ISDIR(cwd_mode):
                 # Live Grok co-locates session_search.sqlite and similar files next
                 # to cwd buckets — skip regular files; only dirs are session trees.
-                if stat.S_ISREG(mode):
+                if stat.S_ISREG(cwd_mode):
                     continue
                 raise DiagnosticError.unsafe_path()
-            try:
-                session_entries = sorted(os.scandir(cwd_entry.path), key=lambda entry: entry.name)
-            except OSError as error:
-                raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
-            for session_entry in session_entries:
-                if len(output) >= DEFAULT_BOUNDS.scanned_records:
-                    break
-                if session_entry.is_symlink():
+            for session_name in bounded_names(cwd_path):
+                session_path = os.path.join(cwd_path, session_name)
+                try:
+                    entry_mode = os.lstat(session_path).st_mode
+                except OSError:
+                    continue
+                if stat.S_ISLNK(entry_mode):
                     raise DiagnosticError.unsafe_path()
-                entry_mode = session_entry.stat(follow_symlinks=False).st_mode
                 # Skip .cwd markers and prompt_history.jsonl / other co-located files.
                 if not stat.S_ISDIR(entry_mode):
                     if stat.S_ISREG(entry_mode):
                         continue
                     raise DiagnosticError.unsafe_path()
                 try:
-                    _identifier(session_entry.name)
+                    _identifier(session_name)
                 except DiagnosticError:
                     continue
-                updates = os.path.join(session_entry.path, "updates.jsonl")
+                updates = os.path.join(session_path, "updates.jsonl")
                 if os.path.isfile(updates) and not os.path.islink(updates):
-                    output.append((cwd_entry.path, updates))
-            if len(output) >= DEFAULT_BOUNDS.scanned_records:
+                    output.append((cwd_path, updates))
+            if preferred_name is not None and cwd_name == preferred_name and output:
                 break
         # Rank by updates.jsonl mtime (newest first) so latest is not name-order capped.
         def _mtime_key(item: tuple[str, str]) -> float:

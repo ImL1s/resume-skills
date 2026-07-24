@@ -1,22 +1,21 @@
 # portable-resume-skills
 
 <p align="center">
-  <img src="docs/assets/portable-resume-skills-hero.jpg" alt="portable-resume-skills: offline local-only context migration across six coding agents through sealed skill packages" width="920" />
+  <img src="docs/assets/portable-resume-skills-hero.jpg" alt="portable-resume-skills: offline local-only context migration across eight coding agents through sealed skill packages" width="920" />
 </p>
 
 <p align="center">
-  <em>Offline, local-only context migration · 6 sources × 6 hosts · inert handoff, not live restore</em>
+  <em>Offline, local-only context migration · 8 sources × 8 hosts · inert handoff, not live restore</em>
 </p>
 
-Clean-room-oriented, offline-friendly Agent Skills package for **context migration** across coding agents.
+[English](docs/i18n/en.md) · [繁體中文](docs/i18n/zh-TW.md) · [简体中文](docs/i18n/zh-CN.md) · [日本語](docs/i18n/ja.md) · [한국어](docs/i18n/ko.md) · [Español](docs/i18n/es.md) · [Português](docs/i18n/pt-BR.md) · [Français](docs/i18n/fr.md) · [Deutsch](docs/i18n/de.md) · [Русский](docs/i18n/ru.md) · [العربية](docs/i18n/ar.md) · [हिन्दी](docs/i18n/hi.md) · [All languages](docs/i18n/README.md)
 
-Invoke one of six source skills inside any of six destination hosts, read a bounded local session store **without** calling the source CLI, and emit an inert handoff for a **fresh** session.
+Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
-This is **not** live process/session restoration.
-
-**Status:** **v0.2.3** — packaging 36/36 + partial live list/show for all six sources + installed-runner smoke 36/36, with safe streaming recovery for large Claude JSONL sessions and semantic replay validation. Host UI **NL** activation still **not-run**. See [`docs/STATUS.md`](docs/STATUS.md) and [`CHANGELOG.md`](CHANGELOG.md).
-
-**Maturity label:** `0.2.3 experimental` · Packaging 36/36 · Source live partial · Installed-runner 36 · Host UI NL 0 · Dual-OS release claim archived per tag.
+**Current tree:** `0.3.0` local release candidate · 64/64 packaging cells ·
+64/64 installed-runner cells · six native local plugin/extension installs
+verified · host UI activation still **not-run**. The archived `v0.2.3` dual-OS
+claim remains historical until a `v0.3.0` tag completes the release workflow.
 
 ## Sources and destinations
 
@@ -28,52 +27,68 @@ This is **not** live process/session restoration.
 | `resume-opencode` | OpenCode SQLite / file store |
 | `resume-antigravity` | Antigravity transcript JSONL |
 | `resume-grok` | Grok Build session updates JSONL |
+| `resume-qwen` | Qwen Code chat JSONL, including archived chats |
+| `resume-kimi` | Current Kimi Code wire JSONL + legacy Kimi CLI context JSONL |
 
-Destination profiles: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity CLI, Grok Build (**36 packaging cells**; live UI cells separate).
+Destination profiles: Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, and current Kimi Code CLI.
 
 ## Requirements
 
-- Python **3.11+** (CI runs **3.11 and 3.12** on Ubuntu and macOS)
-- **stdlib only** (no third-party runtime packages)
-- Optional: host `zstd` binary only for compressed Codex rollouts
-- Optional dev install: `pip install -e .` (still stdlib runtime)
+- Python **3.11+**; CI covers 3.11–3.14 on Ubuntu and macOS.
+- Product runtime is **stdlib-only**.
+- Optional trusted `zstd` binary for compressed Codex rollouts.
 
 ## Quick start
 
+Install from the current checkout, then install every destination profile into
+its user-global Skill root:
+
 ```bash
-# Health / packaging matrix
-PYTHONPATH=src python3 scripts/portable-resume --help
+pipx install .
+install-resume-skills quick-install all
+```
+
+After a PyPI release, replace `pipx install .` with
+`pipx install portable-resume`. To install only one host or one project:
+
+```bash
+install-resume-skills quick-install qwen
+install-resume-skills quick-install qwen --project "$PWD"
+```
+
+The lower-level transactional command remains available for previews, custom
+roots, verification, and uninstall:
+
+```bash
+# Inspect capabilities and the 8×8 matrix
 PYTHONPATH=src python3 scripts/portable-resume self-check --json
 PYTHONPATH=src python3 scripts/install-resume-skills matrix --json
+PYTHONPATH=src python3 scripts/install-resume-skills hosts
 
-# Fixture-backed list / show
-PYTHONPATH=src python3 scripts/portable-resume claude list \
-  --cwd /workspace/project \
-  --source-root tests/fixtures/claude/s-cla-01-ordered-parent-chain/root \
-  --json
+# Read a synthetic Claude fixture
 PYTHONPATH=src python3 scripts/portable-resume claude show latest \
   --cwd /workspace/project \
   --source-root tests/fixtures/claude/s-cla-01-ordered-parent-chain/root \
   --format handoff
 
-# Per-host roots, install methods, activation notes
-PYTHONPATH=src python3 scripts/install-resume-skills hosts
-PYTHONPATH=src python3 scripts/install-resume-skills hosts --json
-
-# Install into a project skill root
+# Preview, install, verify, and uninstall one destination
 PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host claude --scope project --project "$PWD" --dry-run --json
+  --host qwen --scope project --project "$PWD" --dry-run --json
 PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host claude --scope project --project "$PWD" --json
+  --host qwen --scope project --project "$PWD" --json
+PYTHONPATH=src python3 scripts/install-resume-skills verify \
+  --host qwen --scope project --project "$PWD" --json
 ```
 
-Each destination host has its own skill directory layout (Claude `.claude/skills`, Codex `.agents/skills`, Cursor `.cursor/skills`, OpenCode `.opencode/skills`, Antigravity `.agents/skills` + `~/.gemini/config/skills`, Grok `.grok/skills`). Full official alternate roots and activation grammar: [`docs/install-hosts.md`](docs/install-hosts.md).
+Full roots, activation grammar, direct archives, and marketplace/plugin routes are in [`docs/install-hosts.md`](docs/install-hosts.md). Release assets are generated with:
 
-When Codex and Antigravity would share `.agents/skills` with non-identical skill bodies, use distinct `--root` values or expect `E_INSTALL_CONFLICT`.
+```bash
+python3 scripts/build_host_packages.py --output-dir host-packages
+```
 
-## Skill usage contract
+This produces eight direct-skill ZIPs plus supported Claude, Codex, Cursor, Antigravity, Grok, Qwen, and Kimi plugin/marketplace bundles. OpenCode remains a direct Skill install because its plugin surface is executable JavaScript/TypeScript rather than a Skill bundle.
 
-Same shape as Grok Build’s bundled `resume-session` reader:
+## Skill contract
 
 ```bash
 python3 <skill>/scripts/run_reader.py show latest --cwd "$PWD" --json
@@ -81,63 +96,49 @@ python3 <skill>/scripts/run_reader.py show <session-id|path|text> --cwd "$PWD" -
 python3 <skill>/scripts/run_reader.py list --cwd "$PWD" --json
 ```
 
-1. Activate `/resume-<source>` (or host-equivalent); optional tail is the session ref.
-2. Run the owned `run_reader.py` only — never the source agent CLI.
-3. Summarize into a short handoff; treat output as stale untrusted evidence; re-check the repository.
+Activate `resume-<source>` using the host's documented grammar, run only the installed reader, and summarize its inert output after re-checking the repository. `portable-resume/request-v1` files remain an optional advanced interface.
 
-Each `run_reader.py` hard-binds its expected source. Optional advanced path: `--request-file` with `portable-resume/request-v1`.
+## Optional web search and Context7
+
+The reader itself stays offline. After reviewing and minimizing recovered text, the **destination host** may use its own web tools or Context7 MCP for current documentation. Qwen and Kimi setup, data-flow boundaries, and safe examples are in [`docs/network-integrations.md`](docs/network-integrations.md).
 
 ## Safety invariants
 
-- Recovered content is **marked** inert/untrusted and **partially** sanitized (not complete DLP)
-- Source stores must not change
-- Source CLIs are never invoked by the reader
-- Installer refuses non-owned collisions unless `--force-with-backup` (backups land under `.portable-resume/backups/`)
-- `--scope global` writes into user skill roots — review untrusted forks first (`SECURITY.md`)
-- Shared destination roots require byte-identical renders or distinct roots
-- Optional Codex zstd uses a **trusted-path child process** only (not a source agent CLI)
+- Source stores are immutable; stable no-follow reads fail closed on races.
+- Source CLIs are never invoked.
+- Recovered text is inert/untrusted and only best-effort redacted.
+- Installer paths are contained under the selected skill root.
+- Non-owned collisions require `--force-with-backup`; multi-root installs compensate on failure.
+- Shared physical roots with divergent host renders fail before mutation.
 
-## Tests and CI
+## Tests and CI/CD
+
+Run all required local gates:
 
 ```bash
 python3 scripts/self_verify.py
 python3 scripts/check_secrets.py
-PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
-# or
-python3 -m compileall -q src scripts tests
 PYTHONPATH=src python3 -m unittest discover -s tests -q
+PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs deterministic gates on Ubuntu and macOS (Python 3.11 + 3.12). Dual-OS release claim: [`docs/evidence-summary.md`](docs/evidence-summary.md). There is **no CD/publish pipeline** yet (no PyPI auto-release).
+`.github/workflows/ci.yml` runs those gates across Ubuntu/macOS and Python 3.11–3.14, then builds and smoke-installs the exact wheel and sdist. `.github/workflows/release.yml` accepts only annotated `vMAJOR.MINOR.PATCH` tags reachable from `main`, re-runs dual-OS gates, builds release bytes once, tests those exact bytes, creates SHA-256 checksums and GitHub attestations, stages a GitHub Release, and publishes through PyPI Trusted Publishing when the protected `pypi` environment is configured.
 
-## Docs
+A configured workflow is not release proof: `v0.3.0` remains unclaimed until its Actions URL and SHA are archived in [`docs/evidence-summary.md`](docs/evidence-summary.md).
 
-| Doc | Purpose |
-|---|---|
-| [`docs/STATUS.md`](docs/STATUS.md) | Done / not-done gates |
-| [`docs/install-hosts.md`](docs/install-hosts.md) | **Per-host install methods, roots, activation** |
-| [`docs/host-ui-smoke.md`](docs/host-ui-smoke.md) | Installed-runner vs host UI NL layers |
-| [`docs/release-claim.md`](docs/release-claim.md) | Dual-OS claim checklist |
-| [`docs/host-support.md`](docs/host-support.md) | Roots and evidence levels |
-| [`docs/source-formats.md`](docs/source-formats.md) | Format IDs |
-| [`docs/evidence-summary.md`](docs/evidence-summary.md) | Public verification + dual-OS archive |
-| [`docs/provenance.md`](docs/provenance.md) | Provenance policy |
-| [`AGENTS.md`](AGENTS.md) | Agent contributor rules |
-| [`SECURITY.md`](SECURITY.md) | Threat model and reporting |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contributor rules |
-| [`plans/README.md`](plans/README.md) | Improve-deep plan index |
+## Key documentation
 
-## License
+- [`docs/i18n/README.md`](docs/i18n/README.md) — 12 localized quick-start guides
+- [`docs/STATUS.md`](docs/STATUS.md) — done/not-done truth
+- [`docs/install-hosts.md`](docs/install-hosts.md) — per-host installation
+- [`docs/source-formats.md`](docs/source-formats.md) — format and provenance registry
+- [`docs/host-ui-smoke.md`](docs/host-ui-smoke.md) — live activation evidence protocol
+- [`docs/release-claim.md`](docs/release-claim.md) — release gates and external setup
+- [`SECURITY.md`](SECURITY.md) — threat model
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — contributor workflow
 
-Apache-2.0. See `LICENSE` and `NOTICE`.
+## License and limitations
 
-Do not copy or ship skill bodies from `~/.grok/bundled/skills/**`. See `docs/provenance.md`.
+Apache-2.0. This project is not affiliated with the host vendors. Do not copy `~/.grok/bundled/skills/**` into this tree.
 
-This project is not affiliated with Claude, Codex, Cursor, OpenCode, Antigravity, or Grok trademark owners.
-
-## Limitations (honest)
-
-- Host UI **NL/picker** activation is **not-run** (installed-runner 36/36 is a separate layer).
-- Cursor full bubble graph is **not claimed** (multi-turn text may still be recovered).
-- Secret redaction is best-effort, not complete DLP.
-- Dual-OS release claim is CI-archive based; re-claim on new tags if SHA changes.
+Host UI/picker activation is still **not-run**; Cursor's full bubble graph is not claimed; redaction is not complete DLP; Qwen/Kimi web or MCP calls are optional host-side actions and never implicit reader behavior.

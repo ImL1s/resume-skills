@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+## [0.3.0] — 2026-07-24
+
+### Added
+- Qwen Code and current/legacy Kimi CLI session readers, destination profiles,
+  synthetic fixtures, and isolated installed-runner coverage.
+- Eight destination hosts × eight source adapters (**64 packaging and installed
+  runner cells**), including direct skill installation guidance plus each
+  host's documented marketplace/plugin route where one exists.
+- Tag-gated release CI/CD with exact wheel/sdist smoke tests, host bundle
+  assets, checksums, provenance evidence, GitHub attestations, GitHub Releases,
+  and optional PyPI Trusted Publishing.
+- Optional host-side web search and Context7 setup guidance; recovered content
+  remains local unless the user deliberately sends a sanitized question.
+- A `quick-install` command for one or all destination hosts, plus 12
+  release-checked localized quick-start guides (English, Traditional/Simplified
+  Chinese, Japanese, Korean, Spanish, Brazilian Portuguese, French, German,
+  Russian, Arabic, and Hindi).
+
+### Fixed
+- Installer verification is anchored to trusted rendered bytes and package
+  identity; interrupted replacement and multi-root installs now restore prior
+  state.
+- Live SQLite opens pin a no-follow descriptor, eliminating the validation/open
+  race.
+- Bounded discovery no longer chooses `latest` from a lexical prefix, and
+  Codex rollback/fallback handling no longer retains invalid suffix records or
+  masks corruption.
+- Installed runtime packaging now uses an explicit module/resource allowlist,
+  and smoke validation checks structured source/session/content identity.
+
+### Verification
+- Release claims require the four canonical local gates plus dual-OS CI,
+  exact-distribution smoke, artifact digests, and an archived Actions URL/SHA.
+- Host UI natural-language/picker activation remains **not-run** until recorded
+  separately; Cursor full bubble graph remains **not claimed**.
+
 ## [0.2.3] — 2026-07-22
 
 ### Added

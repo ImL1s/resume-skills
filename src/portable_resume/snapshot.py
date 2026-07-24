@@ -734,19 +734,20 @@ def query_only_live_sqlite(
     root: str | os.PathLike[str],
     provider: str | None = None,
 ) -> Iterator[sqlite3.Connection]:
-    """Read-only connection to the live DB without a private multi-hundred-MB copy.
+    """Read-only connection to a pinned live DB descriptor without copying it.
 
     Used when the main DB exceeds ``sqlite_snapshot_bytes`` (e.g. OpenCode homes
-    >1GiB). Still refuses rollback ``-journal`` hot files and enables
-    ``query_only``. Concurrent WAL writers may cause ``E_SOURCE_BUSY``-class
-    failures; callers treat those as degraded, not silent success.
+    >1GiB). The main file is opened no-follow first and SQLite receives only the
+    process-local descriptor path, closing the validation-to-open pathname race.
+    Live sidecars are refused because a descriptor URI cannot safely preserve
+    SQLite's basename-based WAL/SHM family lookup.
     """
-    from urllib.parse import quote
 
-    safe, _base = require_regular_no_symlinks(database, root)
+    safe, base = require_regular_no_symlinks(database, root)
     if os.path.exists(f"{safe}-journal") or os.path.lexists(f"{safe}-journal"):
         raise DiagnosticError("E_SQLITE_HOT_JOURNAL", provider=provider)
-    # Match private-snapshot family policy: wal/shm must not be symlinks.
+    # A descriptor URI pins the main inode, but SQLite derives sidecar names from
+    # the URI path. Refuse live sidecars rather than silently omit committed WAL.
     for suffix in ("-wal", "-shm"):
         member = f"{safe}{suffix}"
         if not os.path.lexists(member):
@@ -757,16 +758,50 @@ def query_only_live_sqlite(
             raise DiagnosticError("E_SOURCE_BUSY", provider=provider) from error
         if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
             raise DiagnosticError.unsafe_path()
-    uri = f"file:{quote(safe)}?mode=ro"
-    connection = sqlite3.connect(uri, uri=True)
+        raise DiagnosticError.source_busy(
+            family=(os.path.basename(member),),
+            provider=provider,
+        )
+
+    descriptor = _open_no_follow(safe, base)
+    expected = _fingerprint(os.fstat(descriptor))
+    descriptor_path = next(
+        (
+            candidate
+            for candidate in (f"/proc/self/fd/{descriptor}", f"/dev/fd/{descriptor}")
+            if os.path.exists(candidate)
+        ),
+        None,
+    )
+    if descriptor_path is None:
+        os.close(descriptor)
+        raise DiagnosticError.unsafe_path()
+
+    uri = f"file:{quote(descriptor_path, safe='/')}?mode=ro&cache=private"
+    connection: sqlite3.Connection | None = None
     try:
+        connection = sqlite3.connect(uri, uri=True)
+        # Detect a persistent rename/replacement during sqlite3.connect. The
+        # connection itself is already pinned to ``descriptor`` and therefore
+        # never follows the replacement.
+        verification = _open_no_follow(safe, base)
+        try:
+            if _fingerprint(os.fstat(verification)) != expected:
+                raise DiagnosticError.source_busy(
+                    family=(os.path.basename(safe),),
+                    provider=provider,
+                )
+        finally:
+            os.close(verification)
         connection.execute("PRAGMA query_only=ON")
         value = connection.execute("PRAGMA query_only").fetchone()
         if value is None or value[0] != 1:
             raise DiagnosticError("E_INVARIANT", provider=provider)
         yield connection
     finally:
-        connection.close()
+        if connection is not None:
+            connection.close()
+        os.close(descriptor)
 
 
 def sha256_file(path: str | os.PathLike[str]) -> str:

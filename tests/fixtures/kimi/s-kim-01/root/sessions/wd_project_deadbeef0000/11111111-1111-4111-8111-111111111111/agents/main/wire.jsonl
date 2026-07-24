@@ -1,0 +1,9 @@
+{"type":"metadata","protocol_version":"1.1","created_at":1784851200,"synthetic":true}
+{"type":"turn.prompt","input":[{"type":"text","text":"Current Kimi prompt"}],"origin":{"kind":"user"},"time":1784851260,"synthetic":true}
+{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"Current Kimi prompt"}],"toolCalls":[],"origin":{"kind":"user"}},"time":1784851260,"synthetic":true}
+{"type":"context.append_message","message":{"role":"system","content":[{"type":"text","text":"hidden synthetic system"}]},"time":1784851290,"synthetic":true}
+{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-1","turnId":"turn-1","step":0},"time":1784851300,"synthetic":true}
+{"type":"context.append_loop_event","event":{"type":"content.part","uuid":"part-1","turnId":"turn-1","step":0,"stepUuid":"step-1","part":{"type":"think","think":"hidden synthetic reasoning"}},"time":1784851310,"synthetic":true}
+{"type":"context.append_loop_event","event":{"type":"content.part","uuid":"part-2","turnId":"turn-1","step":0,"stepUuid":"step-1","part":{"type":"text","text":"Current Kimi "}},"time":1784851320,"synthetic":true}
+{"type":"context.append_loop_event","event":{"type":"content.part","uuid":"part-3","turnId":"turn-1","step":0,"stepUuid":"step-1","part":{"type":"text","text":"answer"}},"time":1784851330,"synthetic":true}
+{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"step-1","turnId":"turn-1","step":0},"time":1784851340,"synthetic":true}

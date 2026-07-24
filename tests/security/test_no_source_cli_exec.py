@@ -1,4 +1,4 @@
-"""PATH-shim and process isolation for all six source CLIs (shipped reader path)."""
+"""PATH-shim and process isolation for every source CLI (shipped reader path)."""
 
 from __future__ import annotations
 
@@ -29,7 +29,16 @@ class NoSourceCliExecTests(unittest.TestCase):
                 path.write_text(f"#!/bin/sh\necho {name} >> '{marker}'\nexit 99\n", encoding="utf-8")
                 path.chmod(0o755)
             # also common launcher names
-            for name in ("claude", "codex", "cursor", "opencode", "agy", "grok"):
+            for name in (
+                "claude",
+                "codex",
+                "cursor",
+                "opencode",
+                "agy",
+                "grok",
+                "kimi",
+                "qwen",
+            ):
                 path = bin_dir / name
                 if not path.exists():
                     path.write_text(f"#!/bin/sh\necho {name} >> '{marker}'\nexit 99\n", encoding="utf-8")

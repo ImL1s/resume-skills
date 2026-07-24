@@ -1,0 +1,9 @@
+{
+  "synthetic": true,
+  "work_dirs": [
+    {
+      "path": "/workspace/project",
+      "kaos": "local"
+    }
+  ]
+}

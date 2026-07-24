@@ -5,8 +5,8 @@ Synthetic credential *shapes* inside unit tests (built at runtime for redaction
 tests) are allowed. Hard-coded home paths and real-looking keys in product
 code/docs are not.
 
-Scans `git ls-files` only (not git history). Release checklist may still run
-gitleaks against history separately.
+Scans tracked plus untracked, non-ignored worktree files (not git history).
+Release checklist may still run gitleaks against history separately.
 """
 
 from __future__ import annotations
@@ -15,6 +15,8 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
 
 # Product/docs must not contain these at all.
 PRODUCT_FORBIDDEN = [
@@ -48,14 +50,19 @@ SENSITIVE_ALLOWLIST = frozenset(
 SKIP_SUFFIX = {".sqlite", ".vscdb", ".zst", ".pyc", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 
-def tracked_files() -> list[str]:
-    return subprocess.check_output(["git", "ls-files"], text=True).splitlines()
+def candidate_files() -> list[str]:
+    return subprocess.check_output(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        cwd=REPO,
+        text=True,
+    ).splitlines()
 
 
 def main() -> int:
     hits: list[str] = []
-    for rel in tracked_files():
-        path = Path(rel)
+    files = candidate_files()
+    for rel in files:
+        path = REPO / rel
         if not path.is_file() or path.suffix.lower() in SKIP_SUFFIX:
             continue
         try:
@@ -83,7 +90,7 @@ def main() -> int:
             print(" -", hit)
         return 1
     print("SECRET/PATH GATE CLEAN")
-    print(f"scanned_tracked_files={len(tracked_files())}")
+    print(f"scanned_worktree_files={len(files)}")
     return 0
 
 

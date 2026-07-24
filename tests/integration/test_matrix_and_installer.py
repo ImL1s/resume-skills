@@ -1,4 +1,4 @@
-"""Thirty-six cell packaging and installer transaction tests."""
+"""Destination-host × source packaging and installer transaction tests."""
 
 from __future__ import annotations
 
@@ -10,12 +10,15 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest import mock
 
 from portable_resume.diagnostics import DiagnosticError, SOURCE_KEYS
+import portable_resume.install.cli as install_cli_module
 from portable_resume.install.cli import run as install_cli_run
 from portable_resume.install.catalog import HOST_KEYS, HOST_PROFILES, matrix_cells, resolve_skill_root
 from portable_resume.install.manifest import claim_key
 from portable_resume.install.render import frontmatter_keys, materialize_plan, render_skill_markdown
+import portable_resume.install.transaction as transaction_module
 from portable_resume.install.transaction import (
     execute_install,
     load_manifest,
@@ -28,14 +31,16 @@ from portable_resume.install.transaction import (
 
 
 class MatrixTests(unittest.TestCase):
-    def test_thirty_six_cells_and_strict_frontmatter(self) -> None:
+    def test_all_cells_and_strict_frontmatter(self) -> None:
         cells = matrix_cells()
-        self.assertEqual(len(cells), 36)
-        self.assertEqual(len(set(cells)), 36)
+        expected = len(HOST_KEYS) * len(SOURCE_KEYS)
+        self.assertEqual(expected, 64)
+        self.assertEqual(len(cells), expected)
+        self.assertEqual(len(set(cells)), expected)
         report = matrix_report()
         self.assertTrue(report["ok"])
-        self.assertEqual(report["cell_count"], 36)
-        self.assertEqual(report["expected"], 36)
+        self.assertEqual(report["cell_count"], expected)
+        self.assertEqual(report["expected"], expected)
         for host, source in cells:
             text = render_skill_markdown(host=host, source=source)
             self.assertEqual(frontmatter_keys(text), ["name", "description"])
@@ -43,6 +48,8 @@ class MatrixTests(unittest.TestCase):
             self.assertIn("portable-resume/request-v1", text)
             self.assertIn("run_reader.py", text)
             self.assertIn("--format handoff", text)
+            self.assertIn("Context7 MCP", text)
+            self.assertIn("reader itself must remain offline", text)
             self.assertIn(HOST_PROFILES[host].profile_id, text)
             body = materialize_plan(host)
             skill_md = body[f"resume-{source}/SKILL.md"].decode("utf-8")
@@ -88,6 +95,16 @@ class InstallerTests(unittest.TestCase):
             project_dir=str(self.project),
             home_dir=str(self.home),
         )
+
+    @staticmethod
+    def _file_bytes(root: Path) -> dict[str, bytes]:
+        if not root.exists():
+            return {}
+        return {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        }
 
     def test_dry_run_is_observationally_pure(self) -> None:
         root = self._root("claude")
@@ -150,6 +167,30 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(backups[0].read_text(encoding="utf-8"), "user owned skill\n")
         verify_root(root)
 
+    def test_force_backup_ids_are_unique_within_one_second(self) -> None:
+        root = self.project / "backup-root"
+        results = []
+        with mock.patch.object(transaction_module.time, "strftime", return_value="20260724T010203Z"):
+            for index in range(2):
+                conflict = root / "resume-cursor" / "SKILL.md"
+                conflict.parent.mkdir(parents=True, exist_ok=True)
+                conflict.write_text(f"foreign-{index}\n", encoding="utf-8")
+                plan = plan_install(
+                    host="cursor",
+                    scope="project",
+                    root=str(root),
+                    force_with_backup=True,
+                )
+                results.append(execute_install(plan, force_with_backup=True))
+                uninstall_claim(host="cursor", scope="project", root=str(root))
+
+        backup_roots = [Path(result["backup_root"]) for result in results]
+        self.assertNotEqual(backup_roots[0].name, backup_roots[1].name)
+        self.assertTrue(all(path.is_dir() for path in backup_roots))
+        for index, backup_root in enumerate(backup_roots):
+            backup = backup_root / "resume-cursor" / "SKILL.md"
+            self.assertEqual(backup.read_text(encoding="utf-8"), f"foreign-{index}\n")
+
     def test_verify_detects_drift(self) -> None:
         root = self._root("opencode")
         plan = plan_install(host="opencode", scope="project", root=root)
@@ -211,6 +252,31 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse((shared / ".portable-resume").exists())
         self.assertFalse(any(shared.glob("resume-*")))
 
+    def test_quick_install_defaults_to_safe_global_roots(self) -> None:
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = install_cli_run(
+                [
+                    "quick-install",
+                    "qwen",
+                    "--home",
+                    str(self.home),
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(code, 0, stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["plan"]["host"], "qwen")
+        self.assertEqual(payload["plan"]["scope"], "global")
+        root = Path(self._root("qwen", scope="global"))
+        self.assertTrue((root / "resume-qwen" / "SKILL.md").is_file())
+        verify_root(
+            str(root),
+            claim=claim_key(host="qwen", scope="global", root=str(root)),
+        )
+
     def test_all_host_install_preflights_later_root_conflict_before_mutation(self) -> None:
         grok_root = Path(self._root("grok", scope="global"))
         conflict = grok_root / "resume-grok" / "SKILL.md"
@@ -238,6 +304,122 @@ class InstallerTests(unittest.TestCase):
         antigravity_root = Path(self._root("antigravity", scope="global"))
         self.assertFalse((antigravity_root / ".portable-resume").exists())
         self.assertEqual(conflict.read_text(encoding="utf-8"), "user owned\n")
+
+    def test_all_host_later_execution_failure_restores_earlier_root_bytes(self) -> None:
+        earlier_root = Path(self._root("claude", scope="global"))
+        execute_install(plan_install(host="claude", scope="global", root=str(earlier_root)))
+        before = self._file_bytes(earlier_root)
+        original_execute = install_cli_module.execute_install
+        calls = 0
+
+        def fail_later_root(plan, *, force_with_backup=False):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("injected later-root failure")
+            return original_execute(plan, force_with_backup=force_with_backup)
+
+        stdout = StringIO()
+        stderr = StringIO()
+        with (
+            mock.patch.object(install_cli_module, "_hosts", return_value=["claude", "grok"]),
+            mock.patch.object(install_cli_module, "execute_install", side_effect=fail_later_root),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            code = install_cli_run(
+                [
+                    "install",
+                    "--host",
+                    "all",
+                    "--scope",
+                    "global",
+                    "--home",
+                    str(self.home),
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(code, 8)
+        self.assertEqual(json.loads(stderr.getvalue())["code"], "E_INVARIANT")
+        self.assertEqual(self._file_bytes(earlier_root), before)
+        verify_root(str(earlier_root))
+
+    def test_all_host_later_failure_removes_earlier_fresh_install(self) -> None:
+        earlier_root = Path(self._root("claude", scope="global"))
+        self.assertEqual(self._file_bytes(earlier_root), {})
+        original_execute = install_cli_module.execute_install
+        calls = 0
+
+        def fail_later_root(plan, *, force_with_backup=False):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("injected later-root failure")
+            return original_execute(plan, force_with_backup=force_with_backup)
+
+        with (
+            mock.patch.object(install_cli_module, "_hosts", return_value=["claude", "grok"]),
+            mock.patch.object(install_cli_module, "execute_install", side_effect=fail_later_root),
+            redirect_stdout(StringIO()),
+            redirect_stderr(StringIO()),
+        ):
+            code = install_cli_run(
+                [
+                    "install",
+                    "--host",
+                    "all",
+                    "--scope",
+                    "global",
+                    "--home",
+                    str(self.home),
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(code, 8)
+        self.assertEqual(self._file_bytes(earlier_root), {})
+
+    def test_all_host_reports_partial_state_when_compensation_fails(self) -> None:
+        original_execute = install_cli_module.execute_install
+        calls = 0
+
+        def fail_later_root(plan, *, force_with_backup=False):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("injected later-root failure")
+            return original_execute(plan, force_with_backup=force_with_backup)
+
+        stderr = StringIO()
+        with (
+            mock.patch.object(install_cli_module, "_hosts", return_value=["claude", "grok"]),
+            mock.patch.object(install_cli_module, "execute_install", side_effect=fail_later_root),
+            mock.patch.object(
+                install_cli_module,
+                "restore_install_checkpoint",
+                side_effect=DiagnosticError("E_RECOVERY_REQUIRED"),
+            ),
+            redirect_stdout(StringIO()),
+            redirect_stderr(stderr),
+        ):
+            code = install_cli_run(
+                [
+                    "install",
+                    "--host",
+                    "all",
+                    "--scope",
+                    "global",
+                    "--home",
+                    str(self.home),
+                    "--json",
+                ]
+            )
+
+        diagnostic = json.loads(stderr.getvalue())
+        self.assertEqual(code, 6)
+        self.assertEqual(diagnostic["code"], "E_RECOVERY_REQUIRED")
+        self.assertEqual(diagnostic["family"], ["claude"])
 
     def test_cli_verify_requires_the_requested_host_claim(self) -> None:
         root = self._root("claude", scope="global")

@@ -28,6 +28,27 @@ _within = _cursor._within
 _object = _cursor._object
 _DuplicateKey = _cursor._DuplicateKey
 
+
+def _bounded_names(directory: str, scanned: list[int]) -> list[str]:
+    """Enumerate one directory without materializing an unbounded live store."""
+    values: list[str] = []
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                scanned[0] += 1
+                if scanned[0] > DEFAULT_BOUNDS.scanned_records:
+                    # Do not return a lexical prefix: it cannot support an
+                    # honest newest-session selection.
+                    raise DiagnosticError.limit_exceeded()
+                values.append(entry.name)
+    except DiagnosticError:
+        raise
+    except OSError as error:
+        raise DiagnosticError.source_busy(provider=LIVE_CLI_FORMAT) from error
+    values.sort()
+    return values
+
+
 def _ms_to_rfc3339(value: object) -> str | None:
     if type(value) is not int:
         return None
@@ -65,24 +86,18 @@ def _list_live_cli_stores(root: str, query: Query) -> list[SessionSummary]:
     if not _regular_directory(chats, root):
         return []
     prefer = _cwd_hash(query.cwd) if query.cwd else None
-    try:
-        hash_names = sorted(os.listdir(chats))
-    except OSError as error:
-        raise DiagnosticError.source_busy(provider=LIVE_CLI_FORMAT) from error
+    scanned = [0]
+    # A cwd query maps to one deterministic bucket, so avoid enumerating every
+    # unrelated project. Otherwise enumerate under one aggregate bound.
+    hash_names = [prefer] if prefer is not None else _bounded_names(chats, scanned)
     values: list[SessionSummary] = []
+    metadata_bytes = 0
     for name in hash_names:
-        if prefer is not None and name != prefer:
-            continue
         bucket = os.path.join(chats, name)
         if not _regular_directory(bucket, root):
             continue
-        try:
-            session_names = sorted(os.listdir(bucket))
-        except OSError:
-            continue
+        session_names = _bounded_names(bucket, scanned)
         for session_name in session_names:
-            if len(values) >= DEFAULT_BOUNDS.scanned_records:
-                break
             try:
                 session_id = str(uuid.UUID(session_name))
             except ValueError:
@@ -106,6 +121,9 @@ def _list_live_cli_stores(root: str, query: Query) -> list[SessionSummary]:
                         max_bytes=min(DEFAULT_BOUNDS.record_bytes, 256 * 1024),
                         budget=None,
                     )
+                    metadata_bytes += len(read.data)
+                    if metadata_bytes > DEFAULT_BOUNDS.source_read_bytes:
+                        raise DiagnosticError.limit_exceeded()
                     meta = json.loads(read.data.decode("utf-8"))
                     if isinstance(meta, dict):
                         if isinstance(meta.get("cwd"), str):
@@ -113,7 +131,10 @@ def _list_live_cli_stores(root: str, query: Query) -> list[SessionSummary]:
                         title = meta.get("title") if isinstance(meta.get("title"), str) else None
                         created_at = _ms_to_rfc3339(meta.get("createdAtMs"))
                         updated_at = _ms_to_rfc3339(meta.get("updatedAtMs"))
-                except (OSError, UnicodeDecodeError, json.JSONDecodeError, DiagnosticError):
+                except DiagnosticError as error:
+                    if error.code == "E_LIMIT_EXCEEDED":
+                        raise
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                     pass
             if query.cwd is not None:
                 if cwd is not None and not same_cwd(cwd, query.cwd):
@@ -143,8 +164,6 @@ def _list_live_cli_stores(root: str, query: Query) -> list[SessionSummary]:
                     provider=LIVE_CLI_FORMAT,
                 )
             )
-        if len(values) >= DEFAULT_BOUNDS.scanned_records:
-            break
     # Rank newest first so latest is not UUID/name-order capped.
     values.sort(
         key=lambda item: (
@@ -541,5 +560,3 @@ def _composer_data_turns(data: Mapping[str, Any]) -> list[dict[str, Any]]:
     for candidate in candidates:
         _walk(candidate)
     return values
-
-

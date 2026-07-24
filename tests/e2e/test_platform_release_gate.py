@@ -10,6 +10,9 @@ import sys
 import unittest
 from pathlib import Path
 
+from portable_resume.diagnostics import SOURCE_KEYS
+from portable_resume.install.catalog import HOST_KEYS
+
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -46,7 +49,8 @@ class PlatformReleaseGateTests(unittest.TestCase):
         self.assertEqual(self_check.returncode, 0, self_check.stderr)
         report = json.loads(self_check.stdout)
         self.assertTrue(report["ok"])
-        self.assertEqual(report["matrix"]["cell_count"], 36)
+        expected_cells = len(HOST_KEYS) * len(SOURCE_KEYS)
+        self.assertEqual(report["matrix"]["cell_count"], expected_cells)
 
         matrix = subprocess.run(
             [sys.executable, str(REPO / "scripts" / "install-resume-skills"), "matrix", "--json"],
@@ -59,7 +63,7 @@ class PlatformReleaseGateTests(unittest.TestCase):
         self.assertEqual(matrix.returncode, 0, matrix.stderr)
         body = json.loads(matrix.stdout)
         self.assertTrue(body["ok"])
-        self.assertEqual(body["cell_count"], 36)
+        self.assertEqual(body["cell_count"], expected_cells)
 
     def test_peer_os_not_silently_claimed(self) -> None:
         # Dual-OS AC-18: without a second runner, docs must not claim both OS green.

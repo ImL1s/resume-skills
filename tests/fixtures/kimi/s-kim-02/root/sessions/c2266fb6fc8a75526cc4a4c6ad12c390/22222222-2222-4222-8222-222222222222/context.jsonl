@@ -1,0 +1,3 @@
+{"timestamp":"2026-07-23T23:00:00Z","role":"system","content":"hidden legacy system","synthetic":true}
+{"timestamp":"2026-07-23T23:01:00Z","role":"user","content":"Legacy Kimi prompt","synthetic":true}
+{"timestamp":"2026-07-23T23:02:00Z","message":{"role":"assistant","content":"Legacy Kimi answer"},"synthetic":true}

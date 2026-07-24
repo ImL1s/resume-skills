@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""36-cell installed skill runner smoke (not host UI NL activation).
+"""Installed skill runner smoke for every host × source cell.
 
 For each destination host and each source skill:
   1. install package into a temp project skill root
   2. run the installed resume-<source>/scripts/run_reader.py list + show
      against a synthetic fixture (source_root)
 
-Exit 0 only when all 36 cells pass. Writes JSON summary to stdout with --json.
+The runner executes with Python isolated mode and without checkout PYTHONPATH,
+then its JSON envelope is checked for the exact synthetic session and content.
+This is packaging/runtime evidence, not host UI natural-language activation.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,33 +23,70 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-HOSTS = ("claude", "codex", "cursor", "opencode", "antigravity", "grok")
-SOURCES = ("claude", "codex", "cursor", "opencode", "antigravity", "grok")
+sys.path.insert(0, str(SRC))
 
-FIXTURES: dict[str, tuple[str, str]] = {
+from portable_resume.diagnostics import SOURCE_KEYS  # noqa: E402
+from portable_resume.install.catalog import HOST_KEYS  # noqa: E402
+
+HOSTS = tuple(sorted(HOST_KEYS))
+SOURCES = tuple(sorted(SOURCE_KEYS))
+
+FIXTURES: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
     "claude": (
         "tests/fixtures/claude/s-cla-01-ordered-parent-chain/root",
         "/workspace/project",
+        "7e0a1246-d538-5993-8d6f-3495aafcdd92",
+        ("synthetic request", "synthetic response"),
     ),
     "codex": (
         "tests/fixtures/codex/s-cod-01-state-generation-selection/root",
         "/workspace/project",
+        "0493207e-6039-5026-81d4-e75c0efff76a",
+        ("synthetic request", "synthetic response"),
     ),
     "cursor": (
         "tests/fixtures/cursor/s-cur-01-cli-cwd-hash/root",
         "/workspace/project",
+        "418306f5-3983-5ab7-b8e0-fa47843e83aa",
+        ("synthetic request", "synthetic response"),
     ),
     "opencode": (
         "tests/fixtures/opencode/s-ope-01/root",
         "/workspace/project",
+        "ses-sql",
+        (
+            "Please inspect the synthetic parser.",
+            "I inspected only synthetic evidence.",
+            "synthetic tool output",
+        ),
     ),
     "antigravity": (
         "tests/fixtures/antigravity/s-ant-01/root",
         "/workspace/project",
+        "conv-one",
+        ("Antigravity prompt", "Antigravity answer"),
     ),
     "grok": (
         "tests/fixtures/grok/s-gro-01/root",
         "/workspace/project",
+        "grok-one",
+        ("Grok prompt", "Grok answer"),
+    ),
+    "qwen": (
+        "tests/fixtures/qwen/s-qwe-01/root",
+        "/workspace/project",
+        "qwen-one",
+        (
+            "Inspect the synthetic Qwen store.",
+            "Only public answer text.",
+            "synthetic tool output",
+        ),
+    ),
+    "kimi": (
+        "tests/fixtures/kimi/s-kim-01/root",
+        "/workspace/project",
+        "11111111-1111-4111-8111-111111111111",
+        ("Current Kimi prompt", "Current Kimi answer"),
     ),
 }
 
@@ -62,19 +102,133 @@ def _run(cmd: list[str], *, env: dict[str, str] | None = None) -> subprocess.Com
     )
 
 
+def _parse_envelope(
+    output: str,
+    *,
+    operation: str,
+    source: str,
+    cwd: str,
+    session_id: str,
+    contents: tuple[str, ...],
+) -> str | None:
+    """Return a failure detail, or None when the exact fixture envelope matches."""
+    try:
+        value = json.loads(output)
+    except (TypeError, json.JSONDecodeError) as error:
+        return f"invalid JSON envelope: {error}"
+    if not isinstance(value, dict):
+        return "JSON envelope is not an object"
+    if value.get("schema_version") != "portable-resume/v1":
+        return f"unexpected schema_version: {value.get('schema_version')!r}"
+    if value.get("operation") != operation:
+        return f"unexpected operation: {value.get('operation')!r}"
+    query = value.get("query")
+    if not isinstance(query, dict) or query.get("source") != source or query.get("cwd") != cwd:
+        return f"unexpected query: {query!r}"
+    if value.get("inert") is not True or value.get("untrusted_content") is not True:
+        return "envelope is missing inert/untrusted boundary flags"
+    sessions = value.get("sessions")
+    if not isinstance(sessions, list) or not sessions:
+        return f"expected at least one session, received: {sessions!r}"
+    if operation == "show" and len(sessions) != 1:
+        return f"show returned multiple sessions: {sessions!r}"
+    matches: list[dict[str, object]] = []
+    for candidate in sessions:
+        if not isinstance(candidate, dict):
+            return "session is not an object"
+        if candidate.get("source") != source:
+            return f"unexpected session source: {candidate.get('source')!r}"
+        if (
+            candidate.get("inert") is not True
+            or candidate.get("untrusted_content") is not True
+        ):
+            return "session is missing inert/untrusted boundary flags"
+        candidate_turns = candidate.get("turns")
+        if not isinstance(candidate_turns, list):
+            return "session turns is not a list"
+        if operation == "list" and candidate_turns:
+            return "list session unexpectedly contains turns"
+        if candidate.get("session_id") == session_id:
+            matches.append(candidate)
+    if len(matches) != 1:
+        return f"expected one matching session {session_id!r}, received {len(matches)}"
+    session = matches[0]
+    turns = session.get("turns")
+    assert isinstance(turns, list)
+    actual_contents = tuple(
+        turn.get("content")
+        for turn in turns
+        if isinstance(turn, dict)
+    )
+    expected_contents = () if operation == "list" else contents
+    if actual_contents != expected_contents:
+        return f"unexpected turn content: {actual_contents!r}"
+    if any(
+        not isinstance(turn, dict)
+        or turn.get("inert") is not True
+        or turn.get("untrusted_content") is not True
+        for turn in turns
+    ):
+        return "turn is missing inert/untrusted boundary flags"
+    return None
+
+
+def _materialize_fixture(source: str, fixture: Path, destination: Path) -> Path:
+    """Return an immutable fixture root, or a relocated synthetic copy.
+
+    Current Kimi indexes persist an absolute ``sessionDir``. The tracked
+    synthetic fixture intentionally cannot contain a developer's real home
+    path, so smoke tests relocate it and rewrite only the temporary copy.
+    """
+
+    if source != "kimi":
+        return fixture
+    target = destination / source
+    shutil.copytree(fixture, target)
+    session_dirs = sorted((target / "sessions").glob("*/*"))
+    if len(session_dirs) != 1:
+        raise RuntimeError("synthetic Kimi fixture must contain exactly one session")
+    index = target / "session_index.jsonl"
+    records = [
+        json.loads(line)
+        for line in index.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if len(records) != 1 or not isinstance(records[0], dict):
+        raise RuntimeError("synthetic Kimi index must contain exactly one record")
+    records[0]["sessionDir"] = str(session_dirs[0].resolve())
+    index.write_text(
+        json.dumps(records[0], ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return target
+
+
 def main(argv: list[str] | None = None) -> int:
     as_json = "--json" in (argv or sys.argv[1:])
     cells: list[dict[str, object]] = []
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC) + os.pathsep + env.get("PYTHONPATH", "")
+    installed_env = os.environ.copy()
+    installed_env.pop("PYTHONPATH", None)
+    installed_env["PYTHONNOUSERSITE"] = "1"
     python = sys.executable
     install = str(ROOT / "scripts" / "install-resume-skills")
 
     with tempfile.TemporaryDirectory(prefix="portable-resume-smoke-") as tmp:
         project = Path(tmp) / "project"
         home = Path(tmp) / "home"
+        fixture_copies = Path(tmp) / "fixtures"
         project.mkdir()
         home.mkdir()
+        fixtures = {
+            source: _materialize_fixture(
+                source,
+                ROOT / fixture[0],
+                fixture_copies,
+            )
+            for source, fixture in FIXTURES.items()
+        }
         for host in HOSTS:
             # Distinct roots: Codex/Antigravity share .agents/skills by default.
             skill_root = str(project / f"skills-{host}")
@@ -111,8 +265,8 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 continue
             for source in SOURCES:
-                fixture_rel, cwd = FIXTURES[source]
-                fixture = ROOT / fixture_rel
+                _fixture_rel, cwd, session_id, contents = FIXTURES[source]
+                fixture = fixtures[source]
                 runner = Path(skill_root) / f"resume-{source}" / "scripts" / "run_reader.py"
                 if not runner.is_file():
                     cells.append(
@@ -129,6 +283,7 @@ def main(argv: list[str] | None = None) -> int:
                 listed = _run(
                     [
                         python,
+                        "-I",
                         str(runner),
                         "list",
                         "--cwd",
@@ -139,22 +294,35 @@ def main(argv: list[str] | None = None) -> int:
                         "0",
                         "--json",
                     ],
-                    env=env,
+                    env=installed_env,
                 )
-                if listed.returncode != 0:
+                list_detail = _parse_envelope(
+                    listed.stdout,
+                    operation="list",
+                    source=source,
+                    cwd=cwd,
+                    session_id=session_id,
+                    contents=contents,
+                )
+                if listed.returncode != 0 or list_detail is not None:
+                    if listed.returncode != 0:
+                        detail = listed.stderr or listed.stdout
+                    else:
+                        detail = list_detail or listed.stdout
                     cells.append(
                         {
                             "host": host,
                             "source": source,
                             "result": "fail",
                             "stage": "list",
-                            "detail": (listed.stderr or listed.stdout)[-500:],
+                            "detail": detail[-500:],
                         }
                     )
                     continue
                 shown = _run(
                     [
                         python,
+                        "-I",
                         str(runner),
                         "show",
                         "latest",
@@ -165,35 +333,43 @@ def main(argv: list[str] | None = None) -> int:
                         "--within-min",
                         "0",
                         "--format",
-                        "handoff",
+                        "json",
                     ],
-                    env=env,
+                    env=installed_env,
                 )
-                out = (shown.stdout or "") + (shown.stderr or "")
-                ok = shown.returncode == 0 and (
-                    "SECURITY BOUNDARY" in out
-                    or "untrusted" in out.casefold()
-                    or "Portable Resume" in out
+                show_detail = _parse_envelope(
+                    shown.stdout,
+                    operation="show",
+                    source=source,
+                    cwd=cwd,
+                    session_id=session_id,
+                    contents=contents,
                 )
+                ok = shown.returncode == 0 and show_detail is None
+                if shown.returncode != 0:
+                    detail = shown.stderr or shown.stdout
+                else:
+                    detail = show_detail or shown.stdout
                 cells.append(
                     {
                         "host": host,
                         "source": source,
                         "result": "pass" if ok else "fail",
                         "stage": "show" if not ok else "ok",
-                        "detail": "" if ok else out[-500:],
+                        "detail": "" if ok else detail[-500:],
                     }
                 )
 
     passed = sum(1 for c in cells if c["result"] == "pass")
     failed = [c for c in cells if c["result"] != "pass"]
+    expected = len(HOSTS) * len(SOURCES)
     report = {
         "schema_version": "portable-resume/installed-runner-smoke-v1",
         "cell_count": len(cells),
-        "expected": 36,
+        "expected": expected,
         "passed": passed,
         "failed": len(failed),
-        "ok": passed == 36 and len(cells) == 36,
+        "ok": passed == expected and len(cells) == expected,
         "note": "Installed skill runner smoke only — not host UI NL/picker activation",
         "failures": failed,
     }
@@ -203,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:
     elif failed:
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     else:
-        print(f"INSTALLED_RUNNER_SMOKE PASS cells={passed}/36")
+        print(f"INSTALLED_RUNNER_SMOKE PASS cells={passed}/{expected}")
     return 0 if report["ok"] else 1
 
 

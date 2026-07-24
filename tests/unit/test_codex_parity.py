@@ -70,6 +70,47 @@ class CodexParityTests(unittest.TestCase):
         self.assertEqual(len(turns), 1)
         self.assertIn("shell", turns[0]["content"])
 
+    def test_rollback_drops_entire_suffix_from_target_user(self) -> None:
+        records = [
+            {
+                "type": "response_item",
+                "payload": {"type": "message", "role": "assistant", "content": "session prefix"},
+            },
+            {
+                "type": "response_item",
+                "payload": {"type": "message", "role": "user", "content": "kept request"},
+            },
+            {
+                "type": "response_item",
+                "payload": {"type": "message", "role": "assistant", "content": "kept reply"},
+            },
+            {
+                "type": "response_item",
+                "payload": {"type": "message", "role": "user", "content": "rolled back request"},
+            },
+            {
+                "type": "response_item",
+                "payload": {"type": "function_call", "name": "shell", "arguments": "{}"},
+            },
+            {
+                "type": "response_item",
+                "payload": {"type": "function_call_output", "output": "rolled back output"},
+            },
+            {
+                "type": "response_item",
+                "payload": {"type": "message", "role": "assistant", "content": "rolled back reply"},
+            },
+            {
+                "type": "event_msg",
+                "payload": {"type": "thread_rolled_back", "num_turns": 1},
+            },
+        ]
+        turns, _ = _normalized_turns(records)
+        self.assertEqual(
+            [turn["content"] for turn in turns],
+            ["session prefix", "kept request", "kept reply"],
+        )
+
     def test_show_with_world_state_on_disk(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

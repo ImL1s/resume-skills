@@ -1,4 +1,4 @@
-"""Installer CLI: install / verify / uninstall / matrix / recover."""
+"""Installer CLI: quick-install / install / verify / uninstall / matrix / recover."""
 
 from __future__ import annotations
 
@@ -13,10 +13,14 @@ from .catalog import HOST_KEYS, hosts_report, resolve_skill_root
 from .manifest import claim_key
 from .render import materialize_plan, package_identity
 from .transaction import (
+    capture_install_checkpoint,
+    discard_install_checkpoint,
     execute_install,
     matrix_report,
     plan_install,
     recover_root,
+    require_no_pending_journal,
+    restore_install_checkpoint,
     uninstall_claim,
     verify_root,
 )
@@ -37,6 +41,27 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--json", action="store_true")
         if name == "install":
             p.add_argument("--force-with-backup", action="store_true")
+
+    quick = sub.add_parser(
+        "quick-install",
+        help="install one host (or all hosts) globally with safe defaults",
+    )
+    quick.add_argument(
+        "host",
+        nargs="?",
+        default="all",
+        choices=(*sorted(HOST_KEYS), "all"),
+        help="host key; defaults to all",
+    )
+    quick.add_argument(
+        "--project",
+        help="install into this project's host root instead of user-global roots",
+    )
+    quick.add_argument("--root", help="explicit skill root override")
+    quick.add_argument("--home", default=os.path.expanduser("~"))
+    quick.add_argument("--dry-run", action="store_true")
+    quick.add_argument("--force-with-backup", action="store_true")
+    quick.add_argument("--json", action="store_true")
 
     m = sub.add_parser("matrix")
     m.add_argument("--json", action="store_true")
@@ -137,6 +162,9 @@ def run(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     try:
         ns = parser.parse_args(list(argv) if argv is not None else None)
+        if ns.command == "quick-install":
+            ns.command = "install"
+            ns.scope = "project" if ns.project else "global"
         if ns.command == "matrix":
             report = matrix_report()
             _print(report, as_json=True)
@@ -183,18 +211,49 @@ def run(argv: Sequence[str] | None = None) -> int:
                     for plan in plans
                 ]
             else:
-                # Re-plan under the latest manifest generation. This matters
-                # when byte-identical host profiles intentionally share a root.
-                for host, root in targets:
-                    plan = plan_install(
-                        host=host,
-                        scope=ns.scope,
-                        root=root,
-                        force_with_backup=ns.force_with_backup,
-                    )
-                    results.append(
-                        execute_install(plan, force_with_backup=ns.force_with_backup)
-                    )
+                for _host, root in targets:
+                    require_no_pending_journal(root)
+                checkpoints = []
+                try:
+                    for plan in plans:
+                        checkpoints.append(capture_install_checkpoint(plan))
+                except Exception:
+                    for checkpoint in checkpoints:
+                        discard_install_checkpoint(checkpoint)
+                    raise
+                completed: list[tuple[str, Any, dict[str, Any]]] = []
+                try:
+                    # Re-plan under the latest manifest generation. This matters
+                    # when byte-identical host profiles intentionally share a root.
+                    for (host, root), checkpoint in zip(targets, checkpoints):
+                        plan = plan_install(
+                            host=host,
+                            scope=ns.scope,
+                            root=root,
+                            force_with_backup=ns.force_with_backup,
+                        )
+                        result = execute_install(plan, force_with_backup=ns.force_with_backup)
+                        results.append(result)
+                        completed.append((host, checkpoint, result))
+                except Exception:
+                    compensation_failures: list[str] = []
+                    for host, checkpoint, result in reversed(completed):
+                        try:
+                            restore_install_checkpoint(
+                                checkpoint,
+                                backup_root=result.get("backup_root"),
+                            )
+                        except Exception:
+                            compensation_failures.append(host)
+                    if compensation_failures:
+                        raise DiagnosticError(
+                            "E_RECOVERY_REQUIRED",
+                            family=tuple(sorted(compensation_failures)),
+                        )
+                    raise
+                finally:
+                    for checkpoint in checkpoints:
+                        discard_install_checkpoint(checkpoint)
         else:
             for host, root in targets:
                 if ns.command == "verify":

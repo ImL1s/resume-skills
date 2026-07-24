@@ -6,7 +6,18 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-SOURCE_KEYS = frozenset({"claude", "codex", "cursor", "opencode", "antigravity", "grok"})
+SOURCE_KEYS = frozenset(
+    {
+        "antigravity",
+        "claude",
+        "codex",
+        "cursor",
+        "grok",
+        "kimi",
+        "opencode",
+        "qwen",
+    }
+)
 TURN_ROLES = frozenset({"user", "assistant", "tool"})
 OPERATIONS = frozenset({"list", "show"})
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 import stat
 from pathlib import Path
 from string import Template
@@ -21,6 +19,38 @@ from .catalog import (
 _PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 _RESOURCES = _PACKAGE_ROOT / "resources"
 _RUNTIME_SRC = _PACKAGE_ROOT
+
+# Keep the installed reader runtime explicit and reviewable. Adding a new
+# runtime dependency must update this list and the installed-runner smoke; the
+# installer package itself is deliberately absent.
+_RUNTIME_MODULES = (
+    "__init__.py",
+    "bounds.py",
+    "contracts.py",
+    "diagnostics.py",
+    "handoff.py",
+    "model.py",
+    "paths.py",
+    "reader.py",
+    "request.py",
+    "resources/portable-resume-v1.schema.json",
+    "sanitize.py",
+    "select.py",
+    "snapshot.py",
+    "adapters/__init__.py",
+    "adapters/antigravity.py",
+    "adapters/base.py",
+    "adapters/claude.py",
+    "adapters/codex.py",
+    "adapters/codex_sqlite.py",
+    "adapters/common.py",
+    "adapters/cursor.py",
+    "adapters/cursor_live.py",
+    "adapters/grok.py",
+    "adapters/kimi.py",
+    "adapters/opencode.py",
+    "adapters/qwen.py",
+)
 
 
 def _read_template(name: str) -> Template:
@@ -60,7 +90,7 @@ def materialize_plan(host: str) -> dict[str, bytes]:
         rel = path.relative_to(_RUNTIME_SRC)
         dest = Path(".portable-resume") / "runtime" / "portable_resume" / rel
         files[dest.as_posix()] = path.read_bytes()
-    # six skills
+    # one skill for every supported source
     for source in sorted(SOURCE_KEYS):
         skill = skill_name_for(source)
         files[f"{skill}/SKILL.md"] = render_skill_markdown(host=host, source=source).encode("utf-8")
@@ -69,22 +99,16 @@ def materialize_plan(host: str) -> dict[str, bytes]:
 
 
 def _iter_runtime_files() -> Iterable[Path]:
-    """Yield runtime modules needed by installed run_reader (exclude install/)."""
-    skip_dirs = {"__pycache__", "install"}
-    for root, dirs, names in os.walk(_RUNTIME_SRC):
-        dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
-        # Never ship the installer package into skill roots.
-        rel_root = Path(root).relative_to(_RUNTIME_SRC)
-        if rel_root.parts and rel_root.parts[0] == "install":
-            dirs[:] = []
-            continue
-        for name in names:
-            if name.endswith(".pyc") or name.startswith("."):
-                continue
-            path = Path(root) / name
-            if not path.is_file():
-                continue
-            yield path
+    """Yield the audited stdlib-only installed runtime module allowlist."""
+    for relative in _RUNTIME_MODULES:
+        path = _RUNTIME_SRC / relative
+        try:
+            mode = path.lstat().st_mode
+        except OSError as error:
+            raise RuntimeError(f"missing installed runtime module: {relative}") from error
+        if path.is_symlink() or not stat.S_ISREG(mode):
+            raise RuntimeError(f"unsafe installed runtime module: {relative}")
+        yield path
 
 
 def package_identity(files: dict[str, bytes]) -> str:

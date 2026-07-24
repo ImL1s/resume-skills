@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.snapshot import query_only_live_sqlite
@@ -49,6 +50,38 @@ class QueryOnlyLiveSqliteTests(unittest.TestCase):
         with self.assertRaises(DiagnosticError) as ctx:
             with query_only_live_sqlite(str(self.db), root=str(self.root), provider="test"):
                 pass
+        self.assertEqual(ctx.exception.code, "E_UNSAFE_PATH")
+
+    def test_main_rename_symlink_swap_before_sqlite_open_fails_closed(self) -> None:
+        attacker = self.root / "attacker.sqlite"
+        connection = sqlite3.connect(attacker)
+        connection.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+        connection.execute("INSERT INTO t(v) VALUES ('attacker')")
+        connection.commit()
+        connection.close()
+
+        original = self.root / "original.sqlite"
+        real_connect = sqlite3.connect
+        swapped = False
+        opened_uri = ""
+
+        def swap_then_connect(*args, **kwargs):
+            nonlocal opened_uri, swapped
+            opened_uri = str(args[0])
+            if not swapped:
+                self.db.rename(original)
+                self.db.symlink_to(attacker)
+                swapped = True
+            return real_connect(*args, **kwargs)
+
+        with mock.patch("portable_resume.snapshot.sqlite3.connect", side_effect=swap_then_connect):
+            with self.assertRaises(DiagnosticError) as ctx:
+                with query_only_live_sqlite(str(self.db), root=str(self.root), provider="test"):
+                    self.fail("swapped source path must never be yielded")
+
+        self.assertTrue(swapped)
+        self.assertRegex(opened_uri, r"^file:/(?:proc/self|dev)/fd/\d+\?")
+        self.assertNotIn(str(self.db), opened_uri)
         self.assertEqual(ctx.exception.code, "E_UNSAFE_PATH")
 
 

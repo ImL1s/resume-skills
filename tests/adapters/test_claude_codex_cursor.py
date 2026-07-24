@@ -631,7 +631,7 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertNotIn("cipher", serialized)
         self.assertNotIn("hidden", serialized)
 
-    def test_s_cod_07_08_zstd_absence_and_malicious_path_degrade_only_provider(self) -> None:
+    def test_s_cod_07_zstd_absence_and_malicious_path_degrade_only_provider(self) -> None:
         compressed, _ = self.rollout(suffix=".jsonl.zst")
         marker = self.root / "called"
         fake = self.root / "zstd"
@@ -644,10 +644,67 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertIn("W_OPTIONAL_ZSTD_UNAVAILABLE", capability.warnings)
         self.assertFalse(marker.exists())
         self.assertEqual(listed_absent, [])
-        # When a trusted decoder exists, corrupt/malicious compressed payloads still
-        # degrade only this session (empty list), not fail the whole provider list.
-        listed_corrupt = codex.ADAPTER.list(self.query(compressed), ReadBudget())
-        self.assertEqual(listed_corrupt, [])
+
+    def test_s_cod_08_zstd_corruption_and_limits_are_not_masked(self) -> None:
+        compressed, _ = self.rollout(suffix=".jsonl.zst")
+        for error in (
+            DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=codex.ZSTD_FORMAT),
+            DiagnosticError.limit_exceeded(),
+        ):
+            with self.subTest(code=error.code):
+                with mock.patch.object(
+                    codex,
+                    "_trusted_zstd",
+                    return_value="/trusted/zstd",
+                ), mock.patch.object(codex, "_decompress_zstd", side_effect=error):
+                    with self.assertRaises(DiagnosticError) as caught:
+                        codex.ADAPTER.list(self.query(compressed), ReadBudget())
+                self.assertEqual(caught.exception.code, error.code)
+
+    def test_supported_database_empty_result_does_not_scan_rollouts(self) -> None:
+        self.rollout()
+        self.database(9, [])
+        with mock.patch.object(
+            codex,
+            "_rollout_paths",
+            side_effect=AssertionError("supported database is authoritative"),
+        ):
+            self.assertEqual(codex.ADAPTER.list(self.query(), ReadBudget()), [])
+
+    def test_unknown_database_schema_falls_back_and_retains_rollout_warning(self) -> None:
+        identifier = str(uuid.uuid4())
+        records = [
+            {
+                "type": "session_meta",
+                "timestamp": stamp(-3),
+                "payload": {
+                    "id": identifier,
+                    "cwd": str(self.cwd),
+                    "source": "cli",
+                },
+            },
+            {"type": "future_rollout_step", "payload": {"synthetic": True}},
+            {
+                "type": "response_item",
+                "timestamp": stamp(-1),
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "compatible fallback"}],
+                },
+            },
+        ]
+        self.rollout(identifier, records=records)
+        self.database(10, [], unknown=True)
+
+        capability = codex.ADAPTER.probe(self.query())
+        values = codex.ADAPTER.list(self.query(), ReadBudget())
+
+        self.assertEqual(capability.evidence, (codex.ROLLOUT_FORMAT,))
+        self.assertIn("W_UNKNOWN_RECORD_SKIPPED", capability.warnings)
+        self.assertEqual([value.session_id for value in values], [identifier])
+        self.assertEqual(values[0].provider, codex.ROLLOUT_FORMAT)
+        self.assertIn("W_UNKNOWN_RECORD_SKIPPED", values[0].warnings)
 
     def test_s_cod_08_decoder_uses_fixed_argv_no_shell_timeout_surface(self) -> None:
         with mock.patch.object(codex, "_trusted_zstd", return_value="/trusted/zstd"), mock.patch.object(

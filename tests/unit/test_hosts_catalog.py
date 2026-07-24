@@ -21,9 +21,9 @@ from portable_resume.install.cli import run as install_cli_run
 
 
 class HostsCatalogTests(unittest.TestCase):
-    def test_six_hosts_complete_metadata(self) -> None:
+    def test_all_hosts_have_complete_metadata(self) -> None:
         self.assertEqual(set(HOST_PROFILES), set(HOST_KEYS))
-        self.assertEqual(len(HOST_KEYS), 6)
+        self.assertEqual(len(HOST_KEYS), 8)
         for key, profile in HOST_PROFILES.items():
             self.assertEqual(profile.key, key)
             self.assertTrue(profile.project_rel)
@@ -42,6 +42,8 @@ class HostsCatalogTests(unittest.TestCase):
             "opencode": (".opencode/skills", ".config/opencode/skills"),
             "antigravity": (".agents/skills", ".gemini/config/skills"),
             "grok": (".grok/skills", ".grok/skills"),
+            "kimi": (".kimi-code/skills", ".kimi-code/skills"),
+            "qwen": (".qwen/skills", ".qwen/skills"),
         }
         for host, (project, global_rel) in expected.items():
             self.assertEqual(HOST_PROFILES[host].project_rel, project)
@@ -72,8 +74,8 @@ class HostsCatalogTests(unittest.TestCase):
     def test_hosts_report_all_and_shared_pair(self) -> None:
         report = hosts_report(project_dir="/tmp/proj", home_dir="/tmp/home")
         self.assertTrue(report["ok"])
-        self.assertEqual(report["host_count"], 6)
-        self.assertEqual(len(report["hosts"]), 6)
+        self.assertEqual(report["host_count"], len(HOST_KEYS))
+        self.assertEqual(len(report["hosts"]), len(HOST_KEYS))
         self.assertEqual(report["docs"], "docs/install-hosts.md")
         pairs = report["shared_root_pairs"]
         self.assertEqual(pairs[0]["hosts"], ["codex", "antigravity"])
@@ -86,7 +88,7 @@ class HostsCatalogTests(unittest.TestCase):
             code = install_cli_run(["hosts", "--json", "--project", "/tmp/p", "--home", "/tmp/h"])
         self.assertEqual(code, 0)
         data = json.loads(buf.getvalue())
-        self.assertEqual(data["host_count"], 6)
+        self.assertEqual(data["host_count"], len(HOST_KEYS))
 
         buf2 = io.StringIO()
         with redirect_stdout(buf2):

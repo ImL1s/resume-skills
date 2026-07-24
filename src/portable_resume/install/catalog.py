@@ -1,4 +1,4 @@
-"""Six-host × six-source packaging catalog and per-host install roots."""
+"""Destination-host × source packaging catalog and per-host install roots."""
 
 from __future__ import annotations
 
@@ -8,7 +8,18 @@ from typing import Any, Iterable
 from .. import __version__ as BUNDLE_VERSION
 from ..diagnostics import SOURCE_KEYS
 
-HOST_KEYS = frozenset({"claude", "codex", "cursor", "opencode", "antigravity", "grok"})
+HOST_KEYS = frozenset(
+    {
+        "antigravity",
+        "claude",
+        "codex",
+        "cursor",
+        "grok",
+        "kimi",
+        "opencode",
+        "qwen",
+    }
+)
 SOURCE_SKILL_NAMES = tuple(f"resume-{key}" for key in sorted(SOURCE_KEYS))
 MANIFEST_SCHEMA = "portable-resume/install-manifest-v1"
 
@@ -47,7 +58,11 @@ HOST_PROFILES: dict[str, HostProfile] = {
         project_rel=".claude/skills",
         global_rel=".claude/skills",
         display_name="Claude Code",
-        official_docs=("https://code.claude.com/docs/en/skills",),
+        official_docs=(
+            "https://code.claude.com/docs/en/skills",
+            "https://code.claude.com/docs/en/discover-plugins",
+            "https://code.claude.com/docs/en/plugin-marketplaces",
+        ),
         project_layout="<project>/.claude/skills/<name>/SKILL.md",
         global_layout="~/.claude/skills/<name>/SKILL.md",
         alternate_project_roots=(),
@@ -56,7 +71,8 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "This installer (recommended): install-resume-skills install --host claude --scope project|global",
             "Manual: copy each resume-*/ folder into .claude/skills/ or ~/.claude/skills/",
             "Also: nested monorepo .claude/skills/ under packages (Claude discovers on demand)",
-            "Plugins: <plugin>/skills/<name>/SKILL.md (namespaced plugin-name:skill-name)",
+            "Plugin package: claude plugin install portable-resume@<marketplace> --scope user|project|local",
+            "Marketplace setup: claude plugin marketplace add <owner/repo>, then /reload-plugins after updates",
         ),
         activation_help=(
             "Invoke `/resume-<source>` (or let the model auto-select by description). "
@@ -90,8 +106,8 @@ HOST_PROFILES: dict[str, HostProfile] = {
         global_rel=".agents/skills",
         display_name="Codex CLI / IDE",
         official_docs=(
-            "https://developers.openai.com/codex/skills/",
             "https://learn.chatgpt.com/docs/build-skills",
+            "https://learn.chatgpt.com/docs/build-plugins",
         ),
         project_layout="<project>/.agents/skills/<name>/SKILL.md (CWD → repo root)",
         global_layout="~/.agents/skills/<name>/SKILL.md",
@@ -103,7 +119,9 @@ HOST_PROFILES: dict[str, HostProfile] = {
         install_methods=(
             "This installer: install-resume-skills install --host codex --scope project|global",
             "Manual: place under .agents/skills/ (repo) or ~/.agents/skills/ (user)",
-            "Upstream curated: $skill-installer <name> inside Codex (not used by this package)",
+            "Local release package: codex plugin marketplace add <extracted-dir>, then codex plugin add portable-resume@portable-resume",
+            "Published repository: codex plugin marketplace add <owner/repo> [--ref <tag>], then codex plugin add portable-resume@portable-resume",
+            "Repository catalog: .agents/plugins/marketplace.json; package manifest: .codex-plugin/plugin.json",
             "Symlinks into ~/.agents/skills are supported by Codex discovery",
         ),
         activation_help=(
@@ -132,7 +150,11 @@ HOST_PROFILES: dict[str, HostProfile] = {
         project_rel=".cursor/skills",
         global_rel=".cursor/skills",
         display_name="Cursor Agent",
-        official_docs=("https://cursor.com/docs/context/skills",),
+        official_docs=(
+            "https://cursor.com/docs/context/skills",
+            "https://cursor.com/marketplace",
+            "https://cursor.com/blog/marketplace",
+        ),
         project_layout="<project>/.cursor/skills/<name>/SKILL.md",
         global_layout="~/.cursor/skills/<name>/SKILL.md",
         alternate_project_roots=(
@@ -146,7 +168,10 @@ HOST_PROFILES: dict[str, HostProfile] = {
         install_methods=(
             "This installer (native Cursor root): install-resume-skills install --host cursor --scope project|global",
             "Manual into .cursor/skills/ or .agents/skills/ (both official)",
-            "GitHub remote rule import via Customize UI (not used by this package)",
+            "Local plugin package: copy/symlink plugins/portable-resume to ~/.cursor/plugins/local/portable-resume",
+            "One run only: cursor agent --plugin-dir <extracted-dir>/plugins/portable-resume",
+            "Git marketplace: cursor agent plugin marketplace add <git-url> [--git-ref <tag>], then /add-plugin portable-resume",
+            "Published marketplace: search for the plugin after repository submission and review",
             "Nested package .cursor/skills/ directories are discovered recursively",
         ),
         activation_help=(
@@ -163,6 +188,7 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "Installer defaults to .cursor/skills (native); Cursor also loads .agents/skills as first-class.",
             "If you already install Codex into .agents/skills, Cursor may see those skills too.",
             "No documented tail→argv API.",
+            "The CLI can add a Git marketplace but installing its plugin remains the /add-plugin host UI step.",
         ),
         evidence_notes=(
             "Cursor skills docs list .agents/skills and .cursor/skills (project+user) plus Claude/Codex "
@@ -175,7 +201,10 @@ HOST_PROFILES: dict[str, HostProfile] = {
         project_rel=".opencode/skills",
         global_rel=".config/opencode/skills",
         display_name="OpenCode",
-        official_docs=("https://opencode.ai/docs/skills/",),
+        official_docs=(
+            "https://opencode.ai/docs/skills/",
+            "https://opencode.ai/docs/plugins/",
+        ),
         project_layout="<project>/.opencode/skills/<name>/SKILL.md",
         global_layout="~/.config/opencode/skills/<name>/SKILL.md",
         alternate_project_roots=(
@@ -190,7 +219,7 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "This installer (native OpenCode roots): install-resume-skills install --host opencode --scope project|global",
             "Manual into .opencode/skills/ or ~/.config/opencode/skills/",
             "Fallback: install into .claude/skills or .agents/skills if your build only discovers compat roots",
-            "Custom commands (.opencode/commands) are a separate surface — not this package",
+            "OpenCode has local/JS/npm executable plugins but no official marketplace; this package stays a data-only skill",
         ),
         activation_help=(
             "Ask the model to use the skill by name so it can call native skill loading. "
@@ -209,6 +238,7 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "keep each skill name unique across those roots or inspect which copy won.",
             "No stable user-facing /skill-name grammar for skills (commands are separate).",
             "permission.skill patterns in opencode.json can hide skills.",
+            "Do not confuse this inert SKILL.md package with OpenCode executable plugins.",
         ),
         evidence_notes=(
             "OpenCode docs: native .opencode/skills + ~/.config/opencode/skills plus Claude/agents "
@@ -222,7 +252,8 @@ HOST_PROFILES: dict[str, HostProfile] = {
         global_rel=".gemini/config/skills",
         display_name="Antigravity / agy",
         official_docs=(
-            "https://antigravity.google/docs/skills",
+            "https://www.antigravity.google/docs/skills",
+            "https://www.antigravity.google/docs/plugins",
             "https://codelabs.developers.google.com/getting-started-with-antigravity-skills",
         ),
         project_layout="<workspace>/.agents/skills/<name>/SKILL.md",
@@ -240,6 +271,9 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "Manual project: <workspace>/.agents/skills/<name>/",
             "Manual global (cross-flavor): ~/.gemini/config/skills/<name>/",
             "If only Gemini CLI: prefer ~/.gemini/skills/ or ~/.agents/skills/ with --root",
+            "Local plugin archive: agy plugin validate <extracted-dir>, then agy plugin install <extracted-dir>",
+            "Manual plugin fallback: .agents/plugins/portable-resume or ~/.gemini/config/plugins/portable-resume",
+            "Antigravity documents bundled/manual plugins, not a public general marketplace; direct skills are the lower-trust default",
         ),
         activation_help=(
             "Mention the skill by name in natural language. `/skills` only lists skills; "
@@ -268,8 +302,8 @@ HOST_PROFILES: dict[str, HostProfile] = {
         global_rel=".grok/skills",
         display_name="Grok Build",
         official_docs=(
-            "local:~/.grok/docs/user-guide/08-skills.md",
-            "bundled:/create-skill",
+            "https://docs.x.ai/build/features/skills-plugins-marketplaces",
+            "https://x.ai/news/grok-plugin-marketplace",
         ),
         project_layout="<repo>/.grok/skills/<name>/SKILL.md (CWD + repo root)",
         global_layout="~/.grok/skills/<name>/SKILL.md",
@@ -286,8 +320,9 @@ HOST_PROFILES: dict[str, HostProfile] = {
         install_methods=(
             "This installer: install-resume-skills install --host grok --scope project|global",
             "Manual: ./.grok/skills/ or ~/.grok/skills/",
-            "Interactive: /create-skill inside Grok Build",
-            "Plugins: install a plugin that ships skills",
+            "Local plugin archive: grok plugin validate <extracted-dir>, then grok plugin install <extracted-dir> --trust",
+            "Git plugin: grok plugin install <owner/repo[@ref]> --trust after review",
+            "Marketplace UI: open /plugins (or /skills) and review a configured Marketplace source",
             "Extra dirs: [skills].paths in ~/.grok/config.toml",
         ),
         activation_help=(
@@ -309,11 +344,110 @@ HOST_PROFILES: dict[str, HostProfile] = {
         caveats=(
             "$ARGUMENTS substitution is documented in Grok source/user guide; still not process argv.",
             "Bundled skills extract into ~/.grok/skills on startup — do not overwrite unrelated bundled dirs.",
+            "Review executable plugin contents before passing --trust; direct skills have a smaller trust surface.",
             "Live UI activation for portable-resume cells is not-run.",
         ),
         evidence_notes=(
-            "Grok user-guide 08-skills: ./.grok/skills, ~/.grok/skills, .agents, Claude/Cursor compat, "
-            "/skill-name, $ARGUMENTS prompt-only (2026-07-20)."
+            "Official Grok Build docs: ./.grok/skills, ~/.grok/skills, .agents, Claude/Cursor compat, "
+            "/skill-name, $ARGUMENTS prompt-only, and plugin marketplace installation (checked 2026-07-24)."
+        ),
+    ),
+    "qwen": HostProfile(
+        key="qwen",
+        profile_id="qwen-v1",
+        project_rel=".qwen/skills",
+        global_rel=".qwen/skills",
+        display_name="Qwen Code",
+        official_docs=(
+            "https://qwenlm.github.io/qwen-code-docs/en/users/features/skills/",
+            "https://qwenlm.github.io/qwen-code-docs/en/users/extension/introduction/",
+            "https://qwenlm.github.io/qwen-code-docs/en/users/extension/extension-releasing/",
+        ),
+        project_layout="<project>/.qwen/skills/<name>/SKILL.md",
+        global_layout="~/.qwen/skills/<name>/SKILL.md",
+        alternate_project_roots=(
+            ".qwen/extensions/<extension>/skills/ (extension-provided)",
+        ),
+        alternate_global_roots=(
+            "~/.qwen/extensions/<extension>/skills/ (extension-provided)",
+        ),
+        install_methods=(
+            "This installer: install-resume-skills install --host qwen --scope project|global",
+            "Manual: copy each resume-*/ folder into .qwen/skills/ or ~/.qwen/skills/",
+            "Extension release asset: qwen extensions install <archive-or-git-source>",
+            "Qwen can also install compatible Claude/Gemini marketplace extensions; verify the source before installation",
+        ),
+        activation_help=(
+            "Invoke `/resume-<source>` or choose it from `/skills`; the model may also "
+            "select a skill from its description."
+        ),
+        activation_examples=(
+            "/resume-codex",
+            "/resume-qwen resume_ref: latest cwd: /abs/path",
+            "/skills",
+        ),
+        arguments_note=(
+            "Invocation text is model context; the skill still runs its owned reader explicitly."
+        ),
+        caveats=(
+            "Qwen Code currently requires Node.js 22+ for npm installs; direct skill bundles only require Python 3.11+ at runtime.",
+            "Extensions can execute code or configure MCP; review them before installation.",
+            "Live host UI activation for portable-resume cells is still not-run.",
+        ),
+        evidence_notes=(
+            "Official Qwen Code docs: project/user .qwen/skills, /skills and /<skill>, "
+            "qwen-extension.json, local/archive/git/npm/marketplace extension installs "
+            "(checked 2026-07-24)."
+        ),
+    ),
+    "kimi": HostProfile(
+        key="kimi",
+        profile_id="kimi-code-v1",
+        project_rel=".kimi-code/skills",
+        global_rel=".kimi-code/skills",
+        display_name="Kimi Code CLI",
+        official_docs=(
+            "https://www.kimi.com/code/docs/en/kimi-code-cli/customization/skills.html",
+            "https://www.kimi.com/code/docs/en/kimi-code-cli/customization/plugins.html",
+            "https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/data-locations.html",
+        ),
+        project_layout="<project>/.kimi-code/skills/<name>/SKILL.md",
+        global_layout="$KIMI_CODE_HOME/skills/<name>/SKILL.md (default ~/.kimi-code/skills)",
+        alternate_project_roots=(
+            ".agents/skills/ (cross-tool)",
+        ),
+        alternate_global_roots=(
+            "~/.agents/skills/ (cross-tool)",
+            "~/.config/agents/skills/ (legacy Kimi CLI generic root)",
+        ),
+        install_methods=(
+            "This installer: install-resume-skills install --host kimi --scope project|global",
+            "Manual: copy each resume-*/ folder into .kimi-code/skills/ or $KIMI_CODE_HOME/skills/",
+            "Current plugin release asset: /plugins install <local-directory, ZIP URL, or GitHub URL>, then /plugins reload",
+            "Legacy Python Kimi CLI uses different ~/.kimi roots and kimi plugin; do not mix plugin formats",
+        ),
+        activation_help=(
+            "Invoke `/skill:resume-<source>` or mention the skill by name; start a new "
+            "session or `/reload` after installing a plugin."
+        ),
+        activation_examples=(
+            "/skill:resume-codex",
+            "/skill:resume-kimi",
+            "Use the resume-qwen skill with resume_ref: latest",
+        ),
+        arguments_note=(
+            "No skill-to-process argv binding is claimed; pass labeled context and run the owned reader."
+        ),
+        caveats=(
+            "This destination profile targets current Kimi Code CLI (~/.kimi-code), not legacy Python Kimi CLI (~/.kimi).",
+            "Current and legacy plugin manifests are incompatible.",
+            "Plugins can execute tools; direct SKILL.md installation is the lower-trust default.",
+            "Live host UI activation for portable-resume cells is still not-run.",
+        ),
+        evidence_notes=(
+            "Official Kimi Code docs: .kimi-code/skills, cross-tool .agents roots, "
+            "/skill:<name>, kimi.plugin.json, ZIP/GitHub plugin installs, and custom "
+            "marketplace catalogs (checked 2026-07-24)."
         ),
     ),
 }
@@ -325,6 +459,8 @@ SOURCE_TITLES = {
     "opencode": "OpenCode",
     "antigravity": "Antigravity CLI",
     "grok": "Grok Build",
+    "kimi": "Kimi CLI / Kimi Code CLI",
+    "qwen": "Qwen Code",
 }
 
 

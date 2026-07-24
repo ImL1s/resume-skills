@@ -8,6 +8,7 @@ from enum import IntEnum
 from typing import Any, NoReturn
 
 from .bounds import DEFAULT_BOUNDS
+from .model import SOURCE_KEYS
 
 
 class ExitCode(IntEnum):
@@ -131,9 +132,6 @@ class DiagnosticError(Exception):
     @classmethod
     def limit_exceeded(cls) -> "DiagnosticError":
         return cls("E_LIMIT_EXCEEDED")
-
-
-SOURCE_KEYS = frozenset({"claude", "codex", "cursor", "opencode", "antigravity", "grok"})
 
 
 def _bounded_message(message: object) -> str:

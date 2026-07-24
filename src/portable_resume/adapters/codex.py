@@ -105,12 +105,17 @@ def _regular_directory(path: str, root: str) -> bool:
 
 
 def _state_databases(root: str) -> list[str]:
+    names: list[str] = []
     try:
-        names = os.listdir(root)
+        with os.scandir(root) as entries:
+            for entry in entries:
+                if len(names) >= DEFAULT_BOUNDS.scanned_records:
+                    raise DiagnosticError.limit_exceeded()
+                names.append(entry.name)
+    except DiagnosticError:
+        raise
     except OSError as error:
         raise DiagnosticError.source_busy(provider=SQLITE_FORMAT) from error
-    if len(names) > DEFAULT_BOUNDS.scanned_records:
-        raise DiagnosticError.limit_exceeded()
     values: list[tuple[int, str]] = []
     for name in names:
         match = _STATE_DB.fullmatch(name)
@@ -126,25 +131,35 @@ def _state_databases(root: str) -> list[str]:
     return [path for _, path in sorted(values, reverse=True)]
 
 
-def _walk_rollouts(container: str, root: str, *, max_depth: int = 4) -> list[str]:
+def _walk_rollouts(
+    container: str,
+    root: str,
+    *,
+    max_depth: int = 4,
+    scan_state: list[int] | None = None,
+) -> list[str]:
     if not _regular_directory(container, root):
         return []
     output: list[str] = []
-    visited = 0
+    visited = scan_state if scan_state is not None else [0]
 
     def visit(directory: str, depth: int) -> None:
-        nonlocal visited
+        names: list[str] = []
         try:
-            names = sorted(os.listdir(directory))
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    visited[0] += 1
+                    if visited[0] > DEFAULT_BOUNDS.scanned_records:
+                        # Do not return a traversal-order prefix: callers use
+                        # this set to resolve the newest rollout.
+                        raise DiagnosticError.limit_exceeded()
+                    names.append(entry.name)
+        except DiagnosticError:
+            raise
         except OSError as error:
             raise DiagnosticError.source_busy(provider=ROLLOUT_FORMAT) from error
-        visited += len(names)
-        if visited > DEFAULT_BOUNDS.scanned_records:
-            # Stop walking large trees; do not fail the whole provider.
-            return
+        names.sort()
         for name in names:
-            if visited > DEFAULT_BOUNDS.scanned_records:
-                return
             path = os.path.join(directory, name)
             try:
                 current = os.lstat(path)
@@ -156,15 +171,14 @@ def _walk_rollouts(container: str, root: str, *, max_depth: int = 4) -> list[str
                 visit(path, depth + 1)
             elif stat.S_ISREG(current.st_mode) and _ROLLOUT.fullmatch(name):
                 output.append(path)
-                if len(output) >= DEFAULT_BOUNDS.scanned_records:
-                    return
 
     visit(container, 0)
     return output
 
 
 def _rollout_paths(root: str, query: Query) -> list[str]:
-    values = _walk_rollouts(os.path.join(root, "sessions"), root)
+    scan_state = [0]
+    values = _walk_rollouts(os.path.join(root, "sessions"), root, scan_state=scan_state)
     # Archived rows are intentionally invisible unless the user supplied an
     # exact native UUID.  Text and path searches cannot enumerate archives.
     if query.ref:
@@ -173,9 +187,23 @@ def _rollout_paths(root: str, query: Query) -> list[str]:
         except ValueError:
             exact = False
         if exact:
-            values.extend(_walk_rollouts(os.path.join(root, "archived_sessions"), root))
+            values.extend(
+                _walk_rollouts(
+                    os.path.join(root, "archived_sessions"),
+                    root,
+                    scan_state=scan_state,
+                )
+            )
     exact = _exact_uuid_ref(query.ref)
-    return sorted(path for path in values if exact is None or _rollout_id(path) == exact)
+    filtered = [path for path in values if exact is None or _rollout_id(path) == exact]
+
+    def newest(path: str) -> tuple[float, str]:
+        try:
+            return (-os.lstat(path).st_mtime, path)
+        except OSError:
+            return (0.0, path)
+
+    return sorted(filtered, key=newest)
 
 
 def _exact_uuid_ref(value: str | None) -> str | None:
@@ -478,15 +506,15 @@ def _raw_turn(record: Mapping[str, Any]) -> dict[str, Any] | None:
 def _drop_last_user_turns(turns: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
     if count <= 0 or not turns:
         return turns
-    remaining = count
-    output = list(turns)
-    index = len(output) - 1
-    while index >= 0 and remaining > 0:
-        if output[index].get("role") == "user":
-            del output[index]
-            remaining -= 1
-        index -= 1
-    return output
+    user_positions = [
+        index
+        for index, turn in enumerate(turns)
+        if turn.get("role") == "user"
+    ]
+    if not user_positions:
+        return turns
+    cut = user_positions[0] if count >= len(user_positions) else user_positions[-count]
+    return turns[:cut]
 
 
 def _normalized_turns(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
@@ -517,7 +545,7 @@ def _normalized_turns(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any
                 warnings.append("W_TRUNCATED")  # post-compact view is partial by definition
             continue
         if outer == "event_msg" and isinstance(payload, Mapping):
-            if payload.get("type") in {"thread_rolled_back", "turn_aborted"}:
+            if payload.get("type") == "thread_rolled_back":
                 raw_n = payload.get("num_turns")
                 if raw_n is None:
                     raw_n = payload.get("turns")
@@ -540,17 +568,9 @@ def _rollout_summary(path: str, root: str, query: Query, budget: ReadBudget) -> 
         return None
     if path.endswith(".zst") and _trusted_zstd() is None:
         return None
-    compressed = path.endswith(".zst")
-    try:
-        observation, records, warnings, provider = _read_rollout(path, root, budget)
-        metadata = _session_meta(records, identifier, provider)
-        cwd = canonicalize_cwd(metadata["cwd"])
-    except DiagnosticError as error:
-        # Optional compressed provider: any structural/decode failure skips only this session
-        # so list() remains available for plain rollouts / SQLite providers.
-        if compressed:
-            return None
-        raise
+    observation, records, warnings, provider = _read_rollout(path, root, budget)
+    metadata = _session_meta(records, identifier, provider)
+    cwd = canonicalize_cwd(metadata["cwd"])
     if query.cwd is not None and not same_cwd(cwd, query.cwd):
         return None
     updated = _mtime(observation)
@@ -620,15 +640,24 @@ class CodexAdapter:
                 except DiagnosticError as error:
                     if error.code in {"E_SQLITE_HOT_JOURNAL", "E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
                         return CapabilityReport(self.key, SQLITE_FORMAT, "unsafe", root=root)
+                    raise
             paths = _rollout_paths(root, query)
             plain = [path for path in paths if not path.endswith(".zst")]
             if plain:
                 try:
                     identifier = _rollout_id(plain[0])
                     assert identifier is not None
-                    _, records, _, provider = _read_rollout(plain[0], root, ReadBudget())
+                    _, records, record_warnings, provider = _read_rollout(
+                        plain[0],
+                        root,
+                        ReadBudget(),
+                    )
                     _session_meta(records, identifier, provider)
-                    warnings = self._zstd_warnings(root, query)
+                    warnings = tuple(
+                        dict.fromkeys(
+                            (*record_warnings, *self._zstd_warnings(root, query))
+                        )
+                    )
                     return CapabilityReport(
                         self.key,
                         ROLLOUT_FORMAT,
@@ -640,6 +669,8 @@ class CodexAdapter:
                 except DiagnosticError as error:
                     if error.code in {"E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
                         return CapabilityReport(self.key, ROLLOUT_FORMAT, "unsafe", root=root)
+                    if error.code != "E_UNSUPPORTED_FORMAT":
+                        raise
             zstd = [path for path in paths if path.endswith(".zst")]
             if zstd and _trusted_zstd() is None:
                 return CapabilityReport(
@@ -674,8 +705,10 @@ class CodexAdapter:
                 database_supported = True
                 values = rows
                 break
-        # Prefer DB rows for list; only scan rollouts when DB absent or no matches.
-        if not values:
+        # A recognized DB is authoritative even when the query has no matches.
+        # Rollout scanning is a compatibility fallback only when no DB schema is
+        # recognized, never a way to hide corruption, bounds, or busy diagnostics.
+        if not database_supported:
             for path in _rollout_paths(root, query):
                 item = _rollout_summary(path, root, query, budget)
                 if item is not None:
