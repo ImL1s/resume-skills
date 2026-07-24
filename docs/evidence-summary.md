@@ -53,11 +53,12 @@ are in [`host-ui-smoke.md`](host-ui-smoke.md).
 |---|---|
 | Public repository | [`ImL1s/portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace) |
 | Publication commit | `4997715cd8f2680ab9e196ba43ec4af323a56bd1` |
-| Current marketplace commit | `3179288bb25ee96f9eb1315cca39d65821439d3d` |
+| Current marketplace commit | `b265be0f65151e81cb3992ebdaf061249a6e0416` |
 | Annotated tag | `v0.3.2`; tag object `29a583bbe6017ec3934d8504b1a5e5ae636329dc` |
 | Marketplace release | [`v0.3.2`](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.2) |
 | Initial publication CI | [marketplace run 30097511787](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30097511787); [release run 30097512849](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30097512849) |
-| Current CI / sync | [marketplace run 30099827015](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30099827015); [manual network sync 30098926042](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30098926042) |
+| Current CI / sync | [marketplace run 30101943331](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30101943331); [manual network sync 30101985883](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30101985883) |
+| Sanitized host evidence | [`public-marketplace-v0.3.2.json`](evidence/public-marketplace-v0.3.2.json) |
 
 Fresh isolated installs from the public catalogs passed on all six compatible
 hosts: Claude 2.1.218, Codex 0.145.0, Cursor Agent
@@ -67,6 +68,20 @@ confirmed the installed plugin. Version-reporting surfaces showed `0.3.2`, and
 the applicable hosts reported eight Skills. Antigravity and OpenCode have no
 compatible public catalog for this package shape and retain their
 release/direct installation paths.
+
+Qwen and Grok consume the marketplace's Claude-compatible subtree rather than
+the standalone Qwen/Grok release archives. The evidence record therefore binds
+those installs to publication commit `4997715…`, path
+`plugins/claude/portable-resume`, and Git tree
+`fd069e937013dca2ba6d45aa5ee2665f2a869da0`. The marketplace sync now rejects
+unsafe or colliding ZIP paths, malformed catalogs, checksum mismatch,
+downgrades, and same-version content divergence; its CI also compares an
+existing tag's release index before committing.
+
+The immutable marketplace `v0.3.2` tag retains its historical README. The
+GitHub Release body now explicitly supersedes the obsolete Cursor/Qwen commands
+with the verified `/plugin` and `--scope user` routes; the generated README for
+the next release already contains those corrected commands.
 
 This proves an independently maintained public marketplace and real host
 installation. It does not prove inclusion in the vendors' curated Claude or

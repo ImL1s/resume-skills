@@ -63,7 +63,7 @@
 | `v0.3.1` PyPI publication | pass | [portable-resume 0.3.1](https://pypi.org/project/portable-resume/0.3.1/) |
 | Host-native headless activation | 8/8 pass | rows in `docs/host-ui-smoke.md` |
 | Native plugin/extension install | 7/7 pass | exact 0.3.2 rows in `docs/host-ui-smoke.md` |
-| Public marketplace publication/install | 6/6 compatible hosts pass | public repository plus install rows in `docs/host-ui-smoke.md` |
+| Public marketplace publication/install | 6/6 compatible hosts pass | public repository, install rows, and `docs/evidence/public-marketplace-v0.3.2.json` |
 | Visual marketplace picker | Cursor and Kimi pass | interactive selection rows in `docs/host-ui-smoke.md` |
 | Other visual Skill pickers | not-run | per-host interactive picker evidence |
 | Vendor-curated directory listing | not submitted | authenticated vendor submission/readback |

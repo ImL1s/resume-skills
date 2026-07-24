@@ -73,15 +73,17 @@ Valid hosts: `claude`, `codex`, `cursor`, `opencode`, `antigravity`, `grok`, `qw
 Public catalog:
 [`ImL1s/portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace),
 publication commit `4997715cd8f2680ab9e196ba43ec4af323a56bd1`.
+The sanitized host readbacks and raw-evidence digests are archived in
+[`evidence/public-marketplace-v0.3.2.json`](evidence/public-marketplace-v0.3.2.json).
 
-| host | host_version | public route | result | upstream_artifact_sha256 | notes | date |
+| host | host_version | public route | result | delivered source proof | notes | date |
 |---|---|---|---|---|---|---|
-| claude | 2.1.218 | `claude plugin marketplace add ImL1s/portable-resume-marketplace`; install `portable-resume@portable-resume` | pass | `ef3d85aaf08e5e157cb390fa589f52f5461b20e537dccea995325fff51b01a2e` | Isolated config listed version 0.3.2 enabled | 2026-07-24 |
-| codex | 0.145.0 | `codex plugin marketplace add ImL1s/portable-resume-marketplace`; add `portable-resume@portable-resume` | pass | `70d15c769f647ffa74dcfb694313c98a297ffc48077b6fa5ba12297834bce446` | Isolated `CODEX_HOME` listed version 0.3.2 enabled | 2026-07-24 |
-| cursor | 2026.07.23-e383d2b | public Git marketplace; `/plugin` picker | pass | `efd1befeb5b7f40965e77b7b1c47a48bab813c6f6b89df4a63e4206347075724` | Installed tab showed the marketplace name and eight Skills | 2026-07-24 |
-| qwen | 0.20.1 | public extension source; `extensions install ...:portable-resume` | pass | `7667180e708f831be15f3a4b56fb3c585c0cddcb2058836c774e77c3d1df2000` | Isolated home listed version 0.3.2 and eight Skills | 2026-07-24 |
-| grok | 0.2.111 | public marketplace; install `portable-resume@portable-resume-marketplace --trust` | pass | `ccbe3ac70bebb19ce135aa6b3878be7ef232eb54b582e62b146ca60b309a8083` | Isolated `GROK_HOME` listed the installed plugin | 2026-07-24 |
-| kimi | 0.29.1 | public JSON catalog; TUI Trust and install | pass | `4b85bf855022411b8a94c727c26ad4f2536c6e9487eff6faee404dc99b119f5b` | Managed install records the exact 0.3.2 GitHub Release ZIP; list showed eight Skills | 2026-07-24 |
+| claude | 2.1.218 | `claude plugin marketplace add ImL1s/portable-resume-marketplace`; install `portable-resume@portable-resume` | pass | commit `4997715…`, `plugins/claude/portable-resume`, tree `fd069e937013dca2ba6d45aa5ee2665f2a869da0` | Isolated config listed version 0.3.2 enabled | 2026-07-24 |
+| codex | 0.145.0 | `codex plugin marketplace add ImL1s/portable-resume-marketplace`; add `portable-resume@portable-resume` | pass | commit `4997715…`, `plugins/codex/portable-resume`, tree `8fb7002fc709664dd2b1f59b968b2086c3ae69ed` | Isolated `CODEX_HOME` listed version 0.3.2 enabled | 2026-07-24 |
+| cursor | 2026.07.23-e383d2b | public Git marketplace; `/plugin` picker | pass | commit `4997715…`, `plugins/cursor/portable-resume`, tree `aab88c238265271d65ddf3cd3e739376643bbde5` | Installed tab showed the marketplace name and eight Skills | 2026-07-24 |
+| qwen | 0.20.1 | public extension source; `extensions install ...:portable-resume --scope user` | pass | commit `4997715…`, compatibility path `plugins/claude/portable-resume`, tree `fd069e937013dca2ba6d45aa5ee2665f2a869da0` | Install metadata reports Claude-origin mapping; list showed version 0.3.2 and eight Skills | 2026-07-24 |
+| grok | 0.2.111 | public marketplace; install `portable-resume@portable-resume-marketplace --trust` | pass | commit `4997715…`, compatibility path `plugins/claude/portable-resume`, tree `fd069e937013dca2ba6d45aa5ee2665f2a869da0` | Registry records the compatibility subdirectory; list showed the installed plugin | 2026-07-24 |
+| kimi | 0.29.1 | public JSON catalog; TUI Trust and install | pass | release ZIP SHA-256 `4b85bf855022411b8a94c727c26ad4f2536c6e9487eff6faee404dc99b119f5b` | Managed install records the exact 0.3.2 GitHub Release ZIP; list showed eight Skills | 2026-07-24 |
 
 Antigravity and OpenCode have no compatible public catalog for this package
 shape, so their published release/direct routes remain the supported paths.

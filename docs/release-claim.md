@@ -86,12 +86,13 @@ separate and require their own rows in
   and [PyPI](https://pypi.org/project/portable-resume/0.3.2/).
 - Public marketplace:
   [`ImL1s/portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
-  at current commit `3179288bb25ee96f9eb1315cca39d65821439d3d`.
-  [Marketplace CI 30099827015](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30099827015)
-  and [sync run 30098926042](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30098926042)
-  passed; its
+  at current commit `b265be0f65151e81cb3992ebdaf061249a6e0416`.
+  [Marketplace CI 30101943331](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30101943331)
+  and [sync run 30101985883](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30101985883)
+  passed, including immutable-tag index verification; its
   [`v0.3.2` release](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.2)
-  is public.
+  is public and its editable Release body contains the corrected Cursor/Qwen
+  commands without moving the annotated tag.
 - `v0.3.1`: archived published release from annotated tag object
   `bf483ebd503143faa1ce73bc5aa95fac95bc0648` at commit
   `d50a1e33db2824830dabc469b7d566031aa45697`.
@@ -111,6 +112,8 @@ host CLIs and exact local installation of all seven supported native package
 formats, including Cursor. This release workflow does not reproduce those
 credentialed host checks. Separate post-release evidence verifies public
 marketplace installation on all six compatible hosts and Cursor/Kimi
-marketplace picker flows. Other visual Skill pickers, vendor-curated
+marketplace picker flows; sanitized readbacks are retained in
+[`evidence/public-marketplace-v0.3.2.json`](evidence/public-marketplace-v0.3.2.json).
+Other visual Skill pickers, vendor-curated
 Claude/Cursor directory listings, and Cursor full bubble-graph completeness
 remain excluded.

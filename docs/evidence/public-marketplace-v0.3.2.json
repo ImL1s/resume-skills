@@ -1,0 +1,131 @@
+{
+  "schema_version": "portable-resume/public-marketplace-evidence-v1",
+  "date": "2026-07-24",
+  "claim": "Six compatible destination hosts installed Portable Resume 0.3.2 from the public marketplace or its catalog-pinned release asset.",
+  "marketplace": {
+    "repository": "https://github.com/ImL1s/portable-resume-marketplace",
+    "publication_commit": "4997715cd8f2680ab9e196ba43ec4af323a56bd1",
+    "current_hardening_commit": "b265be0f65151e81cb3992ebdaf061249a6e0416",
+    "release": "https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.2"
+  },
+  "raw_evidence_policy": "Raw host files contain temporary absolute paths and are not tracked. Their SHA-256 values bind the contemporaneous readbacks; this file preserves only sanitized claim-relevant fields.",
+  "hosts": [
+    {
+      "host": "claude",
+      "host_version": "2.1.218",
+      "result": "pass",
+      "installed_version": "0.3.2",
+      "enabled": true,
+      "scope": "user",
+      "route": "claude plugin marketplace add ImL1s/portable-resume-marketplace; claude plugin install portable-resume@portable-resume --scope user",
+      "delivered_source": {
+        "repository_commit": "4997715cd8f2680ab9e196ba43ec4af323a56bd1",
+        "path": "plugins/claude/portable-resume",
+        "git_tree_oid": "fd069e937013dca2ba6d45aa5ee2665f2a869da0"
+      },
+      "readback": "portable-resume@portable-resume listed as version 0.3.2, enabled, user scope",
+      "raw_evidence_sha256": {
+        "claude-list.json": "f69bb76b6116476c7056b5a6a9e8636435dede8755fe56f4994b77cbb40f04f7",
+        "installed_plugins.json": "9e94942f458801b716497e59d320e85ba79b99986f34d48f94a43217a28f5237",
+        "known_marketplaces.json": "d8d52b65554c10d9678ca7c4542452add2f5144dde1c9f8fc73cdcff575105fe"
+      }
+    },
+    {
+      "host": "codex",
+      "host_version": "0.145.0",
+      "result": "pass",
+      "installed_version": "0.3.2",
+      "enabled": true,
+      "route": "codex plugin marketplace add ImL1s/portable-resume-marketplace; codex plugin add portable-resume@portable-resume",
+      "delivered_source": {
+        "repository_commit": "4997715cd8f2680ab9e196ba43ec4af323a56bd1",
+        "path": "plugins/codex/portable-resume",
+        "git_tree_oid": "8fb7002fc709664dd2b1f59b968b2086c3ae69ed"
+      },
+      "readback": "portable-resume@portable-resume listed as installed and enabled at version 0.3.2 from the public Git marketplace",
+      "raw_evidence_sha256": {
+        "codex-list.json": "0db8d19c865d938061784880e3860c3e5e1db490179a19f1ef26be868b882670"
+      }
+    },
+    {
+      "host": "cursor",
+      "host_version": "2026.07.23-e383d2b",
+      "result": "pass",
+      "installed_version": "0.3.2",
+      "scope": "user",
+      "route": "Add the public Git marketplace, then use /plugin > Marketplace > portable-resume",
+      "delivered_source": {
+        "repository_commit": "4997715cd8f2680ab9e196ba43ec4af323a56bd1",
+        "path": "plugins/cursor/portable-resume",
+        "git_tree_oid": "aab88c238265271d65ddf3cd3e739376643bbde5"
+      },
+      "readback": "Installed tab showed Portable Resume 0.3.2 and eight Skills",
+      "skills_count": 8,
+      "raw_evidence_sha256": {
+        "cursor-marketplace-install.json": "7e422276cd4229b53a93c0c0e0359738792d85dfb385e34463232e9b2e700f8f"
+      }
+    },
+    {
+      "host": "qwen",
+      "host_version": "0.20.1",
+      "result": "pass",
+      "installed_version": "0.3.2",
+      "enabled": true,
+      "scope": "user",
+      "route": "qwen extensions sources add ImL1s/portable-resume-marketplace; qwen extensions install ImL1s/portable-resume-marketplace:portable-resume --consent --scope user",
+      "delivered_source": {
+        "repository_commit": "4997715cd8f2680ab9e196ba43ec4af323a56bd1",
+        "path": "plugins/claude/portable-resume",
+        "git_tree_oid": "fd069e937013dca2ba6d45aa5ee2665f2a869da0",
+        "compatibility_mapping": "Qwen install metadata reports originSource Claude and the Claude marketplace subtree."
+      },
+      "readback": "Extension list showed Portable Resume 0.3.2 enabled with eight Skills",
+      "skills_count": 8,
+      "raw_evidence_sha256": {
+        "qwen-list.txt": "747ca08dd2106012e640ef8640bfab9da6a68506bfbaae5271429ed6470098cd",
+        ".qwen-extension-install.json": "9c7537cd13c0341536c6b65d1b2dfb2afd58752e6797053605466495e9d9a3bf"
+      }
+    },
+    {
+      "host": "grok",
+      "host_version": "0.2.111",
+      "result": "pass",
+      "installed_version": "0.3.2",
+      "route": "grok plugin marketplace add ImL1s/portable-resume-marketplace; grok plugin install portable-resume@portable-resume-marketplace --trust",
+      "delivered_source": {
+        "repository_commit": "4997715cd8f2680ab9e196ba43ec4af323a56bd1",
+        "path": "plugins/claude/portable-resume",
+        "git_tree_oid": "fd069e937013dca2ba6d45aa5ee2665f2a869da0",
+        "compatibility_mapping": "Grok registry reports plugin_subdir plugins/claude/portable-resume."
+      },
+      "readback": "Plugin list and registry showed Portable Resume 0.3.2 from the public marketplace",
+      "raw_evidence_sha256": {
+        "grok-list.txt": "18a3f17b3ae4248c0b8e0882e0b9ab919620c7bee28bedd3cb072718e9c08249",
+        "registry.json": "b00768784ea539b0946f6e7d5d118ac17ad5232c204546e7ed7e8d1e9d961b7b"
+      }
+    },
+    {
+      "host": "kimi",
+      "host_version": "0.29.1",
+      "result": "pass",
+      "installed_version": "0.3.2",
+      "enabled": true,
+      "route": "/plugins marketplace https://raw.githubusercontent.com/ImL1s/portable-resume-marketplace/main/kimi-marketplace.json; Trust and install",
+      "delivered_source": {
+        "release_asset": "https://github.com/ImL1s/resume-skills/releases/download/v0.3.2/portable-resume-0.3.2-kimi-plugin.zip",
+        "sha256": "4b85bf855022411b8a94c727c26ad4f2536c6e9487eff6faee404dc99b119f5b"
+      },
+      "readback": "Managed install recorded the exact 0.3.2 release ZIP; plugin list showed eight Skills",
+      "skills_count": 8,
+      "raw_evidence_sha256": {
+        "kimi-marketplace-install.json": "5ea04f56cb2b00ac1c831add231e7c3f4776597b4684eb846ee1b5becbd9be7d",
+        "installed.json": "393b06ae262bb8f01b5d8b0243ccd1a118240dbee37c0d661b464c5ff0b07874"
+      }
+    }
+  ],
+  "excluded_claims": [
+    "Vendor-curated Claude or Cursor directory listing",
+    "Visual picker behavior on hosts other than Cursor and Kimi",
+    "Live process or session restoration"
+  ]
+}
