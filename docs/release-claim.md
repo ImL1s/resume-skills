@@ -86,9 +86,9 @@ separate and require their own rows in
   and [PyPI](https://pypi.org/project/portable-resume/0.3.2/).
 - Public marketplace:
   [`ImL1s/portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
-  at current commit `b265be0f65151e81cb3992ebdaf061249a6e0416`.
-  [Marketplace CI 30101943331](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30101943331)
-  and [sync run 30101985883](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30101985883)
+  at current commit `0806e186674d22925f23aaa57d83a403ebfb8515`.
+  [Marketplace CI 30103298262](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30103298262)
+  and [sync run 30103342413](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30103342413)
   passed, including immutable-tag index verification; its
   [`v0.3.2` release](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.2)
   is public and its editable Release body contains the corrected Cursor/Qwen

@@ -5,7 +5,7 @@
   "marketplace": {
     "repository": "https://github.com/ImL1s/portable-resume-marketplace",
     "publication_commit": "4997715cd8f2680ab9e196ba43ec4af323a56bd1",
-    "current_hardening_commit": "b265be0f65151e81cb3992ebdaf061249a6e0416",
+    "current_hardening_commit": "0806e186674d22925f23aaa57d83a403ebfb8515",
     "release": "https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.2"
   },
   "raw_evidence_policy": "Raw host files contain temporary absolute paths and are not tracked. Their SHA-256 values bind the contemporaneous readbacks; this file preserves only sanitized claim-relevant fields.",
