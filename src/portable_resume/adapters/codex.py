@@ -283,7 +283,13 @@ def _trusted_zstd() -> str | None:
     return None
 
 
-def _decompress_zstd(data: bytes) -> bytes:
+def _decompress_zstd(
+    data: bytes,
+    *,
+    max_bytes: int = DEFAULT_BOUNDS.source_read_bytes,
+) -> bytes:
+    if max_bytes < 0 or max_bytes > DEFAULT_BOUNDS.source_read_bytes:
+        raise DiagnosticError.invalid(source="codex")
     executable = _trusted_zstd()
     if executable is None:
         raise DiagnosticError("E_CAPABILITY_UNAVAILABLE", source="codex", provider=ZSTD_FORMAT)
@@ -338,7 +344,7 @@ def _decompress_zstd(data: bytes) -> bytes:
                     eof = True
                     break
                 output.extend(chunk)
-                if len(output) > DEFAULT_BOUNDS.record_bytes:
+                if len(output) > max_bytes:
                     process.kill()
                     raise DiagnosticError.limit_exceeded()
         remaining = max(0.0, deadline - time.monotonic())
@@ -360,8 +366,14 @@ def _parse_lines(data: bytes, budget: ReadBudget, provider: str) -> tuple[list[d
     output: list[dict[str, Any]] = []
     warnings: list[str] = []
     lines = data.splitlines(keepends=True)
+    maximum_record = min(
+        budget.limits.record_bytes,
+        DEFAULT_BOUNDS.record_bytes,
+    )
     for index, raw in enumerate(lines):
-        budget.consume_records()
+        budget.consume_transcript_records()
+        if len(raw) > maximum_record:
+            raise DiagnosticError.limit_exceeded()
         partial = index == len(lines) - 1 and not raw.endswith((b"\n", b"\r"))
         stripped = raw.strip()
         if not stripped:
@@ -394,9 +406,30 @@ def _parse_lines(data: bytes, budget: ReadBudget, provider: str) -> tuple[list[d
 
 
 def _read_rollout(path: str, root: str, budget: ReadBudget) -> tuple[StableRead, list[dict[str, Any]], tuple[str, ...], str]:
-    observation = stable_read_bytes(path, root=root, max_bytes=DEFAULT_BOUNDS.record_bytes, budget=budget)
+    maximum_source = min(
+        budget.limits.source_read_bytes,
+        DEFAULT_BOUNDS.source_read_bytes,
+    )
+    observation = stable_read_bytes(
+        path,
+        root=root,
+        max_bytes=maximum_source,
+        attempts=min(
+            budget.limits.snapshot_attempts,
+            DEFAULT_BOUNDS.snapshot_attempts,
+        ),
+        membership_limit=min(
+            budget.limits.scanned_records,
+            DEFAULT_BOUNDS.scanned_records,
+        ),
+        budget=budget,
+    )
     provider = ZSTD_FORMAT if path.endswith(".zst") else ROLLOUT_FORMAT
-    data = _decompress_zstd(observation.data) if provider == ZSTD_FORMAT else observation.data
+    data = (
+        _decompress_zstd(observation.data, max_bytes=maximum_source)
+        if provider == ZSTD_FORMAT
+        else observation.data
+    )
     if provider == ZSTD_FORMAT:
         budget.consume_bytes(len(data))
     records, warnings = _parse_lines(data, budget, provider)
