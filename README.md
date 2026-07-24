@@ -1,7 +1,7 @@
 # portable-resume-skills
 
 <p align="center">
-  <img src="docs/assets/portable-resume-skills-hero.jpg" alt="portable-resume-skills: offline local-only context migration across eight coding agents through sealed skill packages" width="920" />
+  <img src="docs/assets/portable-resume-skills-hero-v2.jpg" alt="Eight local coding-agent sources flow into a sealed context archive, then into eight fresh destination sessions" width="920" />
 </p>
 
 <p align="center">
