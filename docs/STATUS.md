@@ -1,6 +1,6 @@
 # Project status (2026-07-24)
 
-## Current tree: 0.3.1 correction candidate
+## Current release: 0.3.1
 
 | Gate | Status |
 |---|---|
@@ -9,14 +9,14 @@
 | Packaging matrix | **64/64 pass locally** |
 | Installed runner matrix | **64/64 pass locally** |
 | Python test suite | **265 pass locally** |
-| Wheel + sdist smoke | **pass outside checkout**, including verified quick-install |
+| Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **6/7 pass**; Cursor live load not-run |
 | Host UI / picker activation | **not-run** |
 | Public marketplace installation | **not-run** |
-| CI | **pass**: Ubuntu + macOS × Python 3.11–3.14 |
-| `v0.3.1` release workflow | **not-run remotely** |
-| Published `v0.3.0` workflow | **pass**: annotated tag through GitHub Release and PyPI |
-| Public PyPI installation | **pass for 0.3.0**: isolated install, 64-cell matrix, Qwen install/verify |
+| CI | **pass**: [Ubuntu + macOS × Python 3.11–3.14](https://github.com/ImL1s/resume-skills/actions/runs/30089095568) |
+| `v0.3.1` release workflow | **pass**: [annotated tag through GitHub Release and PyPI](https://github.com/ImL1s/resume-skills/actions/runs/30089194956) |
+| Published release | **pass**: [GitHub Release v0.3.1](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.1) |
+| Public PyPI installation | **pass for 0.3.1**: isolated install, 64-cell self-check, Qwen and Kimi install/verify |
 | Cursor full bubble graph | **not claimed** |
 
 ## Corrected in 0.3.1
@@ -36,27 +36,31 @@
 - CI gates, exact wheel/sdist smoke, annotated-tag release validation, checksums, artifact attestations, staged GitHub Release, and PyPI Trusted Publishing.
 - Qwen and Kimi source adapters plus destination installation profiles; readers remain offline.
 
-## Honest open gates
+## Evidence gates
 
 | Area | Status | Required evidence |
 |---|---|---|
 | Current local release gates | pass | four canonical commands, 2026-07-24 |
-| `v0.3.1` dual-OS release | not-run | tagged Actions URL + immutable SHA + successful release jobs |
-| `v0.3.1` PyPI publication | not-run | published project/version URL |
+| `v0.3.1` dual-OS release | pass | [Actions run 30089194956](https://github.com/ImL1s/resume-skills/actions/runs/30089194956), commit `d50a1e33db2824830dabc469b7d566031aa45697` |
+| `v0.3.1` PyPI publication | pass | [portable-resume 0.3.1](https://pypi.org/project/portable-resume/0.3.1/) |
 | Host activation | not-run | rows in `docs/host-ui-smoke.md` |
 | Cursor native plugin load | not-run | accepted local package in current Cursor host |
 | Public marketplace publication | not-run | public listing/install evidence |
 | Cursor graph completeness | not claimed | upstream schema/recovery work beyond current best effort |
 
-The latest published GitHub release remains
-[`v0.3.0`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.0) until
-the 0.3.1 release evidence is archived. PyPI publication is a
-package-distribution claim, not evidence of any host's marketplace listing or
-picker activation.
+The latest published GitHub release is
+[`v0.3.1`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.1).
+PyPI publication is a package-distribution claim, not evidence of any host's
+marketplace listing or picker activation.
 
 ## Historical release evidence
 
-`v0.2.3` remains an archived historical claim only: SHA `5ff9eba503e28971e5044015cd0666c2807a3d89`, [Actions run 29890453185](https://github.com/ImL1s/resume-skills/actions/runs/29890453185), Ubuntu/macOS × Python 3.11/3.12. It does not prove the 0.3.0 changes.
+`v0.3.0` is archived at commit
+`78c2acd0f9841d90d87f85eff151b842a80dc011` with [release run
+30084711240](https://github.com/ImL1s/resume-skills/actions/runs/30084711240).
+`v0.2.3` remains an older historical claim at commit
+`5ff9eba503e28971e5044015cd0666c2807a3d89` with [Actions run
+29890453185](https://github.com/ImL1s/resume-skills/actions/runs/29890453185).
 
 ## Required local verification
 

@@ -12,7 +12,7 @@
 
 Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
-**Current version:** `0.3.1` · 64/64 packaging cells · 64/64
+**Current published version:** [`0.3.1`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.1) · 64/64 packaging cells · 64/64
 installed-runner cells · six native local plugin/extension installs verified ·
 host UI activation still **not-run**. This patch removes mistakenly scoped
 destination-host network/documentation-tool guidance; Qwen/Kimi support remains
@@ -121,10 +121,12 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 `.github/workflows/ci.yml` runs those gates across Ubuntu/macOS and Python 3.11–3.14, then builds and smoke-installs the exact wheel and sdist. `.github/workflows/release.yml` accepts only annotated `vMAJOR.MINOR.PATCH` tags reachable from `main`, re-runs dual-OS gates, builds release bytes once, tests those exact bytes, creates SHA-256 checksums and GitHub attestations, stages a GitHub Release, and publishes through PyPI Trusted Publishing.
 
-The latest archived release claim is `v0.3.0`, backed by the immutable
-[release run](https://github.com/ImL1s/resume-skills/actions/runs/30084711240),
-commit `78c2acd0f9841d90d87f85eff151b842a80dc011`, and archived details in
-[`docs/evidence-summary.md`](docs/evidence-summary.md).
+The latest archived release claim is `v0.3.1`, backed by the immutable
+[release run](https://github.com/ImL1s/resume-skills/actions/runs/30089194956),
+commit `d50a1e33db2824830dabc469b7d566031aa45697`, the
+[GitHub Release](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.1),
+and [PyPI](https://pypi.org/project/portable-resume/0.3.1/). Full evidence is
+in [`docs/evidence-summary.md`](docs/evidence-summary.md).
 
 ## Key documentation
 
