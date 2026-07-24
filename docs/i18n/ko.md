@@ -5,7 +5,7 @@ Portable Resume은 Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kim
 
 ## 설치
 
-Python 3.11+가 필요합니다. PyPI 릴리스 후:
+Python 3.11+가 필요합니다. PyPI에서 게시된 패키지를 설치합니다:
 
 ```bash
 pipx install portable-resume

@@ -12,10 +12,10 @@
 
 Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
-**Current tree:** `0.3.0` local release candidate · 64/64 packaging cells ·
-64/64 installed-runner cells · six native local plugin/extension installs
-verified · host UI activation still **not-run**. The archived `v0.2.3` dual-OS
-claim remains historical until a `v0.3.0` tag completes the release workflow.
+**Published:** [`v0.3.0`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.0)
+on [PyPI](https://pypi.org/project/portable-resume/0.3.0/) · 64/64 packaging
+cells · 64/64 installed-runner cells · six native local plugin/extension
+installs verified · host UI activation still **not-run**.
 
 ## Sources and destinations
 
@@ -40,16 +40,16 @@ Destination profiles: Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Bu
 
 ## Quick start
 
-Install from the current checkout, then install every destination profile into
-its user-global Skill root:
+Install the published package, then install every destination profile into its
+user-global Skill root:
 
 ```bash
-pipx install .
+pipx install portable-resume
 install-resume-skills quick-install all
 ```
 
-After a PyPI release, replace `pipx install .` with
-`pipx install portable-resume`. To install only one host or one project:
+From a source checkout, use `pipx install .` instead. To install only one host
+or one project:
 
 ```bash
 install-resume-skills quick-install qwen
@@ -122,9 +122,12 @@ PYTHONPATH=src python3 -m unittest discover -s tests -q
 PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
-`.github/workflows/ci.yml` runs those gates across Ubuntu/macOS and Python 3.11–3.14, then builds and smoke-installs the exact wheel and sdist. `.github/workflows/release.yml` accepts only annotated `vMAJOR.MINOR.PATCH` tags reachable from `main`, re-runs dual-OS gates, builds release bytes once, tests those exact bytes, creates SHA-256 checksums and GitHub attestations, stages a GitHub Release, and publishes through PyPI Trusted Publishing when the protected `pypi` environment is configured.
+`.github/workflows/ci.yml` runs those gates across Ubuntu/macOS and Python 3.11–3.14, then builds and smoke-installs the exact wheel and sdist. `.github/workflows/release.yml` accepts only annotated `vMAJOR.MINOR.PATCH` tags reachable from `main`, re-runs dual-OS gates, builds release bytes once, tests those exact bytes, creates SHA-256 checksums and GitHub attestations, stages a GitHub Release, and publishes through PyPI Trusted Publishing.
 
-A configured workflow is not release proof: `v0.3.0` remains unclaimed until its Actions URL and SHA are archived in [`docs/evidence-summary.md`](docs/evidence-summary.md).
+The published `v0.3.0` claim is backed by the immutable
+[release run](https://github.com/ImL1s/resume-skills/actions/runs/30084711240),
+commit `78c2acd0f9841d90d87f85eff151b842a80dc011`, and archived details in
+[`docs/evidence-summary.md`](docs/evidence-summary.md).
 
 ## Key documentation
 

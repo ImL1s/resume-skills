@@ -20,4 +20,6 @@ Product sources and fixtures are compatibility implementations over public shape
 
 The product sources and synthetic fixtures do **not** contain copied installed-bundle content or real vendor transcripts.
 
-This statement does not claim host UI activation, marketplace UI installation, a complete Cursor bubble graph, or a 0.3.0 dual-OS release until their separate evidence gates are satisfied.
+This statement does not claim host UI activation, marketplace UI installation,
+or a complete Cursor bubble graph. The separate 0.3.0 dual-OS release evidence
+is archived in `docs/evidence-summary.md`.

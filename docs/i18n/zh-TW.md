@@ -5,7 +5,7 @@ Portable Resume 可把 Claude、Codex、Cursor、OpenCode、Antigravity、Grok�
 
 ## 安裝
 
-需要 Python 3.11+。PyPI 正式發布後：
+需要 Python 3.11+。從 PyPI 安裝已發布套件：
 
 ```bash
 pipx install portable-resume

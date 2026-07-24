@@ -5,7 +5,7 @@ Portable Resume moves bounded local context from Claude, Codex, Cursor, OpenCode
 
 ## Install
 
-Requires Python 3.11+. After a PyPI release:
+Requires Python 3.11+. Install the published package from PyPI:
 
 ```bash
 pipx install portable-resume

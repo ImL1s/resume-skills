@@ -5,7 +5,7 @@ Portable Resume migra contexto local limitado de Claude, Codex, Cursor, OpenCode
 
 ## Instalación
 
-Requiere Python 3.11+. Después de publicarse en PyPI:
+Requiere Python 3.11+. Instale el paquete publicado desde PyPI:
 
 ```bash
 pipx install portable-resume

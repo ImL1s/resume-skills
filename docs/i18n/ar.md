@@ -5,7 +5,7 @@
 
 ## التثبيت
 
-يتطلب Python 3.11+. بعد النشر على PyPI:
+يتطلب Python 3.11+. ثبّت الحزمة المنشورة من PyPI:
 
 ```bash
 pipx install portable-resume

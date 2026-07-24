@@ -5,7 +5,7 @@ Portable Resume überträgt begrenzten lokalen Kontext aus Claude, Codex, Cursor
 
 ## Installation
 
-Erfordert Python 3.11+. Nach der PyPI-Veröffentlichung:
+Erfordert Python 3.11+. Installieren Sie das veröffentlichte Paket von PyPI:
 
 ```bash
 pipx install portable-resume

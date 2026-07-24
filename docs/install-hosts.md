@@ -14,19 +14,19 @@ The package builder creates eight `*-<host>-skills.zip` archives, seven supporte
 
 ## Fastest safe install
 
-From a checkout:
+From PyPI:
 
 ```bash
-pipx install .
+pipx install portable-resume
 install-resume-skills quick-install qwen        # user-global Qwen profile
 install-resume-skills quick-install all         # all eight user-global profiles
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-After publication, `pipx install portable-resume` installs the same two CLI entry
-points from PyPI. `quick-install` defaults to user-global roots; use the lower-level
-transactional commands below for dry runs, explicit roots, verification, backup
-replacement, or uninstall.
+From a source checkout, use `pipx install .` instead. Both routes install the
+same two CLI entry points. `quick-install` defaults to user-global roots; use
+the lower-level transactional commands below for dry runs, explicit roots,
+verification, backup replacement, or uninstall.
 
 ## Direct installer (all hosts)
 

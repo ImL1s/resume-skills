@@ -5,7 +5,7 @@ Portable Resume, Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen या
 
 ## स्थापना
 
-Python 3.11+ आवश्यक है। PyPI release के बाद:
+Python 3.11+ आवश्यक है। PyPI से प्रकाशित package स्थापित करें:
 
 ```bash
 pipx install portable-resume

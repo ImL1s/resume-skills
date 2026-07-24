@@ -1,6 +1,8 @@
 # Release CI/CD and claim checklist
 
-`.github/workflows/release.yml` is the release authority. A configured workflow is not evidence that a release ran.
+`.github/workflows/release.yml` is the release authority. A configured workflow
+alone is not evidence that a release ran; each published version needs its own
+archived run and immutable commit.
 
 ## One-time repository setup
 
@@ -53,5 +55,17 @@ Host UI/picker and marketplace UI claims remain separate and require rows in [`h
 
 ### Current state
 
-- `v0.3.0`: workflow implemented, **not-run remotely**, no release claim.
+- `v0.3.0`: **published** from annotated tag object
+  `6afb60448e20f4b2d9ba38485a6bdbdbfa6a7e87` at commit
+  `78c2acd0f9841d90d87f85eff151b842a80dc011`.
+  [Release run 30084711240](https://github.com/ImL1s/resume-skills/actions/runs/30084711240)
+  passed all dual-OS gates, exact-byte smoke, attestation, PyPI Trusted
+  Publishing, and GitHub Release publication.
+- Published outputs:
+  [GitHub Release](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.0)
+  and [PyPI](https://pypi.org/project/portable-resume/0.3.0/).
 - `v0.2.3`: historical archived CI claim only; see evidence summary.
+
+This release claim excludes host UI/picker activation, Cursor native plugin
+loading, public host marketplace listings, and Cursor full bubble-graph
+completeness.

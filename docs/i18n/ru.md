@@ -5,7 +5,7 @@ Portable Resume переносит ограниченный локальный �
 
 ## Установка
 
-Требуется Python 3.11+. После публикации в PyPI:
+Требуется Python 3.11+. Установите опубликованный пакет из PyPI:
 
 ```bash
 pipx install portable-resume

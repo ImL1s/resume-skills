@@ -1,6 +1,6 @@
 # Project status (2026-07-24)
 
-## Current tree: 0.3.0 local release candidate
+## Published release: 0.3.0
 
 | Gate | Status |
 |---|---|
@@ -13,8 +13,9 @@
 | Native local plugin/extension install | **6/7 pass**; Cursor live load not-run |
 | Host UI / picker activation | **not-run** |
 | Public marketplace installation | **not-run** |
-| CI definition | Ubuntu + macOS × Python 3.11–3.14 |
-| `v0.3.0` release workflow | implemented locally; **not-run remotely** |
+| CI | **pass**: Ubuntu + macOS × Python 3.11–3.14 |
+| `v0.3.0` release workflow | **pass**: annotated tag through GitHub Release and PyPI |
+| Public PyPI installation | **pass**: isolated install, 64-cell matrix, Qwen install/verify |
 | Cursor full bubble graph | **not claimed** |
 
 ## Implemented in 0.3.0
@@ -31,12 +32,17 @@
 | Area | Status | Required evidence |
 |---|---|---|
 | Current local release gates | pass | four canonical commands, 2026-07-24 |
-| `v0.3.0` dual-OS release | not-run | tagged Actions URL + immutable SHA + successful release jobs |
-| PyPI publication | not-run | protected `pypi` environment + Trusted Publisher + published project URL |
+| `v0.3.0` dual-OS release | **pass** | [release run 30084711240](https://github.com/ImL1s/resume-skills/actions/runs/30084711240), SHA `78c2acd0f9841d90d87f85eff151b842a80dc011` |
+| PyPI publication | **pass** | [portable-resume 0.3.0](https://pypi.org/project/portable-resume/0.3.0/) via Trusted Publishing |
 | Host activation | not-run | rows in `docs/host-ui-smoke.md` |
 | Cursor native plugin load | not-run | accepted local package in current Cursor host |
 | Public marketplace publication | not-run | public listing/install evidence |
 | Cursor graph completeness | not claimed | upstream schema/recovery work beyond current best effort |
+
+The published GitHub release is
+[`v0.3.0`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.0).
+PyPI publication is a package-distribution claim, not evidence of any host's
+marketplace listing or picker activation.
 
 ## Historical release evidence
 
