@@ -2,6 +2,10 @@
 
 Date: 2026-07-20
 
+> Historical readiness snapshot. Current release and host evidence lives in
+> [`STATUS.md`](STATUS.md), [`host-ui-smoke.md`](host-ui-smoke.md), and
+> [`evidence-summary.md`](evidence-summary.md).
+
 ## Verdict: **SAFE TO OPEN SOURCE** (with residual product honesty)
 
 ### Completed gates

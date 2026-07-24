@@ -12,11 +12,10 @@
 
 Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
-**Current published version:** [`0.3.1`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.1) · 64/64 packaging cells · 64/64
-installed-runner cells · six native local plugin/extension installs verified ·
-host UI activation still **not-run**. This patch removes mistakenly scoped
-destination-host network/documentation-tool guidance; Qwen/Kimi support remains
-offline context migration and installation only.
+**Current release candidate:** `0.3.2` · 64/64 packaging cells · 64/64
+installed-runner cells · 7/7 native local plugin/extension installs verified ·
+8/8 host-native headless Skill invocations verified. Visual picker interaction
+and public marketplace listings remain separate **not-run** claims.
 
 ## Sources and destinations
 
@@ -121,12 +120,11 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 `.github/workflows/ci.yml` runs those gates across Ubuntu/macOS and Python 3.11–3.14, then builds and smoke-installs the exact wheel and sdist. `.github/workflows/release.yml` accepts only annotated `vMAJOR.MINOR.PATCH` tags reachable from `main`, re-runs dual-OS gates, builds release bytes once, tests those exact bytes, creates SHA-256 checksums and GitHub attestations, stages a GitHub Release, and publishes through PyPI Trusted Publishing.
 
-The latest archived release claim is `v0.3.1`, backed by the immutable
-[release run](https://github.com/ImL1s/resume-skills/actions/runs/30089194956),
-commit `d50a1e33db2824830dabc469b7d566031aa45697`, the
-[GitHub Release](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.1),
-and [PyPI](https://pypi.org/project/portable-resume/0.3.1/). Full evidence is
-in [`docs/evidence-summary.md`](docs/evidence-summary.md).
+Release candidate `v0.3.2` also verifies the GitHub Release layout itself: every
+`SHA256SUMS` entry is a flat asset basename, and both Ubuntu and macOS validate
+a simulated flat download before publication. After publication, the immutable
+run, commit, GitHub Release, and PyPI evidence will be archived in
+[`docs/evidence-summary.md`](docs/evidence-summary.md).
 
 ## Key documentation
 
@@ -143,4 +141,6 @@ in [`docs/evidence-summary.md`](docs/evidence-summary.md).
 
 Apache-2.0. This project is not affiliated with the host vendors. Do not copy `~/.grok/bundled/skills/**` into this tree.
 
-Host UI/picker activation is still **not-run**; Cursor's full bubble graph is not claimed; redaction is not complete DLP.
+Headless slash/name activation is verified on all eight hosts. Visual picker
+interaction and public marketplace publication remain **not-run**; Cursor's
+full bubble graph is not claimed; redaction is not complete DLP.

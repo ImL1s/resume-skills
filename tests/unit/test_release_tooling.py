@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
+from hashlib import sha256
 from pathlib import Path
 
 import portable_resume
@@ -59,6 +62,81 @@ class ReleaseToolingTests(unittest.TestCase):
         self.assertIn("environment:\n      name: pypi", release)
         self.assertIn("attestations: write", release)
         self.assertIn("subject-path:", release)
+        self.assertIn("python scripts/write_release_checksums.py", release)
+        self.assertIn("sha256sum --check SHA256SUMS", release)
+        self.assertIn("shasum -a 256 --check SHA256SUMS", release)
+
+    def test_release_checksum_manifest_uses_flat_asset_names(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            wheel = root / "dist" / "portable_resume-9.9.9-py3-none-any.whl"
+            plugin = root / "release-assets" / "hosts" / "plugin.zip"
+            wheel.parent.mkdir(parents=True)
+            plugin.parent.mkdir(parents=True)
+            wheel.write_bytes(b"wheel")
+            plugin.write_bytes(b"plugin")
+            manifest = root / "release-assets" / "SHA256SUMS"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO / "scripts" / "write_release_checksums.py"),
+                    "--output",
+                    str(manifest),
+                    str(plugin),
+                    str(wheel),
+                ],
+                cwd=REPO,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            lines = manifest.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(
+                [line.split("  ", 1)[1] for line in lines],
+                sorted((plugin.name, wheel.name)),
+            )
+            self.assertTrue(all("/" not in line.split("  ", 1)[1] for line in lines))
+
+            downloaded = root / "downloaded"
+            downloaded.mkdir()
+            shutil.copy2(wheel, downloaded / wheel.name)
+            shutil.copy2(plugin, downloaded / plugin.name)
+            for line in lines:
+                digest, name = line.split("  ", 1)
+                self.assertEqual(
+                    sha256((downloaded / name).read_bytes()).hexdigest(),
+                    digest,
+                )
+
+    def test_release_checksum_manifest_rejects_duplicate_asset_names(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first = root / "one" / "artifact.zip"
+            second = root / "two" / "artifact.zip"
+            first.parent.mkdir()
+            second.parent.mkdir()
+            first.write_bytes(b"one")
+            second.write_bytes(b"two")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO / "scripts" / "write_release_checksums.py"),
+                    "--output",
+                    str(root / "SHA256SUMS"),
+                    str(first),
+                    str(second),
+                ],
+                cwd=REPO,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("duplicate release asset basename", result.stderr)
 
 
 if __name__ == "__main__":

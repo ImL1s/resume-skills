@@ -31,7 +31,10 @@ Product sources, tests, and fixtures in this repository:
 - do not contain copied installed-bundle skill bodies;
 - do not invoke source agent CLIs as recovery backends.
 
-This attestation covers **deterministic packaging and reader behavior**. It does **not** claim live host UI activation completeness. The separate 0.3.0 dual-OS release claim is archived in `docs/evidence-summary.md`.
+This attestation covers **deterministic packaging and reader behavior**. It
+does **not** claim visual picker completeness. Headless host invocation, local native
+package installation, and dual-OS release evidence are recorded separately in
+`docs/host-ui-smoke.md` and `docs/evidence-summary.md`.
 
 ## Fixture policy
 

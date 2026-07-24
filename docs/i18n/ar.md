@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: ar v0.3.1 -->
+<!-- portable-resume-i18n: ar v0.3.2 -->
 # Portable Resume — دليل البدء السريع بالعربية
 
 ينقل Portable Resume سياقًا محليًا محدودًا من Claude وCodex وCursor وOpenCode وAntigravity وGrok وQwen وKimi إلى جلسة وكيل برمجي **جديدة**. لا يستعيد عملية أو جلسة عاملة. تعمل أدوات القراءة دون شبكة وبمكتبة Python القياسية فقط، ولا تشغّل CLI المصدر، وتوسم النص المستعاد بأنه خامل وغير موثوق.
@@ -37,5 +37,7 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
 فعّل `resume-<source>` بصيغة host الوجهة، وأعد فحص repository الحالي قبل تنفيذ handoff.
+
+نجح اختبار host المحلي في 8/8 من استدعاءات CLI وفي 7/7 من عمليات تثبيت صيغ plugin／extension الأصلية المدعومة. يظل التفاعل مع أداة الاختيار المرئية والنشر في marketplace العامة اختبارين منفصلين لم يُنفّذا بعد.
 
 يوضح [حالة المشروع](../STATUS.md) الأدلة المثبتة وبوابات UI／release التي لم تُشغّل بعد.

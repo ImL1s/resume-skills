@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: fr v0.3.1 -->
+<!-- portable-resume-i18n: fr v0.3.2 -->
 # Portable Resume — démarrage rapide en français
 
 Portable Resume transfère un contexte local limité de Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen ou Kimi vers une session **neuve** d’agent de programmation. Il ne restaure ni processus ni session en cours. Les lecteurs restent hors ligne, utilisent uniquement la bibliothèque standard Python, n’exécutent jamais le CLI source et marquent le texte récupéré comme inerte et non fiable.
@@ -37,5 +37,7 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
 Activez `resume-<source>` selon la syntaxe du host et revérifiez le repository actuel avant d’appliquer le handoff.
+
+Le smoke test local a réussi 8/8 invocations de CLI et 7/7 installations natives de plugin／extension prises en charge. L’interaction avec les sélecteurs visuels et la publication sur les marketplaces publiques restent des vérifications séparées non exécutées.
 
 Consultez l’[état du projet](../STATUS.md) pour distinguer les preuves vérifiées des étapes UI／release non exécutées.

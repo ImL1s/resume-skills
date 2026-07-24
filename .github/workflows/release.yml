@@ -171,14 +171,12 @@ jobs:
       - name: Write release checksums
         shell: bash
         run: |
-          {
-            find dist release-assets/hosts -type f -print0
-            printf '%s\0' \
-              release-assets/host-packages-build.json \
-              release-assets/release-evidence.json
-          } \
-            | sort -z \
-            | xargs -0 sha256sum > release-assets/SHA256SUMS
+          python scripts/write_release_checksums.py \
+            --output release-assets/SHA256SUMS \
+            dist/* \
+            release-assets/hosts/* \
+            release-assets/host-packages-build.json \
+            release-assets/release-evidence.json
 
       - name: Upload immutable release candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -223,6 +221,22 @@ jobs:
           python scripts/smoke_distribution.py
           --dist-dir dist
           --version "${{ needs.validate.outputs.version }}"
+
+      - name: Verify flattened GitHub Release checksums
+        shell: bash
+        run: |
+          mkdir flat-release
+          cp dist/* release-assets/hosts/* \
+            release-assets/host-packages-build.json \
+            release-assets/release-evidence.json \
+            release-assets/SHA256SUMS \
+            flat-release/
+          cd flat-release
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum --check SHA256SUMS
+          else
+            shasum -a 256 --check SHA256SUMS
+          fi
 
   attest:
     name: attest release artifacts

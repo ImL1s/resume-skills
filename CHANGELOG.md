@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## [0.3.2] — 2026-07-24
+
+### Fixed
+- Generate `SHA256SUMS` with flat GitHub Release asset basenames rather than
+  build-tree paths, so a normal downloaded release can be checked directly.
+- Reject duplicate or unsafe release asset basenames before publishing.
+
+### Added
+- Dual-OS release smoke now copies the exact candidate into a flat download
+  layout and validates every checksum with the platform-native checker.
+- Recorded real host-native headless Skill invocation on all eight destination
+  CLIs and exact `0.3.1` local plugin/extension installation on all seven
+  supported native package surfaces.
+
 ## [0.3.1] — 2026-07-24
 
 ### Fixed

@@ -6,8 +6,9 @@
 |---|---|---|
 | Packaging matrix | 8 hosts × 8 source Skills render safely | **64/64** |
 | Installed runner | Installed `run_reader` list/show works on fixtures | **64/64** |
-| Native package install | Host CLI/TUI accepts the generated local plugin/extension | **6/7 tested** |
-| Host UI activation | Host discovers and invokes the Skill in its UI/TUI | **not-run** |
+| Native package install | Host CLI/TUI accepts the generated local plugin/extension | **7/7 tested** |
+| Host-native headless activation | Host discovers/invokes the Skill and runs its owned reader | **8/8 tested** |
+| Visual picker interaction | A human-visible picker was opened and selected | **not-run** |
 | Public marketplace install | Host installs a published listing | **not-run** |
 
 Run the automated layer with:
@@ -28,23 +29,39 @@ The harness uses a distinct root per host and never launches a source agent CLI.
 5. Confirm no source CLI was launched and no transcript was sent to a network service automatically.
 6. Add one evidence row; do not infer untested cells from it.
 
-## Natural-language / picker evidence
+## Host-native headless invocation evidence
 
 | host | source | host_version | activation | result | artifact_sha256 | notes | date |
 |---|---|---|---|---|---|---|---|
-| | | | | | | | |
+| claude | claude | 2.1.218 | `/resume-claude` | pass | `8a5c1050af154d4cc5dce9499e4f2dd93a3b19a880aa0c26d9ac18956e7765b8` | Public PyPI 0.3.1 project install; event result matched the synthetic session and inert/untrusted flags | 2026-07-24 |
+| codex | claude | 0.145.0 | `$resume-claude` | pass | `8a5c1050af154d4cc5dce9499e4f2dd93a3b19a880aa0c26d9ac18956e7765b8` | Ephemeral `codex exec` read the project Skill and executed its reader | 2026-07-24 |
+| cursor | claude | 2026.07.23-e383d2b | `/resume-claude` with `--plugin-dir` | pass | `c3dc56b428612d2a99ef407bdb6f0560a3b6a28f5c11ae2660ad698a44267aa2` | Exact 0.3.1 Cursor archive loaded; tool event used the extracted plugin reader | 2026-07-24 |
+| opencode | claude | 1.15.10 | model loads `resume-claude` by name | pass | `8a5c1050af154d4cc5dce9499e4f2dd93a3b19a880aa0c26d9ac18956e7765b8` | Isolated config/data roots; Skill loader and bash event both resolved to the project install | 2026-07-24 |
+| antigravity | claude | 1.1.6 | name mention in `agy --print` | pass | `8a5c1050af154d4cc5dce9499e4f2dd93a3b19a880aa0c26d9ac18956e7765b8` | Print mode ran the exact project reader and verified the structured result | 2026-07-24 |
+| grok | claude | 0.2.111 | `/resume-claude` | pass | `8a5c1050af154d4cc5dce9499e4f2dd93a3b19a880aa0c26d9ac18956e7765b8` | Exported transcript records Skill read, exact reader command, and pass marker | 2026-07-24 |
+| qwen | claude | 0.20.1 | `/resume-claude` | pass | `8a5c1050af154d4cc5dce9499e4f2dd93a3b19a880aa0c26d9ac18956e7765b8` | `--approval-mode=yolo` exposed shell execution; stream JSON records command/output | 2026-07-24 |
+| kimi | claude | 0.29.0 | `/skill:resume-claude` with `--skills-dir` | pass | `8a5c1050af154d4cc5dce9499e4f2dd93a3b19a880aa0c26d9ac18956e7765b8` | Stream JSON records native Skill load, Bash command, structured output, and pass marker | 2026-07-24 |
+
+All rows use the same synthetic Claude fixture and expected session ID. They
+prove non-interactive native discovery/invocation, not a visual picker click.
+
+## Visual picker evidence
+
+| host | picker | result | notes | date |
+|---|---|---|---|---|
+| all | native visual Skill picker | not-run | No screenshot/interactive selection evidence is archived | 2026-07-24 |
 
 ## Marketplace/plugin install evidence
 
 | host | host_version | package_type | install_path_or_ui | result | artifact_sha256 | notes | date |
 |---|---|---|---|---|---|---|---|
-| claude | 2.1.218 | marketplace + plugin | `claude plugin marketplace add`; `claude plugin install --scope user` | pass | `fb5821cf695b73ed88c3f27ae765f6146deed2e91b05d9605f1519346bce83fa` | strict validation and isolated user-scope install; enabled as 0.3.0 | 2026-07-24 |
-| codex | 0.145.0 | marketplace + plugin | `codex plugin marketplace add`; `codex plugin add` | pass | `5ba1bb5adf5536324ef7f9b9a692e3a8ec568933d495b0fc440091ed5bcefef2` | isolated local marketplace install; enabled as 0.3.0 | 2026-07-24 |
-| qwen | 0.20.1 | extension | `qwen extensions install --consent --scope user` | pass | `c8e408a5bc3d45e922d1df2f90b4bba831707a8013e64a10d47f856657d0ffce` | isolated install; extension lists eight Skills | 2026-07-24 |
-| grok | 0.2.111 | plugin | `grok plugin validate`; `grok plugin install --trust` | pass | `cca96d4c86d320be58c802c9d20d583784f3063c2a622efc9623fd657684be2b` | isolated local-path validation and install | 2026-07-24 |
-| antigravity | 1.1.6 | plugin | `agy plugin validate`; `agy plugin install` | pass | `6c757ae110a6113c448f81ec68108e70ee6e8bd94ad0fc11fdcf40738a28de80` | isolated local-path install; eight Skills discovered | 2026-07-24 |
-| kimi | 0.29.0 | plugin | TUI `/plugins install <local-path>`; `/plugins list` | pass | `c952ab85c97513231891207fa72079b67bb744fcf9d57fb5234cbef0a925802b` | trust prompt accepted; 0.3.0 local-path plugin lists eight Skills | 2026-07-24 |
-| cursor | not-run | plugin | local plugin directory / marketplace UI | not-run | `98cdb158a544a6d67a2ec17cf598dec01163bbd07663fc2cbe6f8afc968f9c53` | package schema tested; live host load remains unverified | 2026-07-24 |
+| claude | 2.1.218 | marketplace + plugin | `claude plugin marketplace add`; `claude plugin install --scope user` | pass | `c1fafa5ec05d974657552cb40366824b2d7b473efc713eceaed26138ee206d39` | Exact 0.3.1 archive passed strict validation and isolated install; listed enabled as 0.3.1 | 2026-07-24 |
+| codex | 0.145.0 | marketplace + plugin | `codex plugin marketplace add`; `codex plugin add` | pass | `755083cf5aa8fd6e9375ebed058f0f3b0a92e2b90b30e2eabbfe3453ee48b8f7` | Exact 0.3.1 archive installed in isolated `CODEX_HOME`; listed enabled as 0.3.1 | 2026-07-24 |
+| cursor | 2026.07.23-e383d2b | plugin | `cursor-agent --plugin-dir <plugin>` | pass | `c3dc56b428612d2a99ef407bdb6f0560a3b6a28f5c11ae2660ad698a44267aa2` | Exact 0.3.1 plugin loaded and executed its bundled reader | 2026-07-24 |
+| qwen | 0.20.1 | extension | `qwen extensions install --consent --scope user` | pass | `3a53e9b5af42cdc0516bae113c34edb5fb74190fa883e50c7d2041c455d031ab` | Exact 0.3.1 ZIP installed in isolated home; list reports eight Skills | 2026-07-24 |
+| grok | 0.2.111 | plugin | `grok plugin validate`; `grok plugin install --trust` | pass | `c3fb0b33bf1f5a601fd26e5a666d33b556934aa87b5a378c005842514826f2f9` | Exact 0.3.1 local path validated and installed in isolated `GROK_HOME` | 2026-07-24 |
+| antigravity | 1.1.6 | plugin | `agy plugin validate`; `agy plugin install` | pass | `86466f51590810a39d6e56400a5dfd671be6b3ae86d7c35a5ec6341c8f56868a` | Exact 0.3.1 archive extracted; isolated install reports eight Skills | 2026-07-24 |
+| kimi | 0.29.0 | plugin | TUI `/plugins install <local-path>`; `/plugins list` | pass | `4212ef946019e149fc627c0ec7b0e0cc1752601a0ecc523138dca4e57774b7a6` | Exact 0.3.1 local-path install in isolated `KIMI_CODE_HOME`; list reports eight Skills | 2026-07-24 |
 
 Valid hosts: `claude`, `codex`, `cursor`, `opencode`, `antigravity`, `grok`, `qwen`, `kimi`. OpenCode has no plugin-package row because this project intentionally uses its data-only Skill surface.
 
@@ -52,6 +69,6 @@ Valid hosts: `claude`, `codex`, `cursor`, `opencode`, `antigravity`, `grok`, `qw
 
 Local CLI/TUI installation proves only that the native host accepted the local
 archive. It does not prove publication in a public marketplace or
-natural-language/picker activation. Keep those claims at `not-run` until their
-own evidence rows exist. A green 64-cell filesystem/runner matrix is not
-evidence that a host picker, marketplace, or natural-language router worked.
+visual picker activation. Keep those claims at `not-run` until their own
+evidence rows exist. A green 64-cell filesystem/runner matrix is not evidence
+that a host picker or public marketplace worked.

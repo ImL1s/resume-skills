@@ -92,7 +92,7 @@ HOST_PROFILES: dict[str, HostProfile] = {
         ),
         caveats=(
             "Cowork/cloud sessions do not read local ~/.claude/skills; use account-enabled or repo skills.",
-            "Live host UI activation for portable-resume cells is still not-run.",
+            "Visual picker interaction and public marketplace publication are separate evidence claims.",
         ),
         evidence_notes=(
             "Official Claude Code skills docs: personal + project roots, /skill-name, "
@@ -392,7 +392,7 @@ HOST_PROFILES: dict[str, HostProfile] = {
         caveats=(
             "Qwen Code currently requires Node.js 22+ for npm installs; direct skill bundles only require Python 3.11+ at runtime.",
             "Extensions can execute code or configure MCP; review them before installation.",
-            "Live host UI activation for portable-resume cells is still not-run.",
+            "Visual picker interaction and public marketplace publication are separate evidence claims.",
         ),
         evidence_notes=(
             "Official Qwen Code docs: project/user .qwen/skills, /skills and /<skill>, "
@@ -442,7 +442,7 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "This destination profile targets current Kimi Code CLI (~/.kimi-code), not legacy Python Kimi CLI (~/.kimi).",
             "Current and legacy plugin manifests are incompatible.",
             "Plugins can execute tools; direct SKILL.md installation is the lower-trust default.",
-            "Live host UI activation for portable-resume cells is still not-run.",
+            "Visual picker interaction and public marketplace publication are separate evidence claims.",
         ),
         evidence_notes=(
             "Official Kimi Code docs: .kimi-code/skills, cross-tool .agents roots, "

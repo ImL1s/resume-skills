@@ -12,6 +12,25 @@ python3 scripts/build_host_packages.py --output-dir host-packages
 
 The package builder creates eight `*-<host>-skills.zip` archives, seven supported plugin/marketplace archives, and `host-packages.json` with SHA-256 digests. Replace `<version>` below with the release version.
 
+Download and verify an exact release before installing a plugin:
+
+```bash
+gh release download "v<version>" \
+  --repo ImL1s/resume-skills \
+  --dir "portable-resume-<version>"
+cd "portable-resume-<version>"
+
+# Linux
+sha256sum --check SHA256SUMS
+
+# macOS
+shasum -a 256 --check SHA256SUMS
+```
+
+Starting with `v0.3.2`, checksum entries use the flat filenames delivered by a
+GitHub Release. The release workflow validates that layout on both Ubuntu and
+macOS before publication.
+
 ## Fastest safe install
 
 From PyPI:
@@ -70,8 +89,9 @@ For direct archives, extract the archive contents into the selected Skill root. 
 ## Evidence boundary
 
 Filesystem render/install/verify and installed `run_reader` behavior cover
-**64/64** cells. Isolated local package installation also passed on current
-Claude, Codex, Qwen, Grok, Antigravity, and Kimi CLIs/TUI; versions and archive
-digests are recorded in [`host-ui-smoke.md`](host-ui-smoke.md). Cursor native
-plugin loading, public marketplace publication, host picker/slash-command
-activation, and natural-language routing remain **not-run**.
+**64/64** cells. Exact `0.3.1` local package installation passed on all seven
+supported native plugin/extension surfaces, including Cursor. Host-native
+headless Skill invocation passed on all eight destination CLIs. Versions,
+commands, and archive digests are recorded in
+[`host-ui-smoke.md`](host-ui-smoke.md). Visual picker interaction and public
+marketplace publication remain **not-run**.

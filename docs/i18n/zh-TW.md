@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: zh-TW v0.3.1 -->
+<!-- portable-resume-i18n: zh-TW v0.3.2 -->
 # Portable Resume — 繁體中文快速指南
 
 Portable Resume 可把 Claude、Codex、Cursor、OpenCode、Antigravity、Grok、Qwen、Kimi 的有限本機脈絡帶到**全新**的程式代理工作階段；它不是即時程序或工作階段還原。讀取器離線、僅使用 Python 標準函式庫、不會呼叫來源 CLI，並把復原文字標示為惰性且不受信任。
@@ -37,5 +37,7 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
 依目的 host 的語法啟用 `resume-<source>`，並在採取行動前重新確認目前 repository 狀態。
+
+目前的本機 host 煙霧測試已通過 8/8 個 CLI 呼叫與 7/7 種支援的原生 plugin／extension 安裝。視覺化選擇器互動與公開 marketplace 發布仍是分開且尚未執行的證據項目。
 
 已驗證項目與尚未執行的 UI／release 門檻請見[專案狀態](../STATUS.md)。

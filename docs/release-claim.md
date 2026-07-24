@@ -38,10 +38,13 @@ git push origin vX.Y.Z
 3. Run the four canonical gates plus multilingual-document consistency on Ubuntu/macOS × Python 3.11/3.14.
 4. Build wheel, sdist, eight direct host archives, and seven plugin/marketplace archives once.
 5. Smoke-install the exact wheel and sdist outside the checkout on both OSes.
-6. Generate artifact digests, `release-evidence.json`, `SHA256SUMS`, and GitHub attestations.
-7. Create a **draft** GitHub Release containing those exact bytes.
-8. Publish the same Python artifacts through PyPI Trusted Publishing.
-9. Publish the staged GitHub Release only after PyPI succeeds. A manual dispatch may deliberately skip PyPI.
+6. Generate artifact digests, `release-evidence.json`, and a `SHA256SUMS` that
+   uses the flat basenames delivered by GitHub Releases.
+7. Recreate that flat download layout and verify every checksum on Ubuntu and
+   macOS.
+8. Create GitHub artifact attestations and a **draft** Release containing those exact bytes.
+9. Publish the same Python artifacts through PyPI Trusted Publishing.
+10. Publish the staged GitHub Release only after PyPI succeeds. A manual dispatch may deliberately skip PyPI.
 
 ## Manual recovery / dry release
 
@@ -55,6 +58,10 @@ Host UI/picker and marketplace UI claims remain separate and require rows in [`h
 
 ### Current state
 
+- `v0.3.2`: **local release candidate**. It fixes the v0.3.1 checksum path
+  layout, rejects duplicate asset basenames, and adds dual-OS flat-download
+  verification. Its immutable tag, Actions run, GitHub Release, and PyPI
+  evidence remain pending until the tagged workflow completes.
 - `v0.3.1`: **published** from annotated tag object
   `bf483ebd503143faa1ce73bc5aa95fac95bc0648` at commit
   `d50a1e33db2824830dabc469b7d566031aa45697`.
@@ -72,6 +79,8 @@ Host UI/picker and marketplace UI claims remain separate and require rows in [`h
   Publishing, and GitHub Release publication.
 - `v0.2.3`: historical archived CI claim only; see evidence summary.
 
-This release claim excludes host UI/picker activation, Cursor native plugin
-loading, public host marketplace listings, and Cursor full bubble-graph
-completeness.
+Separate local evidence verifies headless Skill invocation on all eight current
+host CLIs and exact local installation of all seven supported native package
+formats, including Cursor. This release workflow does not reproduce those
+credentialed host checks. Visual picker interaction, public host marketplace
+listings, and Cursor full bubble-graph completeness remain excluded.

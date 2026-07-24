@@ -49,6 +49,10 @@ REQUIRED_LINKS = (
     "../install-hosts.md",
     "../STATUS.md",
 )
+REQUIRED_EVIDENCE_MARKERS = (
+    "8/8",
+    "7/7",
+)
 
 
 def check() -> dict[str, object]:
@@ -84,6 +88,11 @@ def check() -> dict[str, object]:
         for link in REQUIRED_LINKS:
             if link not in text:
                 failures.append(f"{path.relative_to(REPO)}: missing link {link!r}")
+        for marker in REQUIRED_EVIDENCE_MARKERS:
+            if marker not in text:
+                failures.append(
+                    f"{path.relative_to(REPO)}: missing evidence marker {marker!r}"
+                )
         for host in HOST_NAMES:
             if host not in text:
                 failures.append(f"{path.relative_to(REPO)}: missing host {host}")

@@ -1,5 +1,25 @@
 # Evidence summary
 
+## Local release candidate: v0.3.2
+
+Local release work on 2026-07-24 corrected `SHA256SUMS` to use flat GitHub
+Release asset basenames. Two regression tests cover flat verification and
+duplicate-basename rejection. The release workflow now simulates a flat
+download and runs `sha256sum --check` on Ubuntu or `shasum -a 256 --check` on
+macOS before publication.
+
+Fresh host evidence also records:
+
+- **8/8** host-native headless Skill invocations passed against the same
+  synthetic Claude fixture.
+- **7/7** exact `0.3.1` plugin/extension archives installed locally on their
+  supported current host surfaces.
+- Cursor loaded the exact plugin archive and executed its bundled reader.
+
+The immutable `v0.3.2` tag, Actions URL, release asset digests, and PyPI URL
+remain pending until the release workflow completes. Exact host rows and
+boundaries are in [`host-ui-smoke.md`](host-ui-smoke.md).
+
 ## Published archive: v0.3.1
 
 | Field | Evidence |
@@ -34,6 +54,16 @@ PyPI and GitHub Release report matching digests. `SHA256SUMS`,
 `release-evidence.json`, eight direct Skill archives, and seven
 plugin/marketplace archives are attached to the release.
 
+### v0.3.1 checksum-manifest limitation
+
+The artifact bytes and recorded SHA-256 values are correct, but the published
+`SHA256SUMS` entries retain build-tree prefixes such as `dist/` and
+`release-assets/hosts/`. GitHub downloads release assets into one flat
+directory, so a direct `shasum -a 256 --check SHA256SUMS` cannot locate those
+prefixed paths. A basename-aware local check verified all 20 referenced
+artifacts. `v0.3.2` supersedes this manifest layout and adds dual-OS regression
+coverage; the immutable `v0.3.1` assets are not replaced.
+
 ## Fresh verification
 
 Local verification on 2026-07-24 used:
@@ -55,11 +85,12 @@ It quick-installed Qwen and Kimi into temporary user roots, and installer
 verification confirmed 43 owned files for each host. The installed Skills
 contain the offline-reader invariant and no removed external-tool guidance.
 
-Native local plugin/extension installation passed for Claude, Codex, Qwen,
-Grok, Antigravity, and Kimi. Cursor native plugin loading, host UI
-natural-language/picker activation, and public host marketplace installation
-remain **not-run**. Cursor's full bubble graph remains **not claimed**. PyPI
-publication does not satisfy those separate host evidence gates.
+Fresh post-release checks installed all seven exact `0.3.1` native
+plugin/extension archives, including Cursor, and completed host-native headless
+Skill invocation on all eight CLIs. Visual picker interaction and public host
+marketplace installation remain **not-run**. Cursor's full bubble graph remains
+**not claimed**. PyPI publication does not satisfy those separate host evidence
+gates.
 
 ## Historical archive: v0.3.0
 
