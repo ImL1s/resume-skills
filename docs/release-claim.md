@@ -10,6 +10,10 @@ archived run and immutable commit.
 2. Create a GitHub environment named **`pypi`** and add appropriate reviewer/protection rules.
 3. In PyPI, create a Trusted Publisher for this repository, workflow file `release.yml`, environment `pypi`, and project `portable-resume`.
 4. Keep Actions permissions restricted; the workflow grants write/OIDC permissions only to the jobs that need them.
+5. Maintain the independent
+   [`portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace).
+   Its CI validates every change; scheduled, manual, and repository-dispatch
+   workflows synchronize stable source releases.
 
 No long-lived PyPI token is required or expected.
 
@@ -45,6 +49,16 @@ git push origin vX.Y.Z
 8. Create GitHub artifact attestations and a **draft** Release containing those exact bytes.
 9. Publish the same Python artifacts through PyPI Trusted Publishing.
 10. Publish the staged GitHub Release only after PyPI succeeds. A manual dispatch may deliberately skip PyPI.
+11. Synchronize the public marketplace and verify its release:
+
+    ```bash
+    gh workflow run sync.yml \
+      --repo ImL1s/portable-resume-marketplace \
+      -f tag=vX.Y.Z
+    ```
+
+    The marketplace also polls daily and accepts the
+    `portable-resume-release` repository-dispatch event.
 
 ## Manual recovery / dry release
 
@@ -54,23 +68,37 @@ git push origin vX.Y.Z
 
 Archive all of the following in [`evidence-summary.md`](evidence-summary.md): exact tag and 40-character SHA, immutable Actions run URL, GitHub Release URL, PyPI version URL or explicit skip, successful OS jobs, and maintainer/date sign-off.
 
-Host UI/picker and marketplace UI claims remain separate and require rows in [`host-ui-smoke.md`](host-ui-smoke.md).
+Host UI/picker, public marketplace, and vendor-curated directory claims remain
+separate and require their own rows in
+[`host-ui-smoke.md`](host-ui-smoke.md).
 
 ### Current state
 
-- `v0.3.2`: **local release candidate**. It fixes the v0.3.1 checksum path
-  layout, rejects duplicate asset basenames, and adds dual-OS flat-download
-  verification. Its immutable tag, Actions run, GitHub Release, and PyPI
-  evidence remain pending until the tagged workflow completes.
-- `v0.3.1`: **published** from annotated tag object
+- `v0.3.2`: **published** from annotated tag object
+  `a1a17fc21a7ea65bd2717b2ce3faa89fe21d0b5a` at commit
+  `284865a4dc8c1c3dca16ee40f5204053cabb3a92`.
+  [Release run 30093776529, attempt 1](https://github.com/ImL1s/resume-skills/actions/runs/30093776529)
+  passed 14 jobs: dual-OS gates, exact-byte smoke, flat-download checksum
+  verification, attestation, PyPI Trusted Publishing, and GitHub Release
+  publication.
+- Published outputs:
+  [GitHub Release](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
+  and [PyPI](https://pypi.org/project/portable-resume/0.3.2/).
+- Public marketplace:
+  [`ImL1s/portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
+  at current commit `0806e186674d22925f23aaa57d83a403ebfb8515`.
+  [Marketplace CI 30103298262](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30103298262)
+  and [sync run 30103342413](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30103342413)
+  passed, including immutable-tag index verification; its
+  [`v0.3.2` release](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.2)
+  is public and its editable Release body contains the corrected Cursor/Qwen
+  commands without moving the annotated tag.
+- `v0.3.1`: archived published release from annotated tag object
   `bf483ebd503143faa1ce73bc5aa95fac95bc0648` at commit
   `d50a1e33db2824830dabc469b7d566031aa45697`.
   [Release run 30089194956](https://github.com/ImL1s/resume-skills/actions/runs/30089194956)
   passed all dual-OS gates, exact-byte smoke, attestation, PyPI Trusted
   Publishing, and GitHub Release publication.
-- Published outputs:
-  [GitHub Release](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.1)
-  and [PyPI](https://pypi.org/project/portable-resume/0.3.1/).
 - `v0.3.0`: archived published release from annotated tag object
   `6afb60448e20f4b2d9ba38485a6bdbdbfa6a7e87` at commit
   `78c2acd0f9841d90d87f85eff151b842a80dc011`.
@@ -82,5 +110,10 @@ Host UI/picker and marketplace UI claims remain separate and require rows in [`h
 Separate local evidence verifies headless Skill invocation on all eight current
 host CLIs and exact local installation of all seven supported native package
 formats, including Cursor. This release workflow does not reproduce those
-credentialed host checks. Visual picker interaction, public host marketplace
-listings, and Cursor full bubble-graph completeness remain excluded.
+credentialed host checks. Separate post-release evidence verifies public
+marketplace installation on all six compatible hosts and Cursor/Kimi
+marketplace picker flows; sanitized readbacks are retained in
+[`evidence/public-marketplace-v0.3.2.json`](evidence/public-marketplace-v0.3.2.json).
+Other visual Skill pickers, vendor-curated
+Claude/Cursor directory listings, and Cursor full bubble-graph completeness
+remain excluded.

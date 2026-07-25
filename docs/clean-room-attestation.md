@@ -20,7 +20,8 @@ Product sources and fixtures are compatibility implementations over public shape
 
 The product sources and synthetic fixtures do **not** contain copied installed-bundle content or real vendor transcripts.
 
-This statement does not claim visual picker interaction, public marketplace
-publication, or a complete Cursor bubble graph. Headless host invocation, local
-native package installation, and dual-OS release evidence are recorded
-separately in `docs/host-ui-smoke.md` and `docs/evidence-summary.md`.
+This source-content attestation does not itself claim host UI behavior, public
+marketplace publication, or a complete Cursor bubble graph. Headless host
+invocation, local/native and public marketplace installation, scoped picker
+checks, and dual-OS release evidence are recorded separately in
+`docs/host-ui-smoke.md` and `docs/evidence-summary.md`.

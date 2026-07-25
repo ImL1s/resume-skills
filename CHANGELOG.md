@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+- Published the independent
+  [`portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
+  with validated Claude, Codex, Cursor, Qwen, Grok, and Kimi catalogs,
+  synchronized release CI/CD, and a public `v0.3.2` release.
+- Recorded fresh public installation on all six compatible hosts plus visual
+  marketplace picker verification for Cursor and Kimi.
+
+### Documentation
+- Added public marketplace commands and proof boundaries to all 12 localized
+  quick-start guides and the canonical host/release documentation.
+
 ## [0.3.2] — 2026-07-24
 
 ### Fixed

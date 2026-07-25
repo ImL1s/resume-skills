@@ -43,15 +43,18 @@ REQUIRED_COMMANDS = (
     "pipx install portable-resume",
     "install-resume-skills quick-install qwen",
     "install-resume-skills quick-install all",
+    "claude plugin marketplace add ImL1s/portable-resume-marketplace",
     "python3 scripts/self_verify.py",
 )
 REQUIRED_LINKS = (
     "../install-hosts.md",
     "../STATUS.md",
+    "https://github.com/ImL1s/portable-resume-marketplace",
 )
 REQUIRED_EVIDENCE_MARKERS = (
     "8/8",
     "7/7",
+    "6/6",
 )
 
 
