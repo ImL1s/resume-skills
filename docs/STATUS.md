@@ -1,4 +1,4 @@
-# Project status (2026-07-24)
+# Project status (2026-07-25)
 
 ## Current release: 0.3.2
 
@@ -8,7 +8,7 @@
 | Destination profiles | 8 |
 | Packaging matrix | **64/64 pass locally** |
 | Installed runner matrix | **64/64 pass locally** |
-| Python test suite | **267 pass locally** |
+| Python test suite | **267 pass locally** (269 on PR #4 head when present) |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
 | Host-native headless Skill activation | **8/8 pass** |
@@ -21,6 +21,20 @@
 | Published release | **pass**: [GitHub Release v0.3.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2) |
 | Public PyPI installation | **pass for 0.3.2**: isolated install, 64-cell self-check, and all 8 host install/verify cells |
 | Cursor full bubble graph | **not claimed** |
+| Codex large-rollout budget + parent list filter (Issue #3) | **open PR** [PR #4](https://github.com/ImL1s/resume-skills/pull/4) @ `2cb0ee8` — P0 hotfix only |
+| Codex probe head-only + list FS fallback | **not done** — [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + [plan 026](../plans/026-codex-probe-list-discovery.md) |
+| Codex streaming show / reducer | **not done** — [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + [plan 027](../plans/027-codex-streaming-show.md) |
+| Codex-native live resume / `codex resume` from hosts | **not claimed** (inert handoff only) |
+
+## Open work (honest backlog)
+
+| Item | Track | Notes |
+|---|---|---|
+| Issue #3 parent list + large rollout reject | GitHub #3 + PR #4 (approved @ `2cb0ee8`) | P0: correct `source_read_bytes` / `transcript_records` + SQL pre-filter. Local verify: self_verify, secrets clean, 269 tests, 64/64 matrix. Still whole-file load. Close #3 only after merge. |
+| Discovery false unsupported / stale SQLite | [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + plan 026 | P1a: head-only probe; no full `sessions/` walk; read-only FS head fallback. Do not mutate `~/.codex`. |
+| Peak memory on large show | [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + plan 027 | P1b: stable streaming lines + reducer; synthetic 17–30 MiB test. Not live process restore. |
+
+`/resume-codex` remains **context migration** (Skill + reader), not Grok Build native `/resume` and not Codex CLI live resume.
 
 ## Corrected and verified in 0.3.2
 
