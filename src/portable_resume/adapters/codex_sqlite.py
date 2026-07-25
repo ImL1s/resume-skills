@@ -137,14 +137,16 @@ def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) 
                 "FROM threads"
             )
             params: list[Any] = []
-            clauses: list[str] = []
+            clauses = ["source IN ('cli', 'vscode')"]
             exact = _exact_uuid_ref(query.ref)
             if exact is not None:
                 clauses.append("id = ?")
                 params.append(exact)
-            elif query.cwd:
-                clauses.append("cwd = ?")
-                params.append(query.cwd)
+            else:
+                clauses.append("archived = 0")
+                if query.cwd:
+                    clauses.append("cwd = ?")
+                    params.append(query.cwd)
             if clauses:
                 select += " WHERE " + " AND ".join(clauses)
             select += f" ORDER BY {updated_column} DESC, id ASC LIMIT ?"
@@ -154,7 +156,8 @@ def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) 
                 rows = connection.execute(
                     f"SELECT id, rollout_path, {updated_column}, source, cwd, "
                     f"{title_expr}, {first_expr}, archived, {branch_expr} "
-                    f"FROM threads ORDER BY {updated_column} DESC, id ASC LIMIT ?",
+                    "FROM threads WHERE source IN ('cli', 'vscode') AND archived = 0 "
+                    f"ORDER BY {updated_column} DESC, id ASC LIMIT ?",
                     (DEFAULT_BOUNDS.scanned_records,),
                 ).fetchall()
         except sqlite3.Error as error:

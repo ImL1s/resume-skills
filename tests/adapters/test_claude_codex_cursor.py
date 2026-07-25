@@ -7,13 +7,14 @@ import sqlite3
 import tempfile
 import unittest
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 from portable_resume.adapters import claude, codex, codex_sqlite, cursor
 from portable_resume.adapters.base import ResolvedRef
-from portable_resume.bounds import Bounds, ReadBudget
+from portable_resume.bounds import DEFAULT_BOUNDS, Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.model import Query
 from portable_resume.reader import run
@@ -569,6 +570,113 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertEqual([turn.content for turn in session.turns], ["Build feature", "Implemented"])
         self.assertEqual(before, tree_snapshot(self.root))
 
+    def test_database_filters_parent_rows_before_listing_limit(self) -> None:
+        first, first_path = self.rollout()
+        second, second_path = self.rollout()
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        noise = [
+            (
+                str(uuid.uuid4()),
+                f"sessions/missing-{index}.jsonl",
+                now_ms + index + 1,
+                "subagent",
+                str(self.cwd),
+                "noise",
+                "noise",
+                0,
+                None,
+            )
+            for index in range(DEFAULT_BOUNDS.listed_sessions)
+        ]
+        first_row = list(self.db_row(first, first_path))
+        second_row = list(self.db_row(second, second_path, source="vscode"))
+        first_row[2] = now_ms
+        second_row[2] = now_ms - 1
+        self.database(9, [*noise, tuple(first_row), tuple(second_row)])
+
+        values = codex.ADAPTER.list(self.query(), ReadBudget())
+
+        self.assertEqual({item.session_id for item in values}, {first, second})
+
+    def test_rollout_uses_source_and_transcript_budgets(self) -> None:
+        identifier = str(uuid.uuid4())
+        records = [
+            {
+                "type": "session_meta",
+                "timestamp": stamp(-4),
+                "payload": {
+                    "id": identifier,
+                    "cwd": str(self.cwd),
+                    "source": "cli",
+                },
+            },
+            *(
+                {
+                    "type": "world_state",
+                    "payload": {"padding": "x" * 300, "index": index},
+                }
+                for index in range(3)
+            ),
+            {
+                "type": "response_item",
+                "timestamp": stamp(-1),
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": "bounded large rollout",
+                },
+            },
+        ]
+        _, path = self.rollout(identifier, records=records)
+        self.assertGreater(path.stat().st_size, 1_024)
+        self.assertLess(path.stat().st_size, 4_096)
+        limits = replace(
+            DEFAULT_BOUNDS,
+            scanned_records=1,
+            transcript_records=len(records),
+            record_bytes=1_024,
+            source_read_bytes=4_096,
+        )
+        with mock.patch.object(codex, "DEFAULT_BOUNDS", limits):
+            session = codex.ADAPTER.show(
+                ResolvedRef(identifier, str(path)),
+                self.query(),
+                ReadBudget(limits),
+            )
+        self.assertEqual(session.last_user_request, "bounded large rollout")
+
+        records[1]["payload"]["padding"] = "x" * 1_024
+        write_jsonl(path, records)
+        with mock.patch.object(codex, "DEFAULT_BOUNDS", limits):
+            with self.assertRaises(DiagnosticError) as caught:
+                codex.ADAPTER.show(
+                    ResolvedRef(identifier, str(path)),
+                    self.query(),
+                    ReadBudget(limits),
+                )
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_rollout_stable_read_uses_remaining_source_budget(self) -> None:
+        _, first = self.rollout()
+        _, second = self.rollout()
+        remaining = second.stat().st_size - 1
+        limits = replace(
+            DEFAULT_BOUNDS,
+            source_read_bytes=first.stat().st_size + remaining,
+        )
+        budget = ReadBudget(limits)
+        codex._read_rollout(str(first), str(self.root), budget)
+
+        with mock.patch.object(
+            codex,
+            "stable_read_bytes",
+            wraps=codex.stable_read_bytes,
+        ) as stable_read:
+            with self.assertRaises(DiagnosticError) as caught:
+                codex._read_rollout(str(second), str(self.root), budget)
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+        self.assertEqual(stable_read.call_args.kwargs["max_bytes"], remaining)
+
     def test_s_cod_03_archive_hidden_by_default_exact_id_selectable(self) -> None:
         active, active_path = self.rollout()
         archived, archived_path = self.rollout(archived=True)
@@ -661,6 +769,26 @@ class CodexAdapterTests(unittest.TestCase):
                         codex.ADAPTER.list(self.query(compressed), ReadBudget())
                 self.assertEqual(caught.exception.code, error.code)
 
+    def test_zstd_decompression_uses_remaining_source_budget(self) -> None:
+        identifier, compressed = self.rollout(suffix=".jsonl.zst")
+        encoded = compressed.read_bytes()
+        limits = replace(
+            DEFAULT_BOUNDS,
+            source_read_bytes=len(encoded) * 2,
+        )
+        with mock.patch.object(
+            codex,
+            "_decompress_zstd",
+            return_value=encoded,
+        ) as decoder:
+            session = codex.ADAPTER.show(
+                ResolvedRef(identifier, str(compressed)),
+                self.query(),
+                ReadBudget(limits),
+            )
+        decoder.assert_called_once_with(encoded, max_bytes=len(encoded))
+        self.assertEqual(session.session_id, identifier)
+
     def test_supported_database_empty_result_does_not_scan_rollouts(self) -> None:
         self.rollout()
         self.database(9, [])
@@ -744,7 +872,7 @@ class CodexAdapterTests(unittest.TestCase):
             codex.ADAPTER.list(self.query(), ReadBudget())
         self.assertEqual(corrupt.exception.code, "E_CORRUPT_RECORD")
         with self.assertRaises(DiagnosticError) as bounded:
-            codex.ADAPTER.list(self.query(), ReadBudget(Bounds(scanned_records=1)))
+            codex.ADAPTER.list(self.query(), ReadBudget(Bounds(transcript_records=1)))
         self.assertEqual(bounded.exception.code, "E_LIMIT_EXCEEDED")
         marker = self.root / "owned"
         stdout, stderr = io.StringIO(), io.StringIO()

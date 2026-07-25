@@ -5,7 +5,7 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 
-from portable_resume.bounds import Bounds, ReadBudget
+from portable_resume.bounds import DEFAULT_BOUNDS, Bounds, ReadBudget
 from portable_resume.contracts import validate_diagnostic, validate_envelope
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.model import Candidate, Envelope, Query, Session, Turn
@@ -133,6 +133,14 @@ class ModelContractTests(unittest.TestCase):
             with self.subTest(method=method), self.assertRaises(DiagnosticError) as caught:
                 getattr(budget, method)(1)
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_transcript_budget_cannot_raise_global_ceiling(self) -> None:
+        budget = ReadBudget(
+            Bounds(transcript_records=DEFAULT_BOUNDS.transcript_records + 1)
+        )
+        with self.assertRaises(DiagnosticError) as caught:
+            budget.consume_transcript_records(DEFAULT_BOUNDS.transcript_records + 1)
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
     def test_u024_diagnostic_is_closed_bounded_and_content_free(self) -> None:
         # Construct at runtime so public-tree hygiene does not flag synthetic secrets.

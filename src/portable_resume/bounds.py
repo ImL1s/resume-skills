@@ -52,7 +52,11 @@ class ReadBudget:
         self._consume("records", amount, self.limits.scanned_records)
 
     def consume_transcript_records(self, amount: int = 1) -> None:
-        self._consume("transcript_records_read", amount, self.limits.transcript_records)
+        self._consume(
+            "transcript_records_read",
+            amount,
+            min(self.limits.transcript_records, DEFAULT_BOUNDS.transcript_records),
+        )
 
     def consume_bytes(self, amount: int) -> None:
         # Admitted source payload budget (distinct from verification I/O and output UTF-8).
