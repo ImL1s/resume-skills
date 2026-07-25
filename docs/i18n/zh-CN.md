@@ -1,7 +1,7 @@
-<!-- portable-resume-i18n: zh-CN v0.3.2 -->
+<!-- portable-resume-i18n: zh-CN v0.3.3 -->
 # Portable Resume — 简体中文快速指南
 
-**当前已发布版本：** [`0.3.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
+**当前已发布版本：** [`0.3.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3)
 
 Portable Resume 可将 Claude、Codex、Cursor、OpenCode、Antigravity、Grok、Qwen、Kimi 的有限本地上下文迁移到**全新**的编程代理会话；它不是实时进程或会话恢复。读取器离线、仅使用 Python 标准库、不会调用来源 CLI，并将恢复内容标记为惰性且不受信任。
 

@@ -1,6 +1,6 @@
 # Project status (2026-07-25)
 
-## Current release: 0.3.2
+## Current release: 0.3.3
 
 | Gate | Status |
 |---|---|
@@ -36,7 +36,16 @@
 
 `/resume-codex` remains **context migration** (Skill + reader), not Grok Build native `/resume` and not Codex CLI live resume.
 
+## Corrected and verified in 0.3.3
+
+- Adapter list/show budgets and parent-session SQL pre-filter landed on main
+  (PR #4 / `48746c4`), including remaining zstd/source capacity, bounded
+  readline parsing, transcript raise clamp, and stable-read verification hashing.
+- CI GitHub Actions pins: checkout v7.0.1, setup-python v7.0.0.
+- Unit suite: **274** tests locally before tag.
+
 ## Corrected and verified in 0.3.2
+
 
 - Release checksums now contain flat GitHub asset basenames, reject duplicate
   names, and are tested in a simulated flat download on Ubuntu and macOS.

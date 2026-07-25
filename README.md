@@ -12,8 +12,8 @@
 
 Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
-**Current release:** [`0.3.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
-· [PyPI](https://pypi.org/project/portable-resume/0.3.2/) · 64/64 packaging
+**Current release:** [`0.3.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3)
+· [PyPI](https://pypi.org/project/portable-resume/0.3.3/) · 64/64 packaging
 cells · 64/64 installed-runner cells · 7/7 exact native local
 plugin/extension installs verified · 8/8 host-native headless Skill
 invocations verified · 6/6 compatible public marketplace installs verified.

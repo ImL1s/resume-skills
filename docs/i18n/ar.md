@@ -1,7 +1,7 @@
-<!-- portable-resume-i18n: ar v0.3.2 -->
+<!-- portable-resume-i18n: ar v0.3.3 -->
 # Portable Resume — دليل البدء السريع بالعربية
 
-**الإصدار الحالي المنشور:** [`0.3.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
+**الإصدار الحالي المنشور:** [`0.3.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3)
 
 ينقل Portable Resume سياقًا محليًا محدودًا من Claude وCodex وCursor وOpenCode وAntigravity وGrok وQwen وKimi إلى جلسة وكيل برمجي **جديدة**. لا يستعيد عملية أو جلسة عاملة. تعمل أدوات القراءة دون شبكة وبمكتبة Python القياسية فقط، ولا تشغّل CLI المصدر، وتوسم النص المستعاد بأنه خامل وغير موثوق.
 

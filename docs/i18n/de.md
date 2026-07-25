@@ -1,7 +1,7 @@
-<!-- portable-resume-i18n: de v0.3.2 -->
+<!-- portable-resume-i18n: de v0.3.3 -->
 # Portable Resume — deutscher Schnellstart
 
-**Aktuelle veröffentlichte Version:** [`0.3.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
+**Aktuelle veröffentlichte Version:** [`0.3.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3)
 
 Portable Resume überträgt begrenzten lokalen Kontext aus Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen oder Kimi in eine **neue** Coding-Agent-Sitzung. Laufende Prozesse oder Sitzungen werden nicht wiederhergestellt. Die Reader arbeiten offline, verwenden nur die Python-Standardbibliothek, starten niemals die Quell-CLI und kennzeichnen wiederhergestellten Text als inert und nicht vertrauenswürdig.
 

@@ -2,17 +2,28 @@
 
 ## Unreleased
 
-### Added
-- Published the independent
-  [`portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
-  with validated Claude, Codex, Cursor, Qwen, Grok, and Kimi catalogs,
-  synchronized release CI/CD, and a public `v0.3.2` release.
-- Recorded fresh public installation on all six compatible hosts plus visual
-  marketplace picker verification for Cursor and Kimi.
+## [0.3.3] — 2026-07-25
 
-### Documentation
-- Added public marketplace commands and proof boundaries to all 12 localized
-  quick-start guides and the canonical host/release documentation.
+### Fixed
+- Live source discovery no longer lets subagent rows crowd parent `cli`/`vscode`
+  sessions out of the listing window: filter source and default unarchived
+  rows in SQL before `LIMIT`, while exact-ID lookup still reaches archived parents.
+- Rollout reads charge whole-file bounds with `source_read_bytes` and
+  per-line counts with `transcript_records`, keeping `record_bytes` as the
+  single-record ceiling (including remaining capacity for zstd and fallback paths).
+- Custom transcript ceilings can no longer exceed the global 50,000-line default.
+- Prefer bounded `BytesIO.readline` over full `splitlines` materialization for
+  large JSONL parsing; stable-read verification uses incremental hashing so
+  peak memory no longer keeps three full source copies.
+
+### Changed
+- CI pins `actions/checkout` to v7.0.1 and `actions/setup-python` to v7.0.0
+  (SHA-pinned).
+
+### Notes
+- Still inert handoff only — not live process restore.
+- Head-only probe / filesystem list fallback and full streaming show reducers
+  remain follow-up work (Issues #7 / #8).
 
 ## [0.3.2] — 2026-07-24
 
