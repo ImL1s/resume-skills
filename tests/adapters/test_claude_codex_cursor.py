@@ -748,6 +748,26 @@ class CodexAdapterTests(unittest.TestCase):
                         codex.ADAPTER.list(self.query(compressed), ReadBudget())
                 self.assertEqual(caught.exception.code, error.code)
 
+    def test_zstd_decompression_uses_remaining_source_budget(self) -> None:
+        identifier, compressed = self.rollout(suffix=".jsonl.zst")
+        encoded = compressed.read_bytes()
+        limits = replace(
+            DEFAULT_BOUNDS,
+            source_read_bytes=len(encoded) * 2,
+        )
+        with mock.patch.object(
+            codex,
+            "_decompress_zstd",
+            return_value=encoded,
+        ) as decoder:
+            session = codex.ADAPTER.show(
+                ResolvedRef(identifier, str(compressed)),
+                self.query(),
+                ReadBudget(limits),
+            )
+        decoder.assert_called_once_with(encoded, max_bytes=len(encoded))
+        self.assertEqual(session.session_id, identifier)
+
     def test_supported_database_empty_result_does_not_scan_rollouts(self) -> None:
         self.rollout()
         self.database(9, [])

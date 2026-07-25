@@ -426,7 +426,10 @@ def _read_rollout(path: str, root: str, budget: ReadBudget) -> tuple[StableRead,
     )
     provider = ZSTD_FORMAT if path.endswith(".zst") else ROLLOUT_FORMAT
     data = (
-        _decompress_zstd(observation.data, max_bytes=maximum_source)
+        _decompress_zstd(
+            observation.data,
+            max_bytes=max(0, maximum_source - budget.bytes_read),
+        )
         if provider == ZSTD_FORMAT
         else observation.data
     )
