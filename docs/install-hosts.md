@@ -47,6 +47,69 @@ same two CLI entry points. `quick-install` defaults to user-global roots; use
 the lower-level transactional commands below for dry runs, explicit roots,
 verification, backup replacement, or uninstall.
 
+## Public marketplace install
+
+The independent
+[`portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
+publishes host-native catalogs for the six compatible hosts. These commands
+were verified against the public repository for version `0.3.2`:
+
+### Claude Code
+
+```bash
+claude plugin marketplace add ImL1s/portable-resume-marketplace
+claude plugin install portable-resume@portable-resume --scope user
+```
+
+### Codex
+
+```bash
+codex plugin marketplace add ImL1s/portable-resume-marketplace
+codex plugin add portable-resume@portable-resume
+```
+
+### Cursor Agent
+
+```bash
+cursor-agent plugin marketplace add \
+  https://github.com/ImL1s/portable-resume-marketplace --git-ref main
+```
+
+Run `/plugin`, open **Marketplace**, search for `portable-resume`, and install
+it for user scope.
+
+### Qwen Code
+
+```bash
+qwen extensions sources add ImL1s/portable-resume-marketplace
+qwen extensions install \
+  ImL1s/portable-resume-marketplace:portable-resume \
+  --consent --scope user
+```
+
+### Grok CLI
+
+```bash
+grok plugin marketplace add ImL1s/portable-resume-marketplace
+grok plugin install portable-resume@portable-resume-marketplace --trust
+```
+
+### Kimi Code CLI
+
+Inside Kimi Code CLI, add the catalog:
+
+```text
+/plugins marketplace https://raw.githubusercontent.com/ImL1s/portable-resume-marketplace/main/kimi-marketplace.json
+```
+
+Select **Portable Resume**, choose **Trust and install**, then confirm with
+`/plugins list`.
+
+Antigravity and OpenCode do not currently expose a compatible public catalog
+for these inert Skill packages. Use the published release/plugin or direct
+Skill routes below. Network access is used only by the destination host to
+download a package; every bundled reader remains offline.
+
 ## Direct installer (all hosts)
 
 ```bash
@@ -65,16 +128,16 @@ Use `--scope global` for the user root or `--root <path>` for an explicit root. 
 
 ## Per-host routes
 
-| Host | Direct Skill root (project / user) | Release plugin or marketplace route | Activation |
+| Host | Direct Skill root (project / user) | Preferred package route | Activation |
 |---|---|---|---|
-| Claude Code (`claude`) | `.claude/skills` / `~/.claude/skills` | Extract `claude-marketplace.zip`; `claude plugin marketplace add <extracted-root>`, then `claude plugin install portable-resume@portable-resume --scope user` | `/resume-codex` |
-| Codex (`codex`) | `.agents/skills` / `~/.agents/skills` | Extract `codex-marketplace.zip`; `codex plugin marketplace add <extracted-root>`, then `codex plugin add portable-resume@portable-resume` | `$resume-codex`; `/skills` lists |
-| Cursor (`cursor`) | `.cursor/skills` / `~/.cursor/skills` | Extract `cursor-marketplace.zip`; copy/symlink `plugins/portable-resume` to `~/.cursor/plugins/local/portable-resume`, or use `cursor agent --plugin-dir <.../plugins/portable-resume>` for one run. A Git marketplace can be added with `cursor agent plugin marketplace add <git-url>`, but plugin installation remains `/add-plugin portable-resume`. | `/resume-codex` |
+| Claude Code (`claude`) | `.claude/skills` / `~/.claude/skills` | Public marketplace commands above. Offline fallback: extract `claude-marketplace.zip`, add its root, then install `portable-resume@portable-resume`. | `/resume-codex` |
+| Codex (`codex`) | `.agents/skills` / `~/.agents/skills` | Public marketplace commands above. Offline fallback: extract `codex-marketplace.zip`, add its root, then install `portable-resume@portable-resume`. | `$resume-codex`; `/skills` lists |
+| Cursor (`cursor`) | `.cursor/skills` / `~/.cursor/skills` | Add the public Git marketplace, then install from `/plugin`. Offline fallback: use `cursor-agent --plugin-dir <.../plugins/portable-resume>`. | `/resume-codex` |
 | OpenCode (`opencode`) | `.opencode/skills` / `~/.config/opencode/skills` | Direct Skill only. OpenCode plugins are executable JS/TS modules, not a packaging format for inert Skills. | Ask it to use `resume-codex` |
 | Antigravity (`antigravity`) | `.agents/skills` / `~/.gemini/config/skills` | Extract `antigravity-plugin.zip`; `agy plugin validate <extracted-dir>`, then `agy plugin install <extracted-dir>`. Manual fallback: `.agents/plugins/portable-resume` or `~/.gemini/config/plugins/portable-resume`. | Mention `resume-codex`; `/skills` lists |
-| Grok Build (`grok`) | `.grok/skills` / `~/.grok/skills` | Extract `grok-plugin.zip`; `grok plugin validate <extracted-dir>`, then, after review, `grok plugin install <extracted-dir> --trust` | `/resume-codex` |
-| Qwen Code (`qwen`) | `.qwen/skills` / `~/.qwen/skills` | `qwen extensions install /path/portable-resume-<version>-qwen-extension.zip`; add `--scope project` for project scope | `/resume-codex`; `/skills` lists |
-| Kimi Code CLI (`kimi`) | `.kimi-code/skills` / `$KIMI_CODE_HOME/skills` (default `~/.kimi-code/skills`) | Download and extract `kimi-plugin.zip`, then `/plugins install <extracted-dir>`; an exact release ZIP URL also works. Run `/plugins reload`, `/reload`, or start a new session. | `/skill:resume-codex` |
+| Grok Build (`grok`) | `.grok/skills` / `~/.grok/skills` | Public marketplace commands above. Offline fallback: validate and install the extracted `grok-plugin.zip` with `--trust`. | `/resume-codex` |
+| Qwen Code (`qwen`) | `.qwen/skills` / `~/.qwen/skills` | Public extension source commands above. Offline fallback: `qwen extensions install /path/portable-resume-<version>-qwen-extension.zip`. | `/resume-codex`; `/skills` lists |
+| Kimi Code CLI (`kimi`) | `.kimi-code/skills` / `$KIMI_CODE_HOME/skills` (default `~/.kimi-code/skills`) | Add the public catalog in `/plugins`, or install the exact release ZIP URL/path. Run `/plugins reload`, `/reload`, or start a new session. | `/skill:resume-codex` |
 
 For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, and `resume-qwen`.
 
@@ -82,16 +145,19 @@ For direct archives, extract the archive contents into the selected Skill root. 
 
 - **Claude:** cloud/Cowork sessions do not automatically read local user Skills; use project or account-enabled Skills there.
 - **Codex/Cursor/OpenCode/Kimi:** compatible `.agents/skills` roots may cause duplicate names. Keep one authoritative copy per host and inspect discovery when upgrading.
-- **Qwen:** installing from the repository URL is not recommended for this monorepo because the extension manifest is a release asset, not at repository root. Use the exact Qwen extension ZIP.
+- **Qwen:** do not install the source monorepo URL as an extension. Use the
+  dedicated public marketplace source or the exact Qwen extension ZIP.
 - **Kimi:** the destination bundle targets current Kimi Code CLI. Legacy Python Kimi CLI session data is readable as a source, but its plugin format and `~/.kimi` data root are different.
 - **All plugin routes:** plugins can have broader execution authority than Skills. Inspect the archive and verify its published SHA-256 first.
 
 ## Evidence boundary
 
 Filesystem render/install/verify and installed `run_reader` behavior cover
-**64/64** cells. Exact `0.3.1` local package installation passed on all seven
+**64/64** cells. Exact `0.3.2` local package installation passed on all seven
 supported native plugin/extension surfaces, including Cursor. Host-native
-headless Skill invocation passed on all eight destination CLIs. Versions,
-commands, and archive digests are recorded in
-[`host-ui-smoke.md`](host-ui-smoke.md). Visual picker interaction and public
-marketplace publication remain **not-run**.
+headless Skill invocation passed on all eight destination CLIs. Public
+marketplace installation passed on all six compatible hosts; Cursor and Kimi
+also passed their visual marketplace picker flows. Versions, commands, and
+archive digests are recorded in [`host-ui-smoke.md`](host-ui-smoke.md). Other
+visual Skill pickers and vendor-curated directory listings remain separate
+unclaimed gates.

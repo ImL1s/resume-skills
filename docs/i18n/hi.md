@@ -1,6 +1,8 @@
 <!-- portable-resume-i18n: hi v0.3.2 -->
 # Portable Resume — हिन्दी त्वरित शुरुआत
 
+**वर्तमान प्रकाशित संस्करण:** [`0.3.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
+
 Portable Resume, Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen या Kimi के सीमित स्थानीय context को एक **नई** coding-agent session में ले जाता है। यह चलती process या session को restore नहीं करता। reader offline और केवल Python standard library पर चलता है, source CLI कभी नहीं चलाता, तथा मिले हुए text को inert और untrusted चिह्नित करता है।
 
 ## स्थापना
@@ -26,6 +28,21 @@ install-resume-skills quick-install qwen --project "$PWD"
 
 समर्थित destination हैं Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code और Kimi Code CLI। सही direct Skill, extension, plugin और marketplace commands के लिए [installation guide](../install-hosts.md) देखें। किसी plugin पर भरोसा करने से पहले उसकी सामग्री और release SHA-256 जाँचें।
 
+## सार्वजनिक marketplace
+
+सार्वजनिक
+[`portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
+छह संगत hosts के लिए native installation देता है:
+
+```bash
+claude plugin marketplace add ImL1s/portable-resume-marketplace
+claude plugin install portable-resume@portable-resume --scope user
+codex plugin marketplace add ImL1s/portable-resume-marketplace
+codex plugin add portable-resume@portable-resume
+```
+
+गाइड में Cursor, Qwen, Grok और Kimi के सत्यापित रास्ते तथा Antigravity／OpenCode के direct विकल्प दिए गए हैं।
+
 ## सत्यापन और उपयोग
 
 checkout में चलाएँ:
@@ -38,6 +55,6 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 destination host की documented syntax से `resume-<source>` सक्रिय करें और handoff पर काम करने से पहले वर्तमान repository दोबारा जाँचें।
 
-वर्तमान स्थानीय host smoke में 8/8 CLI invocation और 7/7 समर्थित native plugin／extension installation सफल रहे। Visual picker interaction और public marketplace publication अलग, अभी न चलाए गए प्रमाण हैं।
+वर्तमान host smoke में 8/8 CLI invocation और 7/7 सटीक local native package installation सफल रहे। सार्वजनिक marketplace installation 6/6 संगत hosts पर सफल रहा; Cursor और Kimi marketplace picker भी सफल रहे। अन्य visual Skill picker और vendor-curated directories को पूर्ण होने का दावा नहीं किया गया है।
 
 सत्यापित दावों और अभी न चले UI／release gates के लिए [project status](../STATUS.md) देखें।

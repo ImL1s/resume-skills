@@ -1,7 +1,7 @@
 # portable-resume-skills
 
 <p align="center">
-  <img src="docs/assets/portable-resume-skills-hero.jpg" alt="portable-resume-skills: offline local-only context migration across eight coding agents through sealed skill packages" width="920" />
+  <img src="docs/assets/portable-resume-skills-hero-v2.jpg" alt="Eight local coding-agent sources flow into a sealed context archive, then into eight fresh destination sessions" width="920" />
 </p>
 
 <p align="center">
@@ -12,10 +12,13 @@
 
 Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
-**Current release candidate:** `0.3.2` · 64/64 packaging cells · 64/64
-installed-runner cells · 7/7 native local plugin/extension installs verified ·
-8/8 host-native headless Skill invocations verified. Visual picker interaction
-and public marketplace listings remain separate **not-run** claims.
+**Current release:** [`0.3.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
+· [PyPI](https://pypi.org/project/portable-resume/0.3.2/) · 64/64 packaging
+cells · 64/64 installed-runner cells · 7/7 exact native local
+plugin/extension installs verified · 8/8 host-native headless Skill
+invocations verified · 6/6 compatible public marketplace installs verified.
+Cursor and Kimi marketplace pickers were also exercised; other visual Skill
+picker paths remain separate **not-run** claims.
 
 ## Sources and destinations
 
@@ -55,6 +58,22 @@ or one project:
 install-resume-skills quick-install qwen
 install-resume-skills quick-install qwen --project "$PWD"
 ```
+
+For a host-native public marketplace install, add the
+[`portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace):
+
+```bash
+# Claude Code
+claude plugin marketplace add ImL1s/portable-resume-marketplace
+claude plugin install portable-resume@portable-resume --scope user
+
+# Codex
+codex plugin marketplace add ImL1s/portable-resume-marketplace
+codex plugin add portable-resume@portable-resume
+```
+
+Verified Cursor, Qwen, Grok, and Kimi commands plus direct Antigravity/OpenCode
+fallbacks are in [`docs/install-hosts.md`](docs/install-hosts.md).
 
 The lower-level transactional command remains available for previews, custom
 roots, verification, and uninstall:
@@ -120,11 +139,12 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 `.github/workflows/ci.yml` runs those gates across Ubuntu/macOS and Python 3.11–3.14, then builds and smoke-installs the exact wheel and sdist. `.github/workflows/release.yml` accepts only annotated `vMAJOR.MINOR.PATCH` tags reachable from `main`, re-runs dual-OS gates, builds release bytes once, tests those exact bytes, creates SHA-256 checksums and GitHub attestations, stages a GitHub Release, and publishes through PyPI Trusted Publishing.
 
-Release candidate `v0.3.2` also verifies the GitHub Release layout itself: every
-`SHA256SUMS` entry is a flat asset basename, and both Ubuntu and macOS validate
-a simulated flat download before publication. After publication, the immutable
-run, commit, GitHub Release, and PyPI evidence will be archived in
-[`docs/evidence-summary.md`](docs/evidence-summary.md).
+Published release `v0.3.2` also verifies the GitHub Release layout itself:
+every `SHA256SUMS` entry is a flat asset basename, and both Ubuntu and macOS
+validate a simulated flat download before publication. The immutable
+[release run](https://github.com/ImL1s/resume-skills/actions/runs/30093776529),
+commit, public artifact checks, GitHub Release, and PyPI evidence are archived
+in [`docs/evidence-summary.md`](docs/evidence-summary.md).
 
 ## Key documentation
 
@@ -141,6 +161,8 @@ run, commit, GitHub Release, and PyPI evidence will be archived in
 
 Apache-2.0. This project is not affiliated with the host vendors. Do not copy `~/.grok/bundled/skills/**` into this tree.
 
-Headless slash/name activation is verified on all eight hosts. Visual picker
-interaction and public marketplace publication remain **not-run**; Cursor's
-full bubble graph is not claimed; redaction is not complete DLP.
+Headless slash/name activation is verified on all eight hosts. Public
+marketplace installation is verified on all six compatible hosts, including
+Cursor and Kimi picker flows. Other visual Skill pickers and vendor-curated
+directory listings are not claimed; Cursor's full bubble graph is not claimed;
+redaction is not complete DLP.
