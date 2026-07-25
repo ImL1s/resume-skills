@@ -227,26 +227,29 @@ def stable_read_bytes(
             observed = _fingerprint(before_stat, content_hash)
             if hook:
                 hook("after-read", attempt, safe)
-            os.lseek(descriptor, 0, os.SEEK_SET)
-            verified_data = _read_bounded_descriptor(descriptor, max_bytes)
-            verified = _fingerprint(os.fstat(descriptor), hashlib.sha256(verified_data).hexdigest())
+            verified_hash, verified_size = _hash_descriptor(
+                descriptor,
+                maximum=max_bytes,
+            )
+            verified = _fingerprint(os.fstat(descriptor), verified_hash)
             if hook:
                 hook("after-verify-read", attempt, safe)
             # Observe parent membership before the terminal content hash.  A
             # same-stat mutation performed during that observation is then
             # detected by the terminal descriptor read below.
             middle_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
-            os.lseek(descriptor, 0, os.SEEK_SET)
-            final_data = _read_bounded_descriptor(descriptor, max_bytes)
-            final = _fingerprint(os.fstat(descriptor), hashlib.sha256(final_data).hexdigest())
+            final_hash, final_size = _hash_descriptor(
+                descriptor,
+                maximum=max_bytes,
+            )
+            final = _fingerprint(os.fstat(descriptor), final_hash)
         finally:
             os.close(descriptor)
         after_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
         if (
             observed == verified == final
             and before_membership == middle_membership == after_membership
-            and len(data) == before.size
-            and data == verified_data == final_data
+            and len(data) == verified_size == final_size == before.size
         ):
             if budget is not None:
                 # Bytes only: adapters charge consume_records() per logical row/line.

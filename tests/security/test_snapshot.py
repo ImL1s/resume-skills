@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from portable_resume import snapshot as snapshot_module
 from portable_resume.bounds import Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.snapshot import (
@@ -37,6 +38,23 @@ class StableSnapshotTests(unittest.TestCase):
         self.assertEqual(result.attempts, 1)
         self.assertEqual(len(result.fingerprint.content_sha256 or ""), 64)
         self.assertEqual(before, after)
+
+    def test_stable_read_keeps_only_the_returned_payload_buffer(self) -> None:
+        path = self.store / "record.jsonl"
+        path.write_bytes(b"synthetic\n")
+        with mock.patch.object(
+            snapshot_module,
+            "_read_bounded_descriptor",
+            wraps=snapshot_module._read_bounded_descriptor,
+        ) as materialized, mock.patch.object(
+            snapshot_module,
+            "_hash_descriptor",
+            wraps=snapshot_module._hash_descriptor,
+        ) as hashed:
+            result = stable_read_bytes(path, root=self.store)
+        self.assertEqual(result.data, b"synthetic\n")
+        self.assertEqual(materialized.call_count, 1)
+        self.assertEqual(hashed.call_count, 2)
 
     def test_detects_one_concurrent_mutation_then_retries(self) -> None:
         path = self.store / "record"
