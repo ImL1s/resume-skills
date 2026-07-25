@@ -40,9 +40,9 @@ Status values: `TODO` | `IN PROGRESS` | `DONE` | `BLOCKED` | `DEFERRED` | `REJEC
 
 ## Open follow-ups (2026-07-25)
 
-- **P0**: [Issue #3](https://github.com/ImL1s/resume-skills/issues/3) / [PR #4](https://github.com/ImL1s/resume-skills/pull/4) — budget accounting + SQL parent pre-filter (hotfix; not streaming). Maintainer **Approve** on head `2cb0ee8`.
-- **P1a**: [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + plan 026 — probe head-only, no full sessions-tree walk, list verify + read-only FS head fallback.
-- **P1b**: [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + plan 027 — stable streaming show + 17–30 MiB synthetic regression; still inert handoff (never `codex resume`).
+- **P0**: [Issue #3](https://github.com/ImL1s/resume-skills/issues/3) / [PR #4](https://github.com/ImL1s/resume-skills/pull/4) — **merged** as `48746c4` (budget/SQL + later defensive commits). Not full streaming parity.
+- **P1a**: [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + plan 026 — probe head-only, no full sessions-tree walk, list verify + read-only FS head fallback. (#5 closed as duplicate.)
+- **P1b**: [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + plan 027 — stable streaming show + 17–30 MiB synthetic regression; still inert handoff (never live process restore). (#6 closed as duplicate.)
 
 ## Verification baseline (re-run after further edits)
 

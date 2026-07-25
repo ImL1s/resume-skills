@@ -8,7 +8,7 @@
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: MED–HIGH (correctness under concurrent writers)
-- **Depends on**: plan 026 preferred first (probe/list no longer force full reads); PR #4 merged
+- **Depends on**: plan 026 preferred first (probe/list no longer force full reads); PR #4 merged as `48746c4` (partial: readline + budget clamps landed; full reducer still this plan)
 - **Category**: reliability / performance
 - **Planned at**: 2026-07-25
 

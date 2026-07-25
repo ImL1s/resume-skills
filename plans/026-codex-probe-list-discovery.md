@@ -8,7 +8,7 @@
 - **Priority**: P1
 - **Effort**: M
 - **Risk**: MED
-- **Depends on**: PR #4 merged (Issue #3 P0: `source_read_bytes` + `transcript_records` + SQL parent pre-filter)
+- **Depends on**: PR #4 merged as `48746c4` (Issue #3 P0: `source_read_bytes` + `transcript_records` + SQL parent pre-filter) — **satisfied on main**
 - **Category**: bug / reliability
 - **Planned at**: 2026-07-25 (post PR #4 review)
 
