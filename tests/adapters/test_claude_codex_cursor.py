@@ -656,6 +656,27 @@ class CodexAdapterTests(unittest.TestCase):
                 )
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
+    def test_rollout_stable_read_uses_remaining_source_budget(self) -> None:
+        _, first = self.rollout()
+        _, second = self.rollout()
+        remaining = second.stat().st_size - 1
+        limits = replace(
+            DEFAULT_BOUNDS,
+            source_read_bytes=first.stat().st_size + remaining,
+        )
+        budget = ReadBudget(limits)
+        codex._read_rollout(str(first), str(self.root), budget)
+
+        with mock.patch.object(
+            codex,
+            "stable_read_bytes",
+            wraps=codex.stable_read_bytes,
+        ) as stable_read:
+            with self.assertRaises(DiagnosticError) as caught:
+                codex._read_rollout(str(second), str(self.root), budget)
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+        self.assertEqual(stable_read.call_args.kwargs["max_bytes"], remaining)
+
     def test_s_cod_03_archive_hidden_by_default_exact_id_selectable(self) -> None:
         active, active_path = self.rollout()
         archived, archived_path = self.rollout(archived=True)

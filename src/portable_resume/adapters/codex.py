@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -365,16 +366,16 @@ def _decompress_zstd(
 def _parse_lines(data: bytes, budget: ReadBudget, provider: str) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
     output: list[dict[str, Any]] = []
     warnings: list[str] = []
-    lines = data.splitlines(keepends=True)
     maximum_record = min(
         budget.limits.record_bytes,
         DEFAULT_BOUNDS.record_bytes,
     )
-    for index, raw in enumerate(lines):
+    stream = io.BytesIO(data)
+    while raw := stream.readline(max(1, maximum_record + 1)):
         budget.consume_transcript_records()
         if len(raw) > maximum_record:
             raise DiagnosticError.limit_exceeded()
-        partial = index == len(lines) - 1 and not raw.endswith((b"\n", b"\r"))
+        partial = not raw.endswith((b"\n", b"\r"))
         stripped = raw.strip()
         if not stripped:
             continue
@@ -413,7 +414,7 @@ def _read_rollout(path: str, root: str, budget: ReadBudget) -> tuple[StableRead,
     observation = stable_read_bytes(
         path,
         root=root,
-        max_bytes=maximum_source,
+        max_bytes=max(0, maximum_source - budget.bytes_read),
         attempts=min(
             budget.limits.snapshot_attempts,
             DEFAULT_BOUNDS.snapshot_attempts,

@@ -20,6 +20,29 @@ def _ts() -> str:
 
 
 class CodexParityTests(unittest.TestCase):
+    def test_parse_lines_does_not_materialize_a_splitlines_list(self) -> None:
+        class NoSplitlines(bytes):
+            def splitlines(self, keepends: bool = False) -> list[bytes]:
+                raise AssertionError("parser must iterate bounded lines")
+
+        raw = NoSplitlines(
+            json.dumps({"type": "world_state", "payload": {"ignored": True}}).encode()
+            + b"\n"
+            + json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": "bounded",
+                    },
+                }
+            ).encode()
+            + b"\n"
+        )
+        records, _ = _parse_lines(raw, ReadBudget(), "codex-rollout-jsonl-v1")
+        self.assertEqual(len(records), 1)
+
     def test_parse_skips_world_state(self) -> None:
         session_id = str(uuid.uuid4())
         lines = [
