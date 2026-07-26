@@ -228,14 +228,14 @@ class InstallerTransactionTests(unittest.TestCase):
         original_replace = transaction_module.os.replace
         staged_replaces = 0
 
-        def fail_third_staged_replace(src, dst):
+        def fail_third_staged_replace(src, dst, **kwargs):
             nonlocal staged_replaces
             source = os.fspath(src)
             if "portable-resume-stage-" in source and f"{os.sep}.rollback{os.sep}" not in source:
                 staged_replaces += 1
                 if staged_replaces == 3:
                     raise OSError("injected staged replace failure")
-            return original_replace(src, dst)
+            return original_replace(src, dst, **kwargs)
 
         with mock.patch.object(transaction_module.os, "replace", side_effect=fail_third_staged_replace):
             with self.assertRaises(OSError):
@@ -261,14 +261,14 @@ class InstallerTransactionTests(unittest.TestCase):
         original_replace = transaction_module.os.replace
         staged_replaces = 0
 
-        def interrupt_second_staged_replace(src, dst):
+        def interrupt_second_staged_replace(src, dst, **kwargs):
             nonlocal staged_replaces
             source = os.fspath(src)
             if "portable-resume-stage-" in source and f"{os.sep}.rollback{os.sep}" not in source:
                 staged_replaces += 1
                 if staged_replaces == 2:
                     raise OSError("simulated process interruption")
-            return original_replace(src, dst)
+            return original_replace(src, dst, **kwargs)
 
         with (
             mock.patch.object(transaction_module.os, "replace", side_effect=interrupt_second_staged_replace),

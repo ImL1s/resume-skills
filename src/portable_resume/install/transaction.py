@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import tempfile
 import time
 from dataclasses import dataclass
@@ -257,6 +258,130 @@ def _dest_under_root(root: str, rel: str) -> str:
     return dest
 
 
+def _supports_descriptor_relative_commit() -> bool:
+    return os.name != "nt" and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
+
+
+def _open_skill_root_descriptor(root: str) -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        return os.open(root, flags)
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+
+
+def _open_directory_under_root(root_fd: int, rel_dir: str) -> int:
+    """Open an existing directory under root_fd without following symlinks."""
+    parts = [part for part in rel_dir.split(os.sep) if part and part != "."]
+    current_fd = root_fd
+    opened: list[int] = []
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        for part in parts:
+            try:
+                next_fd = os.open(part, flags, dir_fd=current_fd)
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            if current_fd is not root_fd:
+                opened.append(current_fd)
+            current_fd = next_fd
+        return current_fd
+    except Exception:
+        for fd in opened:
+            os.close(fd)
+        raise
+
+
+def _mkdir_directory_under_root(root_fd: int, rel_dir: str) -> None:
+    """Create rel_dir under root_fd when missing; never follow symlinks."""
+    parts = [part for part in rel_dir.split(os.sep) if part and part != "."]
+    if not parts:
+        return
+    current_fd = root_fd
+    opened: list[int] = []
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        for part in parts:
+            try:
+                next_fd = os.open(part, flags, dir_fd=current_fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(part, mode=0o755, dir_fd=current_fd)
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                try:
+                    next_fd = os.open(part, flags, dir_fd=current_fd)
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            if current_fd is not root_fd:
+                opened.append(current_fd)
+            current_fd = next_fd
+    finally:
+        for fd in opened:
+            os.close(fd)
+        if current_fd is not root_fd:
+            os.close(current_fd)
+
+
+def _revalidate_lstat_walk(root: str, rel: str) -> None:
+    """Walk existing parent components without following symlinks."""
+    safe = _safe_rel_path(rel)
+    parts = [part for part in safe.split(os.sep) if part and part != "."]
+    if not parts:
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    root_real = os.path.realpath(root)
+    current = root
+    for part in parts[:-1]:
+        current = os.path.join(current, part)
+        try:
+            entry_stat = os.lstat(current)
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(entry_stat.st_mode) or not stat.S_ISDIR(entry_stat.st_mode):
+            raise DiagnosticError("E_INSTALL_CONFLICT")
+        try:
+            resolved = os.path.realpath(current)
+            if os.path.commonpath((resolved, root_real)) != root_real:
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+        except ValueError as error:
+            raise DiagnosticError("E_INSTALL_CONFLICT") from error
+
+
+def _commit_payload_file(*, root: str, root_fd: int | None, rel: str, staged_src: str) -> None:
+    """Atomically commit one staged payload under root with TOCTOU-resistant checks."""
+    safe = _safe_rel_path(rel)
+    basename = os.path.basename(safe)
+    parent_rel = os.path.dirname(safe)
+    if not basename:
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+
+    _dest_under_root(root, safe)
+
+    if _supports_descriptor_relative_commit():
+        if root_fd is None:
+            raise DiagnosticError("E_INSTALL_CONFLICT")
+        _mkdir_directory_under_root(root_fd, parent_rel)
+        parent_fd = _open_directory_under_root(root_fd, parent_rel)
+        try:
+            os.replace(staged_src, basename, dst_dir_fd=parent_fd)
+        finally:
+            os.close(parent_fd)
+        return
+
+    # Windows / platforms without dirfd: reopen-and-revalidate immediately before replace.
+    _revalidate_lstat_walk(root, safe)
+    dest = _dest_under_root(root, safe)
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    _revalidate_lstat_walk(root, safe)
+    dest = _dest_under_root(root, safe)
+    os.replace(staged_src, dest)
+
+
 def _classify_dest(
     *,
     root: str,
@@ -381,29 +506,34 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
             journal["state"] = "committing"
             _write_journal(root, journal)
             # commit files
-            for rel in sorted(plan.files):
-                safe = _safe_rel_path(rel)
-                # re-check each path immediately before replace
-                kind = _classify_dest(
-                    root=root,
-                    rel=safe,
-                    data=plan.files[rel],
-                    existing=existing,
-                    claim=plan.claim,
-                    force_with_backup=force_with_backup or safe in planned_backups or safe in backups,
-                )
-                if kind == "backup" and safe not in backups and not force_with_backup and safe not in planned_backups:
-                    raise DiagnosticError("E_INSTALL_CONFLICT")
-                if kind == "retain":
-                    journal["paths"][safe]["state"] = "retained"
+            root_fd: int | None = None
+            if _supports_descriptor_relative_commit():
+                root_fd = _open_skill_root_descriptor(root)
+            try:
+                for rel in sorted(plan.files):
+                    safe = _safe_rel_path(rel)
+                    # re-check each path immediately before replace
+                    kind = _classify_dest(
+                        root=root,
+                        rel=safe,
+                        data=plan.files[rel],
+                        existing=existing,
+                        claim=plan.claim,
+                        force_with_backup=force_with_backup or safe in planned_backups or safe in backups,
+                    )
+                    if kind == "backup" and safe not in backups and not force_with_backup and safe not in planned_backups:
+                        raise DiagnosticError("E_INSTALL_CONFLICT")
+                    if kind == "retain":
+                        journal["paths"][safe]["state"] = "retained"
+                        _write_journal(root, journal)
+                        continue
+                    src = os.path.join(stage_dir, safe)
+                    _commit_payload_file(root=root, root_fd=root_fd, rel=safe, staged_src=src)
+                    journal["paths"][safe]["state"] = "committed"
                     _write_journal(root, journal)
-                    continue
-                src = os.path.join(stage_dir, safe)
-                dest = _dest_under_root(root, safe)
-                os.makedirs(os.path.dirname(dest), exist_ok=True)
-                os.replace(src, dest)
-                journal["paths"][safe]["state"] = "committed"
-                _write_journal(root, journal)
+            finally:
+                if root_fd is not None:
+                    os.close(root_fd)
             # Remove owned orphans (in old manifest, not in new plan, sole claim released).
             # Journal orphan targets *before* delete so crash recovery can reason about them.
             orphan_removed: list[str] = []
