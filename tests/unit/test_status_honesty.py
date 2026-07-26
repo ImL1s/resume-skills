@@ -66,7 +66,9 @@ class StatusHonestyTests(unittest.TestCase):
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
         self.assertRegex(text, r"\*\*\d+ pass locally\*\*")
-        self.assertIn("d9152cd", text)
+        self.assertRegex(text, r"81/81")
+        self.assertIn("359", text)  # current local suite after Pi destination PR C
+        self.assertIn("d9152cd", text)  # archived PR #51 merge tip
         self.assertIn("340", text)  # archived PR #51 merge count
         self.assertRegex(text, r"(?i)pi.*destination.*(supported|pass)")
         self.assertRegex(text, r"(?i)(native|picker|host.?ui).*(not-run|not claimed)")

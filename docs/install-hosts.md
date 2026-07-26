@@ -153,12 +153,14 @@ For direct archives, extract the archive contents into the selected Skill root. 
 
 ## Evidence boundary
 
-Filesystem render/install/verify and installed `run_reader` behavior cover
-**64/64** cells. Exact `0.3.2` local package installation passed on all seven
+Historical published evidence for `0.3.2` / `0.3.3` (not current unreleased `main`
+**9×9=81** matrix): filesystem render/install/verify and installed `run_reader`
+behavior cover **64/64** cells. Exact `0.3.2` local package installation passed on all seven
 supported native plugin/extension surfaces, including Cursor. Host-native
 headless Skill invocation passed on all eight destination CLIs. Public
 marketplace installation passed on all six compatible hosts; Cursor and Kimi
 also passed their visual marketplace picker flows. Versions, commands, and
 archive digests are recorded in [`host-ui-smoke.md`](host-ui-smoke.md). Other
 visual Skill pickers and vendor-curated directory listings remain separate
-unclaimed gates.
+unclaimed gates. Pi destination on `main` is filesystem packaging only until
+PR D native activation rows exist.
