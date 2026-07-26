@@ -41,6 +41,7 @@ class ScannedLine:
     ordinal: int
     text: str
     byte_offset: int
+    terminated: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,7 +274,11 @@ def _collect_scanned_lines(
     budget: ReadBudget | None,
     charge_transcript: bool,
 ) -> tuple[list[ScannedLine], int, int, str]:
-    """Stream complete lines from an open descriptor; skip a terminal partial line."""
+    """Stream lines from an open descriptor.
+
+    Newline-terminated records set ``terminated=True``. A final buffer without a
+    trailing newline is emitted with ``terminated=False`` when within bounds.
+    """
 
     buffer = bytearray()
     absolute_offset = 0
@@ -328,7 +333,6 @@ def _collect_scanned_lines(
             check_record_budget()
             pending_records += 1
             try:
-                # Strip optional CR so CRLF and LF JSONL decode identically.
                 text = payload.decode("utf-8")
             except UnicodeDecodeError as error:
                 raise DiagnosticError("E_CORRUPT_RECORD") from error
@@ -337,6 +341,7 @@ def _collect_scanned_lines(
                     ordinal=len(collected),
                     text=text,
                     byte_offset=absolute_offset,
+                    terminated=True,
                 )
             )
             absolute_offset += len(line_bytes)
@@ -365,6 +370,7 @@ def _collect_scanned_lines(
                 ordinal=len(collected),
                 text=text,
                 byte_offset=absolute_offset,
+                terminated=False,
             )
         )
     return collected, pending_bytes, pending_records, digest.hexdigest()
@@ -384,22 +390,39 @@ def stable_scan_lines(
     Uses the same root containment and symlink rejection as stable_read_bytes.
     Reads stream in chunks. A final unterminated buffer (common JSONL without a
     trailing newline) is emitted as one last line when within max_line_bytes.
+    Caller-lowered ``Bounds`` for record_bytes, snapshot_attempts, and
+    scanned_records membership are honored and clamped to DEFAULT_BOUNDS.
     Yields from a per-attempt collected list until true streaming yield lands.
     """
 
-    line_limit = max_line_bytes if max_line_bytes is not None else DEFAULT_BOUNDS.record_bytes
-    if line_limit < 0 or line_limit > DEFAULT_BOUNDS.record_bytes:
-        raise DiagnosticError.invalid()
     # Always bound memory: a missing caller budget still uses DEFAULT_BOUNDS.
     effective_budget = budget if budget is not None else ReadBudget()
+    budget_line_cap = min(
+        effective_budget.limits.record_bytes,
+        DEFAULT_BOUNDS.record_bytes,
+    )
+    if max_line_bytes is None:
+        line_limit = budget_line_cap
+    else:
+        if max_line_bytes < 0:
+            raise DiagnosticError.invalid()
+        line_limit = min(max_line_bytes, budget_line_cap)
     max_file_bytes = min(
         DEFAULT_BOUNDS.source_read_bytes,
         effective_budget.limits.source_read_bytes,
     )
     safe, base = require_regular_no_symlinks(path, root)
     parent = os.path.dirname(safe)
-    attempts = DEFAULT_BOUNDS.snapshot_attempts
-    membership_limit = DEFAULT_BOUNDS.scanned_records
+    attempts = min(
+        effective_budget.limits.snapshot_attempts,
+        DEFAULT_BOUNDS.snapshot_attempts,
+    )
+    if attempts < 1:
+        raise DiagnosticError.invalid()
+    membership_limit = min(
+        effective_budget.limits.scanned_records,
+        DEFAULT_BOUNDS.scanned_records,
+    )
     for attempt in range(1, attempts + 1):
         before_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
         descriptor = _open_no_follow(safe, base)

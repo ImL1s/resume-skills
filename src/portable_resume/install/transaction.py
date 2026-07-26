@@ -30,6 +30,18 @@ MANIFEST_NAME = "manifest.json"
 LOCK_NAME = "install.lock"
 JOURNAL_NAME = "journal.json"
 BACKUP_DIR = "backups"
+STAGE_PREFIX = "portable-resume-stage-"
+# Names under SUPPORT_DIR that journals must never be allowed to delete.
+_PROTECTED_SUPPORT_NAMES = frozenset(
+    {
+        "runtime",
+        "resources",
+        BACKUP_DIR,
+        MANIFEST_NAME,
+        LOCK_NAME,
+        JOURNAL_NAME,
+    }
+)
 
 
 @dataclass(slots=True)
@@ -426,7 +438,14 @@ def _mkdir_directory_under_root(root_fd: int, rel_dir: str) -> None:
             os.close(current_fd)
 
 
-def _commit_payload_file(*, root: str, root_fd: int | None, rel: str, staged_src: str) -> None:
+def _commit_payload_file(
+    *,
+    root: str,
+    root_fd: int | None,
+    rel: str,
+    staged_src: str,
+    stage_dir: str | None = None,
+) -> None:
     """Atomically commit one staged payload under root with TOCTOU-resistant checks."""
     safe = _safe_rel_path(rel)
     basename = os.path.basename(safe)
@@ -436,21 +455,57 @@ def _commit_payload_file(*, root: str, root_fd: int | None, rel: str, staged_src
 
     _dest_under_root(root, safe)
 
-    if _supports_descriptor_relative_commit():
-        if root_fd is None:
-            raise DiagnosticError("E_INSTALL_CONFLICT")
-        _mkdir_directory_under_root(root_fd, parent_rel)
-        parent_fd = _open_directory_under_root(root_fd, parent_rel)
-        try:
-            os.replace(staged_src, basename, dst_dir_fd=parent_fd)
-        finally:
-            if parent_fd is not root_fd:
-                os.close(parent_fd)
-        return
+    if not _supports_descriptor_relative_commit():
+        # Platforms without dir_fd / O_NOFOLLOW replace: fail closed (Windows not a V1 gate).
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    if root_fd is None or not stage_dir:
+        raise DiagnosticError("E_INSTALL_CONFLICT")
 
-    # Platforms without dir_fd / O_NOFOLLOW replace: fail closed instead of a
-    # residual pathname TOCTOU window (Windows is not a V1 release gate).
-    raise DiagnosticError("E_INSTALL_CONFLICT")
+    # Stage identity must match the journal-owned stage tree before any replace.
+    authorized_stage = _authorize_support_cleanup(root, stage_dir, role="stage")
+    if authorized_stage is None:
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    stage_name = os.path.basename(authorized_stage)
+    staged_abs = os.path.abspath(staged_src)
+    try:
+        staged_rel = os.path.relpath(staged_abs, authorized_stage)
+    except ValueError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    if staged_rel.startswith("..") or os.path.isabs(staged_rel):
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    src_basename = os.path.basename(staged_rel)
+    src_parent_rel = os.path.dirname(staged_rel)
+
+    _mkdir_directory_under_root(root_fd, parent_rel)
+    support_fd = _open_directory_under_root(root_fd, SUPPORT_DIR)
+    stage_fd: int | None = None
+    src_parent_fd: int | None = None
+    dst_parent_fd: int | None = None
+    try:
+        stage_fd = _open_directory_under_root(support_fd, stage_name)
+        if src_parent_rel in ("", "."):
+            src_parent_fd = stage_fd
+        else:
+            src_parent_fd = _open_directory_under_root(stage_fd, src_parent_rel)
+        dst_parent_fd = _open_directory_under_root(root_fd, parent_rel)
+        os.replace(
+            src_basename,
+            basename,
+            src_dir_fd=src_parent_fd,
+            dst_dir_fd=dst_parent_fd,
+        )
+    finally:
+        if dst_parent_fd is not None and dst_parent_fd is not root_fd:
+            os.close(dst_parent_fd)
+        if (
+            src_parent_fd is not None
+            and src_parent_fd not in (stage_fd, support_fd, root_fd)
+        ):
+            os.close(src_parent_fd)
+        if stage_fd is not None and stage_fd not in (support_fd, root_fd):
+            os.close(stage_fd)
+        if support_fd is not root_fd:
+            os.close(support_fd)
 
 
 def _classify_dest(
@@ -599,7 +654,13 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                         _write_journal(root, journal)
                         continue
                     src = os.path.join(stage_dir, safe)
-                    _commit_payload_file(root=root, root_fd=root_fd, rel=safe, staged_src=src)
+                    _commit_payload_file(
+                        root=root,
+                        root_fd=root_fd,
+                        rel=safe,
+                        staged_src=src,
+                        stage_dir=stage_dir,
+                    )
                     journal["paths"][safe]["state"] = "committed"
                     _write_journal(root, journal)
             finally:
@@ -808,11 +869,7 @@ def restore_install_checkpoint(
         os.remove(dest)
         removed.append(rel)
     if backup_root:
-        if not _path_within_support(checkpoint.root, backup_root):
-            raise DiagnosticError("E_RECOVERY_REQUIRED")
-        if os.path.islink(backup_root):
-            raise DiagnosticError("E_RECOVERY_REQUIRED")
-        _safe_rmtree_under_support(checkpoint.root, backup_root)
+        _delete_authorized_support_subtree(checkpoint.root, backup_root, role="backup")
     _cleanup_empty_dirs(checkpoint.root, removed_paths=removed)
 
 
@@ -844,6 +901,78 @@ def _path_within_support(root: str, path: str) -> bool:
         return os.path.commonpath((candidate, support)) == support and candidate != support
     except ValueError:
         return False
+
+
+def _authorize_support_cleanup(root: str, path: str, *, role: str) -> str | None:
+    """Authorize journal-driven deletion of stage/backup trees only.
+
+    ``role`` is ``\"stage\"`` (direct child ``portable-resume-stage-*`` under
+    ``.portable-resume``) or ``\"backup\"`` (direct child under
+    ``.portable-resume/backups``). Protected control-plane names such as
+    ``runtime``, ``resources``, and ``backups`` itself are never authorized.
+
+    Returns the absolute path to delete, or ``None`` when the authorized path is
+    already absent (idempotent cleanup).
+    """
+    import stat as stat_mod
+
+    if role not in {"stage", "backup"}:
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+    if not isinstance(path, str) or not path:
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+
+    support_path = os.path.join(root, SUPPORT_DIR)
+    try:
+        support_stat = os.lstat(support_path)
+    except OSError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+    if stat_mod.S_ISLNK(support_stat.st_mode) or not stat_mod.S_ISDIR(support_stat.st_mode):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+
+    support_base = os.path.abspath(support_path)
+    candidate = os.path.abspath(path)
+    try:
+        if os.path.commonpath((candidate, support_base)) != support_base or candidate == support_base:
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+    except ValueError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+
+    rel = os.path.relpath(candidate, support_base)
+    parts = [part for part in rel.split(os.sep) if part and part != "."]
+    if any(part in {os.pardir, "."} for part in parts):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+
+    if role == "stage":
+        if len(parts) != 1:
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+        name = parts[0]
+        if name in _PROTECTED_SUPPORT_NAMES or not name.startswith(STAGE_PREFIX):
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+    else:
+        if len(parts) != 2 or parts[0] != BACKUP_DIR:
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+        backup_name = parts[1]
+        if not backup_name or backup_name in {os.pardir, "."} or backup_name in _PROTECTED_SUPPORT_NAMES:
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+
+    if not os.path.lexists(path):
+        return None
+
+    try:
+        path_stat = os.lstat(path)
+    except OSError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+    if stat_mod.S_ISLNK(path_stat.st_mode) or not stat_mod.S_ISDIR(path_stat.st_mode):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+    return candidate
+
+
+def _delete_authorized_support_subtree(root: str, path: str, *, role: str) -> None:
+    """Authorize then delete a stage/backup tree; failures stay fail-closed."""
+    authorized = _authorize_support_cleanup(root, path, role=role)
+    if authorized is None:
+        return
+    _safe_rmtree_under_support(root, authorized)
 
 
 def _open_parent_and_target_under_fd(base_fd: int, rel: str) -> tuple[int, int, str]:
@@ -1047,10 +1176,16 @@ def _attempt_rollback(root: str, journal: dict[str, Any]) -> None:
     if complete:
         stage_dir = journal.get("stage_dir")
         if stage_dir:
-            _try_safe_rmtree_under_support(root, stage_dir)
+            try:
+                _delete_authorized_support_subtree(root, stage_dir, role="stage")
+            except DiagnosticError:
+                pass
         backup_root = journal.get("backup_root")
         if backup_root:
-            _try_safe_rmtree_under_support(root, backup_root)
+            try:
+                _delete_authorized_support_subtree(root, backup_root, role="backup")
+            except DiagnosticError:
+                pass
         try:
             os.remove(journal_path(root))
         except OSError:
@@ -1062,14 +1197,21 @@ def recover_root(root: str) -> dict[str, Any]:
     if not os.path.isfile(path):
         return {"ok": True, "recovered": False}
     with RootLock(root):
-        journal = json.loads(Path(path).read_text(encoding="utf-8"))
+        try:
+            journal = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        if not isinstance(journal, dict):
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
         if journal.get("state") == "complete":
             stage_dir = journal.get("stage_dir")
             if stage_dir:
-                if _path_within_support(root, stage_dir):
-                    _try_safe_rmtree_under_support(root, stage_dir)
-                else:
-                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+                # Explicit recover must fail closed: do not clear the journal if
+                # authorized cleanup cannot complete.
+                _delete_authorized_support_subtree(root, stage_dir, role="stage")
+            backup_root = journal.get("backup_root")
+            if backup_root:
+                _delete_authorized_support_subtree(root, backup_root, role="backup")
             os.remove(path)
             return {"ok": True, "recovered": True, "action": "cleared_complete_journal"}
         # incomplete: restore only transaction snapshots; keep journal on drift.
@@ -1077,12 +1219,11 @@ def recover_root(root: str) -> dict[str, Any]:
         if not complete:
             raise DiagnosticError("E_RECOVERY_REQUIRED")
         stage_dir = journal.get("stage_dir")
-        if stage_dir and os.path.isdir(stage_dir):
-            if _path_within_support(root, stage_dir):
-                _try_safe_rmtree_under_support(root, stage_dir)
+        if stage_dir:
+            _delete_authorized_support_subtree(root, stage_dir, role="stage")
         backup_root = journal.get("backup_root")
-        if backup_root and _path_within_support(root, backup_root) and not os.path.islink(backup_root):
-            _try_safe_rmtree_under_support(root, backup_root)
+        if backup_root:
+            _delete_authorized_support_subtree(root, backup_root, role="backup")
         os.remove(path)
         return {"ok": True, "recovered": True, "action": "restored_from_journal", "restored_paths": restored}
 

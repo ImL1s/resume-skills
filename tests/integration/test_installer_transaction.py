@@ -58,7 +58,7 @@ class InstallerTransactionTests(unittest.TestCase):
                 "state": "committing",
                 "generation": 99,
                 "claim": "synthetic",
-                "stage_dir": os.path.join(self.root, ".portable-resume", "stage-missing"),
+                "stage_dir": os.path.join(self.root, ".portable-resume", "portable-resume-stage-missing"),
                 "backup_root": os.path.join(self.root, ".portable-resume", "backups", "x"),
                 "paths": {},
             },
@@ -230,8 +230,8 @@ class InstallerTransactionTests(unittest.TestCase):
 
         def fail_third_staged_replace(src, dst, **kwargs):
             nonlocal staged_replaces
-            source = os.fspath(src)
-            if "portable-resume-stage-" in source and f"{os.sep}.rollback{os.sep}" not in source:
+            # Descriptor-relative payload commits pass both src_dir_fd and dst_dir_fd.
+            if kwargs.get("src_dir_fd") is not None and kwargs.get("dst_dir_fd") is not None:
                 staged_replaces += 1
                 if staged_replaces == 3:
                     raise OSError("injected staged replace failure")
@@ -263,8 +263,7 @@ class InstallerTransactionTests(unittest.TestCase):
 
         def interrupt_second_staged_replace(src, dst, **kwargs):
             nonlocal staged_replaces
-            source = os.fspath(src)
-            if "portable-resume-stage-" in source and f"{os.sep}.rollback{os.sep}" not in source:
+            if kwargs.get("src_dir_fd") is not None and kwargs.get("dst_dir_fd") is not None:
                 staged_replaces += 1
                 if staged_replaces == 2:
                     raise OSError("simulated process interruption")

@@ -131,6 +131,60 @@ class StableScanLinesTests(unittest.TestCase):
                 list(stable_scan_lines(str(path), root=str(root)))
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
+    def test_termination_metadata_distinguishes_eof_buffer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "session.jsonl"
+            path.write_text('{"id":1}\n{"id":2}', encoding="utf-8")
+            lines = list(stable_scan_lines(str(path), root=str(root)))
+            self.assertTrue(lines[0].terminated)
+            self.assertFalse(lines[1].terminated)
+
+    def test_scan_honors_lower_record_bytes_without_explicit_max(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "session.jsonl"
+            path.write_text("abcdef\n", encoding="utf-8")
+            budget = ReadBudget(limits=Bounds(record_bytes=4))
+            with self.assertRaises(DiagnosticError) as caught:
+                list(stable_scan_lines(str(path), root=str(root), budget=budget))
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_explicit_max_cannot_exceed_budget_record_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "session.jsonl"
+            path.write_text("abcdef\n", encoding="utf-8")
+            budget = ReadBudget(limits=Bounds(record_bytes=4))
+            with self.assertRaises(DiagnosticError) as caught:
+                list(
+                    stable_scan_lines(
+                        str(path),
+                        root=str(root),
+                        budget=budget,
+                        max_line_bytes=64,
+                    )
+                )
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_scan_honors_lower_snapshot_attempts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "record.jsonl"
+            path.write_bytes(b"aaaa\n")
+            original = path.stat().st_mtime_ns
+            budget = ReadBudget(limits=Bounds(snapshot_attempts=1))
+
+            def hook(stage: str, attempt: int, _: str) -> None:
+                if stage == "after-read":
+                    path.write_bytes(b"bbbb\n")
+                    os.utime(path, ns=(original, original))
+
+            with self.assertRaises(DiagnosticError) as caught:
+                list(stable_scan_lines(str(path), root=str(root), budget=budget, hook=hook))
+            self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+            self.assertEqual(caught.exception.attempts, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

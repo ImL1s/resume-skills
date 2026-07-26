@@ -76,17 +76,30 @@ class InstallCommitContainmentTests(unittest.TestCase):
     def test_top_level_commits_reuse_root_fd(self) -> None:
         """Committing files at skill root must not close root_fd between files."""
         root = str(Path(self._tmpdir.name) / "skill-root")
-        os.makedirs(root, mode=0o755)
+        support = Path(root) / ".portable-resume"
+        support.mkdir(parents=True)
+        stage_dir = support / "portable-resume-stage-unit"
+        stage_dir.mkdir()
         root_fd = _open_skill_root_descriptor(root)
         try:
-            stage_dir = Path(self._tmpdir.name) / "stage"
-            stage_dir.mkdir()
             first_stage = stage_dir / "first.txt"
             second_stage = stage_dir / "second.txt"
             first_stage.write_bytes(b"first\n")
             second_stage.write_bytes(b"second\n")
-            _commit_payload_file(root=root, root_fd=root_fd, rel="first.txt", staged_src=str(first_stage))
-            _commit_payload_file(root=root, root_fd=root_fd, rel="second.txt", staged_src=str(second_stage))
+            _commit_payload_file(
+                root=root,
+                root_fd=root_fd,
+                rel="first.txt",
+                staged_src=str(first_stage),
+                stage_dir=str(stage_dir),
+            )
+            _commit_payload_file(
+                root=root,
+                root_fd=root_fd,
+                rel="second.txt",
+                staged_src=str(second_stage),
+                stage_dir=str(stage_dir),
+            )
         finally:
             os.close(root_fd)
         self.assertEqual((Path(root) / "first.txt").read_bytes(), b"first\n")
