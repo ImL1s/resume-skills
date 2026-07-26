@@ -14,7 +14,7 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
-Depuis un checkout, utilisez `pipx install .`. Pour installer les huit host de destination dans les emplacements utilisateur :
+Depuis un checkout de `main` actuel, utilisez `pipx install .`. Pour installer les neuf host de destination dans les emplacements utilisateur :
 
 ```bash
 install-resume-skills quick-install all
@@ -26,7 +26,7 @@ Pour installer Qwen uniquement dans le projet courant :
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-Les destinations sont Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code et Kimi Code CLI. Le [guide d’installation](../install-hosts.md) donne les commandes exactes pour Skill, extension, plugin et marketplace. Inspectez tout plugin et vérifiez le SHA-256 du release avant de lui faire confiance.
+Les destinations activées sur `main` sont Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI et Pi (installation fichiers ; UI native not-run). Le `0.3.3` publié reste à huit destinations. Le [guide d’installation](../install-hosts.md) donne les commandes exactes pour Skill, extension, plugin et marketplace. Inspectez tout plugin et vérifiez le SHA-256 du release avant de lui faire confiance.
 
 ## Marketplace public
 

@@ -14,7 +14,7 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
-من checkout استخدم `pipx install .`. لتثبيت جميع host الثمانية في مسارات المستخدم العامة:
+من checkout على `main` الحالي استخدم `pipx install .`. لتثبيت جميع host التسعة في مسارات المستخدم العامة:
 
 ```bash
 install-resume-skills quick-install all
@@ -26,7 +26,7 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-الوجهات هي Claude Code وCodex وCursor وOpenCode وAntigravity وGrok Build وQwen Code وKimi Code CLI. راجع [دليل التثبيت](../install-hosts.md) لأوامر Skill وextension وplugin وmarketplace الدقيقة. افحص أي plugin وتحقق من SHA-256 الخاص بالـ release قبل منحه الثقة.
+الوجهات المفعّلة على `main` هي Claude Code وCodex وCursor وOpenCode وAntigravity وGrok Build وQwen Code وKimi Code CLI وPi (تثبيت ملفات فقط؛ واجهة المستخدم الأصلية not-run). إصدار `0.3.3` المنشور ما زال بثمانية وجهات. راجع [دليل التثبيت](../install-hosts.md) لأوامر Skill وextension وplugin وmarketplace الدقيقة. افحص أي plugin وتحقق من SHA-256 الخاص بالـ release قبل منحه الثقة.
 
 ## Marketplace عام
 
