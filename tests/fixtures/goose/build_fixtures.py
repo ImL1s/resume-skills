@@ -7,7 +7,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+FIXTURE_ROOT = Path(__file__).resolve().parent
+fixture_root = FIXTURE_ROOT
 WORKING_DIR = "/tmp/project"
 NOW = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 NOW_TS = NOW.strftime("%Y-%m-%d %H:%M:%S")
@@ -197,7 +198,7 @@ def _insert_usage_ledger_row(
 
 
 def build_s_go_01() -> None:
-    case = ROOT / "s-go-01-user-basic"
+    case = fixture_root / "s-go-01-user-basic"
     db_path = case / "sessions" / "sessions.db"
     conn = _connect(db_path)
     _create_core_schema(conn)
@@ -223,7 +224,7 @@ def build_s_go_01() -> None:
 
 
 def build_s_go_02() -> None:
-    case = ROOT / "s-go-02-session-types"
+    case = fixture_root / "s-go-02-session-types"
     db_path = case / "sessions" / "sessions.db"
     conn = _connect(db_path)
     _create_core_schema(conn)
@@ -250,7 +251,7 @@ def build_s_go_02() -> None:
 
 
 def build_s_go_03() -> None:
-    case = ROOT / "s-go-03-parent-subagent"
+    case = fixture_root / "s-go-03-parent-subagent"
     db_path = case / "sessions" / "sessions.db"
     conn = _connect(db_path)
     _create_core_schema(conn)
@@ -286,7 +287,7 @@ def build_s_go_03() -> None:
 
 
 def build_s_go_04() -> None:
-    case = ROOT / "s-go-04-archived"
+    case = fixture_root / "s-go-04-archived"
     db_path = case / "sessions" / "sessions.db"
     conn = _connect(db_path)
     _create_core_schema(conn)
@@ -311,7 +312,7 @@ def build_s_go_04() -> None:
 
 
 def build_s_go_05() -> None:
-    case = ROOT / "s-go-05-unsupported-schema"
+    case = fixture_root / "s-go-05-unsupported-schema"
     db_path = case / "sessions" / "sessions.db"
     conn = _connect(db_path)
     _create_core_schema(conn, include_usage_ledger=False)
@@ -325,7 +326,9 @@ def build_s_go_05() -> None:
     conn.close()
 
 
-def main() -> None:
+def build_all(root: Path | None = None) -> None:
+    global fixture_root
+    fixture_root = Path(root) if root is not None else FIXTURE_ROOT
     build_s_go_01()
     build_s_go_02()
     build_s_go_03()
@@ -333,5 +336,14 @@ def main() -> None:
     build_s_go_05()
 
 
+def main() -> None:
+    build_all()
+
+
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=None)
+    args = parser.parse_args()
+    build_all(root=args.root)

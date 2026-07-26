@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -80,6 +83,33 @@ class GooseFixtureTests(unittest.TestCase):
         db_path = manifest_path.parent / "sessions" / "sessions.db"
         types = _session_types(db_path)
         self.assertEqual(types, _EXPECTED_SESSION_TYPES)
+
+    def test_fixture_manifests_validate(self) -> None:
+        from tests.helpers.fixture_manifest import validate_fixture_tree
+
+        manifests = validate_fixture_tree(GOOSE_FIXTURES)
+        self.assertEqual(len(manifests), 5)
+        self.assertTrue(all(item.source == "goose" for item in manifests))
+
+    def test_builder_rebuilds_into_temp_root(self) -> None:
+        builder = GOOSE_FIXTURES / "build_fixtures.py"
+        with tempfile.TemporaryDirectory() as temporary:
+            out_root = Path(temporary) / "goose"
+            completed = subprocess.run(
+                [sys.executable, str(builder), "--root", str(out_root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, msg=completed.stderr or completed.stdout)
+            rebuilt = sorted(out_root.rglob("sessions.db"))
+            self.assertEqual(len(rebuilt), 5)
+            for db_path in rebuilt:
+                version = _schema_version(db_path)
+                if "s-go-05-unsupported-schema" in db_path.parts:
+                    self.assertNotEqual(version, 15, msg=str(db_path))
+                else:
+                    self.assertEqual(version, 15, msg=str(db_path))
 
 
 if __name__ == "__main__":
