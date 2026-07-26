@@ -736,7 +736,7 @@ def restore_install_checkpoint(
             raise DiagnosticError("E_RECOVERY_REQUIRED")
         if os.path.islink(backup_root):
             raise DiagnosticError("E_RECOVERY_REQUIRED")
-        shutil.rmtree(backup_root, ignore_errors=False)
+        _safe_rmtree_under_support(checkpoint.root, backup_root)
     _cleanup_empty_dirs(checkpoint.root, removed_paths=removed)
 
 
@@ -768,6 +768,136 @@ def _path_within_support(root: str, path: str) -> bool:
         return os.path.commonpath((candidate, support)) == support and candidate != support
     except ValueError:
         return False
+
+
+def _open_parent_and_target_under_fd(base_fd: int, rel: str) -> tuple[int, int, str]:
+    """Open parent dir and target directory under base_fd without following symlinks."""
+    parts = [part for part in rel.split(os.sep) if part and part != "."]
+    if not parts:
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if len(parts) == 1:
+        target_name = parts[0]
+        try:
+            target_fd = os.open(target_name, flags, dir_fd=base_fd)
+        except OSError as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        return base_fd, target_fd, target_name
+    current_fd = base_fd
+    opened: list[int] = []
+    try:
+        for part in parts[:-1]:
+            try:
+                next_fd = os.open(part, flags, dir_fd=current_fd)
+            except OSError as error:
+                raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+            if current_fd is not base_fd:
+                opened.append(current_fd)
+            current_fd = next_fd
+        parent_fd = current_fd
+        target_name = parts[-1]
+        try:
+            target_fd = os.open(target_name, flags, dir_fd=parent_fd)
+        except OSError as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        for fd in opened:
+            os.close(fd)
+        opened.clear()
+        return parent_fd, target_fd, target_name
+    except Exception:
+        for fd in opened:
+            os.close(fd)
+        if current_fd is not base_fd:
+            os.close(current_fd)
+        raise
+
+
+def _rmtree_nofollow_dirfd(dir_fd: int) -> None:
+    """Delete directory contents at dir_fd without following symlinks."""
+    import stat as stat_mod
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    for name in os.listdir(dir_fd):
+        try:
+            st = os.lstat(name, dir_fd=dir_fd)
+        except OSError as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        if stat_mod.S_ISDIR(st.st_mode) and not stat_mod.S_ISLNK(st.st_mode):
+            sub_fd = os.open(name, flags, dir_fd=dir_fd)
+            try:
+                _rmtree_nofollow_dirfd(sub_fd)
+            finally:
+                os.close(sub_fd)
+            try:
+                os.rmdir(name, dir_fd=dir_fd)
+            except OSError as error:
+                raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        else:
+            try:
+                os.unlink(name, dir_fd=dir_fd)
+            except OSError as error:
+                raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+
+
+def _safe_rmtree_under_support(root: str, path: str) -> None:
+    """Remove a support subtree using pinned dirfds (TOCTOU-resistant)."""
+    if not isinstance(path, str):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+    if not _path_within_support(root, path):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+    if not _supports_descriptor_relative_commit():
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+    support_real = os.path.realpath(os.path.join(root, SUPPORT_DIR))
+    try:
+        candidate_real = os.path.realpath(path)
+    except OSError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+    rel = os.path.relpath(candidate_real, support_real)
+    if rel == "." or rel.startswith(".."):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+
+    import stat as stat_mod
+
+    try:
+        root_fd = _open_skill_root_descriptor(root)
+    except DiagnosticError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+    support_fd: int | None = None
+    parent_fd: int | None = None
+    target_fd: int | None = None
+    try:
+        try:
+            support_fd = _open_directory_under_root(root_fd, SUPPORT_DIR)
+        except DiagnosticError as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        parent_fd, target_fd, target_name = _open_parent_and_target_under_fd(support_fd, rel)
+        st = os.fstat(target_fd)
+        if not stat_mod.S_ISDIR(st.st_mode):
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+        _rmtree_nofollow_dirfd(target_fd)
+        os.close(target_fd)
+        target_fd = None
+        os.rmdir(target_name, dir_fd=parent_fd)
+    except DiagnosticError:
+        raise
+    except OSError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+    finally:
+        if target_fd is not None:
+            os.close(target_fd)
+        if parent_fd is not None and parent_fd not in (root_fd, support_fd):
+            os.close(parent_fd)
+        if support_fd is not None and support_fd != root_fd:
+            os.close(support_fd)
+        os.close(root_fd)
+
+
+def _try_safe_rmtree_under_support(root: str, path: str) -> None:
+    """Best-effort support cleanup; swallow containment failures."""
+    try:
+        _safe_rmtree_under_support(root, path)
+    except (DiagnosticError, OSError):
+        pass
 
 
 def _rollback_paths(root: str, journal: dict[str, Any]) -> tuple[int, bool]:
@@ -829,11 +959,11 @@ def _attempt_rollback(root: str, journal: dict[str, Any]) -> None:
     _restored, complete = _rollback_paths(root, journal)
     if complete:
         stage_dir = journal.get("stage_dir")
-        if stage_dir and _path_within_support(root, stage_dir):
-            shutil.rmtree(stage_dir, ignore_errors=True)
+        if stage_dir:
+            _try_safe_rmtree_under_support(root, stage_dir)
         backup_root = journal.get("backup_root")
-        if backup_root and _path_within_support(root, backup_root) and not os.path.islink(backup_root):
-            shutil.rmtree(backup_root, ignore_errors=True)
+        if backup_root:
+            _try_safe_rmtree_under_support(root, backup_root)
         try:
             os.remove(journal_path(root))
         except OSError:
@@ -848,10 +978,11 @@ def recover_root(root: str) -> dict[str, Any]:
         journal = json.loads(Path(path).read_text(encoding="utf-8"))
         if journal.get("state") == "complete":
             stage_dir = journal.get("stage_dir")
-            if stage_dir and _path_within_support(root, stage_dir):
-                shutil.rmtree(stage_dir, ignore_errors=True)
-            elif stage_dir:
-                raise DiagnosticError("E_RECOVERY_REQUIRED")
+            if stage_dir:
+                if _path_within_support(root, stage_dir):
+                    _try_safe_rmtree_under_support(root, stage_dir)
+                else:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
             os.remove(path)
             return {"ok": True, "recovered": True, "action": "cleared_complete_journal"}
         # incomplete: restore only transaction snapshots; keep journal on drift.
@@ -860,12 +991,11 @@ def recover_root(root: str) -> dict[str, Any]:
             raise DiagnosticError("E_RECOVERY_REQUIRED")
         stage_dir = journal.get("stage_dir")
         if stage_dir and os.path.isdir(stage_dir):
-            # stage must stay under support dir
             if _path_within_support(root, stage_dir):
-                shutil.rmtree(stage_dir, ignore_errors=True)
+                _try_safe_rmtree_under_support(root, stage_dir)
         backup_root = journal.get("backup_root")
         if backup_root and _path_within_support(root, backup_root) and not os.path.islink(backup_root):
-            shutil.rmtree(backup_root, ignore_errors=True)
+            _try_safe_rmtree_under_support(root, backup_root)
         os.remove(path)
         return {"ok": True, "recovered": True, "action": "restored_from_journal", "restored_paths": restored}
 

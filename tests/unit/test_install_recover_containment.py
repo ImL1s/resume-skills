@@ -6,10 +6,13 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.install.catalog import resolve_skill_root
+import portable_resume.install.transaction as transaction_module
 from portable_resume.install.transaction import (
+    _supports_descriptor_relative_commit,
     _write_journal,
     journal_path,
     recover_root,
@@ -59,6 +62,53 @@ class RecoverCompleteJournalContainmentTests(unittest.TestCase):
         self.assertTrue(marker.is_file())
         self.assertEqual(marker.read_text(encoding="utf-8"), "must survive recover")
         self.assertTrue(os.path.isfile(journal_path(self.root)))
+
+    @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd recovery delete path")
+    def test_stage_symlink_swap_before_delete_does_not_escape(self) -> None:
+        support = Path(self.root) / ".portable-resume"
+        stage_dir = support / "portable-resume-stage-test"
+        stage_dir.mkdir(parents=True)
+        (stage_dir / "staged.txt").write_text("stage payload", encoding="utf-8")
+
+        outside = Path(self._tmpdir.name) / "victim-outside"
+        outside.mkdir()
+        marker = outside / "keep-me.txt"
+        marker.write_text("must survive recover", encoding="utf-8")
+
+        _write_journal(
+            self.root,
+            {
+                "schema_version": "portable-resume/install-journal-v1",
+                "state": "complete",
+                "generation": 1,
+                "claim": "x",
+                "stage_dir": str(stage_dir),
+                "backup_root": None,
+                "paths": {},
+            },
+        )
+
+        original_try = transaction_module._try_safe_rmtree_under_support
+
+        def try_with_stage_symlink_swap(root: str, path: str) -> None:
+            stage_path = Path(path)
+            if stage_path.exists() and not stage_path.is_symlink():
+                real_stage = stage_path.with_name(stage_path.name + ".real")
+                stage_path.rename(real_stage)
+                stage_path.symlink_to(outside, target_is_directory=True)
+            return original_try(root, path)
+
+        with mock.patch.object(
+            transaction_module,
+            "_try_safe_rmtree_under_support",
+            side_effect=try_with_stage_symlink_swap,
+        ):
+            result = recover_root(self.root)
+
+        self.assertTrue(result.get("recovered"))
+        self.assertTrue(marker.is_file())
+        self.assertEqual(marker.read_text(encoding="utf-8"), "must survive recover")
+        self.assertFalse(os.path.isfile(journal_path(self.root)))
 
 
 if __name__ == "__main__":
