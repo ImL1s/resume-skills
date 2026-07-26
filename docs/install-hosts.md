@@ -10,7 +10,11 @@ PYTHONPATH=src python3 scripts/install-resume-skills matrix --json
 python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
-The package builder creates eight `*-<host>-skills.zip` archives, seven supported plugin/marketplace archives, and `host-packages.json` with SHA-256 digests. Replace `<version>` below with the release version.
+On current `main`, the package builder creates nine `*-<host>-skills.zip` archives
+(one per enabled destination, including Pi), seven supported plugin/marketplace
+archives, and `host-packages.json` with SHA-256 digests. Published `0.3.3`
+release assets remain eight direct archives. Replace `<version>` below with the
+release version.
 
 Download and verify an exact release before installing a plugin:
 

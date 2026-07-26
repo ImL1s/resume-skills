@@ -112,7 +112,7 @@ Full roots, activation grammar, direct archives, and marketplace/plugin routes a
 python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
-This produces eight direct-skill ZIPs plus supported Claude, Codex, Cursor, Antigravity, Grok, Qwen, and Kimi plugin/marketplace bundles. OpenCode remains a direct Skill install because its plugin surface is executable JavaScript/TypeScript rather than a Skill bundle.
+On current `main` this produces nine direct-skill ZIPs (including Pi) plus supported Claude, Codex, Cursor, Antigravity, Grok, Qwen, and Kimi plugin/marketplace bundles. Published `0.3.3` assets remain eight direct ZIPs. OpenCode remains a direct Skill install because its plugin surface is executable JavaScript/TypeScript rather than a Skill bundle.
 
 ## Skill contract
 
