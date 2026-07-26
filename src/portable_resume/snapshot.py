@@ -37,6 +37,13 @@ class StableRead:
 
 
 @dataclass(frozen=True, slots=True)
+class ScannedLine:
+    ordinal: int
+    text: str
+    byte_offset: int
+
+
+@dataclass(frozen=True, slots=True)
 class StableWindows:
     """Repeatedly verified metadata windows from one no-follow descriptor."""
 
@@ -255,6 +262,136 @@ def stable_read_bytes(
                 # Bytes only: adapters charge consume_records() per logical row/line.
                 budget.consume_bytes(len(data))
             return StableRead(data=data, fingerprint=observed, attempts=attempt)
+    family = (os.path.basename(safe),)
+    raise DiagnosticError.source_busy(attempts=attempts, family=family)
+
+
+def _collect_scanned_lines(
+    descriptor: int,
+    *,
+    max_line_bytes: int,
+    budget: ReadBudget | None,
+    charge_transcript: bool,
+) -> tuple[list[ScannedLine], int, int]:
+    """Stream complete lines from an open descriptor; skip a terminal partial line."""
+
+    buffer = bytearray()
+    absolute_offset = 0
+    collected: list[ScannedLine] = []
+    pending_bytes = 0
+    pending_records = 0
+    chunk_size = 64 * 1024
+
+    def check_byte_budget(amount: int) -> None:
+        if budget is None:
+            return
+        maximum = min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes)
+        if budget.bytes_read + pending_bytes + amount > maximum:
+            raise DiagnosticError.limit_exceeded()
+
+    def check_record_budget() -> None:
+        if budget is None:
+            return
+        if charge_transcript:
+            maximum = min(
+                budget.limits.transcript_records,
+                DEFAULT_BOUNDS.transcript_records,
+            )
+            current = budget.transcript_records_read
+        else:
+            maximum = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
+            current = budget.records
+        if current + pending_records + 1 > maximum:
+            raise DiagnosticError.limit_exceeded()
+
+    def drain_complete_lines() -> None:
+        nonlocal absolute_offset, pending_records
+        while True:
+            newline_index = buffer.find(b"\n")
+            if newline_index < 0:
+                return
+            line_bytes = bytes(buffer[: newline_index + 1])
+            del buffer[: newline_index + 1]
+            content_len = len(line_bytes) - 1
+            if content_len > max_line_bytes:
+                raise DiagnosticError.limit_exceeded()
+            check_record_budget()
+            pending_records += 1
+            collected.append(
+                ScannedLine(
+                    ordinal=len(collected),
+                    text=line_bytes[:-1].decode("utf-8"),
+                    byte_offset=absolute_offset,
+                )
+            )
+            absolute_offset += len(line_bytes)
+
+    while True:
+        chunk = os.read(descriptor, chunk_size)
+        if not chunk:
+            break
+        check_byte_budget(len(chunk))
+        pending_bytes += len(chunk)
+        buffer.extend(chunk)
+        drain_complete_lines()
+
+    return collected, pending_bytes, pending_records
+
+
+def stable_scan_lines(
+    path: str | os.PathLike[str],
+    *,
+    root: str | os.PathLike[str],
+    budget: ReadBudget | None = None,
+    max_line_bytes: int | None = None,
+    charge_transcript: bool = False,
+    hook: AttemptHook | None = None,
+) -> Iterator[ScannedLine]:
+    """Yield UTF-8 lines under no-follow / containment / budget rules.
+
+    Uses the same root containment and symlink rejection as stable_read_bytes.
+    Prefer streaming reads; do not require the whole file in memory.
+    Terminal partial line may be skipped with a warning path left to callers.
+    """
+
+    line_limit = max_line_bytes if max_line_bytes is not None else DEFAULT_BOUNDS.record_bytes
+    if line_limit < 0 or line_limit > DEFAULT_BOUNDS.record_bytes:
+        raise DiagnosticError.invalid()
+    safe, base = require_regular_no_symlinks(path, root)
+    parent = os.path.dirname(safe)
+    attempts = DEFAULT_BOUNDS.snapshot_attempts
+    membership_limit = DEFAULT_BOUNDS.scanned_records
+    for attempt in range(1, attempts + 1):
+        before_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+        descriptor = _open_no_follow(safe, base)
+        try:
+            before_stat = os.fstat(descriptor)
+            if hook:
+                hook("before-read", attempt, safe)
+            collected, pending_bytes, pending_records = _collect_scanned_lines(
+                descriptor,
+                max_line_bytes=line_limit,
+                budget=budget,
+                charge_transcript=charge_transcript,
+            )
+            after_stat = os.fstat(descriptor)
+            if hook:
+                hook("after-read", attempt, safe)
+        finally:
+            os.close(descriptor)
+        after_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+        if (
+            _fingerprint(before_stat) == _fingerprint(after_stat)
+            and before_membership == after_membership
+        ):
+            if budget is not None:
+                budget.consume_bytes(pending_bytes)
+                if charge_transcript:
+                    budget.consume_transcript_records(pending_records)
+                else:
+                    budget.consume_records(pending_records)
+            yield from collected
+            return
     family = (os.path.basename(safe),)
     raise DiagnosticError.source_busy(attempts=attempts, family=family)
 
