@@ -723,8 +723,10 @@ def recover_root(root: str) -> dict[str, Any]:
         journal = json.loads(Path(path).read_text(encoding="utf-8"))
         if journal.get("state") == "complete":
             stage_dir = journal.get("stage_dir")
-            if stage_dir:
+            if stage_dir and _path_within_support(root, stage_dir):
                 shutil.rmtree(stage_dir, ignore_errors=True)
+            elif stage_dir:
+                raise DiagnosticError("E_RECOVERY_REQUIRED")
             os.remove(path)
             return {"ok": True, "recovered": True, "action": "cleared_complete_journal"}
         # incomplete: restore only transaction snapshots; keep journal on drift.
