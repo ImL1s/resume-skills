@@ -138,8 +138,9 @@ Use `--scope global` for the user root or `--root <path>` for an explicit root. 
 | Grok Build (`grok`) | `.grok/skills` / `~/.grok/skills` | Public marketplace commands above. Offline fallback: validate and install the extracted `grok-plugin.zip` with `--trust`. | `/resume-codex` |
 | Qwen Code (`qwen`) | `.qwen/skills` / `~/.qwen/skills` | Public extension source commands above. Offline fallback: `qwen extensions install /path/portable-resume-<version>-qwen-extension.zip`. | `/resume-codex`; `/skills` lists |
 | Kimi Code CLI (`kimi`) | `.kimi-code/skills` / `$KIMI_CODE_HOME/skills` (default `~/.kimi-code/skills`) | Add the public catalog in `/plugins`, or install the exact release ZIP URL/path. Run `/plugins reload`, `/reload`, or start a new session. | `/skill:resume-codex` |
+| Pi agent (`pi`) | `.pi/skills` / `~/.pi/agent/skills` | Direct Skill only for this PR. Alternate `.agents/skills` roots are compatibility-only (not multi-installed). | `/skill:resume-codex` |
 
-For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, and `resume-qwen`.
+For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, `resume-pi`, and `resume-qwen`.
 
 ## Host-specific notes
 
