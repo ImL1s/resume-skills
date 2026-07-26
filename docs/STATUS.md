@@ -8,7 +8,7 @@
 | Destination profiles | 8 (Pi destination not supported) |
 | Packaging matrix | **72/72 pass locally** (currently **9×8=72**, derived from registries) |
 | Installed runner matrix | **72/72 pass locally** (currently **9×8=72**, derived from registries) |
-| Python test suite | **74 pass locally** (OpenClaw fixtures PR A)
+| Python test suite | **349 pass locally** (OpenClaw fixtures PR A)
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
 | Host-native headless Skill activation | **8/8 pass** |
