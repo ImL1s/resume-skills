@@ -12,7 +12,7 @@ Adapters are clean-room compatibility readers built from public documentation/so
 | Grok Build | `grok-updates-jsonl-v1` | Apache-2.0 public tree + fixtures | supported (fixture/parser) | bounded live support; installed bundled Skills are excluded as implementation sources |
 | Qwen Code | `qwen-chat-jsonl-v1` | Qwen Code public tree at `713a083aea24ccb7b80db3e11abf2155b854a78c` + fixtures | supported (fixture/parser) | bounded live support; thought/tool/file/binary payloads are not replayed |
 | Kimi Code / legacy Kimi CLI | `kimi-code-wire-jsonl-v1`, `kimi-legacy-context-jsonl-v1` | Kimi Code `a2401cc1ed26e5758c081e657bcff6a75cb061bb`; legacy Kimi CLI `4a550effdfcb29a25a5d325bf935296cc50cd417`; fixtures | supported (fixture/parser) | bounded live support; tool execution is never replayed |
-| Pi | `pi-session-jsonl-v3`, `pi-session-jsonl-v2` | Pi public session-format docs + synthetic fixtures | supported (source only; fixture/parser) | v3 primary; v2 read-only compat; Pi destination host not supported |
+| Pi | `pi-session-jsonl-v3`, `pi-session-jsonl-v2` | Pi public session-format docs + synthetic fixtures | supported (fixture/parser) | v3 primary; v2 read-only compat; destination filesystem install supported; native UI activation not-run |
 | OpenClaw | `openclaw-agent-sqlite-v1` | OpenClaw public schema/session docs + synthetic fixtures | planned (fixtures-only) | no adapter; per-agent SQLite under `agents/<id>/agent/openclaw-agent.sqlite` |
 | goose | `goose-sessions-sqlite-v15` | aaif-goose `CURRENT_SCHEMA_VERSION=15` + synthetic fixtures | planned (fixtures-only) | SQLite authority only; legacy JSONL out of scope; adapter not landed (#39) |
 
@@ -65,7 +65,9 @@ Legacy Python Kimi CLI `kimi.json` session metadata plus `sessions/<workdir-key>
 Pi agent session JSONL (version 3 tree with `id`/`parentId`). Default on-disk layout:
 `agent/sessions/--<cwd-slug>--/<timestamp>_<uuid>.jsonl`. Synthetic fixtures:
 `tests/fixtures/pi/`. A v2 tree compatibility fixture exists (`pi-session-jsonl-v2`);
-v1 linear sessions are not fixture-covered yet. Destination install for Pi remains a later PR (#38).
+v1 linear sessions are not fixture-covered yet. Destination filesystem install
+to `.pi/skills` / `~/.pi/agent/skills` is supported on `main`; native Pi host
+UI / picker activation evidence remains not-run (PR D).
 `list` is metadata-lenient on interior corrupt lines (`W_BROKEN_CHAIN`); `show` fails closed with `E_CORRUPT_RECORD`.
 
 ### pi-pi-session-jsonl-v2

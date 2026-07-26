@@ -4,11 +4,11 @@
 
 | Gate | Status |
 |---|---|
-| Source adapters | 9: Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi, **Pi (source only)** |
-| Destination profiles | 8 (Pi destination not supported) |
-| Packaging matrix | **72/72 pass on `main`** (currently **9×8=72**, derived from registries; **not** claimed for published `0.3.3` PyPI/GitHub assets) |
-| Installed runner matrix | **72/72 pass on `main`** (currently **9×8=72**, derived from registries; published `0.3.3` remains 64-cell) |
-| Python test suite | **357 pass locally** (Codex #51 follow-up + OpenClaw/goose fixtures) |
+| Source adapters | 9: Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi, **Pi** |
+| Destination profiles | 9 including **Pi** (filesystem install supported) |
+| Packaging matrix | **81/81 pass on `main`** (currently **9×9=81**, derived from registries; **not** claimed for published `0.3.3` PyPI/GitHub assets) |
+| Installed runner matrix | **81/81 pass on `main`** (currently **9×9=81**, derived from registries; published `0.3.3` remains 64-cell) |
+| Python test suite | **359 pass locally** (Pi destination PR C + honesty suite) |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
 | Host-native headless Skill activation | **8/8 pass** |
@@ -20,7 +20,7 @@
 | Phase 0 / Milestone N1 | **merged** [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c` |
 | `v0.3.2` release workflow | **pass**: [14 jobs through GitHub Release and PyPI](https://github.com/ImL1s/resume-skills/actions/runs/30093776529) |
 | Published release | **pass**: [GitHub Release v0.3.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2) / [v0.3.3](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3) |
-| Public PyPI installation | **pass for 0.3.3** (64-cell release artifact); Pi source / 72-cell matrix is **unreleased on `main` only** until the next versioned release |
+| Public PyPI installation | **pass for 0.3.3** (64-cell release artifact); Pi source + 81-cell matrix is **unreleased on `main` only** until the next versioned release |
 | Cursor full bubble graph | **not claimed** |
 | Codex large-rollout budget + parent list filter (Issue #3) | **done on main** [PR #4](https://github.com/ImL1s/resume-skills/pull/4) merge `48746c4` — P0 hotfix (not full streaming) |
 | Codex probe head-only + list FS fallback | **not done** — [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + [plan 026](../plans/026-codex-probe-list-discovery.md) |
@@ -54,22 +54,28 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 | Issue #3 parent list + large rollout reject | **Closed** via PR #4 → `48746c4` | P0 on main. |
 | Discovery false unsupported / stale SQLite | [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + plan 026 | P1a: head-only probe; no full `sessions/` walk; read-only FS head fallback. Do not mutate `~/.codex`. |
 | Peak memory on large show | [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + plan 027 | P1b: true chunked stable streaming + reducer + synthetic 17–30 MiB test. |
-| Capability registries + dynamic matrix | [Issue #36](https://github.com/ImL1s/resume-skills/issues/36) | **Partial via PR #49:** source/destination registries + dynamic direct-runner matrix (now **9×8** with Pi source-only). `PACKAGE_SURFACES` scaffold empty; package builders not registry-driven. Keep #36 open. |
+| Capability registries + dynamic matrix | [Issue #36](https://github.com/ImL1s/resume-skills/issues/36) | **Partial via PR #49:** source/destination registries + dynamic direct-runner matrix (now **9×9=81** with Pi destination filesystem install). `PACKAGE_SURFACES` scaffold empty; package builders not registry-driven. Keep #36 open. |
 | Shared `stable_scan_lines` (#10) | [Issue #10](https://github.com/ImL1s/resume-skills/issues/10) + PR #49 | Foundation on main; **adopted by Pi source adapter**; remaining adapters still pending. True streaming yield remains with #8. |
 | ReadBudget raise clamp (#17) | [Issue #17](https://github.com/ImL1s/resume-skills/issues/17) + PR #49 | **Partial:** four consume counters clamp to `DEFAULT_BOUNDS`. Full Bounds construction-time validation still open. |
 | Installer recover containment (#20) | **Closed** via [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c` | Typed stage/backup authorization + pinned support dirfd deletes + adversarial tests in `tests/unit/test_install_recover_containment.py`. |
 | Descriptor-relative install (#31) | [Issue #31](https://github.com/ImL1s/resume-skills/issues/31) + PR #49 | **Partial:** POSIX forward commit is dirfd-based; rollback/manifest/orphan/Windows still pathname or fail-closed. |
-| Next-wave agent roadmap (Pi, OpenClaw, goose, …) | [Issue #48](https://github.com/ImL1s/resume-skills/issues/48) + [Issue #38](https://github.com/ImL1s/resume-skills/issues/38) | Phase 0 on `7b5192c`. **Pi PR B: source adapter supported** (`pi-session-jsonl-v3` / v2 read-only); **Pi destination not-run** (PR C). **OpenClaw PR A: fixtures-only** (`openclaw-agent-sqlite-v1`, no adapter). **goose PR A: fixtures-only** (`goose-sessions-sqlite-v15` synthetic; adapter #39 not landed). |
+| Next-wave agent roadmap (Pi, OpenClaw, goose, …) | [Issue #48](https://github.com/ImL1s/resume-skills/issues/48) + [Issue #38](https://github.com/ImL1s/resume-skills/issues/38) | Phase 0 on `7b5192c`. **Pi PR B: source adapter supported** (`pi-session-jsonl-v3` / v2 read-only). **Pi PR C: destination filesystem install supported** (`.pi/skills` / `~/.pi/agent/skills`; 81-cell smoke pass). **Pi PR D: native host UI / picker activation not-run**. **OpenClaw PR A: fixtures-only** (`openclaw-agent-sqlite-v1`, no adapter). **goose PR A: fixtures-only** (`goose-sessions-sqlite-v15` synthetic; adapter #39 not landed). |
 
 `/resume-codex` remains **context migration** (Skill + reader), not Grok Build native `/resume` and not Codex CLI live resume.
 
+## Corrected after Pi destination PR C
+
+- **Pi destination install: supported (filesystem)** — `.pi/skills` / `~/.pi/agent/skills` direct Skill roots; **81/81** installed-runner smoke pass on `main`.
+- **Pi native host UI / picker activation: not-run** (PR D evidence separate from filesystem install).
+- Verify locally: **359** unittest, **81/81** installed-runner smoke, self_verify, secrets gate, check_docs.
+
 ## Corrected after PR #51
 
-- **Pi source adapter supported** (`pi-session-jsonl-v3` / v2 read-only); **Pi destination not-run**.
+- **Pi source adapter supported** (`pi-session-jsonl-v3` / v2 read-only).
 - Verify at merge tip: **340** unittest, **72/72** installed-runner smoke, self_verify, secrets gate,
   [CI run 30203656076](https://github.com/ImL1s/resume-skills/actions/runs/30203656076) on `d9152cd`.
 - Honesty follow-up: suite **345** (tail-window list fix + max-tool-chars + UTF-8 header
-  regressions); README separates published `0.3.3` 64-cell claims from unreleased 72-cell `main`.
+  regressions); README separates published `0.3.3` 64-cell claims from unreleased `main`.
 
 ## Corrected and verified on main after 0.3.3 (PR #49)
 

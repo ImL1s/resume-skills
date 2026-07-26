@@ -1,11 +1,11 @@
 # portable-resume-skills
 
 <p align="center">
-  <img src="docs/assets/portable-resume-skills-hero-v2.jpg" alt="Nine local coding-agent sources flow into a sealed context archive, then into eight fresh destination sessions (Pi source-only)" width="920" />
+  <img src="docs/assets/portable-resume-skills-hero-v2.jpg" alt="Nine local coding-agent sources flow into a sealed context archive, then into nine fresh destination sessions" width="920" />
 </p>
 
 <p align="center">
-  <em>Offline, local-only context migration · 9 sources × 8 hosts (derived from registries) · inert handoff, not live restore</em>
+  <em>Offline, local-only context migration · 9 sources × 9 hosts (derived from registries) · inert handoff, not live restore</em>
 </p>
 
 [English](docs/i18n/en.md) · [繁體中文](docs/i18n/zh-TW.md) · [简体中文](docs/i18n/zh-CN.md) · [日本語](docs/i18n/ja.md) · [한국어](docs/i18n/ko.md) · [Español](docs/i18n/es.md) · [Português](docs/i18n/pt-BR.md) · [Français](docs/i18n/fr.md) · [Deutsch](docs/i18n/de.md) · [Русский](docs/i18n/ru.md) · [العربية](docs/i18n/ar.md) · [हिन्दी](docs/i18n/hi.md) · [All languages](docs/i18n/README.md)
@@ -20,9 +20,11 @@ invocations verified · 6/6 compatible public marketplace installs verified.
 Cursor and Kimi marketplace pickers were also exercised; other visual Skill
 picker paths remain separate **not-run** claims.
 
-**Unreleased `main` (post-0.3.3):** registry-derived **9×8=72** cells including
-Pi **source-only** (`resume-pi`). Not claimed for the linked PyPI/GitHub `0.3.3`
-artifacts until the next versioned release.
+**Unreleased `main` (post-0.3.3):** registry-derived **9×9=81** cells including
+Pi source and **Pi destination filesystem install** (`.pi/skills` /
+`~/.pi/agent/skills`). Not claimed for the linked PyPI/GitHub `0.3.3`
+artifacts until the next versioned release. Pi native host UI / picker
+activation remains **not-run**.
 
 ## Sources and destinations
 
@@ -38,7 +40,7 @@ artifacts until the next versioned release.
 | `resume-kimi` | Current Kimi Code wire JSONL + legacy Kimi CLI context JSONL |
 | `resume-pi` | Pi agent versioned tree JSONL (`agent/sessions/--cwd-slug--/`) |
 
-Destination profiles: Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, and current Kimi Code CLI.
+Destination profiles: Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI, and Pi agent.
 
 ## Requirements
 

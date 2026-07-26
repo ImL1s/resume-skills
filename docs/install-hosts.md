@@ -1,6 +1,6 @@
 # Destination installation guide
 
-This repository ships eight `resume-<source>` Skills to eight destination hosts. The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
+This repository ships nine `resume-<source>` Skills to nine destination hosts (derived from registries). The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
 
 ## Build or inspect packages
 
@@ -38,7 +38,7 @@ From PyPI:
 ```bash
 pipx install portable-resume
 install-resume-skills quick-install qwen        # user-global Qwen profile
-install-resume-skills quick-install all         # all eight user-global profiles
+install-resume-skills quick-install all         # all nine user-global profiles
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
