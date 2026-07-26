@@ -36,8 +36,8 @@ class FoundationBaselineTests(unittest.TestCase):
         self.assertIn("~/.grok/bundled/skills/**", provenance)
         self.assertIn("does **not** claim", provenance)
         source_formats = Path("docs/source-formats.md").read_text()
-        # G001 used "| planned |" rows; G002 promotes adapters to fixture/parser support.
-        planned = source_formats.count("planned")
+        # Count table status cells only (avoid matching prose "planned").
+        planned = source_formats.count("| planned (fixtures-only) |")
         supported = source_formats.count("| supported (fixture/parser) |")
         self.assertEqual(planned + supported, 9)
         self.assertGreaterEqual(planned, 1)
