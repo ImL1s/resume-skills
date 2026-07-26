@@ -421,11 +421,21 @@ class PiAdapter:
             overlap = max(0, len(windows.head) - windows.tail_offset)
             tail = windows.tail[overlap:]
             if tail:
-                chunks.append((tail, windows.tail_offset > 0, True))
+                # Mid-line only when the absolute byte before this fragment is not a
+                # newline (exact record boundaries must keep the first tail record).
+                abs_start = windows.tail_offset + overlap
+                starts_mid = False
+                if abs_start > 0:
+                    if abs_start <= len(windows.head):
+                        preceding = windows.head[abs_start - 1 : abs_start]
+                    else:
+                        preceding = windows.tail[abs_start - windows.tail_offset - 1 : abs_start - windows.tail_offset]
+                    starts_mid = preceding not in (b"\n", b"\r")
+                chunks.append((tail, starts_mid, True))
         first_line = True
         for chunk, starts_mid_line, ends_at_eof in chunks:
             # Only the first fragment of a mid-line tail window is partial; clear
-            # the flag after skipping it so later complete records are scanned.
+            # the flag after handling it so later complete records are scanned.
             skip_leading_partial = starts_mid_line
             for raw in chunk.split(b"\n"):
                 if not raw.strip():
@@ -438,6 +448,16 @@ class PiAdapter:
                     continue  # session header
                 if skip_leading_partial:
                     skip_leading_partial = False
+                    # Boundary-aligned tails can still be flagged mid-line; keep
+                    # the fragment when it parses as a complete record.
+                    try:
+                        text = raw.decode("utf-8")
+                        record = _loads_line(text, provider=provider)
+                    except (UnicodeDecodeError, DiagnosticError):
+                        continue
+                    stamp = _timestamp(record.get("timestamp"))
+                    if stamp is not None:
+                        timestamps.append(stamp)
                     continue
                 try:
                     text = raw.decode("utf-8")

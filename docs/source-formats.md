@@ -14,6 +14,7 @@ Adapters are clean-room compatibility readers built from public documentation/so
 | Kimi Code / legacy Kimi CLI | `kimi-code-wire-jsonl-v1`, `kimi-legacy-context-jsonl-v1` | Kimi Code `a2401cc1ed26e5758c081e657bcff6a75cb061bb`; legacy Kimi CLI `4a550effdfcb29a25a5d325bf935296cc50cd417`; fixtures | supported (fixture/parser) | bounded live support; tool execution is never replayed |
 | Pi | `pi-session-jsonl-v3`, `pi-session-jsonl-v2` | Pi public session-format docs + synthetic fixtures | supported (source only; fixture/parser) | v3 primary; v2 read-only compat; Pi destination host not supported |
 | OpenClaw | `openclaw-agent-sqlite-v1` | OpenClaw public schema/session docs + synthetic fixtures | planned (fixtures-only) | no adapter; per-agent SQLite under `agents/<id>/agent/openclaw-agent.sqlite` |
+| goose | `goose-sessions-sqlite-v15` | aaif-goose `CURRENT_SCHEMA_VERSION=15` + synthetic fixtures | planned (fixtures-only) | SQLite authority only; legacy JSONL out of scope; adapter not landed (#39) |
 
 ## Provenance anchors
 
@@ -85,6 +86,15 @@ Fixtures pin `openclaw-agent-sqlite-v1` with `PRAGMA user_version = 11` and a mi
 subset of tables (`schema_meta`, `session_nodes`, `session_windows`, `conversations`,
 `session_conversations`, `transcript_events`). All fixture payloads are synthetic
 (`synthetic: true`); no adapter is registered yet. See `tests/fixtures/openclaw/`.
+
+### goose-goose-sessions-sqlite-v15
+
+Goose `sessions/sessions.db` SQLite store at schema version 15 (`schema_version`,
+`sessions`, `messages`, `usage_ledger`). Upstream `session_type` values are snake_case
+(`sub_agent`, `gateway`, `acp`, …). Synthetic fixtures: `tests/fixtures/goose/`.
+Legacy JSONL session files are not fixture-covered. Future adapter `list` should prefer
+`user` sessions and exclude `scheduled`, `sub_agent`, `hidden`, `gateway`, and `acp` by
+default unless explicitly requested.
 
 ## Clean-room boundary
 
