@@ -14,6 +14,12 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
+SRC = REPO / "src"
+sys.path.insert(0, str(SRC))
+
+from portable_resume.registry import matrix_dimensions  # noqa: E402
+
+EXPECTED_MATRIX_CELLS = matrix_dimensions()["cells"]
 
 
 def _run(
@@ -115,8 +121,13 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
             ),
             "installed self-check",
         )
-        if not self_check.get("ok") or self_check.get("matrix", {}).get("cell_count") != 64:
-            raise RuntimeError("installed self-check did not prove the 64-cell matrix")
+        if (
+            not self_check.get("ok")
+            or self_check.get("matrix", {}).get("cell_count") != EXPECTED_MATRIX_CELLS
+        ):
+            raise RuntimeError(
+                f"installed self-check did not prove the {EXPECTED_MATRIX_CELLS}-cell matrix"
+            )
 
         matrix = _json_stdout(
             _run(
@@ -126,8 +137,10 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
             ),
             "installed matrix",
         )
-        if not matrix.get("ok") or matrix.get("cell_count") != 64:
-            raise RuntimeError("installed matrix did not contain 64 successful cells")
+        if not matrix.get("ok") or matrix.get("cell_count") != EXPECTED_MATRIX_CELLS:
+            raise RuntimeError(
+                f"installed matrix did not contain {EXPECTED_MATRIX_CELLS} successful cells"
+            )
 
         home = base / "home"
         home.mkdir()
