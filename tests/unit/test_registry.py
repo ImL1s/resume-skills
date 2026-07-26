@@ -18,7 +18,7 @@ from portable_resume.registry import (
 
 
 class RegistryInvariantTests(unittest.TestCase):
-    def test_current_nine_sources_and_eight_destinations(self) -> None:
+    def test_current_nine_sources_and_nine_destinations(self) -> None:
         self.assertEqual(
             enabled_source_keys(),
             frozenset(
@@ -46,14 +46,15 @@ class RegistryInvariantTests(unittest.TestCase):
                     "grok",
                     "kimi",
                     "opencode",
+                    "pi",
                     "qwen",
                 }
             ),
         )
         dims = matrix_dimensions()
         self.assertEqual(dims["sources"], 9)
-        self.assertEqual(dims["destinations"], 8)
-        self.assertEqual(dims["cells"], 72)
+        self.assertEqual(dims["destinations"], 9)
+        self.assertEqual(dims["cells"], 81)
 
     def test_source_and_destination_sets_are_independent_types(self) -> None:
         # Adding a destination-only key must not invent a source.
@@ -192,7 +193,7 @@ class DynamicMatrixTests(unittest.TestCase):
         cells = matrix_cells()
         dims = matrix_dimensions()
         self.assertEqual(len(cells), dims["cells"])
-        self.assertEqual(len(cells), 72)
+        self.assertEqual(len(cells), 81)
 
     def test_destination_only_expands_rectangle(self) -> None:
         from portable_resume.registry import rectangular_cells

@@ -45,6 +45,7 @@ class HostsCatalogTests(unittest.TestCase):
             "grok": (".grok/skills", ".grok/skills"),
             "kimi": (".kimi-code/skills", ".kimi-code/skills"),
             "qwen": (".qwen/skills", ".qwen/skills"),
+            "pi": (".pi/skills", ".pi/agent/skills"),
         }
         for host, (project, global_rel) in expected.items():
             self.assertEqual(HOST_PROFILES[host].project_rel, project)
@@ -108,6 +109,23 @@ class HostsCatalogTests(unittest.TestCase):
             self.assertIn(f"`{host}`", text)
         self.assertIn("install-resume-skills hosts", text)
         self.assertIn("E_INSTALL_CONFLICT", text)
+
+    def test_pi_resolve_skill_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            project = Path(tmp) / "proj"
+            home.mkdir()
+            project.mkdir()
+            project_root = resolve_skill_root(
+                host="pi", scope="project", project_dir=str(project), home_dir=str(home)
+            )
+            global_root = resolve_skill_root(
+                host="pi", scope="global", project_dir=str(project), home_dir=str(home)
+            )
+            self.assertTrue(project_root.endswith(os.path.join("proj", ".pi", "skills")))
+            self.assertTrue(
+                global_root.endswith(os.path.join("home", ".pi", "agent", "skills"))
+            )
 
     def test_resolve_skill_root_requires_project(self) -> None:
         with self.assertRaises(ValueError):
