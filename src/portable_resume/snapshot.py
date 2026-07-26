@@ -311,7 +311,10 @@ def _collect_scanned_lines(
             raise DiagnosticError.limit_exceeded()
 
     def reject_oversize_unterminated_line() -> None:
-        if len(buffer) > max_line_bytes:
+        effective_len = len(buffer)
+        if effective_len and buffer[-1] == 0x0d:
+            effective_len -= 1
+        if effective_len > max_line_bytes:
             raise DiagnosticError.limit_exceeded()
 
     def drain_complete_lines() -> None:

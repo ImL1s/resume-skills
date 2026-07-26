@@ -59,7 +59,9 @@ class InstallerTransactionTests(unittest.TestCase):
                 "generation": 99,
                 "claim": "synthetic",
                 "stage_dir": os.path.join(self.root, ".portable-resume", "portable-resume-stage-missing"),
-                "backup_root": os.path.join(self.root, ".portable-resume", "backups", "x"),
+                "backup_root": os.path.join(
+                    self.root, ".portable-resume", "backups", "20260726T000000Z-test"
+                ),
                 "paths": {},
             },
         )

@@ -4,10 +4,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from portable_resume.bounds import Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
-from portable_resume.snapshot import stable_scan_lines
+from portable_resume.snapshot import _collect_scanned_lines, stable_scan_lines
 
 
 class StableScanLinesTests(unittest.TestCase):
@@ -108,6 +109,29 @@ class StableScanLinesTests(unittest.TestCase):
             path.write_bytes(b'{"id":1}\r\n{"id":2}\r\n')
             lines = list(stable_scan_lines(str(path), root=str(root)))
             self.assertEqual([item.text for item in lines], ['{"id":1}', '{"id":2}'])
+
+    def test_pending_cr_at_max_line_bytes_waits_for_newline(self) -> None:
+        max_line = 8
+        payload = b"x" * max_line + b"\r"
+        chunks = [payload, b"\n"]
+
+        chunk_iter = iter(chunks)
+
+        def mock_read(_fd: int, _size: int) -> bytes:
+            try:
+                return next(chunk_iter)
+            except StopIteration:
+                return b""
+        with mock.patch("os.read", side_effect=mock_read):
+            collected, _, _, _ = _collect_scanned_lines(
+                0,
+                max_line_bytes=max_line,
+                budget=None,
+                charge_transcript=False,
+            )
+        self.assertEqual(len(collected), 1)
+        self.assertEqual(collected[0].text, "x" * max_line)
+        self.assertTrue(collected[0].terminated)
 
     def test_crlf_exact_max_line_bytes_matches_lf(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

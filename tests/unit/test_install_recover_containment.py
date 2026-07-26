@@ -12,6 +12,7 @@ from portable_resume.diagnostics import DiagnosticError
 from portable_resume.install.catalog import resolve_skill_root
 import portable_resume.install.transaction as transaction_module
 from portable_resume.install.transaction import (
+    _authorize_support_cleanup,
     _safe_rmtree_under_support,
     _supports_descriptor_relative_commit,
     _write_journal,
@@ -121,7 +122,7 @@ class RecoverCompleteJournalContainmentTests(unittest.TestCase):
         self.assertFalse(stage.exists())
         self.assertFalse(os.path.isfile(journal_path(self.root)))
 
-    def test_complete_journal_preserves_force_backup_tree(self) -> None:
+    def test_complete_journal_recover_preserves_force_backup_root(self) -> None:
         support = Path(self.root) / ".portable-resume"
         stage = support / "portable-resume-stage-ok"
         stage.mkdir(parents=True)
@@ -140,6 +141,20 @@ class RecoverCompleteJournalContainmentTests(unittest.TestCase):
         self.assertTrue(marker.is_file())
         self.assertEqual(marker.read_text(encoding="utf-8"), "retained force backup")
         self.assertFalse(os.path.isfile(journal_path(self.root)))
+
+    def test_authorize_backup_rejects_non_timestamp_directory_name(self) -> None:
+        support = Path(self.root) / ".portable-resume"
+        backups = support / "backups"
+        backups.mkdir(parents=True)
+        bad_backup = backups / "user-archive"
+        bad_backup.mkdir()
+        marker = bad_backup / "keep-me.txt"
+        marker.write_text("must survive", encoding="utf-8")
+
+        with self.assertRaises(DiagnosticError) as ctx:
+            _authorize_support_cleanup(self.root, str(bad_backup), role="backup")
+        self.assertEqual(ctx.exception.code, "E_RECOVERY_REQUIRED")
+        self.assertTrue(marker.is_file())
 
     @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd recovery delete path")
     def test_safe_rmtree_rejects_symlinked_cleanup_target(self) -> None:

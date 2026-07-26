@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -31,6 +32,7 @@ LOCK_NAME = "install.lock"
 JOURNAL_NAME = "journal.json"
 BACKUP_DIR = "backups"
 STAGE_PREFIX = "portable-resume-stage-"
+_BACKUP_NAME_PREFIX_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-")
 # Names under SUPPORT_DIR that journals must never be allowed to delete.
 _PROTECTED_SUPPORT_NAMES = frozenset(
     {
@@ -986,7 +988,12 @@ def _authorize_support_cleanup(root: str, path: str, *, role: str) -> str | None
         if len(parts) != 2 or parts[0] != BACKUP_DIR:
             raise DiagnosticError("E_RECOVERY_REQUIRED")
         backup_name = parts[1]
-        if not backup_name or backup_name in {os.pardir, "."} or backup_name in _PROTECTED_SUPPORT_NAMES:
+        if (
+            not backup_name
+            or backup_name in {os.pardir, "."}
+            or backup_name in _PROTECTED_SUPPORT_NAMES
+            or not _BACKUP_NAME_PREFIX_RE.match(backup_name)
+        ):
             raise DiagnosticError("E_RECOVERY_REQUIRED")
 
     if not os.path.lexists(path):
