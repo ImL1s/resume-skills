@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"dddddddd-dddd-dddd-dddd-dddddddddddd","timestamp":"2024-01-01T03:00:00.000Z","cwd":"/tmp/project"}
+{"type":"message","id":"x1000001","parentId":null,"timestamp":"2024-01-01T03:00:01.000Z","message":{"role":"user","content":"synthetic user before corrupt interior line","timestamp":1704078001000}}
+{not valid json on purpose for future adapter fail-closed}
+{"type":"message","id":"x2000002","parentId":"x1000001","timestamp":"2024-01-01T03:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"synthetic tail after corruption"}],"api":"messages","provider":"anthropic","model":"claude-sonnet","usage":{"input":6,"output":10,"cacheRead":0,"cacheWrite":0,"totalTokens":16,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":1704078002000}}

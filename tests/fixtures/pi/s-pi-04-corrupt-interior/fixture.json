@@ -1,0 +1,10 @@
+{
+  "case": "s-pi-04-corrupt-interior",
+  "expected_code": 7,
+  "expected_operation": "error",
+  "expected_warnings": [],
+  "format_id": "pi-session-jsonl-v3",
+  "provenance_ref": "docs/source-formats.md#pi-pi-session-jsonl-v3",
+  "source": "pi",
+  "synthetic": true
+}

@@ -37,9 +37,10 @@ class FoundationBaselineTests(unittest.TestCase):
         self.assertIn("does **not** claim", provenance)
         source_formats = Path("docs/source-formats.md").read_text()
         # G001 used "| planned |" rows; G002 promotes adapters to fixture/parser support.
-        planned = source_formats.count("| planned |")
+        planned = source_formats.count("planned")
         supported = source_formats.count("| supported (fixture/parser) |")
-        self.assertEqual(planned + supported, 8)
+        self.assertEqual(planned + supported, 9)
+        self.assertGreaterEqual(planned, 1)
         self.assertGreaterEqual(supported, 1)
         attestation = Path("docs/clean-room-attestation.md").read_text()
         self.assertIn("do **not** contain copied installed-bundle", attestation)

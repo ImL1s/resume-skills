@@ -26,6 +26,7 @@ _REQUIRED = frozenset(
 _SLUG = re.compile(r"^[a-z0-9]+(?:[a-z0-9._-]*[a-z0-9])?$")
 _PRIVATE_PATH = re.compile(r"(?:^|[\\/])(?:Users|home)[\\/][^\\/]+", re.IGNORECASE)
 _WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:[\\/]")
+_FIXTURE_ONLY_SOURCES = frozenset({"pi"})
 
 
 class FixtureManifestError(ValueError):
@@ -75,7 +76,7 @@ def validate_fixture_manifest(path: str | os.PathLike[str]) -> FixtureManifest:
         raise FixtureManifestError("fixture manifest keys are not exact")
     if payload["synthetic"] is not True:
         raise FixtureManifestError("fixture must be explicitly synthetic")
-    if payload["source"] not in SOURCE_KEYS:
+    if payload["source"] not in SOURCE_KEYS and payload["source"] not in _FIXTURE_ONLY_SOURCES:
         raise FixtureManifestError("fixture source is unsupported")
     for key in ("format_id", "case"):
         value = payload[key]

@@ -1,0 +1,10 @@
+{
+  "case": "s-pi-03-tool-and-custom",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "pi-session-jsonl-v3",
+  "provenance_ref": "docs/source-formats.md#pi-pi-session-jsonl-v3",
+  "source": "pi",
+  "synthetic": true
+}
