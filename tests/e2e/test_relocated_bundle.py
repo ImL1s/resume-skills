@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 from portable_resume.diagnostics import SOURCE_KEYS
-from portable_resume.install.catalog import HOST_KEYS
+from portable_resume.registry import matrix_dimensions
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -44,7 +44,7 @@ class RelocatedBundleTests(unittest.TestCase):
             self.assertEqual(len(report["sources"]), len(SOURCE_KEYS))
             self.assertEqual(
                 report["matrix"]["cell_count"],
-                len(HOST_KEYS) * len(SOURCE_KEYS),
+                matrix_dimensions()["cells"],
             )
 
             project = Path(temporary) / "proj"

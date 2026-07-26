@@ -1,0 +1,198 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+ProfileStatus = Literal["supported", "partial", "experimental", "planned", "research"]
+
+_EIGHT_KEYS: tuple[str, ...] = (
+    "antigravity",
+    "claude",
+    "codex",
+    "cursor",
+    "grok",
+    "kimi",
+    "opencode",
+    "qwen",
+)
+
+_SOURCE_FORMAT_IDS: dict[str, tuple[str, ...]] = {
+    "antigravity": ("antigravity-transcript-jsonl-v1",),
+    "claude": ("claude-jsonl-v1",),
+    "codex": (
+        "codex-state-sqlite-v1",
+        "codex-rollout-jsonl-v1",
+        "codex-rollout-zstd-v1",
+    ),
+    "cursor": (
+        "cursor-cli-chat-v1",
+        "cursor-desktop-vscdb-v1",
+        "cursor-cli-store-v1",
+        "cursor-desktop-composer-v1",
+    ),
+    "grok": ("grok-updates-jsonl-v1",),
+    "kimi": ("kimi-code-wire-jsonl-v1", "kimi-legacy-context-jsonl-v1"),
+    "opencode": (
+        "opencode-sqlite-v1",
+        "opencode-file-store-v1",
+        "opencode-export-file-v1",
+    ),
+    "qwen": ("qwen-chat-jsonl-v1",),
+}
+
+_DESTINATION_PAYLOAD_PROFILES: dict[str, str] = {
+    "antigravity": "antigravity-v1",
+    "claude": "claude-v1",
+    "codex": "codex-v1",
+    "cursor": "cursor-v1",
+    "grok": "grok-v1",
+    "kimi": "kimi-code-v1",
+    "opencode": "opencode-v1",
+    "qwen": "qwen-v1",
+}
+
+_DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
+    "antigravity": (".agents/skills", ".gemini/config/skills"),
+    "claude": (".claude/skills", ".claude/skills"),
+    "codex": (".agents/skills", ".agents/skills"),
+    "cursor": (".cursor/skills", ".cursor/skills"),
+    "grok": (".grok/skills", ".grok/skills"),
+    "kimi": (".kimi-code/skills", ".kimi-code/skills"),
+    "opencode": (".opencode/skills", ".config/opencode/skills"),
+    "qwen": (".qwen/skills", ".qwen/skills"),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class SourceProfile:
+    key: str
+    adapter_module: str
+    format_ids: tuple[str, ...]
+    status: ProfileStatus = "supported"
+    local_only: bool = True
+    supports_list: bool = True
+    supports_show: bool = True
+    exact_ref_kinds: tuple[str, ...] = ("id", "path", "text", "latest")
+    fixture_profile: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DestinationProfile:
+    key: str
+    payload_profile: str
+    status: ProfileStatus = "supported"
+    direct_skill: bool = True
+    project_rel: str = ""
+    global_rel: str = ""
+    native_package_profile: str | None = None
+    activation_profile: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PackageSurface:
+    key: str
+    destination: str
+    profile: str
+    buildable: bool = True
+    last_verified_host_version: str | None = None
+    status: ProfileStatus = "supported"
+
+
+SOURCE_PROFILES: dict[str, SourceProfile] = {
+    key: SourceProfile(
+        key=key,
+        adapter_module=f"portable_resume.adapters.{key}",
+        format_ids=_SOURCE_FORMAT_IDS[key],
+        status="supported",
+    )
+    for key in _EIGHT_KEYS
+}
+
+DESTINATION_PROFILES: dict[str, DestinationProfile] = {
+    key: DestinationProfile(
+        key=key,
+        payload_profile=_DESTINATION_PAYLOAD_PROFILES[key],
+        status="supported",
+        direct_skill=True,
+        project_rel=_DESTINATION_ROOTS[key][0],
+        global_rel=_DESTINATION_ROOTS[key][1],
+    )
+    for key in _EIGHT_KEYS
+}
+
+PACKAGE_SURFACES: dict[str, PackageSurface] = {}
+
+
+def source_keys() -> frozenset[str]:
+    return frozenset(SOURCE_PROFILES)
+
+
+def destination_keys() -> frozenset[str]:
+    return frozenset(DESTINATION_PROFILES)
+
+
+def enabled_source_keys() -> frozenset[str]:
+    return frozenset(k for k, p in SOURCE_PROFILES.items() if p.status == "supported")
+
+
+def enabled_destination_keys() -> frozenset[str]:
+    return frozenset(
+        k
+        for k, p in DESTINATION_PROFILES.items()
+        if p.status == "supported" and p.direct_skill
+    )
+
+
+def matrix_dimensions() -> dict[str, int]:
+    sources = len(enabled_source_keys())
+    destinations = len(enabled_destination_keys())
+    return {
+        "sources": sources,
+        "destinations": destinations,
+        "cells": sources * destinations,
+    }
+
+
+def rectangular_cells(
+    *,
+    sources: frozenset[str],
+    destinations: frozenset[str],
+) -> list[tuple[str, str]]:
+    """Return (destination, source) pairs in deterministic sort order."""
+    cells: list[tuple[str, str]] = []
+    for destination in sorted(destinations):
+        for source in sorted(sources):
+            cells.append((destination, source))
+    return cells
+
+
+def _validate_maps(
+    sources: dict[str, SourceProfile],
+    destinations: dict[str, DestinationProfile],
+    packages: dict[str, PackageSurface],
+) -> None:
+    if len(sources) != len({p.key for p in sources.values()}):
+        raise ValueError("duplicate source keys")
+    if len(destinations) != len({p.key for p in destinations.values()}):
+        raise ValueError("duplicate destination keys")
+    for surface in packages.values():
+        if surface.destination not in destinations:
+            raise ValueError(
+                f"package surface owner missing: {surface.destination}"
+            )
+    for key, profile in sources.items():
+        if key != profile.key:
+            raise ValueError(f"source map key mismatch: {key}")
+        if profile.status == "supported" and not profile.format_ids:
+            raise ValueError(f"supported source missing format_ids: {key}")
+        if profile.status == "supported" and not profile.adapter_module.startswith(
+            "portable_resume.adapters."
+        ):
+            raise ValueError(f"bad adapter_module: {key}")
+    for key, profile in destinations.items():
+        if key != profile.key:
+            raise ValueError(f"destination map key mismatch: {key}")
+
+
+def validate_registries() -> None:
+    _validate_maps(SOURCE_PROFILES, DESTINATION_PROFILES, PACKAGE_SURFACES)

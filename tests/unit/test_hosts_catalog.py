@@ -18,12 +18,13 @@ from portable_resume.install.catalog import (
     resolve_skill_root,
 )
 from portable_resume.install.cli import run as install_cli_run
+from portable_resume.registry import enabled_destination_keys
 
 
 class HostsCatalogTests(unittest.TestCase):
     def test_all_hosts_have_complete_metadata(self) -> None:
         self.assertEqual(set(HOST_PROFILES), set(HOST_KEYS))
-        self.assertEqual(len(HOST_KEYS), 8)
+        self.assertEqual(len(HOST_KEYS), len(enabled_destination_keys()))
         for key, profile in HOST_PROFILES.items():
             self.assertEqual(profile.key, key)
             self.assertTrue(profile.project_rel)

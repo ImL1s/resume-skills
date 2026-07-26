@@ -47,11 +47,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _load_adapter(source: str) -> SourceAdapter:
+    from .registry import SOURCE_PROFILES
+
+    profile = SOURCE_PROFILES.get(source)
+    if profile is None:
+        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=source)
     try:
-        module = importlib.import_module(f"portable_resume.adapters.{source}")
+        module = importlib.import_module(profile.adapter_module)
     except ModuleNotFoundError as error:
-        expected = f"portable_resume.adapters.{source}"
-        if error.name != expected:
+        if error.name != profile.adapter_module:
             raise
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=source) from error
     adapter: Any = getattr(module, "ADAPTER", None)
@@ -139,16 +143,29 @@ def _table(summaries: Sequence[SessionSummary]) -> str:
 def self_check(*, stdout: Any = sys.stdout) -> int:
     """Deterministic packaging/runtime health report used by release gates."""
     from .install.transaction import matrix_report
+    from .registry import (
+        enabled_destination_keys,
+        enabled_source_keys,
+        matrix_dimensions,
+        validate_registries,
+    )
 
     report: dict[str, Any] = {
         "schema_version": "portable-resume/self-check-v1",
         "ok": True,
-        "sources": sorted(SOURCE_KEYS),
+        "sources": sorted(enabled_source_keys()),
+        "destinations": sorted(enabled_destination_keys()),
+        "matrix_dimensions": matrix_dimensions(),
         "actions": ["list", "show"],
         "adapters": {},
         "matrix": None,
         "warnings": [],
     }
+    try:
+        validate_registries()
+    except Exception as error:  # noqa: BLE001 - self-check must stay content-free
+        report["ok"] = False
+        report["warnings"].append(f"W_REGISTRY_INVALID:{type(error).__name__}")
     for source in sorted(SOURCE_KEYS):
         try:
             adapter = _load_adapter(source)

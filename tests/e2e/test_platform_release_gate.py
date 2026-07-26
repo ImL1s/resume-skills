@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from portable_resume.diagnostics import SOURCE_KEYS
-from portable_resume.install.catalog import HOST_KEYS
+from portable_resume.registry import matrix_dimensions
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -49,7 +49,7 @@ class PlatformReleaseGateTests(unittest.TestCase):
         self.assertEqual(self_check.returncode, 0, self_check.stderr)
         report = json.loads(self_check.stdout)
         self.assertTrue(report["ok"])
-        expected_cells = len(HOST_KEYS) * len(SOURCE_KEYS)
+        expected_cells = matrix_dimensions()["cells"]
         self.assertEqual(report["matrix"]["cell_count"], expected_cells)
 
         matrix = subprocess.run(

@@ -27,6 +27,7 @@ sys.path.insert(0, str(SRC))
 
 from portable_resume.diagnostics import SOURCE_KEYS  # noqa: E402
 from portable_resume.install.catalog import HOST_KEYS  # noqa: E402
+from portable_resume.registry import matrix_dimensions  # noqa: E402
 
 HOSTS = tuple(sorted(HOST_KEYS))
 SOURCES = tuple(sorted(SOURCE_KEYS))
@@ -362,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
 
     passed = sum(1 for c in cells if c["result"] == "pass")
     failed = [c for c in cells if c["result"] != "pass"]
-    expected = len(HOSTS) * len(SOURCES)
+    expected = matrix_dimensions()["cells"]
     report = {
         "schema_version": "portable-resume/installed-runner-smoke-v1",
         "cell_count": len(cells),

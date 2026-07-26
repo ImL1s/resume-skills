@@ -37,6 +37,14 @@ class StableRead:
 
 
 @dataclass(frozen=True, slots=True)
+class ScannedLine:
+    ordinal: int
+    text: str
+    byte_offset: int
+    terminated: bool
+
+
+@dataclass(frozen=True, slots=True)
 class StableWindows:
     """Repeatedly verified metadata windows from one no-follow descriptor."""
 
@@ -255,6 +263,215 @@ def stable_read_bytes(
                 # Bytes only: adapters charge consume_records() per logical row/line.
                 budget.consume_bytes(len(data))
             return StableRead(data=data, fingerprint=observed, attempts=attempt)
+    family = (os.path.basename(safe),)
+    raise DiagnosticError.source_busy(attempts=attempts, family=family)
+
+
+def _collect_scanned_lines(
+    descriptor: int,
+    *,
+    max_line_bytes: int,
+    budget: ReadBudget | None,
+    charge_transcript: bool,
+) -> tuple[list[ScannedLine], int, int, str]:
+    """Stream lines from an open descriptor.
+
+    Newline-terminated records set ``terminated=True``. A final buffer without a
+    trailing newline is emitted with ``terminated=False`` when within bounds.
+    """
+
+    buffer = bytearray()
+    absolute_offset = 0
+    collected: list[ScannedLine] = []
+    pending_bytes = 0
+    pending_records = 0
+    chunk_size = 64 * 1024
+    digest = hashlib.sha256()
+
+    def check_byte_budget(amount: int) -> None:
+        if budget is None:
+            return
+        maximum = min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes)
+        if budget.bytes_read + pending_bytes + amount > maximum:
+            raise DiagnosticError.limit_exceeded()
+
+    def check_record_budget() -> None:
+        if budget is None:
+            return
+        if charge_transcript:
+            maximum = min(
+                budget.limits.transcript_records,
+                DEFAULT_BOUNDS.transcript_records,
+            )
+            current = budget.transcript_records_read
+        else:
+            maximum = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
+            current = budget.records
+        if current + pending_records + 1 > maximum:
+            raise DiagnosticError.limit_exceeded()
+
+    def reject_oversize_unterminated_line() -> None:
+        effective_len = len(buffer)
+        if effective_len and buffer[-1] == 0x0d:
+            effective_len -= 1
+        if effective_len > max_line_bytes:
+            raise DiagnosticError.limit_exceeded()
+
+    def drain_complete_lines() -> None:
+        nonlocal absolute_offset, pending_records
+        while True:
+            newline_index = buffer.find(b"\n")
+            if newline_index < 0:
+                reject_oversize_unterminated_line()
+                return
+            line_bytes = bytes(buffer[: newline_index + 1])
+            del buffer[: newline_index + 1]
+            # Exclude LF and optional CR from the content-length budget so CRLF
+            # and LF records with the same decoded text share the same ceiling.
+            payload = line_bytes[:-1]
+            if payload.endswith(b"\r"):
+                payload = payload[:-1]
+            if len(payload) > max_line_bytes:
+                raise DiagnosticError.limit_exceeded()
+            check_record_budget()
+            pending_records += 1
+            try:
+                text = payload.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise DiagnosticError("E_CORRUPT_RECORD") from error
+            collected.append(
+                ScannedLine(
+                    ordinal=len(collected),
+                    text=text,
+                    byte_offset=absolute_offset,
+                    terminated=True,
+                )
+            )
+            absolute_offset += len(line_bytes)
+
+    while True:
+        chunk = os.read(descriptor, chunk_size)
+        if not chunk:
+            break
+        check_byte_budget(len(chunk))
+        pending_bytes += len(chunk)
+        digest.update(chunk)
+        buffer.extend(chunk)
+        drain_complete_lines()
+
+    reject_oversize_unterminated_line()
+    # JSONL often omits a trailing newline; treat remaining buffer as a final line.
+    if buffer:
+        check_record_budget()
+        pending_records += 1
+        try:
+            text = bytes(buffer).decode("utf-8").removesuffix("\r")
+        except UnicodeDecodeError as error:
+            raise DiagnosticError("E_CORRUPT_RECORD") from error
+        collected.append(
+            ScannedLine(
+                ordinal=len(collected),
+                text=text,
+                byte_offset=absolute_offset,
+                terminated=False,
+            )
+        )
+    return collected, pending_bytes, pending_records, digest.hexdigest()
+
+
+def stable_scan_lines(
+    path: str | os.PathLike[str],
+    *,
+    root: str | os.PathLike[str],
+    budget: ReadBudget | None = None,
+    max_line_bytes: int | None = None,
+    charge_transcript: bool = False,
+    hook: AttemptHook | None = None,
+) -> Iterator[ScannedLine]:
+    """Yield UTF-8 lines under no-follow / containment / budget rules.
+
+    Uses the same root containment and symlink rejection as stable_read_bytes.
+    Reads stream in chunks. A final unterminated buffer (common JSONL without a
+    trailing newline) is emitted as one last line when within max_line_bytes.
+    Caller-lowered ``Bounds`` for record_bytes, snapshot_attempts, and
+    scanned_records membership are honored and clamped to DEFAULT_BOUNDS.
+    Yields from a per-attempt collected list until true streaming yield lands.
+    """
+
+    # Always bound memory: a missing caller budget still uses DEFAULT_BOUNDS.
+    effective_budget = budget if budget is not None else ReadBudget()
+    budget_line_cap = min(
+        effective_budget.limits.record_bytes,
+        DEFAULT_BOUNDS.record_bytes,
+    )
+    if max_line_bytes is None:
+        line_limit = budget_line_cap
+    else:
+        if max_line_bytes < 0:
+            raise DiagnosticError.invalid()
+        line_limit = min(max_line_bytes, budget_line_cap)
+    max_file_bytes = min(
+        DEFAULT_BOUNDS.source_read_bytes,
+        effective_budget.limits.source_read_bytes,
+    )
+    safe, base = require_regular_no_symlinks(path, root)
+    parent = os.path.dirname(safe)
+    attempts = min(
+        effective_budget.limits.snapshot_attempts,
+        DEFAULT_BOUNDS.snapshot_attempts,
+    )
+    if attempts < 1:
+        raise DiagnosticError.invalid()
+    membership_limit = min(
+        effective_budget.limits.scanned_records,
+        DEFAULT_BOUNDS.scanned_records,
+    )
+    for attempt in range(1, attempts + 1):
+        before_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+        descriptor = _open_no_follow(safe, base)
+        try:
+            before_stat = os.fstat(descriptor)
+            if before_stat.st_size > max_file_bytes:
+                raise DiagnosticError.limit_exceeded()
+            if hook:
+                hook("before-read", attempt, safe)
+            collected, pending_bytes, pending_records, content_hash = _collect_scanned_lines(
+                descriptor,
+                max_line_bytes=line_limit,
+                budget=effective_budget,
+                charge_transcript=charge_transcript,
+            )
+            observed = _fingerprint(before_stat, content_hash)
+            if hook:
+                hook("after-read", attempt, safe)
+            verified_hash, verified_size = _hash_descriptor(
+                descriptor,
+                maximum=max_file_bytes,
+            )
+            verified = _fingerprint(os.fstat(descriptor), verified_hash)
+            if hook:
+                hook("after-verify-read", attempt, safe)
+            middle_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+            final_hash, final_size = _hash_descriptor(
+                descriptor,
+                maximum=max_file_bytes,
+            )
+            final = _fingerprint(os.fstat(descriptor), final_hash)
+        finally:
+            os.close(descriptor)
+        after_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+        if (
+            observed == verified == final
+            and before_membership == middle_membership == after_membership
+            and pending_bytes == verified_size == final_size == before_stat.st_size
+        ):
+            effective_budget.consume_bytes(pending_bytes)
+            if charge_transcript:
+                effective_budget.consume_transcript_records(pending_records)
+            else:
+                effective_budget.consume_records(pending_records)
+            yield from collected
+            return
     family = (os.path.basename(safe),)
     raise DiagnosticError.source_busy(attempts=attempts, family=family)
 

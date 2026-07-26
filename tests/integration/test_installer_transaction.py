@@ -58,8 +58,10 @@ class InstallerTransactionTests(unittest.TestCase):
                 "state": "committing",
                 "generation": 99,
                 "claim": "synthetic",
-                "stage_dir": os.path.join(self.root, ".portable-resume", "stage-missing"),
-                "backup_root": os.path.join(self.root, ".portable-resume", "backups", "x"),
+                "stage_dir": os.path.join(self.root, ".portable-resume", "portable-resume-stage-missing"),
+                "backup_root": os.path.join(
+                    self.root, ".portable-resume", "backups", "20260726T000000Z-test"
+                ),
                 "paths": {},
             },
         )
@@ -228,14 +230,14 @@ class InstallerTransactionTests(unittest.TestCase):
         original_replace = transaction_module.os.replace
         staged_replaces = 0
 
-        def fail_third_staged_replace(src, dst):
+        def fail_third_staged_replace(src, dst, **kwargs):
             nonlocal staged_replaces
-            source = os.fspath(src)
-            if "portable-resume-stage-" in source and f"{os.sep}.rollback{os.sep}" not in source:
+            # Descriptor-relative payload commits pass both src_dir_fd and dst_dir_fd.
+            if kwargs.get("src_dir_fd") is not None and kwargs.get("dst_dir_fd") is not None:
                 staged_replaces += 1
                 if staged_replaces == 3:
                     raise OSError("injected staged replace failure")
-            return original_replace(src, dst)
+            return original_replace(src, dst, **kwargs)
 
         with mock.patch.object(transaction_module.os, "replace", side_effect=fail_third_staged_replace):
             with self.assertRaises(OSError):
@@ -261,14 +263,13 @@ class InstallerTransactionTests(unittest.TestCase):
         original_replace = transaction_module.os.replace
         staged_replaces = 0
 
-        def interrupt_second_staged_replace(src, dst):
+        def interrupt_second_staged_replace(src, dst, **kwargs):
             nonlocal staged_replaces
-            source = os.fspath(src)
-            if "portable-resume-stage-" in source and f"{os.sep}.rollback{os.sep}" not in source:
+            if kwargs.get("src_dir_fd") is not None and kwargs.get("dst_dir_fd") is not None:
                 staged_replaces += 1
                 if staged_replaces == 2:
                     raise OSError("simulated process interruption")
-            return original_replace(src, dst)
+            return original_replace(src, dst, **kwargs)
 
         with (
             mock.patch.object(transaction_module.os, "replace", side_effect=interrupt_second_staged_replace),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -30,6 +31,19 @@ MANIFEST_NAME = "manifest.json"
 LOCK_NAME = "install.lock"
 JOURNAL_NAME = "journal.json"
 BACKUP_DIR = "backups"
+STAGE_PREFIX = "portable-resume-stage-"
+_BACKUP_NAME_PREFIX_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-")
+# Names under SUPPORT_DIR that journals must never be allowed to delete.
+_PROTECTED_SUPPORT_NAMES = frozenset(
+    {
+        "runtime",
+        "resources",
+        BACKUP_DIR,
+        MANIFEST_NAME,
+        LOCK_NAME,
+        JOURNAL_NAME,
+    }
+)
 
 
 @dataclass(slots=True)
@@ -257,6 +271,318 @@ def _dest_under_root(root: str, rel: str) -> str:
     return dest
 
 
+def _supports_descriptor_relative_commit() -> bool:
+    return os.name != "nt" and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
+
+
+def _open_directory_from_slash(path: str, *, allow_leaf_symlink: bool = False) -> int:
+    """Open a directory by walking each component from ``/`` with ``O_NOFOLLOW``.
+
+    Never pathname-open a multi-component resolved path in one shot: a writable
+    ancestor swapped for a symlink after ``realpath`` would otherwise be followed
+    through intermediate components.
+
+    When a symlink is encountered, the replacement directory is opened *before*
+    releasing any previously pinned ancestor descriptors, so there is no gap
+    where the original path can be retargeted and then re-accepted.
+    """
+    import stat as stat_mod
+
+    abs_path = os.path.abspath(os.path.expanduser(path))
+    parts = [part for part in abs_path.split(os.sep) if part]
+    if not parts:
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        current_fd = os.open("/", flags)
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+
+    opened: list[int] = [current_fd]
+    prefix = "/"
+    try:
+        index = 0
+        while index < len(parts):
+            part = parts[index]
+            is_leaf = index == len(parts) - 1
+            parent_fd = current_fd
+            try:
+                st = os.lstat(part, dir_fd=parent_fd)
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+
+            if stat_mod.S_ISLNK(st.st_mode):
+                if is_leaf and not allow_leaf_symlink:
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                try:
+                    target = os.readlink(part, dir_fd=parent_fd)
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+
+                # Open the replacement while ancestors remain pinned (no close-then-
+                # reopen gap). Then continue the component walk so a later leaf
+                # symlink (skill-root) still gets allow_leaf_symlink handling.
+                if not os.path.isabs(target):
+                    rel_parts = [p for p in target.replace("\\", "/").split("/") if p and p != "."]
+                    probe_fd = parent_fd
+                    probe_opened: list[int] = []
+                    try:
+                        for rel_part in rel_parts:
+                            if rel_part == os.pardir:
+                                raise DiagnosticError("E_INSTALL_CONFLICT")
+                            try:
+                                next_probe = os.open(rel_part, flags, dir_fd=probe_fd)
+                            except OSError as error:
+                                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                            if probe_fd is not parent_fd:
+                                probe_opened.append(probe_fd)
+                            probe_fd = next_probe
+                        replacement_fd = probe_fd
+                        for fd in probe_opened:
+                            os.close(fd)
+                        probe_opened.clear()
+                    except Exception:
+                        for fd in probe_opened:
+                            os.close(fd)
+                        if probe_fd is not parent_fd:
+                            os.close(probe_fd)
+                        raise
+                    new_prefix = os.path.abspath(os.path.join(prefix, target))
+                else:
+                    if not is_leaf:
+                        try:
+                            if os.path.commonpath((os.path.abspath(target), prefix)) != prefix:
+                                raise DiagnosticError("E_INSTALL_CONFLICT")
+                        except ValueError as error:
+                            raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                    replacement_fd = _open_directory_from_slash(
+                        target,
+                        allow_leaf_symlink=False,
+                    )
+                    new_prefix = os.path.abspath(target)
+
+                for fd in opened:
+                    os.close(fd)
+                opened = [replacement_fd]
+                current_fd = replacement_fd
+                prefix = new_prefix
+                if is_leaf:
+                    opened.clear()
+                    return replacement_fd
+                index += 1
+                continue
+
+            try:
+                next_fd = os.open(part, flags, dir_fd=parent_fd)
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            opened.append(next_fd)
+            current_fd = next_fd
+            prefix = os.path.join(prefix, part)
+            index += 1
+
+        for fd in opened[:-1]:
+            os.close(fd)
+        opened.clear()
+        return current_fd
+    except DiagnosticError:
+        for fd in opened:
+            os.close(fd)
+        raise
+    except OSError as error:
+        for fd in opened:
+            os.close(fd)
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+
+
+def _open_skill_root_descriptor(root: str) -> int:
+    """Open the skill root for descriptor-relative commits.
+
+    The skill-root path itself may be a symlink (common dotfiles layouts such as
+    ``~/.claude/skills`` → a shared directory). Each ancestor component is
+    pinned from ``/`` with ``O_NOFOLLOW``; only the final component may be a
+    symlink, resolved once via ``readlink`` and reopened component-wise.
+    Intermediate payload parents still use no-follow opens under this root fd.
+    """
+    if not _supports_descriptor_relative_commit():
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    return _open_directory_from_slash(root, allow_leaf_symlink=True)
+
+
+def _open_directory_under_root(root_fd: int, rel_dir: str) -> int:
+    """Open an existing directory under root_fd without following symlinks.
+
+    Intermediate directory descriptors are closed on both success and failure so
+    multi-component paths do not leak fds across payload commits.
+    """
+    parts = [part for part in rel_dir.split(os.sep) if part and part != "."]
+    if not parts:
+        return root_fd
+    current_fd = root_fd
+    opened: list[int] = []
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        for part in parts:
+            try:
+                next_fd = os.open(part, flags, dir_fd=current_fd)
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            if current_fd is not root_fd:
+                opened.append(current_fd)
+            current_fd = next_fd
+        for fd in opened:
+            os.close(fd)
+        opened.clear()
+        return current_fd
+    except Exception:
+        for fd in opened:
+            os.close(fd)
+        if current_fd is not root_fd:
+            os.close(current_fd)
+        raise
+
+
+def _mkdir_directory_under_root(root_fd: int, rel_dir: str) -> None:
+    """Create rel_dir under root_fd when missing; never follow symlinks."""
+    parts = [part for part in rel_dir.split(os.sep) if part and part != "."]
+    if not parts:
+        return
+    current_fd = root_fd
+    opened: list[int] = []
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        for part in parts:
+            try:
+                next_fd = os.open(part, flags, dir_fd=current_fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(part, mode=0o755, dir_fd=current_fd)
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                try:
+                    next_fd = os.open(part, flags, dir_fd=current_fd)
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            if current_fd is not root_fd:
+                opened.append(current_fd)
+            current_fd = next_fd
+    finally:
+        for fd in opened:
+            os.close(fd)
+        if current_fd is not root_fd:
+            os.close(current_fd)
+
+
+def _validate_staged_regular_file(
+    *,
+    parent_fd: int,
+    basename: str,
+    expected_sha256: str | None = None,
+) -> None:
+    """Reject symlink/dir/fifo staged entries before commit replace."""
+    import hashlib
+    import stat as stat_mod
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(basename, flags, dir_fd=parent_fd)
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    try:
+        if not stat_mod.S_ISREG(os.fstat(fd).st_mode):
+            raise DiagnosticError("E_INSTALL_CONFLICT")
+        if expected_sha256 is not None:
+            digest = hashlib.sha256()
+            while True:
+                chunk = os.read(fd, 1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+            if digest.hexdigest() != expected_sha256:
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+    finally:
+        os.close(fd)
+
+
+def _commit_payload_file(
+    *,
+    root: str,
+    root_fd: int | None,
+    rel: str,
+    staged_src: str,
+    stage_dir: str | None = None,
+    expected_sha256: str | None = None,
+) -> None:
+    """Atomically commit one staged payload under root with TOCTOU-resistant checks."""
+    safe = _safe_rel_path(rel)
+    basename = os.path.basename(safe)
+    parent_rel = os.path.dirname(safe)
+    if not basename:
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+
+    _dest_under_root(root, safe)
+
+    if not _supports_descriptor_relative_commit():
+        # Platforms without dir_fd / O_NOFOLLOW replace: fail closed (Windows not a V1 gate).
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    if root_fd is None or not stage_dir:
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+
+    # Stage identity must match the journal-owned stage tree before any replace.
+    authorized_stage = _authorize_support_cleanup(root, stage_dir, role="stage")
+    if authorized_stage is None:
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    stage_name = os.path.basename(authorized_stage)
+    staged_abs = os.path.abspath(staged_src)
+    try:
+        staged_rel = os.path.relpath(staged_abs, authorized_stage)
+    except ValueError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    if staged_rel.startswith("..") or os.path.isabs(staged_rel):
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    src_basename = os.path.basename(staged_rel)
+    src_parent_rel = os.path.dirname(staged_rel)
+
+    _mkdir_directory_under_root(root_fd, parent_rel)
+    support_fd = _open_directory_under_root(root_fd, SUPPORT_DIR)
+    stage_fd: int | None = None
+    src_parent_fd: int | None = None
+    dst_parent_fd: int | None = None
+    try:
+        stage_fd = _open_directory_under_root(support_fd, stage_name)
+        if src_parent_rel in ("", "."):
+            src_parent_fd = stage_fd
+        else:
+            src_parent_fd = _open_directory_under_root(stage_fd, src_parent_rel)
+        dst_parent_fd = _open_directory_under_root(root_fd, parent_rel)
+        _validate_staged_regular_file(
+            parent_fd=src_parent_fd,
+            basename=src_basename,
+            expected_sha256=expected_sha256,
+        )
+        os.replace(
+            src_basename,
+            basename,
+            src_dir_fd=src_parent_fd,
+            dst_dir_fd=dst_parent_fd,
+        )
+    finally:
+        if dst_parent_fd is not None and dst_parent_fd is not root_fd:
+            os.close(dst_parent_fd)
+        if (
+            src_parent_fd is not None
+            and src_parent_fd not in (stage_fd, support_fd, root_fd)
+        ):
+            os.close(src_parent_fd)
+        if stage_fd is not None and stage_fd not in (support_fd, root_fd):
+            os.close(stage_fd)
+        if support_fd is not root_fd:
+            os.close(support_fd)
+
+
 def _classify_dest(
     *,
     root: str,
@@ -381,29 +707,41 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
             journal["state"] = "committing"
             _write_journal(root, journal)
             # commit files
-            for rel in sorted(plan.files):
-                safe = _safe_rel_path(rel)
-                # re-check each path immediately before replace
-                kind = _classify_dest(
-                    root=root,
-                    rel=safe,
-                    data=plan.files[rel],
-                    existing=existing,
-                    claim=plan.claim,
-                    force_with_backup=force_with_backup or safe in planned_backups or safe in backups,
-                )
-                if kind == "backup" and safe not in backups and not force_with_backup and safe not in planned_backups:
-                    raise DiagnosticError("E_INSTALL_CONFLICT")
-                if kind == "retain":
-                    journal["paths"][safe]["state"] = "retained"
+            root_fd: int | None = None
+            if _supports_descriptor_relative_commit():
+                root_fd = _open_skill_root_descriptor(root)
+            try:
+                for rel in sorted(plan.files):
+                    safe = _safe_rel_path(rel)
+                    # re-check each path immediately before replace
+                    kind = _classify_dest(
+                        root=root,
+                        rel=safe,
+                        data=plan.files[rel],
+                        existing=existing,
+                        claim=plan.claim,
+                        force_with_backup=force_with_backup or safe in planned_backups or safe in backups,
+                    )
+                    if kind == "backup" and safe not in backups and not force_with_backup and safe not in planned_backups:
+                        raise DiagnosticError("E_INSTALL_CONFLICT")
+                    if kind == "retain":
+                        journal["paths"][safe]["state"] = "retained"
+                        _write_journal(root, journal)
+                        continue
+                    src = os.path.join(stage_dir, safe)
+                    _commit_payload_file(
+                        root=root,
+                        root_fd=root_fd,
+                        rel=safe,
+                        staged_src=src,
+                        stage_dir=stage_dir,
+                        expected_sha256=sha256_bytes(plan.files[rel]),
+                    )
+                    journal["paths"][safe]["state"] = "committed"
                     _write_journal(root, journal)
-                    continue
-                src = os.path.join(stage_dir, safe)
-                dest = _dest_under_root(root, safe)
-                os.makedirs(os.path.dirname(dest), exist_ok=True)
-                os.replace(src, dest)
-                journal["paths"][safe]["state"] = "committed"
-                _write_journal(root, journal)
+            finally:
+                if root_fd is not None:
+                    os.close(root_fd)
             # Remove owned orphans (in old manifest, not in new plan, sole claim released).
             # Journal orphan targets *before* delete so crash recovery can reason about them.
             orphan_removed: list[str] = []
@@ -607,11 +945,7 @@ def restore_install_checkpoint(
         os.remove(dest)
         removed.append(rel)
     if backup_root:
-        if not _path_within_support(checkpoint.root, backup_root):
-            raise DiagnosticError("E_RECOVERY_REQUIRED")
-        if os.path.islink(backup_root):
-            raise DiagnosticError("E_RECOVERY_REQUIRED")
-        shutil.rmtree(backup_root, ignore_errors=False)
+        _delete_authorized_support_subtree(checkpoint.root, backup_root, role="backup")
     _cleanup_empty_dirs(checkpoint.root, removed_paths=removed)
 
 
@@ -643,6 +977,224 @@ def _path_within_support(root: str, path: str) -> bool:
         return os.path.commonpath((candidate, support)) == support and candidate != support
     except ValueError:
         return False
+
+
+def _authorize_support_cleanup(root: str, path: str, *, role: str) -> str | None:
+    """Authorize journal-driven deletion of stage/backup trees only.
+
+    ``role`` is ``\"stage\"`` (direct child ``portable-resume-stage-*`` under
+    ``.portable-resume``) or ``\"backup\"`` (direct child under
+    ``.portable-resume/backups``). Protected control-plane names such as
+    ``runtime``, ``resources``, and ``backups`` itself are never authorized.
+
+    Returns the absolute path to delete, or ``None`` when the authorized path is
+    already absent (idempotent cleanup).
+    """
+    import stat as stat_mod
+
+    if role not in {"stage", "backup"}:
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+    if not isinstance(path, str) or not path:
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+
+    support_path = os.path.join(root, SUPPORT_DIR)
+    try:
+        support_stat = os.lstat(support_path)
+    except OSError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+    if stat_mod.S_ISLNK(support_stat.st_mode) or not stat_mod.S_ISDIR(support_stat.st_mode):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+
+    support_base = os.path.abspath(support_path)
+    candidate = os.path.abspath(path)
+    try:
+        if os.path.commonpath((candidate, support_base)) != support_base or candidate == support_base:
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+    except ValueError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+
+    rel = os.path.relpath(candidate, support_base)
+    parts = [part for part in rel.split(os.sep) if part and part != "."]
+    if any(part in {os.pardir, "."} for part in parts):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+
+    if role == "stage":
+        if len(parts) != 1:
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+        name = parts[0]
+        if name in _PROTECTED_SUPPORT_NAMES or not name.startswith(STAGE_PREFIX):
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+    else:
+        if len(parts) != 2 or parts[0] != BACKUP_DIR:
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+        backup_name = parts[1]
+        if (
+            not backup_name
+            or backup_name in {os.pardir, "."}
+            or backup_name in _PROTECTED_SUPPORT_NAMES
+            or not _BACKUP_NAME_PREFIX_RE.match(backup_name)
+        ):
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+
+    if not os.path.lexists(path):
+        return None
+
+    try:
+        path_stat = os.lstat(path)
+    except OSError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+    if stat_mod.S_ISLNK(path_stat.st_mode) or not stat_mod.S_ISDIR(path_stat.st_mode):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+    return candidate
+
+
+def _delete_authorized_support_subtree(root: str, path: str, *, role: str) -> None:
+    """Authorize then delete a stage/backup tree; failures stay fail-closed."""
+    authorized = _authorize_support_cleanup(root, path, role=role)
+    if authorized is None:
+        return
+    _safe_rmtree_under_support(root, authorized)
+
+
+def _open_parent_and_target_under_fd(base_fd: int, rel: str) -> tuple[int, int, str]:
+    """Open parent dir and target directory under base_fd without following symlinks."""
+    parts = [part for part in rel.split(os.sep) if part and part != "."]
+    if not parts:
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if len(parts) == 1:
+        target_name = parts[0]
+        try:
+            target_fd = os.open(target_name, flags, dir_fd=base_fd)
+        except OSError as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        return base_fd, target_fd, target_name
+    current_fd = base_fd
+    opened: list[int] = []
+    try:
+        for part in parts[:-1]:
+            try:
+                next_fd = os.open(part, flags, dir_fd=current_fd)
+            except OSError as error:
+                raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+            if current_fd is not base_fd:
+                opened.append(current_fd)
+            current_fd = next_fd
+        parent_fd = current_fd
+        target_name = parts[-1]
+        try:
+            target_fd = os.open(target_name, flags, dir_fd=parent_fd)
+        except OSError as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        for fd in opened:
+            os.close(fd)
+        opened.clear()
+        return parent_fd, target_fd, target_name
+    except Exception:
+        for fd in opened:
+            os.close(fd)
+        if current_fd is not base_fd:
+            os.close(current_fd)
+        raise
+
+
+def _rmtree_nofollow_dirfd(dir_fd: int) -> None:
+    """Delete directory contents at dir_fd without following symlinks."""
+    import stat as stat_mod
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    for name in os.listdir(dir_fd):
+        try:
+            st = os.lstat(name, dir_fd=dir_fd)
+        except OSError as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        if stat_mod.S_ISDIR(st.st_mode) and not stat_mod.S_ISLNK(st.st_mode):
+            sub_fd = os.open(name, flags, dir_fd=dir_fd)
+            try:
+                _rmtree_nofollow_dirfd(sub_fd)
+            finally:
+                os.close(sub_fd)
+            try:
+                os.rmdir(name, dir_fd=dir_fd)
+            except OSError as error:
+                raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        else:
+            try:
+                os.unlink(name, dir_fd=dir_fd)
+            except OSError as error:
+                raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+
+
+def _safe_rmtree_under_support(root: str, path: str) -> None:
+    """Remove a support subtree using pinned dirfds (TOCTOU-resistant)."""
+    import stat as stat_mod
+
+    if not isinstance(path, str):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+    if not _supports_descriptor_relative_commit():
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+
+    try:
+        st = os.lstat(path)
+    except OSError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+    if stat_mod.S_ISLNK(st.st_mode):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+    if not stat_mod.S_ISDIR(st.st_mode):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+
+    support_base = os.path.abspath(os.path.join(root, SUPPORT_DIR))
+    candidate = os.path.abspath(path)
+    try:
+        if os.path.commonpath((candidate, support_base)) != support_base or candidate == support_base:
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+    except ValueError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+
+    rel = os.path.relpath(candidate, support_base)
+    if rel == "." or rel.startswith(".."):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+
+    try:
+        root_fd = _open_skill_root_descriptor(root)
+    except DiagnosticError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+    support_fd: int | None = None
+    parent_fd: int | None = None
+    target_fd: int | None = None
+    try:
+        try:
+            support_fd = _open_directory_under_root(root_fd, SUPPORT_DIR)
+        except DiagnosticError as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        parent_fd, target_fd, target_name = _open_parent_and_target_under_fd(support_fd, rel)
+        st = os.fstat(target_fd)
+        if not stat_mod.S_ISDIR(st.st_mode):
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+        _rmtree_nofollow_dirfd(target_fd)
+        os.close(target_fd)
+        target_fd = None
+        os.rmdir(target_name, dir_fd=parent_fd)
+    except DiagnosticError:
+        raise
+    except OSError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+    finally:
+        if target_fd is not None:
+            os.close(target_fd)
+        if parent_fd is not None and parent_fd not in (root_fd, support_fd):
+            os.close(parent_fd)
+        if support_fd is not None and support_fd != root_fd:
+            os.close(support_fd)
+        os.close(root_fd)
+
+
+def _try_safe_rmtree_under_support(root: str, path: str) -> None:
+    """Best-effort support cleanup; swallow containment failures."""
+    try:
+        _safe_rmtree_under_support(root, path)
+    except (DiagnosticError, OSError):
+        pass
 
 
 def _rollback_paths(root: str, journal: dict[str, Any]) -> tuple[int, bool]:
@@ -704,11 +1256,17 @@ def _attempt_rollback(root: str, journal: dict[str, Any]) -> None:
     _restored, complete = _rollback_paths(root, journal)
     if complete:
         stage_dir = journal.get("stage_dir")
-        if stage_dir and _path_within_support(root, stage_dir):
-            shutil.rmtree(stage_dir, ignore_errors=True)
+        if stage_dir:
+            try:
+                _delete_authorized_support_subtree(root, stage_dir, role="stage")
+            except DiagnosticError:
+                pass
         backup_root = journal.get("backup_root")
-        if backup_root and _path_within_support(root, backup_root) and not os.path.islink(backup_root):
-            shutil.rmtree(backup_root, ignore_errors=True)
+        if backup_root:
+            try:
+                _delete_authorized_support_subtree(root, backup_root, role="backup")
+            except DiagnosticError:
+                pass
         try:
             os.remove(journal_path(root))
         except OSError:
@@ -720,11 +1278,20 @@ def recover_root(root: str) -> dict[str, Any]:
     if not os.path.isfile(path):
         return {"ok": True, "recovered": False}
     with RootLock(root):
-        journal = json.loads(Path(path).read_text(encoding="utf-8"))
+        try:
+            journal = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        if not isinstance(journal, dict):
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
         if journal.get("state") == "complete":
             stage_dir = journal.get("stage_dir")
             if stage_dir:
-                shutil.rmtree(stage_dir, ignore_errors=True)
+                # Explicit recover must fail closed: do not clear the journal if
+                # authorized cleanup cannot complete.
+                _delete_authorized_support_subtree(root, stage_dir, role="stage")
+            # Force-with-backup trees are retained after a successful install for
+            # the caller; complete-journal recovery must not destroy them.
             os.remove(path)
             return {"ok": True, "recovered": True, "action": "cleared_complete_journal"}
         # incomplete: restore only transaction snapshots; keep journal on drift.
@@ -732,13 +1299,11 @@ def recover_root(root: str) -> dict[str, Any]:
         if not complete:
             raise DiagnosticError("E_RECOVERY_REQUIRED")
         stage_dir = journal.get("stage_dir")
-        if stage_dir and os.path.isdir(stage_dir):
-            # stage must stay under support dir
-            if _path_within_support(root, stage_dir):
-                shutil.rmtree(stage_dir, ignore_errors=True)
+        if stage_dir:
+            _delete_authorized_support_subtree(root, stage_dir, role="stage")
         backup_root = journal.get("backup_root")
-        if backup_root and _path_within_support(root, backup_root) and not os.path.islink(backup_root):
-            shutil.rmtree(backup_root, ignore_errors=True)
+        if backup_root:
+            _delete_authorized_support_subtree(root, backup_root, role="backup")
         os.remove(path)
         return {"ok": True, "recovered": True, "action": "restored_from_journal", "restored_paths": restored}
 
@@ -892,7 +1457,7 @@ def _cleanup_empty_dirs(root: str, *, removed_paths: list[str] | None = None) ->
 
 def matrix_report() -> dict[str, Any]:
     from .catalog import matrix_cells
-    from ..diagnostics import SOURCE_KEYS
+    from ..registry import matrix_dimensions
 
     cells = []
     for host, source in matrix_cells():
@@ -916,7 +1481,7 @@ def matrix_report() -> dict[str, Any]:
     return {
         "ok": all(cell["packaging_supported"] for cell in cells),
         "cell_count": len(cells),
-        "expected": len(HOST_PROFILES) * len(SOURCE_KEYS),
+        "expected": matrix_dimensions()["cells"],
         "packaging_cells_supported": sum(1 for cell in cells if cell["packaging_supported"]),
         "live_cells_supported": 0,
         "cells": cells,

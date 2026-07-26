@@ -1,6 +1,6 @@
 # Host support matrix
 
-Status date: **2026-07-24**. Installer truth lives in `src/portable_resume/install/catalog.py`; detailed commands are in [`install-hosts.md`](install-hosts.md).
+Status date: **2026-07-24**. Installer truth lives in `src/portable_resume/install/catalog.py` and `src/portable_resume/registry.py`; matrix dimensions are **derived from registries** (currently **8×8=64** cells). Detailed commands are in [`install-hosts.md`](install-hosts.md).
 
 ## Evidence levels
 
@@ -35,8 +35,8 @@ Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, and current/legacy Kim
 
 | Layer | Current status |
 |---|---|
-| Local packaging matrix | 64/64 pass |
-| Installed runner matrix | 64/64 pass |
+| Local packaging matrix | 64/64 pass (currently 8×8, derived from registries) |
+| Installed runner matrix | 64/64 pass (currently 8×8, derived from registries) |
 | Native local plugin/extension installs | 7/7 pass with exact 0.3.2 release assets |
 | Host-native headless Skill invocation | 8/8 pass |
 | Public marketplace installation | 6/6 compatible hosts pass |
@@ -47,5 +47,11 @@ Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, and current/legacy Kim
 | Latest archived remote CI/release | `v0.3.2` pass: main CI and 14-job release run archived |
 | Historical release proof | `v0.3.1`, `v0.3.0`, and `v0.2.3` archived separately |
 | Windows | fixture/docs only; not a stated V1 release gate |
+
+### Installer containment notes (Phase 0 / PR #49)
+
+- **POSIX descriptor-relative commits (#31):** payload files are committed with `dir_fd` / `O_NOFOLLOW` under the skill root. The skill-root path itself may be a symlink (common dotfiles layouts); it is resolved once with `realpath`, then the final directory is opened no-follow. Intermediate payload parents never follow symlinks.
+- **Windows residual:** without portable `openat`/`dir_fd` replace, mutating installs **fail closed** with `E_INSTALL_CONFLICT` rather than a pathname TOCTOU path. Windows is not a V1 release gate above.
+- **Recover (#20):** complete journals must not `rmtree` a `stage_dir` outside `.portable-resume/`.
 
 Official host references and alternate roots are linked from the machine-readable `hosts --json` output and [`install-hosts.md`](install-hosts.md).

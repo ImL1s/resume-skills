@@ -7,19 +7,9 @@ from typing import Any, Iterable
 
 from .. import __version__ as BUNDLE_VERSION
 from ..diagnostics import SOURCE_KEYS
+from ..registry import enabled_destination_keys, enabled_source_keys, rectangular_cells
 
-HOST_KEYS = frozenset(
-    {
-        "antigravity",
-        "claude",
-        "codex",
-        "cursor",
-        "grok",
-        "kimi",
-        "opencode",
-        "qwen",
-    }
-)
+HOST_KEYS = enabled_destination_keys()
 SOURCE_SKILL_NAMES = tuple(f"resume-{key}" for key in sorted(SOURCE_KEYS))
 MANIFEST_SCHEMA = "portable-resume/install-manifest-v1"
 
@@ -477,14 +467,11 @@ def skill_name_for(source: str) -> str:
 
 
 def matrix_cells(hosts: Iterable[str] | None = None) -> list[tuple[str, str]]:
-    selected = sorted(hosts or HOST_KEYS)
-    cells: list[tuple[str, str]] = []
-    for host in selected:
-        if host not in HOST_KEYS:
-            raise KeyError(host)
-        for source in sorted(SOURCE_KEYS):
-            cells.append((host, source))
-    return cells
+    destinations = frozenset(hosts) if hosts is not None else enabled_destination_keys()
+    unknown = destinations - enabled_destination_keys()
+    if unknown:
+        raise KeyError(sorted(unknown)[0])
+    return rectangular_cells(sources=enabled_source_keys(), destinations=destinations)
 
 
 def resolve_skill_root(

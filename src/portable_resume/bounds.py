@@ -49,7 +49,11 @@ class ReadBudget:
     _lock: Lock = field(default_factory=Lock, repr=False)
 
     def consume_records(self, amount: int = 1) -> None:
-        self._consume("records", amount, self.limits.scanned_records)
+        self._consume(
+            "records",
+            amount,
+            min(self.limits.scanned_records, DEFAULT_BOUNDS.scanned_records),
+        )
 
     def consume_transcript_records(self, amount: int = 1) -> None:
         self._consume(
@@ -60,10 +64,18 @@ class ReadBudget:
 
     def consume_bytes(self, amount: int) -> None:
         # Admitted source payload budget (distinct from verification I/O and output UTF-8).
-        self._consume("bytes_read", amount, self.limits.source_read_bytes)
+        self._consume(
+            "bytes_read",
+            amount,
+            min(self.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes),
+        )
 
     def consume_turns(self, amount: int = 1) -> None:
-        self._consume("turns", amount, self.limits.normalized_turns)
+        self._consume(
+            "turns",
+            amount,
+            min(self.limits.normalized_turns, DEFAULT_BOUNDS.normalized_turns),
+        )
 
     def _consume(self, field_name: str, amount: int, maximum: int) -> None:
         if not isinstance(amount, int) or amount < 0:

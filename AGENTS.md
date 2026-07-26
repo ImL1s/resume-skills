@@ -2,7 +2,7 @@
 
 ## Product
 
-Offline, local-only **context migration** across six coding-agent sources × six destination hosts.
+Offline, local-only **context migration** across enabled source adapters × enabled destination hosts (currently **8×8=64** cells, **derived from registries** — not a fixed product constant).
 
 - Emit **inert, untrusted handoff** for a **fresh** session.
 - **Not** live process / session restore.
@@ -22,7 +22,7 @@ Scripts under `scripts/` inject `src` onto `sys.path`. Unittest still needs `PYT
 
 ## Honesty gates
 
-- **Installed-runner smoke** (36 cells): `smoke_installed_matrix.py` — packaging + installed `run_reader` only.
+- **Installed-runner smoke** (registry-derived cell count; currently 64): `smoke_installed_matrix.py` — packaging + installed `run_reader` only.
 - **Host UI NL/picker activation**: stay `not-run` until rows exist in `docs/host-ui-smoke.md` NL table.
 - **Dual-OS release claim**: archive Actions URL + SHA in `docs/evidence-summary.md` / `docs/release-claim.md`.
 - **Cursor full bubble graph**: not claimed; multi-turn composerData is best-effort only.
