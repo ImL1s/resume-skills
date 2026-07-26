@@ -59,7 +59,7 @@ class StatusHonestyTests(unittest.TestCase):
     def test_status_reflects_pi_merge_honesty(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
-        self.assertRegex(text, r"\*\*349 pass locally\*\*")
+        self.assertRegex(text, r"\*\*352 pass locally\*\*")
         self.assertIn("d9152cd", text)
         self.assertIn("340", text)  # archived PR #51 merge count
         self.assertTrue(

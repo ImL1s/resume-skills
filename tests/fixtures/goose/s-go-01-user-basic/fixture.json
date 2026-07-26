@@ -1,0 +1,10 @@
+{
+  "case": "s-go-01-user-basic",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "goose-sessions-sqlite-v15",
+  "provenance_ref": "docs/source-formats.md#goose-goose-sessions-sqlite-v15",
+  "source": "goose",
+  "synthetic": true
+}
