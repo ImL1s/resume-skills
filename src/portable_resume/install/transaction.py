@@ -279,6 +279,10 @@ def _open_directory_from_slash(path: str, *, allow_leaf_symlink: bool = False) -
     Never pathname-open a multi-component resolved path in one shot: a writable
     ancestor swapped for a symlink after ``realpath`` would otherwise be followed
     through intermediate components.
+
+    When a symlink is encountered, the replacement directory is opened *before*
+    releasing any previously pinned ancestor descriptors, so there is no gap
+    where the original path can be retargeted and then re-accepted.
     """
     import stat as stat_mod
 
@@ -296,7 +300,9 @@ def _open_directory_from_slash(path: str, *, allow_leaf_symlink: bool = False) -
     opened: list[int] = [current_fd]
     prefix = "/"
     try:
-        for index, part in enumerate(parts):
+        index = 0
+        while index < len(parts):
+            part = parts[index]
             is_leaf = index == len(parts) - 1
             parent_fd = current_fd
             try:
@@ -305,36 +311,63 @@ def _open_directory_from_slash(path: str, *, allow_leaf_symlink: bool = False) -
                 raise DiagnosticError("E_INSTALL_CONFLICT") from error
 
             if stat_mod.S_ISLNK(st.st_mode):
-                if is_leaf and allow_leaf_symlink:
-                    try:
-                        target = os.readlink(part, dir_fd=parent_fd)
-                    except OSError as error:
-                        raise DiagnosticError("E_INSTALL_CONFLICT") from error
-                    for fd in opened:
-                        os.close(fd)
-                    opened.clear()
-                    if not os.path.isabs(target):
-                        target = os.path.normpath(os.path.join(prefix, target))
-                    return _open_directory_from_slash(target, allow_leaf_symlink=False)
-                if is_leaf:
+                if is_leaf and not allow_leaf_symlink:
                     raise DiagnosticError("E_INSTALL_CONFLICT")
                 try:
                     target = os.readlink(part, dir_fd=parent_fd)
                 except OSError as error:
                     raise DiagnosticError("E_INSTALL_CONFLICT") from error
+
+                # Open the replacement while ancestors remain pinned (no close-then-
+                # reopen gap). Then continue the component walk so a later leaf
+                # symlink (skill-root) still gets allow_leaf_symlink handling.
                 if not os.path.isabs(target):
-                    target = os.path.normpath(os.path.join(prefix, target))
-                try:
-                    if os.path.commonpath((target, prefix)) != prefix:
-                        raise DiagnosticError("E_INSTALL_CONFLICT")
-                except ValueError as error:
-                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
-                remaining = parts[index + 1 :]
-                combined = os.path.join(target, *remaining) if remaining else target
+                    rel_parts = [p for p in target.replace("\\", "/").split("/") if p and p != "."]
+                    probe_fd = parent_fd
+                    probe_opened: list[int] = []
+                    try:
+                        for rel_part in rel_parts:
+                            if rel_part == os.pardir:
+                                raise DiagnosticError("E_INSTALL_CONFLICT")
+                            try:
+                                next_probe = os.open(rel_part, flags, dir_fd=probe_fd)
+                            except OSError as error:
+                                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                            if probe_fd is not parent_fd:
+                                probe_opened.append(probe_fd)
+                            probe_fd = next_probe
+                        replacement_fd = probe_fd
+                        probe_opened.clear()
+                    except Exception:
+                        for fd in probe_opened:
+                            os.close(fd)
+                        if probe_fd is not parent_fd:
+                            os.close(probe_fd)
+                        raise
+                    new_prefix = os.path.abspath(os.path.join(prefix, target))
+                else:
+                    if not is_leaf:
+                        try:
+                            if os.path.commonpath((os.path.abspath(target), prefix)) != prefix:
+                                raise DiagnosticError("E_INSTALL_CONFLICT")
+                        except ValueError as error:
+                            raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                    replacement_fd = _open_directory_from_slash(
+                        target,
+                        allow_leaf_symlink=False,
+                    )
+                    new_prefix = os.path.abspath(target)
+
                 for fd in opened:
                     os.close(fd)
-                opened.clear()
-                return _open_directory_from_slash(combined, allow_leaf_symlink=allow_leaf_symlink)
+                opened = [replacement_fd]
+                current_fd = replacement_fd
+                prefix = new_prefix
+                if is_leaf:
+                    opened.clear()
+                    return replacement_fd
+                index += 1
+                continue
 
             try:
                 next_fd = os.open(part, flags, dir_fd=parent_fd)
@@ -343,6 +376,7 @@ def _open_directory_from_slash(path: str, *, allow_leaf_symlink: bool = False) -
             opened.append(next_fd)
             current_fd = next_fd
             prefix = os.path.join(prefix, part)
+            index += 1
 
         for fd in opened[:-1]:
             os.close(fd)
@@ -1209,9 +1243,8 @@ def recover_root(root: str) -> dict[str, Any]:
                 # Explicit recover must fail closed: do not clear the journal if
                 # authorized cleanup cannot complete.
                 _delete_authorized_support_subtree(root, stage_dir, role="stage")
-            backup_root = journal.get("backup_root")
-            if backup_root:
-                _delete_authorized_support_subtree(root, backup_root, role="backup")
+            # Force-with-backup trees are retained after a successful install for
+            # the caller; complete-journal recovery must not destroy them.
             os.remove(path)
             return {"ok": True, "recovered": True, "action": "cleared_complete_journal"}
         # incomplete: restore only transaction snapshots; keep journal on drift.

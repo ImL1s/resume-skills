@@ -121,6 +121,26 @@ class RecoverCompleteJournalContainmentTests(unittest.TestCase):
         self.assertFalse(stage.exists())
         self.assertFalse(os.path.isfile(journal_path(self.root)))
 
+    def test_complete_journal_preserves_force_backup_tree(self) -> None:
+        support = Path(self.root) / ".portable-resume"
+        stage = support / "portable-resume-stage-ok"
+        stage.mkdir(parents=True)
+        (stage / "tmp.txt").write_text("stage", encoding="utf-8")
+        backups = support / "backups"
+        backups.mkdir(parents=True)
+        backup = backups / "20260726T000000Z-force"
+        backup.mkdir()
+        marker = backup / "foreign.txt"
+        marker.write_text("retained force backup", encoding="utf-8")
+        self._write_complete(stage_dir=str(stage), backup_root=str(backup))
+
+        result = recover_root(self.root)
+        self.assertTrue(result.get("recovered"))
+        self.assertFalse(stage.exists())
+        self.assertTrue(marker.is_file())
+        self.assertEqual(marker.read_text(encoding="utf-8"), "retained force backup")
+        self.assertFalse(os.path.isfile(journal_path(self.root)))
+
     @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd recovery delete path")
     def test_safe_rmtree_rejects_symlinked_cleanup_target(self) -> None:
         """P1-B: symlinked stage/backup paths must not delete the link target."""
