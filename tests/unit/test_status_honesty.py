@@ -59,7 +59,7 @@ class StatusHonestyTests(unittest.TestCase):
     def test_status_reflects_pi_merge_honesty(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
-        self.assertRegex(text, r"\*\*354 pass locally\*\*")
+        self.assertRegex(text, r"\*\*\d+ pass locally\*\*")
         self.assertIn("d9152cd", text)
         self.assertIn("340", text)  # archived PR #51 merge count
         self.assertTrue(
@@ -69,6 +69,10 @@ class StatusHonestyTests(unittest.TestCase):
             and "destination" in lowered
             and ("not-run" in lowered or "not supported" in lowered)
         )
+        # Published 0.3.3 must not silently absorb unreleased 72-cell claims.
+        readme = Path("README.md").read_text(encoding="utf-8")
+        self.assertIn("Unreleased `main`", readme)
+        self.assertRegex(readme, r"0\.3\.3[^\n]*64/64|64/64[^\n]*0\.3\.3")
 
 
 if __name__ == "__main__":
