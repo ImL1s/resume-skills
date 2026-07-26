@@ -28,13 +28,13 @@ from portable_resume.install.transaction import (
     verify_root,
     _tree_snapshot,
 )
+from portable_resume.registry import matrix_dimensions
 
 
 class MatrixTests(unittest.TestCase):
     def test_all_cells_and_strict_frontmatter(self) -> None:
         cells = matrix_cells()
-        expected = len(HOST_KEYS) * len(SOURCE_KEYS)
-        self.assertEqual(expected, 64)
+        expected = matrix_dimensions()["cells"]
         self.assertEqual(len(cells), expected)
         self.assertEqual(len(set(cells)), expected)
         report = matrix_report()

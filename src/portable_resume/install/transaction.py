@@ -892,7 +892,7 @@ def _cleanup_empty_dirs(root: str, *, removed_paths: list[str] | None = None) ->
 
 def matrix_report() -> dict[str, Any]:
     from .catalog import matrix_cells
-    from ..diagnostics import SOURCE_KEYS
+    from ..registry import matrix_dimensions
 
     cells = []
     for host, source in matrix_cells():
@@ -916,7 +916,7 @@ def matrix_report() -> dict[str, Any]:
     return {
         "ok": all(cell["packaging_supported"] for cell in cells),
         "cell_count": len(cells),
-        "expected": len(HOST_PROFILES) * len(SOURCE_KEYS),
+        "expected": matrix_dimensions()["cells"],
         "packaging_cells_supported": sum(1 for cell in cells if cell["packaging_supported"]),
         "live_cells_supported": 0,
         "cells": cells,

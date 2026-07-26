@@ -32,6 +32,7 @@ _RUNTIME_MODULES = (
     "model.py",
     "paths.py",
     "reader.py",
+    "registry.py",
     "request.py",
     "resources/portable-resume-v1.schema.json",
     "sanitize.py",

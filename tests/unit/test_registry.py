@@ -157,5 +157,24 @@ class RegistryInvariantTests(unittest.TestCase):
         self.assertEqual(enabled, enabled_destination_keys())
 
 
+class DynamicMatrixTests(unittest.TestCase):
+    def test_matrix_cells_match_dimensions(self) -> None:
+        from portable_resume.install.catalog import matrix_cells
+
+        cells = matrix_cells()
+        dims = matrix_dimensions()
+        self.assertEqual(len(cells), dims["cells"])
+        self.assertEqual(len(cells), 64)  # still true for current eight
+
+    def test_destination_only_expands_rectangle(self) -> None:
+        from portable_resume.registry import rectangular_cells
+
+        cells = rectangular_cells(
+            sources=frozenset({"claude"}),
+            destinations=frozenset({"claude", "pi"}),
+        )
+        self.assertEqual(cells, [("claude", "claude"), ("pi", "claude")])
+
+
 if __name__ == "__main__":
     unittest.main()

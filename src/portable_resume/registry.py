@@ -144,6 +144,19 @@ def matrix_dimensions() -> dict[str, int]:
     }
 
 
+def rectangular_cells(
+    *,
+    sources: frozenset[str],
+    destinations: frozenset[str],
+) -> list[tuple[str, str]]:
+    """Return (destination, source) pairs in deterministic sort order."""
+    cells: list[tuple[str, str]] = []
+    for destination in sorted(destinations):
+        for source in sorted(sources):
+            cells.append((destination, source))
+    return cells
+
+
 def _validate_maps(
     sources: dict[str, SourceProfile],
     destinations: dict[str, DestinationProfile],
