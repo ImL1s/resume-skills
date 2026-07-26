@@ -339,6 +339,8 @@ def _open_directory_from_slash(path: str, *, allow_leaf_symlink: bool = False) -
                                 probe_opened.append(probe_fd)
                             probe_fd = next_probe
                         replacement_fd = probe_fd
+                        for fd in probe_opened:
+                            os.close(fd)
                         probe_opened.clear()
                     except Exception:
                         for fd in probe_opened:
@@ -474,6 +476,37 @@ def _mkdir_directory_under_root(root_fd: int, rel_dir: str) -> None:
             os.close(current_fd)
 
 
+def _validate_staged_regular_file(
+    *,
+    parent_fd: int,
+    basename: str,
+    expected_sha256: str | None = None,
+) -> None:
+    """Reject symlink/dir/fifo staged entries before commit replace."""
+    import hashlib
+    import stat as stat_mod
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(basename, flags, dir_fd=parent_fd)
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    try:
+        if not stat_mod.S_ISREG(os.fstat(fd).st_mode):
+            raise DiagnosticError("E_INSTALL_CONFLICT")
+        if expected_sha256 is not None:
+            digest = hashlib.sha256()
+            while True:
+                chunk = os.read(fd, 1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+            if digest.hexdigest() != expected_sha256:
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+    finally:
+        os.close(fd)
+
+
 def _commit_payload_file(
     *,
     root: str,
@@ -481,6 +514,7 @@ def _commit_payload_file(
     rel: str,
     staged_src: str,
     stage_dir: str | None = None,
+    expected_sha256: str | None = None,
 ) -> None:
     """Atomically commit one staged payload under root with TOCTOU-resistant checks."""
     safe = _safe_rel_path(rel)
@@ -524,6 +558,11 @@ def _commit_payload_file(
         else:
             src_parent_fd = _open_directory_under_root(stage_fd, src_parent_rel)
         dst_parent_fd = _open_directory_under_root(root_fd, parent_rel)
+        _validate_staged_regular_file(
+            parent_fd=src_parent_fd,
+            basename=src_basename,
+            expected_sha256=expected_sha256,
+        )
         os.replace(
             src_basename,
             basename,
@@ -696,6 +735,7 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                         rel=safe,
                         staged_src=src,
                         stage_dir=stage_dir,
+                        expected_sha256=sha256_bytes(plan.files[rel]),
                     )
                     journal["paths"][safe]["state"] = "committed"
                     _write_journal(root, journal)

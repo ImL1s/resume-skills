@@ -14,6 +14,7 @@ from portable_resume.install.catalog import resolve_skill_root
 import portable_resume.install.transaction as transaction_module
 from portable_resume.install.transaction import (
     _commit_payload_file,
+    _open_directory_from_slash,
     _open_directory_under_root,
     _open_skill_root_descriptor,
     _supports_descriptor_relative_commit,
@@ -71,6 +72,40 @@ class InstallCommitContainmentTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "E_INSTALL_CONFLICT")
         self.assertFalse(marker.exists())
         self.assertEqual(list(outside.iterdir()), [])
+
+    def test_staged_symlink_swap_during_commit_fails_closed(self) -> None:
+        outside = Path(self._tmpdir.name) / "outside-escape"
+        outside.mkdir()
+        secret = outside / "secret.txt"
+        secret.write_bytes(b"outside bytes must not install\n")
+
+        execute_install(plan_install(host="claude", scope="project", root=self.root))
+        skill_md = Path(self.root) / "resume-claude" / "SKILL.md"
+        skill_md.write_bytes(skill_md.read_bytes() + b"\n# tamper\n")
+        plan = plan_install(host="claude", scope="project", root=self.root)
+
+        original_commit = transaction_module._commit_payload_file
+
+        def commit_with_staged_symlink_swap(**kwargs):
+            staged_src = kwargs.get("staged_src")
+            if staged_src:
+                staged = Path(staged_src)
+                if staged.is_file() and not staged.is_symlink():
+                    backup = staged.with_suffix(staged.suffix + ".bak")
+                    staged.rename(backup)
+                    staged.symlink_to(secret)
+            return original_commit(**kwargs)
+
+        with mock.patch.object(
+            transaction_module,
+            "_commit_payload_file",
+            side_effect=commit_with_staged_symlink_swap,
+        ):
+            with self.assertRaises(DiagnosticError) as ctx:
+                execute_install(plan)
+        self.assertEqual(ctx.exception.code, "E_INSTALL_CONFLICT")
+        self.assertEqual(secret.read_bytes(), b"outside bytes must not install\n")
+        self.assertFalse((Path(self.root) / "resume-claude" / "secret.txt").exists())
 
     @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd commit path")
     def test_top_level_commits_reuse_root_fd(self) -> None:
@@ -199,6 +234,42 @@ class InstallCommitContainmentTests(unittest.TestCase):
             real_close(leaf_fd)
         finally:
             real_close(root_fd)
+
+    @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd commit path")
+    def test_open_directory_from_slash_closes_relative_symlink_intermediates(self) -> None:
+        """Relative symlink targets with multiple components must close probe fds."""
+        layout = Path(self._tmpdir.name) / "layout"
+        parent = layout / "parent"
+        parent.mkdir(parents=True)
+        target_base = parent / "rel_target" / "a" / "b"
+        leaf = target_base / "leaf"
+        leaf.mkdir(parents=True)
+        mid = parent / "mid"
+        mid.symlink_to("rel_target/a/b", target_is_directory=True)
+        walk_path = str(parent / "mid" / "leaf")
+
+        opened: list[int] = []
+        outstanding: set[int] = set()
+        real_open = os.open
+        real_close = os.close
+
+        def tracking_open(*args, **kwargs):
+            fd = real_open(*args, **kwargs)
+            opened.append(fd)
+            outstanding.add(fd)
+            return fd
+
+        def tracking_close(fd: int) -> None:
+            outstanding.discard(fd)
+            return real_close(fd)
+
+        with mock.patch.object(os, "open", side_effect=tracking_open), mock.patch.object(
+            os, "close", side_effect=tracking_close
+        ):
+            leaf_fd = _open_directory_from_slash(walk_path)
+        self.assertIn(leaf_fd, outstanding)
+        self.assertEqual(len(outstanding), 1, msg=f"leaked fds still open: {outstanding}")
+        real_close(leaf_fd)
 
 
 if __name__ == "__main__":
