@@ -367,7 +367,8 @@ def _commit_payload_file(*, root: str, root_fd: int | None, rel: str, staged_src
         try:
             os.replace(staged_src, basename, dst_dir_fd=parent_fd)
         finally:
-            os.close(parent_fd)
+            if parent_fd is not root_fd:
+                os.close(parent_fd)
         return
 
     # Windows / platforms without dirfd: reopen-and-revalidate immediately before replace.
