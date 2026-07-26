@@ -40,7 +40,7 @@ git push origin vX.Y.Z
 1. Check out the requested tag with full history.
 2. Require strict `vMAJOR.MINOR.PATCH`, matching source/package versions, CHANGELOG entry, clean tree, annotated tag, and reachability from `origin/main`.
 3. Run the four canonical gates plus multilingual-document consistency on Ubuntu/macOS × Python 3.11/3.14.
-4. Build wheel, sdist, eight direct host archives, and seven plugin/marketplace archives once.
+4. Build wheel, sdist, one direct host archive per enabled destination (currently nine, including Pi), and seven plugin/marketplace archives once.
 5. Smoke-install the exact wheel and sdist outside the checkout on both OSes.
 6. Generate artifact digests, `release-evidence.json`, and a `SHA256SUMS` that
    uses the flat basenames delivered by GitHub Releases.

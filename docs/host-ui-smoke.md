@@ -4,10 +4,10 @@
 
 | Layer | What it proves | Status |
 |---|---|---|
-| Packaging matrix | 8 hosts × 8 source Skills render safely | **64/64** |
-| Installed runner | Installed `run_reader` list/show works on fixtures | **64/64** |
+| Packaging matrix | Enabled destinations × sources render safely (currently **9×9** on `main`) | **81/81** on `main` (published `0.3.3` remains **64/64**) |
+| Installed runner | Installed `run_reader` list/show works on fixtures | **81/81** on `main` (published `0.3.3` remains **64/64**) |
 | Native package install | Host CLI/TUI accepts the generated local plugin/extension | **7/7 tested** |
-| Host-native headless activation | Host discovers/invokes the Skill and runs its owned reader | **8/8 tested** |
+| Host-native headless activation | Host discovers/invokes the Skill and runs its owned reader | **8/8 tested** (Pi native activation **not-run**) |
 | Public marketplace install | Host installs a published listing | **6/6 compatible hosts tested** |
 | Visual marketplace picker | A human-visible marketplace picker was opened and selected | **Cursor and Kimi tested** |
 | Other visual Skill pickers | Host-specific Skill picker selection | **not-run** |
