@@ -459,7 +459,8 @@ def _write_fixture_json(case_dir: Path, *, case: str, expected_operation: str, e
     )
 
 
-def build_all() -> None:
+def build_all(root: Path | None = None) -> None:
+    fixture_root = Path(root) if root is not None else FIXTURE_ROOT
     case_specs: list[tuple[str, str, str, int]] = [
         ("s-oc-01-basic", "show", 0),
         ("s-oc-02-multi-agent", "list", 0),
@@ -468,20 +469,20 @@ def build_all() -> None:
         ("s-oc-05-corrupt-meta", "error", 5),
     ]
     for case, operation, code in case_specs:
-        case_dir = FIXTURE_ROOT / case
+        case_dir = fixture_root / case
         case_dir.mkdir(parents=True, exist_ok=True)
         _write_fixture_json(case_dir, case=case, expected_operation=operation, expected_code=code)
 
-    basic_db = FIXTURE_ROOT / "s-oc-01-basic" / "agents/main/agent/openclaw-agent.sqlite"
+    basic_db = fixture_root / "s-oc-01-basic" / "agents/main/agent/openclaw-agent.sqlite"
     with _open_db(basic_db) as connection:
         _seed_basic(connection, agent_id="main")
         connection.commit()
 
-    multi_main = FIXTURE_ROOT / "s-oc-02-multi-agent" / "agents/main/agent/openclaw-agent.sqlite"
+    multi_main = fixture_root / "s-oc-02-multi-agent" / "agents/main/agent/openclaw-agent.sqlite"
     with _open_db(multi_main) as connection:
         _seed_basic(connection, agent_id="main", session_key="agent:main:direct:main-peer", session_id="sess-main-0001")
         connection.commit()
-    multi_worker = FIXTURE_ROOT / "s-oc-02-multi-agent" / "agents/worker/agent/openclaw-agent.sqlite"
+    multi_worker = fixture_root / "s-oc-02-multi-agent" / "agents/worker/agent/openclaw-agent.sqlite"
     with _open_db(multi_worker) as connection:
         _seed_basic(
             connection,
@@ -492,21 +493,26 @@ def build_all() -> None:
         )
         connection.commit()
 
-    compact_db = FIXTURE_ROOT / "s-oc-03-compaction-reset" / "agents/main/agent/openclaw-agent.sqlite"
+    compact_db = fixture_root / "s-oc-03-compaction-reset" / "agents/main/agent/openclaw-agent.sqlite"
     with _open_db(compact_db) as connection:
         _seed_compaction_reset(connection, agent_id="main")
         connection.commit()
 
-    internal_db = FIXTURE_ROOT / "s-oc-04-internal-filter" / "agents/main/agent/openclaw-agent.sqlite"
+    internal_db = fixture_root / "s-oc-04-internal-filter" / "agents/main/agent/openclaw-agent.sqlite"
     with _open_db(internal_db) as connection:
         _seed_internal_filter(connection, agent_id="main")
         connection.commit()
 
-    corrupt_db = FIXTURE_ROOT / "s-oc-05-corrupt-meta" / "agents/main/agent/openclaw-agent.sqlite"
+    corrupt_db = fixture_root / "s-oc-05-corrupt-meta" / "agents/main/agent/openclaw-agent.sqlite"
     with _open_db(corrupt_db) as connection:
         _seed_corrupt_meta(connection, agent_id="main")
         connection.commit()
 
 
 if __name__ == "__main__":
-    build_all()
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=None, help="optional output root (default: this fixtures dir)")
+    args = parser.parse_args()
+    build_all(root=args.root)

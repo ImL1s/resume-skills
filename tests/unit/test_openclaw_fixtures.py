@@ -57,15 +57,56 @@ class OpenClawFixtureTests(unittest.TestCase):
             self.assertEqual(payload["format_id"], "openclaw-agent-sqlite-v1")
 
     def test_builder_rebuilds_agent_databases(self) -> None:
-        completed = subprocess.run(
-            [sys.executable, str(_BUILDER)],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(completed.returncode, 0, msg=completed.stderr or completed.stdout)
-        for db_path in sorted(OPENCLAW_FIXTURES.rglob("openclaw-agent.sqlite")):
-            self.assertTrue(db_path.is_file(), msg=str(db_path))
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temporary:
+            out_root = Path(temporary) / "openclaw"
+            completed = subprocess.run(
+                [sys.executable, str(_BUILDER), "--root", str(out_root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, msg=completed.stderr or completed.stdout)
+            rebuilt = sorted(out_root.rglob("openclaw-agent.sqlite"))
+            self.assertEqual(len(rebuilt), 6)
+            for db_path in rebuilt:
+                self.assertTrue(db_path.is_file(), msg=str(db_path))
+                connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+                try:
+                    tables = {
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table'"
+                        )
+                    }
+                    self.assertTrue(_REQUIRED_TABLES.issubset(tables), msg=str(db_path))
+                    meta = connection.execute(
+                        """
+                        SELECT role, schema_version, agent_id
+                        FROM schema_meta
+                        WHERE meta_key = 'primary'
+                        """
+                    ).fetchone()
+                    self.assertIsNotNone(meta, msg=str(db_path))
+                    self.assertEqual(meta[0], "agent", msg=str(db_path))
+                    agent_folder = db_path.parts[db_path.parts.index("agents") + 1]
+                    self.assertEqual(meta[2], agent_folder, msg=str(db_path))
+                    user_version = connection.execute("PRAGMA user_version").fetchone()[0]
+                    if _CORRUPT_CASE in db_path.parts:
+                        self.assertEqual(meta[1], _ABSURD_SCHEMA_VERSION, msg=str(db_path))
+                        self.assertEqual(user_version, _SCHEMA_VERSION, msg=str(db_path))
+                    else:
+                        self.assertEqual(meta[1], _SCHEMA_VERSION, msg=str(db_path))
+                        self.assertEqual(user_version, _SCHEMA_VERSION, msg=str(db_path))
+                finally:
+                    connection.close()
+
+
+    def test_checked_in_databases_are_readable_without_rebuild(self) -> None:
+        databases = sorted(OPENCLAW_FIXTURES.rglob("openclaw-agent.sqlite"))
+        self.assertEqual(len(databases), 6)
+        for db_path in databases:
             connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
             try:
                 tables = {
@@ -75,24 +116,6 @@ class OpenClawFixtureTests(unittest.TestCase):
                     )
                 }
                 self.assertTrue(_REQUIRED_TABLES.issubset(tables), msg=str(db_path))
-                meta = connection.execute(
-                    """
-                    SELECT role, schema_version, agent_id
-                    FROM schema_meta
-                    WHERE meta_key = 'primary'
-                    """
-                ).fetchone()
-                self.assertIsNotNone(meta, msg=str(db_path))
-                self.assertEqual(meta[0], "agent", msg=str(db_path))
-                agent_folder = db_path.parts[db_path.parts.index("agents") + 1]
-                self.assertEqual(meta[2], agent_folder, msg=str(db_path))
-                user_version = connection.execute("PRAGMA user_version").fetchone()[0]
-                if db_path.parts[-5] == _CORRUPT_CASE:
-                    self.assertEqual(meta[1], _ABSURD_SCHEMA_VERSION, msg=str(db_path))
-                    self.assertEqual(user_version, _SCHEMA_VERSION, msg=str(db_path))
-                else:
-                    self.assertEqual(meta[1], _SCHEMA_VERSION, msg=str(db_path))
-                    self.assertEqual(user_version, _SCHEMA_VERSION, msg=str(db_path))
             finally:
                 connection.close()
 
