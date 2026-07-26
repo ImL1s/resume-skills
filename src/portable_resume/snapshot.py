@@ -318,14 +318,18 @@ def _collect_scanned_lines(
                 return
             line_bytes = bytes(buffer[: newline_index + 1])
             del buffer[: newline_index + 1]
-            content_len = len(line_bytes) - 1
-            if content_len > max_line_bytes:
+            # Exclude LF and optional CR from the content-length budget so CRLF
+            # and LF records with the same decoded text share the same ceiling.
+            payload = line_bytes[:-1]
+            if payload.endswith(b"\r"):
+                payload = payload[:-1]
+            if len(payload) > max_line_bytes:
                 raise DiagnosticError.limit_exceeded()
             check_record_budget()
             pending_records += 1
             try:
                 # Strip optional CR so CRLF and LF JSONL decode identically.
-                text = line_bytes[:-1].decode("utf-8").removesuffix("\r")
+                text = payload.decode("utf-8")
             except UnicodeDecodeError as error:
                 raise DiagnosticError("E_CORRUPT_RECORD") from error
             collected.append(

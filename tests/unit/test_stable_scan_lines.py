@@ -109,6 +109,15 @@ class StableScanLinesTests(unittest.TestCase):
             lines = list(stable_scan_lines(str(path), root=str(root)))
             self.assertEqual([item.text for item in lines], ['{"id":1}', '{"id":2}'])
 
+    def test_crlf_exact_max_line_bytes_matches_lf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "edge.jsonl"
+            payload = b"x" * 8
+            path.write_bytes(payload + b"\r\n")
+            lines = list(stable_scan_lines(str(path), root=str(root), max_line_bytes=8))
+            self.assertEqual([item.text for item in lines], ["x" * 8])
+
 
 if __name__ == "__main__":
     unittest.main()
