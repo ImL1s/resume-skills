@@ -106,6 +106,28 @@ class InstallCommitContainmentTests(unittest.TestCase):
         self.assertTrue(skill_md.is_file(), msg=f"missing {skill_md}; report={report!r}")
         self.assertFalse(skill_md.is_symlink())
 
+    def test_commit_fails_closed_without_descriptor_relative_support(self) -> None:
+        stage = Path(self._tmpdir.name) / "stage"
+        stage.mkdir()
+        staged = stage / "SKILL.md"
+        staged.write_bytes(b"hello\n")
+        root = Path(self._tmpdir.name) / "skill-root"
+        root.mkdir()
+        with mock.patch.object(
+            transaction_module,
+            "_supports_descriptor_relative_commit",
+            return_value=False,
+        ):
+            with self.assertRaises(DiagnosticError) as ctx:
+                _commit_payload_file(
+                    root=str(root),
+                    root_fd=None,
+                    rel="SKILL.md",
+                    staged_src=str(staged),
+                )
+        self.assertEqual(ctx.exception.code, "E_INSTALL_CONFLICT")
+        self.assertFalse((root / "SKILL.md").exists())
+
     @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd commit path")
     def test_open_directory_under_root_closes_intermediate_fds(self) -> None:
         """Multi-component open must close intermediates and keep only the leaf."""

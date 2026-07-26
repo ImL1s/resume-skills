@@ -118,6 +118,19 @@ class StableScanLinesTests(unittest.TestCase):
             lines = list(stable_scan_lines(str(path), root=str(root), max_line_bytes=8))
             self.assertEqual([item.text for item in lines], ["x" * 8])
 
+    def test_default_budget_bounds_record_count_when_budget_omitted(self) -> None:
+        from portable_resume.bounds import DEFAULT_BOUNDS
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "many.jsonl"
+            # Exceed scanned_records with tiny lines while staying under byte cap.
+            count = DEFAULT_BOUNDS.scanned_records + 5
+            path.write_text("\n".join('{"n":%d}' % i for i in range(count)) + "\n", encoding="utf-8")
+            with self.assertRaises(DiagnosticError) as caught:
+                list(stable_scan_lines(str(path), root=str(root)))
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
 
 if __name__ == "__main__":
     unittest.main()

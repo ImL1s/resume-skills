@@ -51,7 +51,7 @@ Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, and current/legacy Kim
 ### Installer containment notes (Phase 0 / PR #49)
 
 - **POSIX descriptor-relative commits (#31):** payload files are committed with `dir_fd` / `O_NOFOLLOW` under the skill root. The skill-root path itself may be a symlink (common dotfiles layouts); it is resolved once with `realpath`, then the final directory is opened no-follow. Intermediate payload parents never follow symlinks.
-- **Windows residual:** without portable `openat`/`dir_fd` replace, Windows uses reopen-and-revalidate (`lstat` walk) immediately before a pathname `os.replace`. That is weaker than the POSIX path (residual TOCTOU). Windows is not a V1 release gate above.
+- **Windows residual:** without portable `openat`/`dir_fd` replace, mutating installs **fail closed** with `E_INSTALL_CONFLICT` rather than a pathname TOCTOU path. Windows is not a V1 release gate above.
 - **Recover (#20):** complete journals must not `rmtree` a `stage_dir` outside `.portable-resume/`.
 
 Official host references and alternate roots are linked from the machine-readable `hosts --json` output and [`install-hosts.md`](install-hosts.md).

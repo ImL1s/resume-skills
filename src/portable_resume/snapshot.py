@@ -390,9 +390,12 @@ def stable_scan_lines(
     line_limit = max_line_bytes if max_line_bytes is not None else DEFAULT_BOUNDS.record_bytes
     if line_limit < 0 or line_limit > DEFAULT_BOUNDS.record_bytes:
         raise DiagnosticError.invalid()
-    max_file_bytes = DEFAULT_BOUNDS.source_read_bytes
-    if budget is not None:
-        max_file_bytes = min(max_file_bytes, budget.limits.source_read_bytes)
+    # Always bound memory: a missing caller budget still uses DEFAULT_BOUNDS.
+    effective_budget = budget if budget is not None else ReadBudget()
+    max_file_bytes = min(
+        DEFAULT_BOUNDS.source_read_bytes,
+        effective_budget.limits.source_read_bytes,
+    )
     safe, base = require_regular_no_symlinks(path, root)
     parent = os.path.dirname(safe)
     attempts = DEFAULT_BOUNDS.snapshot_attempts
@@ -409,7 +412,7 @@ def stable_scan_lines(
             collected, pending_bytes, pending_records, content_hash = _collect_scanned_lines(
                 descriptor,
                 max_line_bytes=line_limit,
-                budget=budget,
+                budget=effective_budget,
                 charge_transcript=charge_transcript,
             )
             observed = _fingerprint(before_stat, content_hash)
@@ -436,12 +439,11 @@ def stable_scan_lines(
             and before_membership == middle_membership == after_membership
             and pending_bytes == verified_size == final_size == before_stat.st_size
         ):
-            if budget is not None:
-                budget.consume_bytes(pending_bytes)
-                if charge_transcript:
-                    budget.consume_transcript_records(pending_records)
-                else:
-                    budget.consume_records(pending_records)
+            effective_budget.consume_bytes(pending_bytes)
+            if charge_transcript:
+                effective_budget.consume_transcript_records(pending_records)
+            else:
+                effective_budget.consume_records(pending_records)
             yield from collected
             return
     family = (os.path.basename(safe),)

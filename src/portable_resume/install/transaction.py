@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import stat
 import tempfile
 import time
 from dataclasses import dataclass
@@ -351,30 +350,6 @@ def _mkdir_directory_under_root(root_fd: int, rel_dir: str) -> None:
             os.close(current_fd)
 
 
-def _revalidate_lstat_walk(root: str, rel: str) -> None:
-    """Walk existing parent components without following symlinks."""
-    safe = _safe_rel_path(rel)
-    parts = [part for part in safe.split(os.sep) if part and part != "."]
-    if not parts:
-        raise DiagnosticError("E_INSTALL_CONFLICT")
-    root_real = os.path.realpath(root)
-    current = root
-    for part in parts[:-1]:
-        current = os.path.join(current, part)
-        try:
-            entry_stat = os.lstat(current)
-        except FileNotFoundError:
-            continue
-        if stat.S_ISLNK(entry_stat.st_mode) or not stat.S_ISDIR(entry_stat.st_mode):
-            raise DiagnosticError("E_INSTALL_CONFLICT")
-        try:
-            resolved = os.path.realpath(current)
-            if os.path.commonpath((resolved, root_real)) != root_real:
-                raise DiagnosticError("E_INSTALL_CONFLICT")
-        except ValueError as error:
-            raise DiagnosticError("E_INSTALL_CONFLICT") from error
-
-
 def _commit_payload_file(*, root: str, root_fd: int | None, rel: str, staged_src: str) -> None:
     """Atomically commit one staged payload under root with TOCTOU-resistant checks."""
     safe = _safe_rel_path(rel)
@@ -397,16 +372,9 @@ def _commit_payload_file(*, root: str, root_fd: int | None, rel: str, staged_src
                 os.close(parent_fd)
         return
 
-    # Windows / platforms without dirfd: reopen-and-revalidate immediately before replace.
-    _revalidate_lstat_walk(root, safe)
-    dest = _dest_under_root(root, safe)
-    try:
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-    except OSError as error:
-        raise DiagnosticError("E_INSTALL_CONFLICT") from error
-    _revalidate_lstat_walk(root, safe)
-    dest = _dest_under_root(root, safe)
-    os.replace(staged_src, dest)
+    # Platforms without dir_fd / O_NOFOLLOW replace: fail closed instead of a
+    # residual pathname TOCTOU window (Windows is not a V1 release gate).
+    raise DiagnosticError("E_INSTALL_CONFLICT")
 
 
 def _classify_dest(
