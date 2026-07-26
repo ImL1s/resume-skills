@@ -8,7 +8,7 @@
 | Destination profiles | 8 (Pi destination not supported) |
 | Packaging matrix | **72/72 pass locally** (currently **9×8=72**, derived from registries) |
 | Installed runner matrix | **72/72 pass locally** (currently **9×8=72**, derived from registries) |
-| Python test suite | **340 pass locally** (main @ `d9152cd`) |
+| Python test suite | **342 pass locally** (honesty follow-up after `d9152cd` / PR #51) |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
 | Host-native headless Skill activation | **8/8 pass** |
@@ -66,8 +66,9 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 ## Corrected after PR #51
 
 - **Pi source adapter supported** (`pi-session-jsonl-v3` / v2 read-only); **Pi destination not-run**.
-- Verify at tip: **340** unittest, **72/72** installed-runner smoke, self_verify, secrets gate,
+- Verify at merge tip: **340** unittest, **72/72** installed-runner smoke, self_verify, secrets gate,
   [CI run 30203656076](https://github.com/ImL1s/resume-skills/actions/runs/30203656076) on `d9152cd`.
+- Honesty follow-up: suite **342** (corrupt-list warning + 17–30 MiB budget pad); STATUS/README counts aligned.
 
 ## Corrected and verified on main after 0.3.3 (PR #49)
 
