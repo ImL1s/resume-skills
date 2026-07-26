@@ -59,9 +59,13 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 | ReadBudget raise clamp (#17) | [Issue #17](https://github.com/ImL1s/resume-skills/issues/17) + PR #49 | **Partial:** four consume counters clamp to `DEFAULT_BOUNDS`. Full Bounds construction-time validation still open. |
 | Installer recover containment (#20) | **Closed** via [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c` | Typed stage/backup authorization + pinned support dirfd deletes + adversarial tests in `tests/unit/test_install_recover_containment.py`. |
 | Descriptor-relative install (#31) | [Issue #31](https://github.com/ImL1s/resume-skills/issues/31) + PR #49 | **Partial:** POSIX forward commit is dirfd-based; rollback/manifest/orphan/Windows still pathname or fail-closed. |
-| Next-wave agent roadmap (Pi, OpenClaw, goose, …) | [Issue #48](https://github.com/ImL1s/resume-skills/issues/48) | Research/fixtures/adapters land per-axis behind PR A–E; **no Pi/OpenClaw/goose support claimed**. Phase 0 registry/matrix/installer landings are on `7b5192c`. |
+| Next-wave agent roadmap (Pi, OpenClaw, goose, …) | [Issue #48](https://github.com/ImL1s/resume-skills/issues/48) + [Issue #38](https://github.com/ImL1s/resume-skills/issues/38) | Phase 0 on `7b5192c`. **Pi PR A fixtures-only** (`tests/fixtures/pi/`, format notes) — **no adapter / registry support**. OpenClaw/goose still research. |
 
 `/resume-codex` remains **context migration** (Skill + reader), not Grok Build native `/resume` and not Codex CLI live resume.
+
+## In flight (this branch)
+
+- Pi source **PR A** ([Issue #38](https://github.com/ImL1s/resume-skills/issues/38)): synthetic session JSONL fixtures + `docs/source-formats.md` planned row (`pi-session-jsonl-v3` / v2). Local suite **332** tests. **Not supported** — no `SOURCE_PROFILES` key, no adapter.
 
 ## Corrected and verified on main after 0.3.3 (PR #49)
 
