@@ -144,6 +144,19 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(skill.exists())
         self.assertIsNone(load_manifest(root))
 
+    def test_pi_install_verify_uninstall(self) -> None:
+        root = self._root("pi")
+        plan = plan_install(host="pi", scope="project", root=root)
+        result = execute_install(plan)
+        self.assertTrue(result["ok"])
+        verified = verify_root(root)
+        self.assertTrue(verified["ok"])
+        skill = Path(root) / "resume-claude" / "SKILL.md"
+        self.assertTrue(skill.is_file())
+        removed = uninstall_claim(host="pi", scope="project", root=root)
+        self.assertTrue(removed["ok"])
+        self.assertFalse(skill.exists())
+
     def test_non_owned_conflict_refuses_without_force(self) -> None:
         root = self._root("grok")
         target = Path(root) / "resume-grok" / "SKILL.md"
