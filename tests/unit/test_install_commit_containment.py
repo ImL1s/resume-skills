@@ -129,6 +129,31 @@ class InstallCommitContainmentTests(unittest.TestCase):
         self.assertFalse((root / "SKILL.md").exists())
 
     @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd commit path")
+    def test_writable_ancestor_symlink_before_root_open_fails_closed(self) -> None:
+        """P1-A: replacing a writable ancestor with a symlink must not open the target."""
+        layout = Path(self._tmpdir.name) / "layout"
+        mid = layout / "writable"
+        skill_root = mid / "skills"
+        skill_root.mkdir(parents=True)
+
+        outside = Path(self._tmpdir.name) / "outside"
+        outside.mkdir()
+        victim = outside / "skills"
+        victim.mkdir()
+        marker = victim / "secret.txt"
+        marker.write_text("must not be pinned as skill root", encoding="utf-8")
+
+        backup = layout / "writable.bak"
+        mid.rename(backup)
+        mid.symlink_to(outside, target_is_directory=True)
+
+        root_path = str(layout / "writable" / "skills")
+        with self.assertRaises(DiagnosticError) as ctx:
+            _open_skill_root_descriptor(root_path)
+        self.assertEqual(ctx.exception.code, "E_INSTALL_CONFLICT")
+        self.assertTrue(marker.is_file())
+
+    @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd commit path")
     def test_open_directory_under_root_closes_intermediate_fds(self) -> None:
         """Multi-component open must close intermediates and keep only the leaf."""
         root = Path(self._tmpdir.name) / "skill-root"

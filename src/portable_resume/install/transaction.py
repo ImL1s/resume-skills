@@ -261,27 +261,103 @@ def _supports_descriptor_relative_commit() -> bool:
     return os.name != "nt" and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
 
 
+def _open_directory_from_slash(path: str, *, allow_leaf_symlink: bool = False) -> int:
+    """Open a directory by walking each component from ``/`` with ``O_NOFOLLOW``.
+
+    Never pathname-open a multi-component resolved path in one shot: a writable
+    ancestor swapped for a symlink after ``realpath`` would otherwise be followed
+    through intermediate components.
+    """
+    import stat as stat_mod
+
+    abs_path = os.path.abspath(os.path.expanduser(path))
+    parts = [part for part in abs_path.split(os.sep) if part]
+    if not parts:
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        current_fd = os.open("/", flags)
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+
+    opened: list[int] = [current_fd]
+    prefix = "/"
+    try:
+        for index, part in enumerate(parts):
+            is_leaf = index == len(parts) - 1
+            parent_fd = current_fd
+            try:
+                st = os.lstat(part, dir_fd=parent_fd)
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+
+            if stat_mod.S_ISLNK(st.st_mode):
+                if is_leaf and allow_leaf_symlink:
+                    try:
+                        target = os.readlink(part, dir_fd=parent_fd)
+                    except OSError as error:
+                        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                    for fd in opened:
+                        os.close(fd)
+                    opened.clear()
+                    if not os.path.isabs(target):
+                        target = os.path.normpath(os.path.join(prefix, target))
+                    return _open_directory_from_slash(target, allow_leaf_symlink=False)
+                if is_leaf:
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                try:
+                    target = os.readlink(part, dir_fd=parent_fd)
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                if not os.path.isabs(target):
+                    target = os.path.normpath(os.path.join(prefix, target))
+                try:
+                    if os.path.commonpath((target, prefix)) != prefix:
+                        raise DiagnosticError("E_INSTALL_CONFLICT")
+                except ValueError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                remaining = parts[index + 1 :]
+                combined = os.path.join(target, *remaining) if remaining else target
+                for fd in opened:
+                    os.close(fd)
+                opened.clear()
+                return _open_directory_from_slash(combined, allow_leaf_symlink=allow_leaf_symlink)
+
+            try:
+                next_fd = os.open(part, flags, dir_fd=parent_fd)
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            opened.append(next_fd)
+            current_fd = next_fd
+            prefix = os.path.join(prefix, part)
+
+        for fd in opened[:-1]:
+            os.close(fd)
+        opened.clear()
+        return current_fd
+    except DiagnosticError:
+        for fd in opened:
+            os.close(fd)
+        raise
+    except OSError as error:
+        for fd in opened:
+            os.close(fd)
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+
+
 def _open_skill_root_descriptor(root: str) -> int:
     """Open the skill root for descriptor-relative commits.
 
     The skill-root path itself may be a symlink (common dotfiles layouts such as
-    `~/.claude/skills` → a shared directory). Resolve that one path with
-    ``realpath``, then open the final directory with ``O_NOFOLLOW`` so later
-    parent walks never follow symlinks. Intermediate payload components still
-    use no-follow opens under this root fd.
+    ``~/.claude/skills`` → a shared directory). Each ancestor component is
+    pinned from ``/`` with ``O_NOFOLLOW``; only the final component may be a
+    symlink, resolved once via ``readlink`` and reopened component-wise.
+    Intermediate payload parents still use no-follow opens under this root fd.
     """
-    try:
-        resolved = os.path.realpath(root)
-    except OSError as error:
-        raise DiagnosticError("E_INSTALL_CONFLICT") from error
-    if not os.path.isdir(resolved) or os.path.islink(resolved):
-        # realpath should yield a non-link directory; refuse anything else.
+    if not _supports_descriptor_relative_commit():
         raise DiagnosticError("E_INSTALL_CONFLICT")
-    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        return os.open(resolved, flags)
-    except OSError as error:
-        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    return _open_directory_from_slash(root, allow_leaf_symlink=True)
 
 
 def _open_directory_under_root(root_fd: int, rel_dir: str) -> int:
@@ -841,22 +917,33 @@ def _rmtree_nofollow_dirfd(dir_fd: int) -> None:
 
 def _safe_rmtree_under_support(root: str, path: str) -> None:
     """Remove a support subtree using pinned dirfds (TOCTOU-resistant)."""
+    import stat as stat_mod
+
     if not isinstance(path, str):
-        raise DiagnosticError("E_RECOVERY_REQUIRED")
-    if not _path_within_support(root, path):
         raise DiagnosticError("E_RECOVERY_REQUIRED")
     if not _supports_descriptor_relative_commit():
         raise DiagnosticError("E_RECOVERY_REQUIRED")
-    support_real = os.path.realpath(os.path.join(root, SUPPORT_DIR))
+
     try:
-        candidate_real = os.path.realpath(path)
+        st = os.lstat(path)
     except OSError as error:
         raise DiagnosticError("E_RECOVERY_REQUIRED") from error
-    rel = os.path.relpath(candidate_real, support_real)
-    if rel == "." or rel.startswith(".."):
+    if stat_mod.S_ISLNK(st.st_mode):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
+    if not stat_mod.S_ISDIR(st.st_mode):
         raise DiagnosticError("E_RECOVERY_REQUIRED")
 
-    import stat as stat_mod
+    support_base = os.path.abspath(os.path.join(root, SUPPORT_DIR))
+    candidate = os.path.abspath(path)
+    try:
+        if os.path.commonpath((candidate, support_base)) != support_base or candidate == support_base:
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+    except ValueError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+
+    rel = os.path.relpath(candidate, support_base)
+    if rel == "." or rel.startswith(".."):
+        raise DiagnosticError("E_RECOVERY_REQUIRED")
 
     try:
         root_fd = _open_skill_root_descriptor(root)

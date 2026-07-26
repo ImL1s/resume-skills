@@ -12,6 +12,7 @@ from portable_resume.diagnostics import DiagnosticError
 from portable_resume.install.catalog import resolve_skill_root
 import portable_resume.install.transaction as transaction_module
 from portable_resume.install.transaction import (
+    _safe_rmtree_under_support,
     _supports_descriptor_relative_commit,
     _write_journal,
     journal_path,
@@ -62,6 +63,24 @@ class RecoverCompleteJournalContainmentTests(unittest.TestCase):
         self.assertTrue(marker.is_file())
         self.assertEqual(marker.read_text(encoding="utf-8"), "must survive recover")
         self.assertTrue(os.path.isfile(journal_path(self.root)))
+
+    @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd recovery delete path")
+    def test_safe_rmtree_rejects_symlinked_cleanup_target(self) -> None:
+        """P1-B: symlinked stage/backup paths must not delete the link target."""
+        support = Path(self.root) / ".portable-resume"
+        real_target = support / "real-stage"
+        real_target.mkdir(parents=True)
+        marker = real_target / "keep-me.txt"
+        marker.write_text("must survive cleanup", encoding="utf-8")
+
+        symlink_stage = support / "portable-resume-stage-symlink"
+        symlink_stage.symlink_to(real_target, target_is_directory=True)
+
+        with self.assertRaises(DiagnosticError) as ctx:
+            _safe_rmtree_under_support(self.root, str(symlink_stage))
+        self.assertEqual(ctx.exception.code, "E_RECOVERY_REQUIRED")
+        self.assertTrue(marker.is_file())
+        self.assertEqual(marker.read_text(encoding="utf-8"), "must survive cleanup")
 
     @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd recovery delete path")
     def test_stage_symlink_swap_before_delete_does_not_escape(self) -> None:
