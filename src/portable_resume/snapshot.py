@@ -324,7 +324,8 @@ def _collect_scanned_lines(
             check_record_budget()
             pending_records += 1
             try:
-                text = line_bytes[:-1].decode("utf-8")
+                # Strip optional CR so CRLF and LF JSONL decode identically.
+                text = line_bytes[:-1].decode("utf-8").removesuffix("\r")
             except UnicodeDecodeError as error:
                 raise DiagnosticError("E_CORRUPT_RECORD") from error
             collected.append(
@@ -347,6 +348,21 @@ def _collect_scanned_lines(
         drain_complete_lines()
 
     reject_oversize_unterminated_line()
+    # JSONL often omits a trailing newline; treat remaining buffer as a final line.
+    if buffer:
+        check_record_budget()
+        pending_records += 1
+        try:
+            text = bytes(buffer).decode("utf-8").removesuffix("\r")
+        except UnicodeDecodeError as error:
+            raise DiagnosticError("E_CORRUPT_RECORD") from error
+        collected.append(
+            ScannedLine(
+                ordinal=len(collected),
+                text=text,
+                byte_offset=absolute_offset,
+            )
+        )
     return collected, pending_bytes, pending_records, digest.hexdigest()
 
 
@@ -362,7 +378,8 @@ def stable_scan_lines(
     """Yield UTF-8 lines under no-follow / containment / budget rules.
 
     Uses the same root containment and symlink rejection as stable_read_bytes.
-    Reads stream in chunks; terminal partial line may be skipped (callers warn).
+    Reads stream in chunks. A final unterminated buffer (common JSONL without a
+    trailing newline) is emitted as one last line when within max_line_bytes.
     Yields from a per-attempt collected list until true streaming yield lands.
     """
 

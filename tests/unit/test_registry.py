@@ -156,6 +156,19 @@ class RegistryInvariantTests(unittest.TestCase):
         self.assertNotIn("planned-host", enabled)
         self.assertEqual(enabled, enabled_destination_keys())
 
+    def test_destination_profiles_match_host_catalog_roots(self) -> None:
+        """Registry DestinationProfile roots must stay aligned with HOST_PROFILES."""
+        from portable_resume.install.catalog import HOST_PROFILES
+
+        self.assertEqual(set(HOST_PROFILES), set(enabled_destination_keys()))
+        for key, dest in DESTINATION_PROFILES.items():
+            if dest.status != "supported" or not dest.direct_skill:
+                continue
+            host = HOST_PROFILES[key]
+            self.assertEqual(dest.project_rel, host.project_rel, msg=key)
+            self.assertEqual(dest.global_rel, host.global_rel, msg=key)
+            self.assertEqual(dest.payload_profile, host.profile_id, msg=key)
+
 
 class DynamicMatrixTests(unittest.TestCase):
     def test_matrix_cells_match_dimensions(self) -> None:

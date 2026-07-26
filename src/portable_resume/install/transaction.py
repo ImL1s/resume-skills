@@ -271,8 +271,14 @@ def _open_skill_root_descriptor(root: str) -> int:
 
 
 def _open_directory_under_root(root_fd: int, rel_dir: str) -> int:
-    """Open an existing directory under root_fd without following symlinks."""
+    """Open an existing directory under root_fd without following symlinks.
+
+    Intermediate directory descriptors are closed on both success and failure so
+    multi-component paths do not leak fds across payload commits.
+    """
     parts = [part for part in rel_dir.split(os.sep) if part and part != "."]
+    if not parts:
+        return root_fd
     current_fd = root_fd
     opened: list[int] = []
     flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -285,10 +291,15 @@ def _open_directory_under_root(root_fd: int, rel_dir: str) -> int:
             if current_fd is not root_fd:
                 opened.append(current_fd)
             current_fd = next_fd
+        for fd in opened:
+            os.close(fd)
+        opened.clear()
         return current_fd
     except Exception:
         for fd in opened:
             os.close(fd)
+        if current_fd is not root_fd:
+            os.close(current_fd)
         raise
 
 

@@ -44,5 +44,12 @@ class StatusHonestyTests(unittest.TestCase):
             )
 
 
+    def test_status_notes_stable_scan_lines_not_yet_adopted(self) -> None:
+        text = Path("docs/STATUS.md").read_text(encoding="utf-8")
+        lowered = text.lower()
+        self.assertIn("stable_scan_lines", lowered)
+        self.assertIn("not yet adopted", lowered)
+
+
 if __name__ == "__main__":
     unittest.main()

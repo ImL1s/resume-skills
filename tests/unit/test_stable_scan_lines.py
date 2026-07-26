@@ -93,6 +93,22 @@ class StableScanLinesTests(unittest.TestCase):
                 list(stable_scan_lines(str(link), root=str(store)))
             self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
 
+    def test_final_line_without_trailing_newline_is_emitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "session.jsonl"
+            path.write_text('{"id":1}\n{"id":2}', encoding="utf-8")
+            lines = list(stable_scan_lines(str(path), root=str(root)))
+            self.assertEqual([item.text for item in lines], ['{"id":1}', '{"id":2}'])
+
+    def test_crlf_lines_strip_carriage_return(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "session.jsonl"
+            path.write_bytes(b'{"id":1}\r\n{"id":2}\r\n')
+            lines = list(stable_scan_lines(str(path), root=str(root)))
+            self.assertEqual([item.text for item in lines], ['{"id":1}', '{"id":2}'])
+
 
 if __name__ == "__main__":
     unittest.main()

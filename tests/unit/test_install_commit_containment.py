@@ -14,6 +14,7 @@ from portable_resume.install.catalog import resolve_skill_root
 import portable_resume.install.transaction as transaction_module
 from portable_resume.install.transaction import (
     _commit_payload_file,
+    _open_directory_under_root,
     _open_skill_root_descriptor,
     _supports_descriptor_relative_commit,
     execute_install,
@@ -90,6 +91,40 @@ class InstallCommitContainmentTests(unittest.TestCase):
             os.close(root_fd)
         self.assertEqual((Path(root) / "first.txt").read_bytes(), b"first\n")
         self.assertEqual((Path(root) / "second.txt").read_bytes(), b"second\n")
+
+    @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd commit path")
+    def test_open_directory_under_root_closes_intermediate_fds(self) -> None:
+        """Multi-component open must close intermediates and keep only the leaf."""
+        root = Path(self._tmpdir.name) / "skill-root"
+        nested = root / "a" / "b" / "c"
+        nested.mkdir(parents=True)
+        root_fd = _open_skill_root_descriptor(str(root))
+        opened: list[int] = []
+        closed: list[int] = []
+        real_open = os.open
+        real_close = os.close
+
+        def tracking_open(*args, **kwargs):
+            fd = real_open(*args, **kwargs)
+            opened.append(fd)
+            return fd
+
+        def tracking_close(fd: int) -> None:
+            closed.append(fd)
+            return real_close(fd)
+
+        try:
+            with mock.patch.object(os, "open", side_effect=tracking_open), mock.patch.object(
+                os, "close", side_effect=tracking_close
+            ):
+                leaf_fd = _open_directory_under_root(root_fd, os.path.join("a", "b", "c"))
+            self.assertEqual(len(opened), 3)
+            self.assertEqual(closed, opened[:2])
+            self.assertEqual(leaf_fd, opened[-1])
+            self.assertNotIn(leaf_fd, closed)
+            real_close(leaf_fd)
+        finally:
+            real_close(root_fd)
 
 
 if __name__ == "__main__":
