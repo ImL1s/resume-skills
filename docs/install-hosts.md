@@ -1,6 +1,6 @@
 # Destination installation guide
 
-This repository ships eight `resume-<source>` Skills to eight destination hosts. The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
+This repository ships nine `resume-<source>` Skills to nine destination hosts (derived from registries). The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
 
 ## Build or inspect packages
 
@@ -10,7 +10,11 @@ PYTHONPATH=src python3 scripts/install-resume-skills matrix --json
 python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
-The package builder creates eight `*-<host>-skills.zip` archives, seven supported plugin/marketplace archives, and `host-packages.json` with SHA-256 digests. Replace `<version>` below with the release version.
+On current `main`, the package builder creates nine `*-<host>-skills.zip` archives
+(one per enabled destination, including Pi), seven supported plugin/marketplace
+archives, and `host-packages.json` with SHA-256 digests. Published `0.3.3`
+release assets remain eight direct archives. Replace `<version>` below with the
+release version.
 
 Download and verify an exact release before installing a plugin:
 
@@ -38,7 +42,7 @@ From PyPI:
 ```bash
 pipx install portable-resume
 install-resume-skills quick-install qwen        # user-global Qwen profile
-install-resume-skills quick-install all         # all eight user-global profiles
+install-resume-skills quick-install all         # all nine user-global profiles
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
@@ -138,8 +142,9 @@ Use `--scope global` for the user root or `--root <path>` for an explicit root. 
 | Grok Build (`grok`) | `.grok/skills` / `~/.grok/skills` | Public marketplace commands above. Offline fallback: validate and install the extracted `grok-plugin.zip` with `--trust`. | `/resume-codex` |
 | Qwen Code (`qwen`) | `.qwen/skills` / `~/.qwen/skills` | Public extension source commands above. Offline fallback: `qwen extensions install /path/portable-resume-<version>-qwen-extension.zip`. | `/resume-codex`; `/skills` lists |
 | Kimi Code CLI (`kimi`) | `.kimi-code/skills` / `$KIMI_CODE_HOME/skills` (default `~/.kimi-code/skills`) | Add the public catalog in `/plugins`, or install the exact release ZIP URL/path. Run `/plugins reload`, `/reload`, or start a new session. | `/skill:resume-codex` |
+| Pi agent (`pi`) | `.pi/skills` / `~/.pi/agent/skills` | Direct Skill only for this PR. Alternate `.agents/skills` roots are compatibility-only (not multi-installed). | `/skill:resume-codex` |
 
-For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, and `resume-qwen`.
+For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, `resume-pi`, and `resume-qwen`.
 
 ## Host-specific notes
 
@@ -152,12 +157,14 @@ For direct archives, extract the archive contents into the selected Skill root. 
 
 ## Evidence boundary
 
-Filesystem render/install/verify and installed `run_reader` behavior cover
-**64/64** cells. Exact `0.3.2` local package installation passed on all seven
+Historical published evidence for `0.3.2` / `0.3.3` (not current unreleased `main`
+**9×9=81** matrix): filesystem render/install/verify and installed `run_reader`
+behavior cover **64/64** cells. Exact `0.3.2` local package installation passed on all seven
 supported native plugin/extension surfaces, including Cursor. Host-native
 headless Skill invocation passed on all eight destination CLIs. Public
 marketplace installation passed on all six compatible hosts; Cursor and Kimi
 also passed their visual marketplace picker flows. Versions, commands, and
 archive digests are recorded in [`host-ui-smoke.md`](host-ui-smoke.md). Other
 visual Skill pickers and vendor-curated directory listings remain separate
-unclaimed gates.
+unclaimed gates. Pi destination on `main` is filesystem packaging only until
+PR D native activation rows exist.

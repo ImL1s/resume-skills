@@ -14,7 +14,7 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
-From a checkout, use `pipx install .`. Install all eight destination profiles into their user-global roots with:
+From a checkout on current `main`, use `pipx install .`. Install all nine destination profiles into their user-global roots with:
 
 ```bash
 install-resume-skills quick-install all
@@ -26,7 +26,7 @@ For one project:
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-The supported destinations are Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, and Kimi Code CLI. Exact direct-Skill, extension, plugin, and marketplace commands are in the [host installation guide](../install-hosts.md). Inspect third-party plugin archives and verify release checksums before trusting them.
+Enabled destinations on `main` are Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI, and Pi (filesystem install; native UI not-run). Published `0.3.3` still ships eight destinations. Exact direct-Skill, extension, plugin, and marketplace commands are in the [host installation guide](../install-hosts.md). Inspect third-party plugin archives and verify release checksums before trusting them.
 
 ## Public marketplace
 

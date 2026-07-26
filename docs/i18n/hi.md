@@ -14,7 +14,7 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
-checkout से `pipx install .` उपयोग करें। सभी आठ destination host को user-global paths में स्थापित करने के लिए:
+वर्तमान `main` checkout से `pipx install .` उपयोग करें। सभी नौ destination host को user-global paths में स्थापित करने के लिए:
 
 ```bash
 install-resume-skills quick-install all
@@ -26,7 +26,7 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-समर्थित destination हैं Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code और Kimi Code CLI। सही direct Skill, extension, plugin और marketplace commands के लिए [installation guide](../install-hosts.md) देखें। किसी plugin पर भरोसा करने से पहले उसकी सामग्री और release SHA-256 जाँचें।
+`main` पर सक्षम destination हैं Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI और Pi (filesystem install; native UI not-run)। प्रकाशित `0.3.3` अभी भी आठ destinations रखता है। सही direct Skill, extension, plugin और marketplace commands के लिए [installation guide](../install-hosts.md) देखें। किसी plugin पर भरोसा करने से पहले उसकी सामग्री और release SHA-256 जाँचें।
 
 ## सार्वजनिक marketplace
 

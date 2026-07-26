@@ -49,6 +49,7 @@ _DESTINATION_PAYLOAD_PROFILES: dict[str, str] = {
     "kimi": "kimi-code-v1",
     "opencode": "opencode-v1",
     "qwen": "qwen-v1",
+    "pi": "pi-v1",
 }
 
 _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
@@ -60,6 +61,7 @@ _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
     "kimi": (".kimi-code/skills", ".kimi-code/skills"),
     "opencode": (".opencode/skills", ".config/opencode/skills"),
     "qwen": (".qwen/skills", ".qwen/skills"),
+    "pi": (".pi/skills", ".pi/agent/skills"),
 }
 
 
@@ -127,6 +129,15 @@ DESTINATION_PROFILES: dict[str, DestinationProfile] = {
     )
     for key in _EIGHT_KEYS
 }
+
+DESTINATION_PROFILES["pi"] = DestinationProfile(
+    key="pi",
+    payload_profile="pi-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".pi/skills",
+    global_rel=".pi/agent/skills",
+)
 
 PACKAGE_SURFACES: dict[str, PackageSurface] = {}
 

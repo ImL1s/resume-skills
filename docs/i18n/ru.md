@@ -14,7 +14,7 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
-Из checkout используйте `pipx install .`. Установка всех восьми целевых host в пользовательские каталоги:
+Из checkout текущего `main` используйте `pipx install .`. Установка всех девяти целевых host в пользовательские каталоги:
 
 ```bash
 install-resume-skills quick-install all
@@ -26,7 +26,7 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-Поддерживаются Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code и Kimi Code CLI. Точные команды для Skill, extension, plugin и marketplace приведены в [руководстве по установке](../install-hosts.md). Перед доверием к plugin проверьте его содержимое и SHA-256 release.
+На `main` включены Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI и Pi (файловая установка; native UI — not-run). Опубликованный `0.3.3` по-прежнему с восьмью назначениями. Точные команды для Skill, extension, plugin и marketplace приведены в [руководстве по установке](../install-hosts.md). Перед доверием к plugin проверьте его содержимое и SHA-256 release.
 
 ## Публичный marketplace
 

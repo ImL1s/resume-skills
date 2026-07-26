@@ -38,6 +38,7 @@ HOST_NAMES = (
     "Grok",
     "Qwen",
     "Kimi",
+    "Pi",
 )
 REQUIRED_COMMANDS = (
     "pipx install portable-resume",

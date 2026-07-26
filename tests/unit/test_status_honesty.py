@@ -8,18 +8,21 @@ class StatusHonestyTests(unittest.TestCase):
     def test_status_does_not_claim_next_wave_supported(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         self.assertNotIn("OpenClaw: supported", text)
-        self.assertNotIn("pi destination: supported", text.lower())
         self.assertNotIn("goose source: supported", text.lower())
         self.assertNotRegex(
             text,
             r"(?i)\b(openclaw|goose)\b[^.\n]{0,40}\bsupported\b",
+        )
+        self.assertNotRegex(
+            text,
+            r"(?i)pi[^.\n]{0,40}(picker|native activation).{0,20}pass",
         )
 
     def test_status_describes_registry_derived_matrix(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
         self.assertIn("derived from registries", lowered)
-        self.assertRegex(text, r"9\s*[×x]\s*8\s*=\s*72|9×8=72|currently 9×8")
+        self.assertRegex(text, r"9\s*[×x]\s*9\s*=\s*81|9×9=81|currently 9×9")
 
     def test_status_open_work_links_next_wave_roadmap(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
@@ -32,7 +35,10 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertNotIn("six coding-agent sources", lowered)
         self.assertNotIn("36 cells", lowered)
         self.assertIn("derived from registries", lowered)
-        self.assertRegex(text, r"9\s*[×x]\s*8|enabled_source|enabled_destination|registry")
+        self.assertRegex(
+            text,
+            r"9\s*[×x]\s*9|9\s*[×x]\s*8|enabled_source|enabled_destination|registry",
+        )
 
     def test_readme_and_host_support_note_registry_derived_matrix(self) -> None:
         for path in (Path("README.md"), Path("docs/host-support.md")):
@@ -60,16 +66,18 @@ class StatusHonestyTests(unittest.TestCase):
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
         self.assertRegex(text, r"\*\*\d+ pass locally\*\*")
-        self.assertIn("d9152cd", text)
+        self.assertRegex(text, r"81/81")
+        self.assertIn("359", text)  # current local suite after Pi destination PR C
+        self.assertIn("d9152cd", text)  # archived PR #51 merge tip
         self.assertIn("340", text)  # archived PR #51 merge count
+        self.assertRegex(text, r"(?i)pi.*destination.*(supported|pass)")
+        self.assertRegex(text, r"(?i)(native|picker|host.?ui).*(not-run|not claimed)")
         self.assertTrue(
             "pi" in lowered
             and "source" in lowered
             and "supported" in lowered
-            and "destination" in lowered
-            and ("not-run" in lowered or "not supported" in lowered)
         )
-        # Published 0.3.3 must not silently absorb unreleased 72-cell claims.
+        # Published 0.3.3 must not silently absorb unreleased 81-cell claims.
         readme = Path("README.md").read_text(encoding="utf-8")
         self.assertIn("Unreleased `main`", readme)
         self.assertRegex(readme, r"0\.3\.3[^\n]*64/64|64/64[^\n]*0\.3\.3")

@@ -1,6 +1,6 @@
 # Host support matrix
 
-Status date: **2026-07-26**. Installer truth lives in `src/portable_resume/install/catalog.py` and `src/portable_resume/registry.py`; matrix dimensions are **derived from registries** (currently **9×8=72** cells). Detailed commands are in [`install-hosts.md`](install-hosts.md).
+Status date: **2026-07-26**. Installer truth lives in `src/portable_resume/install/catalog.py` and `src/portable_resume/registry.py`; matrix dimensions are **derived from registries** (currently **9×9=81** cells). Detailed commands are in [`install-hosts.md`](install-hosts.md).
 
 ## Evidence levels
 
@@ -24,19 +24,20 @@ Status date: **2026-07-26**. Installer truth lives in `src/portable_resume/insta
 | `grok-v1` | `.grok/skills` | `~/.grok/skills` | `/resume-<source>` | direct + public marketplace | headless/public install pass; picker `not-run` |
 | `qwen-v1` | `.qwen/skills` | `~/.qwen/skills` | `/resume-<source>` | direct + public Qwen extension source | headless/public install pass; picker `not-run` |
 | `kimi-code-v1` | `.kimi-code/skills` | `$KIMI_CODE_HOME/skills` | `/skill:resume-<source>` | direct + public Kimi catalog | headless/marketplace picker pass; Skill picker `not-run` |
+| `pi-v1` | `.pi/skills` | `~/.pi/agent/skills` | `/skill:resume-<source>` | direct only | filesystem install pass; native picker `not-run` |
 
-Every profile packages all nine source readers (Pi is source-only until destination PR C). The portable Skill frontmatter contains only `name` and `description`; host invocation text is model context, not automatic process argv.
+Every profile packages all nine source readers. The portable Skill frontmatter contains only `name` and `description`; host invocation text is model context, not automatic process argv.
 
 ## Source adapters
 
-Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi, and **Pi (source only)** have fixture/parser coverage. Live store support is intentionally bounded and fail-closed. Cursor Desktop full bubble graph remains **not claimed**. Pi destination install is **not-run**.
+Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi, and **Pi** have fixture/parser coverage. Live store support is intentionally bounded and fail-closed. Cursor Desktop full bubble graph remains **not claimed**. Pi native host UI / picker activation remains **not-run** (filesystem install is supported).
 
 ## Platform and release scope
 
 | Layer | Current status |
 |---|---|
-| Local packaging matrix | 72/72 pass (currently 9×8, derived from registries) |
-| Installed runner matrix | 72/72 pass (currently 9×8, derived from registries) |
+| Local packaging matrix | 81/81 pass (currently 9×9, derived from registries) |
+| Installed runner matrix | 81/81 pass (currently 9×9, derived from registries) |
 | Native local plugin/extension installs | 7/7 pass with exact 0.3.2 release assets |
 | Host-native headless Skill invocation | 8/8 pass |
 | Public marketplace installation | 6/6 compatible hosts pass |

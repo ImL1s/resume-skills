@@ -867,6 +867,10 @@ Ensure adding `DestinationProfile(key="pi", ...)` does not require a source. Pac
 
 ### Task 13: Pi PR C — destination profile
 
+**Status:** **done on `main`** — `DestinationProfile(key="pi")` + `HostProfile` with
+`.pi/skills` / `~/.pi/agent/skills`; installed-runner smoke **81/81**; native host
+UI / picker activation remains **not-run** (PR D).
+
 **Files:**
 - Modify: `registry.py` / `catalog.py` — `DESTINATION_PROFILES["pi"]` + `HostProfile` details:
   - `project_rel=".pi/skills"`

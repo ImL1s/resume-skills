@@ -41,7 +41,7 @@ class HostPackageBuilderTests(unittest.TestCase):
             report = self.build(first)
             repeated = self.build(second)
             self.assertEqual(report["host_count"], len(HOST_KEYS))
-            self.assertEqual(report["direct_package_count"], 8)
+            self.assertEqual(report["direct_package_count"], len(HOST_KEYS))
             self.assertEqual(report["plugin_package_count"], 7)
             self.assertEqual(report["live_host_installation"], "not-run")
             self.assertEqual(

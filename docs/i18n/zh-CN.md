@@ -14,7 +14,7 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
-从源码 checkout 安装可运行 `pipx install .`。一次安装八个目标 host 到用户全局目录：
+从当前 `main` 源码 checkout 安装可运行 `pipx install .`。一次安装九个目标 host 到用户全局目录：
 
 ```bash
 install-resume-skills quick-install all
@@ -26,7 +26,7 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-支持的目标端包括 Claude Code、Codex、Cursor、OpenCode、Antigravity、Grok Build、Qwen Code 和 Kimi Code CLI。各 host 的直接 Skill、extension、plugin 与 marketplace 命令见[安装指南](../install-hosts.md)。信任第三方 plugin 前，请检查内容并核对 release SHA-256。
+`main` 上启用的目标端包括 Claude Code、Codex、Cursor、OpenCode、Antigravity、Grok Build、Qwen Code、Kimi Code CLI，以及 Pi（文件系统安装；原生 UI 仍为 not-run）。已发布的 `0.3.3` 仍为八个目标端。各 host 的直接 Skill、extension、plugin 与 marketplace 命令见[安装指南](../install-hosts.md)。信任第三方 plugin 前，请检查内容并核对 release SHA-256。
 
 ## 公开 marketplace
 
