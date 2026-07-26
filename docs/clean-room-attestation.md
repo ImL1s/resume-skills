@@ -14,7 +14,7 @@ These references are used to understand formats and public interfaces; vendor co
 
 ## Scoped attestation
 
-Scope: shared core, eight source adapters, eight destination profiles, installer/package builders, and deterministic tests in this repository.
+Scope: shared core, nine source adapters, nine destination profiles, installer/package builders, and deterministic tests in this repository.
 
 Product sources and fixtures are compatibility implementations over public shapes. Readers produce inert, untrusted handoffs for a fresh session; they do not restore a live process, invoke source CLIs, or add a network path.
 

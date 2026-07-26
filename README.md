@@ -86,7 +86,7 @@ The lower-level transactional command remains available for previews, custom
 roots, verification, and uninstall:
 
 ```bash
-# Inspect capabilities and the registry-derived matrix (currently 8×8)
+# Inspect capabilities and the registry-derived matrix (currently 9×9)
 PYTHONPATH=src python3 scripts/portable-resume self-check --json
 PYTHONPATH=src python3 scripts/install-resume-skills matrix --json
 PYTHONPATH=src python3 scripts/install-resume-skills hosts
