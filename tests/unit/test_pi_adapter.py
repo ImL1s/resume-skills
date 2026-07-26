@@ -1,0 +1,200 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from portable_resume.adapters.base import ResolvedRef
+from portable_resume.adapters.pi import ADAPTER, FORMAT_ID_V2, FORMAT_ID_V3
+from portable_resume.bounds import Bounds, ReadBudget
+from portable_resume.diagnostics import DiagnosticError
+from portable_resume.model import Query
+from tests.helpers.core import tree_snapshot
+
+
+FIXTURES = Path("tests/fixtures/pi")
+CWD = "/tmp/project"
+
+
+def agent_root(case: str) -> Path:
+    return (FIXTURES / case / "agent").resolve()
+
+
+def query(root: Path, ref: str | None = None, **kwargs: object) -> Query:
+    return Query(source="pi", ref=ref, cwd=CWD, source_root=str(root), within_min=0, **kwargs)
+
+
+def resolved(items, session_id: str) -> ResolvedRef:
+    return ResolvedRef.from_summary(next(item for item in items if item.session_id == session_id))
+
+
+class PiAdapterTests(unittest.TestCase):
+    def test_list_metadata_only_from_fixture(self) -> None:
+        root = agent_root("s-pi-01-basic-v3")
+        summaries = ADAPTER.list(query(root), ReadBudget())
+        self.assertGreaterEqual(len(summaries), 1)
+        self.assertEqual(summaries[0].source, "pi")
+        self.assertEqual(summaries[0].session_id, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        self.assertEqual(summaries[0].provider, FORMAT_ID_V3)
+
+    def test_show_basic_v3_fixture(self) -> None:
+        root = agent_root("s-pi-01-basic-v3")
+        before = tree_snapshot(root)
+        current = query(root)
+        summaries = ADAPTER.list(current, ReadBudget())
+        session = ADAPTER.show(resolved(summaries, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), current, ReadBudget())
+        self.assertEqual(
+            [turn.content for turn in session.turns],
+            [
+                "synthetic user request for basic v3 branch",
+                "synthetic assistant reply on the active branch",
+            ],
+        )
+        self.assertEqual(tree_snapshot(root), before)
+
+    def test_show_active_branch_skips_compacted_interior(self) -> None:
+        root = agent_root("s-pi-02-branch-compaction")
+        current = query(root)
+        summaries = ADAPTER.list(current, ReadBudget())
+        session = ADAPTER.show(resolved(summaries, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), current, ReadBudget())
+        contents = [turn.content for turn in session.turns]
+        self.assertEqual(contents[0], "synthetic opening user turn")
+        self.assertEqual(contents[1], "synthetic first assistant reply")
+        self.assertIn("compaction", contents[2].lower())
+        self.assertEqual(contents[3], "synthetic post-compaction user turn")
+        self.assertEqual(contents[4], "synthetic active-leaf reply after compaction")
+        combined = " ".join(contents)
+        self.assertNotIn("alternate-branch", combined)
+        self.assertNotIn("summarized", combined)
+
+    def test_show_tool_custom_and_v2_compat(self) -> None:
+        root = agent_root("s-pi-03-tool-and-custom")
+        current = query(root)
+        summaries = ADAPTER.list(current, ReadBudget())
+        session = ADAPTER.show(resolved(summaries, "cccccccc-cccc-cccc-cccc-cccccccccccc"), current, ReadBudget())
+        roles = [turn.role for turn in session.turns]
+        self.assertEqual(roles, ["user", "tool", "tool", "user", "assistant"])
+        self.assertIn("synthetic custom extension context", [turn.content for turn in session.turns])
+
+        v2_root = agent_root("s-pi-05-v2-compat")
+        v2_current = query(v2_root)
+        v2_summaries = ADAPTER.list(v2_current, ReadBudget())
+        self.assertEqual(v2_summaries[0].provider, FORMAT_ID_V2)
+        v2_session = ADAPTER.show(
+            resolved(v2_summaries, "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+            v2_current,
+            ReadBudget(),
+        )
+        self.assertEqual(
+            [turn.content for turn in v2_session.turns],
+            [
+                "synthetic v2 compatibility user turn",
+                "synthetic v2 compatibility assistant reply",
+            ],
+        )
+
+    def test_corrupt_interior_raises_e_corrupt_record(self) -> None:
+        root = agent_root("s-pi-04-corrupt-interior")
+        current = query(root)
+        summaries = ADAPTER.list(current, ReadBudget())
+        with self.assertRaises(DiagnosticError) as caught:
+            ADAPTER.show(resolved(summaries, "dddddddd-dddd-dddd-dddd-dddddddddddd"), current, ReadBudget())
+        self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
+    def test_exact_path_does_not_scan_sibling_buckets(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            agent = base / "agent"
+            primary = agent / "sessions" / "--tmp-project--"
+            sibling = agent / "sessions" / "--other-project--"
+            primary.mkdir(parents=True)
+            sibling.mkdir(parents=True)
+            target = primary / "20240101T000000_11111111-1111-1111-1111-111111111111.jsonl"
+            decoy = sibling / "20240101T000000_22222222-2222-2222-2222-222222222222.jsonl"
+            header = {
+                "type": "session",
+                "version": 3,
+                "id": "11111111-1111-1111-1111-111111111111",
+                "timestamp": "2024-01-01T00:00:00.000Z",
+                "cwd": CWD,
+            }
+            user = {
+                "type": "message",
+                "id": "u1",
+                "parentId": None,
+                "timestamp": "2024-01-01T00:00:01.000Z",
+                "message": {"role": "user", "content": "exact path only", "timestamp": 1},
+            }
+            target.write_text(
+                "\n".join(json.dumps(record, separators=(",", ":")) for record in (header, user)) + "\n",
+                encoding="utf-8",
+            )
+            decoy_header = {**header, "id": "22222222-2222-2222-2222-222222222222"}
+            decoy_user = {**user, "id": "u2", "message": {"role": "user", "content": "sibling leak", "timestamp": 1}}
+            decoy.write_text(
+                "\n".join(json.dumps(record, separators=(",", ":")) for record in (decoy_header, decoy_user)) + "\n",
+                encoding="utf-8",
+            )
+            exact = query(agent, ref=str(target.resolve()))
+            summaries = ADAPTER.list(exact, ReadBudget())
+            self.assertEqual(len(summaries), 1)
+            self.assertEqual(summaries[0].session_id, "11111111-1111-1111-1111-111111111111")
+
+    def test_unsupported_future_version_is_e_unsupported_format(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            agent = base / "agent" / "sessions" / "--tmp-project--"
+            agent.mkdir(parents=True)
+            path = agent / "future.jsonl"
+            header = {
+                "type": "session",
+                "version": 99,
+                "id": "99999999-9999-9999-9999-999999999999",
+                "timestamp": "2024-01-01T00:00:00.000Z",
+                "cwd": CWD,
+            }
+            path.write_text(json.dumps(header) + "\n", encoding="utf-8")
+            current = query(base / "agent")
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.list(current, ReadBudget())
+            self.assertEqual(caught.exception.code, "E_UNSUPPORTED_FORMAT")
+
+    def test_large_synthetic_hits_budget_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            agent = base / "agent" / "sessions" / "--tmp-project--"
+            agent.mkdir(parents=True)
+            path = agent / "large.jsonl"
+            session_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            header = {
+                "type": "session",
+                "version": 3,
+                "id": session_id,
+                "timestamp": "2024-01-01T00:00:00.000Z",
+                "cwd": CWD,
+            }
+            lines = [json.dumps(header, separators=(",", ":"))]
+            parent = None
+            for index in range(50_001):
+                entry_id = f"r{index:06d}"
+                record = {
+                    "type": "message",
+                    "id": entry_id,
+                    "parentId": parent,
+                    "timestamp": "2024-01-01T00:00:01.000Z",
+                    "message": {"role": "user", "content": f"line {index}", "timestamp": index},
+                }
+                lines.append(json.dumps(record, separators=(",", ":")))
+                parent = entry_id
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            current = query(base / "agent")
+            summaries = ADAPTER.list(current, ReadBudget())
+            ref = resolved(summaries, session_id)
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.show(ref, current, ReadBudget())
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+
+if __name__ == "__main__":
+    unittest.main()

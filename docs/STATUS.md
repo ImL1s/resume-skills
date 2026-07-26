@@ -4,10 +4,10 @@
 
 | Gate | Status |
 |---|---|
-| Source adapters | 8: Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi |
-| Destination profiles | 8 |
-| Packaging matrix | **64/64 pass locally** (currently **8×8=64**, derived from registries) |
-| Installed runner matrix | **64/64 pass locally** (currently **8×8=64**, derived from registries) |
+| Source adapters | 9: Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi, **Pi (source only)** |
+| Destination profiles | 8 (Pi destination not supported) |
+| Packaging matrix | **72/72 pass locally** (currently **9×8=72**, derived from registries) |
+| Installed runner matrix | **72/72 pass locally** (currently **9×8=72**, derived from registries) |
 | Python test suite | **329 pass locally** (main @ `7b5192c`) |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
@@ -54,12 +54,12 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 | Issue #3 parent list + large rollout reject | **Closed** via PR #4 → `48746c4` | P0 on main. |
 | Discovery false unsupported / stale SQLite | [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + plan 026 | P1a: head-only probe; no full `sessions/` walk; read-only FS head fallback. Do not mutate `~/.codex`. |
 | Peak memory on large show | [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + plan 027 | P1b: true chunked stable streaming + reducer + synthetic 17–30 MiB test. |
-| Capability registries + dynamic matrix | [Issue #36](https://github.com/ImL1s/resume-skills/issues/36) | **Partial via PR #49:** source/destination registries + dynamic direct-runner matrix (still 8×8). `PACKAGE_SURFACES` scaffold empty; package builders not registry-driven. Keep #36 open. |
-| Shared `stable_scan_lines` (#10) | [Issue #10](https://github.com/ImL1s/resume-skills/issues/10) + PR #49 | Foundation on main; **not yet adopted** by production adapters. True streaming yield remains with #8. |
+| Capability registries + dynamic matrix | [Issue #36](https://github.com/ImL1s/resume-skills/issues/36) | **Partial via PR #49:** source/destination registries + dynamic direct-runner matrix (now **9×8** with Pi source-only). `PACKAGE_SURFACES` scaffold empty; package builders not registry-driven. Keep #36 open. |
+| Shared `stable_scan_lines` (#10) | [Issue #10](https://github.com/ImL1s/resume-skills/issues/10) + PR #49 | Foundation on main; **adopted by Pi source adapter**; remaining adapters still pending. True streaming yield remains with #8. |
 | ReadBudget raise clamp (#17) | [Issue #17](https://github.com/ImL1s/resume-skills/issues/17) + PR #49 | **Partial:** four consume counters clamp to `DEFAULT_BOUNDS`. Full Bounds construction-time validation still open. |
 | Installer recover containment (#20) | **Closed** via [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c` | Typed stage/backup authorization + pinned support dirfd deletes + adversarial tests in `tests/unit/test_install_recover_containment.py`. |
 | Descriptor-relative install (#31) | [Issue #31](https://github.com/ImL1s/resume-skills/issues/31) + PR #49 | **Partial:** POSIX forward commit is dirfd-based; rollback/manifest/orphan/Windows still pathname or fail-closed. |
-| Next-wave agent roadmap (Pi, OpenClaw, goose, …) | [Issue #48](https://github.com/ImL1s/resume-skills/issues/48) + [Issue #38](https://github.com/ImL1s/resume-skills/issues/38) | Phase 0 on `7b5192c`. **Pi PR A fixtures-only** (`tests/fixtures/pi/`, format notes; suite **332** locally) — **no adapter / registry support**. OpenClaw/goose still research. |
+| Next-wave agent roadmap (Pi, OpenClaw, goose, …) | [Issue #48](https://github.com/ImL1s/resume-skills/issues/48) + [Issue #38](https://github.com/ImL1s/resume-skills/issues/38) | Phase 0 on `7b5192c`. **Pi PR B: source adapter supported** (`pi-session-jsonl-v3` / v2 read-only); **Pi destination not-run** (PR C). OpenClaw/goose still research. |
 
 `/resume-codex` remains **context migration** (Skill + reader), not Grok Build native `/resume` and not Codex CLI live resume.
 

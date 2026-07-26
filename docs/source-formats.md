@@ -12,7 +12,7 @@ Adapters are clean-room compatibility readers built from public documentation/so
 | Grok Build | `grok-updates-jsonl-v1` | Apache-2.0 public tree + fixtures | supported (fixture/parser) | bounded live support; installed bundled Skills are excluded as implementation sources |
 | Qwen Code | `qwen-chat-jsonl-v1` | Qwen Code public tree at `713a083aea24ccb7b80db3e11abf2155b854a78c` + fixtures | supported (fixture/parser) | bounded live support; thought/tool/file/binary payloads are not replayed |
 | Kimi Code / legacy Kimi CLI | `kimi-code-wire-jsonl-v1`, `kimi-legacy-context-jsonl-v1` | Kimi Code `a2401cc1ed26e5758c081e657bcff6a75cb061bb`; legacy Kimi CLI `4a550effdfcb29a25a5d325bf935296cc50cd417`; fixtures | supported (fixture/parser) | bounded live support; tool execution is never replayed |
-| Pi | `pi-session-jsonl-v3`, `pi-session-jsonl-v2` | Pi public session-format docs + synthetic fixtures | planned (fixtures-only) | no adapter or registry support; v3 target with a v2 read-only compatibility fixture (v1 linear not fixture-covered yet) |
+| Pi | `pi-session-jsonl-v3`, `pi-session-jsonl-v2` | Pi public session-format docs + synthetic fixtures | supported (source only; fixture/parser) | v3 primary; v2 read-only compat; Pi destination host not supported |
 
 ## Provenance anchors
 
@@ -63,7 +63,7 @@ Legacy Python Kimi CLI `kimi.json` session metadata plus `sessions/<workdir-key>
 Pi agent session JSONL (version 3 tree with `id`/`parentId`). Default on-disk layout:
 `agent/sessions/--<cwd-slug>--/<timestamp>_<uuid>.jsonl`. Synthetic fixtures:
 `tests/fixtures/pi/`. A v2 tree compatibility fixture exists (`pi-session-jsonl-v2`);
-v1 linear sessions are not fixture-covered yet. No runtime adapter support is claimed.
+v1 linear sessions are not fixture-covered yet. Destination install for Pi remains a later PR (#38).
 
 ### pi-pi-session-jsonl-v2
 

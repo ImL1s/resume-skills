@@ -450,6 +450,7 @@ SOURCE_TITLES = {
     "antigravity": "Antigravity CLI",
     "grok": "Grok Build",
     "kimi": "Kimi CLI / Kimi Code CLI",
+    "pi": "Pi agent",
     "qwen": "Qwen Code",
 }
 

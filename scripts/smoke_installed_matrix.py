@@ -27,6 +27,7 @@ sys.path.insert(0, str(SRC))
 
 from portable_resume.diagnostics import SOURCE_KEYS  # noqa: E402
 from portable_resume.install.catalog import HOST_KEYS  # noqa: E402
+from portable_resume.paths import same_cwd  # noqa: E402
 from portable_resume.registry import matrix_dimensions  # noqa: E402
 
 HOSTS = tuple(sorted(HOST_KEYS))
@@ -89,6 +90,15 @@ FIXTURES: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
         "11111111-1111-4111-8111-111111111111",
         ("Current Kimi prompt", "Current Kimi answer"),
     ),
+    "pi": (
+        "tests/fixtures/pi/s-pi-01-basic-v3/agent",
+        "/tmp/project",
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        (
+            "synthetic user request for basic v3 branch",
+            "synthetic assistant reply on the active branch",
+        ),
+    ),
 }
 
 
@@ -124,7 +134,7 @@ def _parse_envelope(
     if value.get("operation") != operation:
         return f"unexpected operation: {value.get('operation')!r}"
     query = value.get("query")
-    if not isinstance(query, dict) or query.get("source") != source or query.get("cwd") != cwd:
+    if not isinstance(query, dict) or query.get("source") != source or not same_cwd(query.get("cwd"), cwd):
         return f"unexpected query: {query!r}"
     if value.get("inert") is not True or value.get("untrusted_content") is not True:
         return "envelope is missing inert/untrusted boundary flags"
