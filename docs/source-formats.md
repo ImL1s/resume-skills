@@ -64,6 +64,7 @@ Pi agent session JSONL (version 3 tree with `id`/`parentId`). Default on-disk la
 `agent/sessions/--<cwd-slug>--/<timestamp>_<uuid>.jsonl`. Synthetic fixtures:
 `tests/fixtures/pi/`. A v2 tree compatibility fixture exists (`pi-session-jsonl-v2`);
 v1 linear sessions are not fixture-covered yet. Destination install for Pi remains a later PR (#38).
+`list` is metadata-lenient on interior corrupt lines (`W_BROKEN_CHAIN`); `show` fails closed with `E_CORRUPT_RECORD`.
 
 ### pi-pi-session-jsonl-v2
 

@@ -8,7 +8,7 @@
 | Destination profiles | 8 (Pi destination not supported) |
 | Packaging matrix | **72/72 pass locally** (currently **9×8=72**, derived from registries) |
 | Installed runner matrix | **72/72 pass locally** (currently **9×8=72**, derived from registries) |
-| Python test suite | **329 pass locally** (main @ `7b5192c`) |
+| Python test suite | **340 pass locally** (main @ `d9152cd`) |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
 | Host-native headless Skill activation | **8/8 pass** |
@@ -16,7 +16,7 @@
 | Visual marketplace picker | **Cursor and Kimi pass** |
 | Other visual Skill picker activation | **not-run** |
 | Vendor-curated directory listing | **not submitted** |
-| CI (main @ `7b5192c`) | **pass**: [Ubuntu + macOS × Python 3.11–3.14 + dist smoke](https://github.com/ImL1s/resume-skills/actions/runs/30191800004) |
+| CI (main @ `d9152cd`) | **pass**: [Ubuntu + macOS × Python 3.11–3.14 + dist smoke](https://github.com/ImL1s/resume-skills/actions/runs/30203656076) ([PR #51](https://github.com/ImL1s/resume-skills/pull/51)) |
 | Phase 0 / Milestone N1 | **merged** [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c` |
 | `v0.3.2` release workflow | **pass**: [14 jobs through GitHub Release and PyPI](https://github.com/ImL1s/resume-skills/actions/runs/30093776529) |
 | Published release | **pass**: [GitHub Release v0.3.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2) / [v0.3.3](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3) |
@@ -62,6 +62,12 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 | Next-wave agent roadmap (Pi, OpenClaw, goose, …) | [Issue #48](https://github.com/ImL1s/resume-skills/issues/48) + [Issue #38](https://github.com/ImL1s/resume-skills/issues/38) | Phase 0 on `7b5192c`. **Pi PR B: source adapter supported** (`pi-session-jsonl-v3` / v2 read-only); **Pi destination not-run** (PR C). OpenClaw/goose still research. |
 
 `/resume-codex` remains **context migration** (Skill + reader), not Grok Build native `/resume` and not Codex CLI live resume.
+
+## Corrected after PR #51
+
+- **Pi source adapter supported** (`pi-session-jsonl-v3` / v2 read-only); **Pi destination not-run**.
+- Verify at tip: **340** unittest, **72/72** installed-runner smoke, self_verify, secrets gate,
+  [CI run 30203656076](https://github.com/ImL1s/resume-skills/actions/runs/30203656076) on `d9152cd`.
 
 ## Corrected and verified on main after 0.3.3 (PR #49)
 
