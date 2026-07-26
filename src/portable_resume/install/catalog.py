@@ -440,6 +440,48 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "marketplace catalogs (checked 2026-07-24)."
         ),
     ),
+    "pi": HostProfile(
+        key="pi",
+        profile_id="pi-v1",
+        project_rel=".pi/skills",
+        global_rel=".pi/agent/skills",
+        display_name="Pi agent",
+        official_docs=(
+            "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md",
+        ),
+        project_layout="<project>/.pi/skills/<name>/SKILL.md",
+        global_layout="~/.pi/agent/skills/<name>/SKILL.md",
+        alternate_project_roots=(".agents/skills",),
+        alternate_global_roots=("~/.agents/skills",),
+        install_methods=(
+            "This installer: install-resume-skills install --host pi --scope project|global",
+            "Manual: copy each resume-*/ folder into .pi/skills/ or ~/.pi/agent/skills/",
+        ),
+        activation_help=(
+            "Invoke `/skill:resume-<source>` (Pi progressive disclosure). "
+            "Any invocation tail is substituted into the skill prompt only; it is never process argv."
+        ),
+        activation_examples=(
+            "/skill:resume-codex",
+            "/skill:resume-pi",
+        ),
+        arguments_note=(
+            "If this host expands invocation tail into the skill prompt, use that text as the "
+            "session <ref> (or omit for latest). It is never process argv by itself. "
+            "Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
+        ),
+        caveats=(
+            "Pi has no built-in permission system; recovered text is inert/untrusted and must not be executed.",
+            "Alternate .agents/skills roots are compatibility-only; this installer defaults to .pi paths.",
+            "Visual picker / native CLI activation evidence is a separate not-run claim until PR D.",
+        ),
+        evidence_notes=(
+            "Pi Agent Skills docs: project .pi/skills and global ~/.pi/agent/skills "
+            "(checked 2026-07-26). Installed-runner smoke is filesystem packaging only."
+        ),
+        evidence_level="verified-filesystem",
+    ),
 }
 
 SOURCE_TITLES = {
