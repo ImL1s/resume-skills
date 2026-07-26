@@ -1,0 +1,10 @@
+{
+  "case": "s-oc-01-basic",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "openclaw-agent-sqlite-v1",
+  "provenance_ref": "docs/source-formats.md#openclaw-openclaw-agent-sqlite-v1",
+  "source": "openclaw",
+  "synthetic": true
+}
