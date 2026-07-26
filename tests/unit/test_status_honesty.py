@@ -56,6 +56,20 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertRegex(text, r"\*\*Closed\*\* via \[PR #49\]")
         self.assertIn("test_install_recover_containment.py", text)
 
+    def test_status_reflects_pi_merge_honesty(self) -> None:
+        text = Path("docs/STATUS.md").read_text(encoding="utf-8")
+        lowered = text.lower()
+        self.assertRegex(text, r"\*\*342 pass locally\*\*")
+        self.assertIn("d9152cd", text)
+        self.assertIn("340", text)  # archived PR #51 merge count
+        self.assertTrue(
+            "pi" in lowered
+            and "source" in lowered
+            and "supported" in lowered
+            and "destination" in lowered
+            and ("not-run" in lowered or "not supported" in lowered)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

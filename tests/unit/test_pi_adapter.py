@@ -102,6 +102,15 @@ class PiAdapterTests(unittest.TestCase):
             ADAPTER.show(resolved(summaries, "dddddddd-dddd-dddd-dddd-dddddddddddd"), current, ReadBudget())
         self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
 
+    def test_list_corrupt_interior_succeeds_with_w_broken_chain(self) -> None:
+        root = agent_root("s-pi-04-corrupt-interior")
+        current = query(root)
+        summaries = ADAPTER.list(current, ReadBudget())
+        match = next(
+            item for item in summaries if item.session_id == "dddddddd-dddd-dddd-dddd-dddddddddddd"
+        )
+        self.assertIn("W_BROKEN_CHAIN", match.warnings)
+
     def test_exact_path_does_not_scan_sibling_buckets(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
@@ -161,6 +170,8 @@ class PiAdapterTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, "E_UNSUPPORTED_FORMAT")
 
     def test_large_synthetic_hits_budget_diagnostics(self) -> None:
+        min_bytes = 17 * 1024 * 1024
+        max_bytes = 30 * 1024 * 1024
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             agent = base / "agent" / "sessions" / "--tmp-project--"
@@ -174,20 +185,52 @@ class PiAdapterTests(unittest.TestCase):
                 "timestamp": "2024-01-01T00:00:00.000Z",
                 "cwd": CWD,
             }
-            lines = [json.dumps(header, separators=(",", ":"))]
-            parent = None
-            for index in range(50_001):
-                entry_id = f"r{index:06d}"
-                record = {
-                    "type": "message",
-                    "id": entry_id,
-                    "parentId": parent,
-                    "timestamp": "2024-01-01T00:00:01.000Z",
-                    "message": {"role": "user", "content": f"line {index}", "timestamp": index},
-                }
-                lines.append(json.dumps(record, separators=(",", ":")))
-                parent = entry_id
+
+            def build_lines(pad_len: int) -> list[str]:
+                lines = [json.dumps(header, separators=(",", ":"))]
+                parent = None
+                padding = "x" * pad_len
+                for index in range(50_001):
+                    entry_id = f"r{index:06d}"
+                    record = {
+                        "type": "message",
+                        "id": entry_id,
+                        "parentId": parent,
+                        "timestamp": "2024-01-01T00:00:01.000Z",
+                        "message": {
+                            "role": "user",
+                            "content": f"line {index}{padding}",
+                            "timestamp": index,
+                        },
+                    }
+                    lines.append(json.dumps(record, separators=(",", ":")))
+                    parent = entry_id
+                return lines
+
+            def file_size(lines: list[str]) -> int:
+                return sum(len(line.encode("utf-8")) + 1 for line in lines)
+
+            pad_len = 0
+            lines = build_lines(pad_len)
+            size = file_size(lines)
+            if size < min_bytes:
+                pad_len = max(1, (min_bytes - size) // 50_001)
+                lines = build_lines(pad_len)
+                size = file_size(lines)
+            while size < min_bytes:
+                pad_len += 1
+                lines = build_lines(pad_len)
+                size = file_size(lines)
+            while size > max_bytes and pad_len > 0:
+                pad_len -= 1
+                lines = build_lines(pad_len)
+                size = file_size(lines)
+            self.assertGreaterEqual(size, min_bytes, msg=f"fixture size {size} below 17 MiB")
+            self.assertLessEqual(size, max_bytes, msg=f"fixture size {size} above 30 MiB")
+
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            self.assertGreaterEqual(path.stat().st_size, min_bytes)
+            self.assertLessEqual(path.stat().st_size, max_bytes)
             current = query(base / "agent")
             summaries = ADAPTER.list(current, ReadBudget())
             ref = resolved(summaries, session_id)
