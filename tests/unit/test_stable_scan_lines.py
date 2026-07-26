@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -37,6 +38,60 @@ class StableScanLinesTests(unittest.TestCase):
                         charge_transcript=True,
                     )
                 )
+
+    def test_oversize_line_without_newline_raises_limit_exceeded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "huge.jsonl"
+            path.write_bytes(b"x" * 32)
+            with self.assertRaises(DiagnosticError) as caught:
+                list(
+                    stable_scan_lines(
+                        str(path),
+                        root=str(root),
+                        max_line_bytes=16,
+                    )
+                )
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_invalid_utf8_raises_corrupt_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "bad.jsonl"
+            path.write_bytes(b"\xff\n")
+            with self.assertRaises(DiagnosticError) as caught:
+                list(stable_scan_lines(str(path), root=str(root)))
+            self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
+    def test_same_size_mtime_spoof_is_detected_by_second_content_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "record.jsonl"
+            path.write_bytes(b"aaaa\n")
+            original = path.stat().st_mtime_ns
+
+            def hook(stage: str, attempt: int, _: str) -> None:
+                if stage == "after-read":
+                    path.write_bytes(b"bbbb\n" if attempt % 2 else b"aaaa\n")
+                    os.utime(path, ns=(original, original))
+
+            with self.assertRaises(DiagnosticError) as caught:
+                list(stable_scan_lines(str(path), root=str(root), hook=hook))
+            self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+            self.assertEqual(caught.exception.attempts, 3)
+
+    def test_symlink_escape_rejected_before_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = root / "store"
+            store.mkdir()
+            outside = root / "outside.jsonl"
+            outside.write_text("secret\n", encoding="utf-8")
+            link = store / "link.jsonl"
+            link.symlink_to(outside)
+            with self.assertRaises(DiagnosticError) as caught:
+                list(stable_scan_lines(str(link), root=str(store)))
+            self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
 
 
 if __name__ == "__main__":

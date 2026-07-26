@@ -16,6 +16,7 @@ from portable_resume.snapshot import (
     snapshot_sqlite_family,
     stable_read_bytes,
     stable_read_windows,
+    stable_scan_lines,
 )
 from tests.helpers.core import tree_snapshot
 
@@ -116,6 +117,15 @@ class StableSnapshotTests(unittest.TestCase):
         link.symlink_to(outside)
         with self.assertRaises(DiagnosticError) as caught:
             stable_read_bytes(link, root=self.store)
+        self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+    def test_stable_scan_lines_symlink_escape_rejected_before_read(self) -> None:
+        outside = self.root / "outside.jsonl"
+        outside.write_text("TOP SECRET\n", encoding="utf-8")
+        link = self.store / "link.jsonl"
+        link.symlink_to(outside)
+        with self.assertRaises(DiagnosticError) as caught:
+            list(stable_scan_lines(link, root=self.store))
         self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
 
     def test_u016_fifo_directory_and_socket_like_inputs_rejected(self) -> None:

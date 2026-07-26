@@ -272,7 +272,7 @@ def _collect_scanned_lines(
     max_line_bytes: int,
     budget: ReadBudget | None,
     charge_transcript: bool,
-) -> tuple[list[ScannedLine], int, int]:
+) -> tuple[list[ScannedLine], int, int, str]:
     """Stream complete lines from an open descriptor; skip a terminal partial line."""
 
     buffer = bytearray()
@@ -281,6 +281,7 @@ def _collect_scanned_lines(
     pending_bytes = 0
     pending_records = 0
     chunk_size = 64 * 1024
+    digest = hashlib.sha256()
 
     def check_byte_budget(amount: int) -> None:
         if budget is None:
@@ -304,11 +305,16 @@ def _collect_scanned_lines(
         if current + pending_records + 1 > maximum:
             raise DiagnosticError.limit_exceeded()
 
+    def reject_oversize_unterminated_line() -> None:
+        if len(buffer) > max_line_bytes:
+            raise DiagnosticError.limit_exceeded()
+
     def drain_complete_lines() -> None:
         nonlocal absolute_offset, pending_records
         while True:
             newline_index = buffer.find(b"\n")
             if newline_index < 0:
+                reject_oversize_unterminated_line()
                 return
             line_bytes = bytes(buffer[: newline_index + 1])
             del buffer[: newline_index + 1]
@@ -317,10 +323,14 @@ def _collect_scanned_lines(
                 raise DiagnosticError.limit_exceeded()
             check_record_budget()
             pending_records += 1
+            try:
+                text = line_bytes[:-1].decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise DiagnosticError("E_CORRUPT_RECORD") from error
             collected.append(
                 ScannedLine(
                     ordinal=len(collected),
-                    text=line_bytes[:-1].decode("utf-8"),
+                    text=text,
                     byte_offset=absolute_offset,
                 )
             )
@@ -332,10 +342,12 @@ def _collect_scanned_lines(
             break
         check_byte_budget(len(chunk))
         pending_bytes += len(chunk)
+        digest.update(chunk)
         buffer.extend(chunk)
         drain_complete_lines()
 
-    return collected, pending_bytes, pending_records
+    reject_oversize_unterminated_line()
+    return collected, pending_bytes, pending_records, digest.hexdigest()
 
 
 def stable_scan_lines(
@@ -350,13 +362,16 @@ def stable_scan_lines(
     """Yield UTF-8 lines under no-follow / containment / budget rules.
 
     Uses the same root containment and symlink rejection as stable_read_bytes.
-    Prefer streaming reads; do not require the whole file in memory.
-    Terminal partial line may be skipped with a warning path left to callers.
+    Reads stream in chunks; terminal partial line may be skipped (callers warn).
+    Yields from a per-attempt collected list until true streaming yield lands.
     """
 
     line_limit = max_line_bytes if max_line_bytes is not None else DEFAULT_BOUNDS.record_bytes
     if line_limit < 0 or line_limit > DEFAULT_BOUNDS.record_bytes:
         raise DiagnosticError.invalid()
+    max_file_bytes = DEFAULT_BOUNDS.source_read_bytes
+    if budget is not None:
+        max_file_bytes = min(max_file_bytes, budget.limits.source_read_bytes)
     safe, base = require_regular_no_symlinks(path, root)
     parent = os.path.dirname(safe)
     attempts = DEFAULT_BOUNDS.snapshot_attempts
@@ -366,23 +381,39 @@ def stable_scan_lines(
         descriptor = _open_no_follow(safe, base)
         try:
             before_stat = os.fstat(descriptor)
+            if before_stat.st_size > max_file_bytes:
+                raise DiagnosticError.limit_exceeded()
             if hook:
                 hook("before-read", attempt, safe)
-            collected, pending_bytes, pending_records = _collect_scanned_lines(
+            collected, pending_bytes, pending_records, content_hash = _collect_scanned_lines(
                 descriptor,
                 max_line_bytes=line_limit,
                 budget=budget,
                 charge_transcript=charge_transcript,
             )
-            after_stat = os.fstat(descriptor)
+            observed = _fingerprint(before_stat, content_hash)
             if hook:
                 hook("after-read", attempt, safe)
+            verified_hash, verified_size = _hash_descriptor(
+                descriptor,
+                maximum=max_file_bytes,
+            )
+            verified = _fingerprint(os.fstat(descriptor), verified_hash)
+            if hook:
+                hook("after-verify-read", attempt, safe)
+            middle_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+            final_hash, final_size = _hash_descriptor(
+                descriptor,
+                maximum=max_file_bytes,
+            )
+            final = _fingerprint(os.fstat(descriptor), final_hash)
         finally:
             os.close(descriptor)
         after_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
         if (
-            _fingerprint(before_stat) == _fingerprint(after_stat)
-            and before_membership == after_membership
+            observed == verified == final
+            and before_membership == middle_membership == after_membership
+            and pending_bytes == verified_size == final_size == before_stat.st_size
         ):
             if budget is not None:
                 budget.consume_bytes(pending_bytes)
