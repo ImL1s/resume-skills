@@ -13,6 +13,7 @@ Adapters are clean-room compatibility readers built from public documentation/so
 | Qwen Code | `qwen-chat-jsonl-v1` | Qwen Code public tree at `713a083aea24ccb7b80db3e11abf2155b854a78c` + fixtures | supported (fixture/parser) | bounded live support; thought/tool/file/binary payloads are not replayed |
 | Kimi Code / legacy Kimi CLI | `kimi-code-wire-jsonl-v1`, `kimi-legacy-context-jsonl-v1` | Kimi Code `a2401cc1ed26e5758c081e657bcff6a75cb061bb`; legacy Kimi CLI `4a550effdfcb29a25a5d325bf935296cc50cd417`; fixtures | supported (fixture/parser) | bounded live support; tool execution is never replayed |
 | Pi | `pi-session-jsonl-v3`, `pi-session-jsonl-v2` | Pi public session-format docs + synthetic fixtures | supported (source only; fixture/parser) | v3 primary; v2 read-only compat; Pi destination host not supported |
+| OpenClaw | `openclaw-agent-sqlite-v1` | OpenClaw public schema/session docs + synthetic fixtures | planned (fixtures-only) | no adapter; per-agent SQLite under `agents/<id>/agent/openclaw-agent.sqlite` |
 
 ## Provenance anchors
 
@@ -71,6 +72,19 @@ v1 linear sessions are not fixture-covered yet. Destination install for Pi remai
 Pi session JSONL version 2 tree (`id`/`parentId` linking). Version 1 linear sessions may
 auto-migrate on load upstream; fixtures here pin v2 only for compatibility testing.
 Synthetic fixture: `tests/fixtures/pi/s-pi-05-v2-compat/`.
+
+### openclaw-openclaw-agent-sqlite-v1
+
+OpenClaw per-agent data-plane SQLite (`agents/<agent-id>/agent/openclaw-agent.sqlite`).
+Public upstream references:
+
+- Schema SQL: [openclaw-agent-schema.sql](https://github.com/openclaw/openclaw/blob/main/src/state/openclaw-agent-schema.sql)
+- Session storage docs: [database-schemas](https://docs2.openclaw.ai/reference/database-schemas)
+
+Fixtures pin `openclaw-agent-sqlite-v1` with `PRAGMA user_version = 11` and a minimal
+subset of tables (`schema_meta`, `session_nodes`, `session_windows`, `conversations`,
+`session_conversations`, `transcript_events`). All fixture payloads are synthetic
+(`synthetic: true`); no adapter is registered yet. See `tests/fixtures/openclaw/`.
 
 ## Clean-room boundary
 
