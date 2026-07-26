@@ -14,14 +14,8 @@ host-packages/
 *.swp
 *~
 .omx/
-.omc/sessions/
-.omc/state/
-.omc/project-memory.json
-.omc/tmp/
-.ruff_cache/
-
-# Local agent research / dual-review artifacts — do not publish
-.omc/research/
+.omg/
+.omc/
 
 # Local skill install roots (installer output under a checkout)
 .grok/

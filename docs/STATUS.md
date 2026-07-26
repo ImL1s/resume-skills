@@ -1,4 +1,4 @@
-# Project status (2026-07-25)
+# Project status (2026-07-26)
 
 ## Current release: 0.3.3
 
@@ -8,7 +8,7 @@
 | Destination profiles | 8 |
 | Packaging matrix | **64/64 pass locally** (currently **8×8=64**, derived from registries) |
 | Installed runner matrix | **64/64 pass locally** (currently **8×8=64**, derived from registries) |
-| Python test suite | **274 pass locally** (main @ `48746c4`) |
+| Python test suite | **329 pass locally** (main @ `7b5192c`) |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
 | Host-native headless Skill activation | **8/8 pass** |
@@ -16,31 +16,61 @@
 | Visual marketplace picker | **Cursor and Kimi pass** |
 | Other visual Skill picker activation | **not-run** |
 | Vendor-curated directory listing | **not submitted** |
-| CI | **pass**: [Ubuntu + macOS × Python 3.11–3.14](https://github.com/ImL1s/resume-skills/actions/runs/30093652499) |
+| CI (main @ `7b5192c`) | **pass**: [Ubuntu + macOS × Python 3.11–3.14 + dist smoke](https://github.com/ImL1s/resume-skills/actions/runs/30191800004) |
+| Phase 0 / Milestone N1 | **merged** [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c` |
 | `v0.3.2` release workflow | **pass**: [14 jobs through GitHub Release and PyPI](https://github.com/ImL1s/resume-skills/actions/runs/30093776529) |
-| Published release | **pass**: [GitHub Release v0.3.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2) |
-| Public PyPI installation | **pass for 0.3.2**: isolated install, registry-derived 64-cell self-check, and all 8 host install/verify cells |
+| Published release | **pass**: [GitHub Release v0.3.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2) / [v0.3.3](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3) |
+| Public PyPI installation | **pass for 0.3.3**: isolated install and registry-derived matrix self-check |
 | Cursor full bubble graph | **not claimed** |
 | Codex large-rollout budget + parent list filter (Issue #3) | **done on main** [PR #4](https://github.com/ImL1s/resume-skills/pull/4) merge `48746c4` — P0 hotfix (not full streaming) |
 | Codex probe head-only + list FS fallback | **not done** — [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + [plan 026](../plans/026-codex-probe-list-discovery.md) |
 | Codex streaming show / reducer | **not done** — [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + [plan 027](../plans/027-codex-streaming-show.md) (PR #4 removed eager `splitlines`; still whole-file + `list[dict]`) |
 | Codex-native live resume / `codex resume` from hosts | **not claimed** (inert handoff only) |
 
+## PR #49 AI review disposition (closed for merge)
+
+Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skills/pull/49) were addressed before squash-merge `7b5192c`. GitHub may still show **outdated** inline threads (`line=null` / old SHAs); treat this table as the source of truth.
+
+| Finding | Severity | Disposition |
+|---|---|---|
+| Close intermediate dirfds on success | P1 | **Done** — `_open_directory_under_root` closes intermediates before return |
+| Bound scan memory when `budget=None` | P1 | **Done** — `stable_scan_lines` always uses `effective_budget` |
+| Fail closed without descriptor-relative replace | P1 | **Done** — non-dirfd platforms fail closed |
+| Pin recovery stage before delete / typed cleanup | P1 | **Done** — authorized stage/backup roles + support dirfd |
+| Pin every root path component before commit | P1 | **Done** — component walk from `/` with `O_NOFOLLOW` |
+| Reject symlinked cleanup targets | P1 | **Done** — no-follow authorization before delete |
+| Keep ancestor fds pinned across symlink hops | P1 | **Done** — open replacement before releasing ancestors |
+| Preserve force-with-backup trees on complete recover | P1 | **Done** — complete journal clears stage only |
+| Reject non-regular staged entries before replace | P1 | **Done** — `_validate_staged_regular_file` + regressions |
+| Restrict backup cleanup to generated names | P2 | **Done** — basename gate for installer backups |
+| Close relative-symlink probe intermediates | P2 | **Done** — probe fds closed on success path |
+| CRLF boundary / parent-relative skill-root edge cases | P2 | **Deferred** — non-blocking; track under #10 / #31 if reproduced |
+| Final `@codex review` thumbs-up on last SHA | n/a | **Not obtained** (bot `Unknown error`); merge gate was CI + disposition above |
+
 ## Open work (honest backlog)
 
 | Item | Track | Notes |
 |---|---|---|
-| Issue #3 parent list + large rollout reject | **Closed** via PR #4 → `48746c4` | P0 on main: SQL parent pre-filter; `source_read_bytes` / `transcript_records`; remaining zstd/source budgets; bounded readline; transcript raise clamp; stable-read hash verification. Maintainer verify before merge: secrets clean, **274** tests, self_verify, 64/64 matrix. |
-| Discovery false unsupported / stale SQLite | [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + plan 026 | P1a: head-only probe; no full `sessions/` walk; read-only FS head fallback. Do not mutate `~/.codex`. (#5 closed as duplicate of #7.) |
-| Peak memory on large show | [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + plan 027 | P1b: true chunked stable streaming + reducer + synthetic 17–30 MiB test. Not live process restore. (#6 closed as duplicate of #8.) |
-| Capability registries + dynamic matrix | [Issue #36](https://github.com/ImL1s/resume-skills/issues/36) | **Partial on PR #49:** source/destination registries + dynamic direct-runner matrix (still 8×8). `PACKAGE_SURFACES` scaffold empty; native package builders not yet registry-driven. Keep #36 open. |
-| Shared `stable_scan_lines` (#10) | [Issue #10](https://github.com/ImL1s/resume-skills/issues/10) + PR #49 | Scanner foundation + termination metadata + caller-lowered record/attempt/membership caps; **not yet adopted by production adapters**. True streaming yield remains open with #8. |
-| ReadBudget raise clamp (#17) | [Issue #17](https://github.com/ImL1s/resume-skills/issues/17) + PR #49 | **Partial:** four consume counters clamp to `DEFAULT_BOUNDS`. Full Bounds construction-time validation still open under #17. |
-| Installer recover containment (#20) | [Issue #20](https://github.com/ImL1s/resume-skills/issues/20) + PR #49 | Typed stage/backup authorization + pinned support dirfd deletes. Keep adversarial coverage green before closing. |
-| Descriptor-relative install (#31) | [Issue #31](https://github.com/ImL1s/resume-skills/issues/31) + PR #49 | **Partial:** POSIX forward commit uses `src_dir_fd`+`dst_dir_fd` under authorized stage. Rollback/manifest/orphan/Windows lifecycle still pathname or fail-closed — keep #31 open. |
-| Next-wave agent roadmap (Pi, OpenClaw, goose, …) | [Issue #48](https://github.com/ImL1s/resume-skills/issues/48) | Research/fixtures/adapters land per-axis behind PR A–E; **no Pi/OpenClaw/goose support claimed** until registry profiles and smoke gates are green. |
+| Issue #3 parent list + large rollout reject | **Closed** via PR #4 → `48746c4` | P0 on main. |
+| Discovery false unsupported / stale SQLite | [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + plan 026 | P1a: head-only probe; no full `sessions/` walk; read-only FS head fallback. Do not mutate `~/.codex`. |
+| Peak memory on large show | [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + plan 027 | P1b: true chunked stable streaming + reducer + synthetic 17–30 MiB test. |
+| Capability registries + dynamic matrix | [Issue #36](https://github.com/ImL1s/resume-skills/issues/36) | **Partial via PR #49:** source/destination registries + dynamic direct-runner matrix (still 8×8). `PACKAGE_SURFACES` scaffold empty; package builders not registry-driven. Keep #36 open. |
+| Shared `stable_scan_lines` (#10) | [Issue #10](https://github.com/ImL1s/resume-skills/issues/10) + PR #49 | Foundation on main; **not yet adopted** by production adapters. True streaming yield remains with #8. |
+| ReadBudget raise clamp (#17) | [Issue #17](https://github.com/ImL1s/resume-skills/issues/17) + PR #49 | **Partial:** four consume counters clamp to `DEFAULT_BOUNDS`. Full Bounds construction-time validation still open. |
+| Installer recover containment (#20) | [Issue #20](https://github.com/ImL1s/resume-skills/issues/20) + [PR #49](https://github.com/ImL1s/resume-skills/pull/49) | **Done on main via PR #49** (`7b5192c`): typed stage/backup authorization + pinned support dirfd deletes + adversarial tests in `tests/unit/test_install_recover_containment.py` — ready to close issue. |
+| Descriptor-relative install (#31) | [Issue #31](https://github.com/ImL1s/resume-skills/issues/31) + PR #49 | **Partial:** POSIX forward commit is dirfd-based; rollback/manifest/orphan/Windows still pathname or fail-closed. |
+| Next-wave agent roadmap (Pi, OpenClaw, goose, …) | [Issue #48](https://github.com/ImL1s/resume-skills/issues/48) | Research/fixtures/adapters land per-axis behind PR A–E; **no Pi/OpenClaw/goose support claimed**. Phase 0 registry/matrix/installer landings are on `7b5192c`. |
 
 `/resume-codex` remains **context migration** (Skill + reader), not Grok Build native `/resume` and not Codex CLI live resume.
+
+## Corrected and verified on main after 0.3.3 (PR #49)
+
+- Phase 0 / Milestone N1: independent source/destination registries, dynamic
+  8×8 matrix, `stable_scan_lines` foundation, ReadBudget consume clamps,
+  installer recover containment, and POSIX descriptor-relative payload commits.
+- Merge: [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c`.
+- Verify at merge: **329** unittest, 64/64 installed-runner smoke, self_verify,
+  secrets gate, [CI run 30191800004](https://github.com/ImL1s/resume-skills/actions/runs/30191800004).
 
 ## Corrected and verified in 0.3.3
 

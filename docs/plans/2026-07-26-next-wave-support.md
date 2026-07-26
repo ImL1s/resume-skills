@@ -1,5 +1,7 @@
 # Next-Wave Agent Support Implementation Plan
 
+> **Status (2026-07-26):** Phase 0 / Milestone N1 **merged** via [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c`. Registries + dynamic matrix + scanner foundation + installer P0 path on main. Remaining: package-surface registry fill, adapter adoption of `stable_scan_lines`, full Bounds validation, #31 lifecycle gaps, and PR A–E next-wave agents. See `docs/STATUS.md` disposition table.
+
 > **For Codex:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Decouple source adapters, destination hosts, and native package surfaces so Portable Resume can add asymmetric next-wave tools (Pi, OpenClaw, goose, …) without hard-coding `8 × 8 = 64`, then land first-wave support behind the standard PR A–E sequence and honesty gates.
