@@ -6,8 +6,8 @@
 |---|---|
 | Source adapters | 8: Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi |
 | Destination profiles | 8 |
-| Packaging matrix | **64/64 pass locally** |
-| Installed runner matrix | **64/64 pass locally** |
+| Packaging matrix | **64/64 pass locally** (currently **8×8=64**, derived from registries) |
+| Installed runner matrix | **64/64 pass locally** (currently **8×8=64**, derived from registries) |
 | Python test suite | **274 pass locally** (main @ `48746c4`) |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
@@ -19,7 +19,7 @@
 | CI | **pass**: [Ubuntu + macOS × Python 3.11–3.14](https://github.com/ImL1s/resume-skills/actions/runs/30093652499) |
 | `v0.3.2` release workflow | **pass**: [14 jobs through GitHub Release and PyPI](https://github.com/ImL1s/resume-skills/actions/runs/30093776529) |
 | Published release | **pass**: [GitHub Release v0.3.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2) |
-| Public PyPI installation | **pass for 0.3.2**: isolated install, 64-cell self-check, and all 8 host install/verify cells |
+| Public PyPI installation | **pass for 0.3.2**: isolated install, registry-derived 64-cell self-check, and all 8 host install/verify cells |
 | Cursor full bubble graph | **not claimed** |
 | Codex large-rollout budget + parent list filter (Issue #3) | **done on main** [PR #4](https://github.com/ImL1s/resume-skills/pull/4) merge `48746c4` — P0 hotfix (not full streaming) |
 | Codex probe head-only + list FS fallback | **not done** — [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + [plan 026](../plans/026-codex-probe-list-discovery.md) |
@@ -33,6 +33,8 @@
 | Issue #3 parent list + large rollout reject | **Closed** via PR #4 → `48746c4` | P0 on main: SQL parent pre-filter; `source_read_bytes` / `transcript_records`; remaining zstd/source budgets; bounded readline; transcript raise clamp; stable-read hash verification. Maintainer verify before merge: secrets clean, **274** tests, self_verify, 64/64 matrix. |
 | Discovery false unsupported / stale SQLite | [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + plan 026 | P1a: head-only probe; no full `sessions/` walk; read-only FS head fallback. Do not mutate `~/.codex`. (#5 closed as duplicate of #7.) |
 | Peak memory on large show | [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + plan 027 | P1b: true chunked stable streaming + reducer + synthetic 17–30 MiB test. Not live process restore. (#6 closed as duplicate of #8.) |
+| Capability registries + dynamic matrix | [Issue #36](https://github.com/ImL1s/resume-skills/issues/36) | Decouple source/destination/package surfaces; matrix cell count is `enabled_sources × enabled_destinations` (currently 8×8=64), not a hard-coded constant. |
+| Next-wave agent roadmap (Pi, OpenClaw, goose, …) | [Issue #48](https://github.com/ImL1s/resume-skills/issues/48) | Research/fixtures/adapters land per-axis behind PR A–E; **no Pi/OpenClaw/goose support claimed** until registry profiles and smoke gates are green. |
 
 `/resume-codex` remains **context migration** (Skill + reader), not Grok Build native `/resume` and not Codex CLI live resume.
 

@@ -1,6 +1,6 @@
 # Host support matrix
 
-Status date: **2026-07-24**. Installer truth lives in `src/portable_resume/install/catalog.py`; detailed commands are in [`install-hosts.md`](install-hosts.md).
+Status date: **2026-07-24**. Installer truth lives in `src/portable_resume/install/catalog.py` and `src/portable_resume/registry.py`; matrix dimensions are **derived from registries** (currently **8×8=64** cells). Detailed commands are in [`install-hosts.md`](install-hosts.md).
 
 ## Evidence levels
 
@@ -35,8 +35,8 @@ Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, and current/legacy Kim
 
 | Layer | Current status |
 |---|---|
-| Local packaging matrix | 64/64 pass |
-| Installed runner matrix | 64/64 pass |
+| Local packaging matrix | 64/64 pass (currently 8×8, derived from registries) |
+| Installed runner matrix | 64/64 pass (currently 8×8, derived from registries) |
 | Native local plugin/extension installs | 7/7 pass with exact 0.3.2 release assets |
 | Host-native headless Skill invocation | 8/8 pass |
 | Public marketplace installation | 6/6 compatible hosts pass |

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <em>Offline, local-only context migration · 8 sources × 8 hosts · inert handoff, not live restore</em>
+  <em>Offline, local-only context migration · 8 sources × 8 hosts (derived from registries) · inert handoff, not live restore</em>
 </p>
 
 [English](docs/i18n/en.md) · [繁體中文](docs/i18n/zh-TW.md) · [简体中文](docs/i18n/zh-CN.md) · [日本語](docs/i18n/ja.md) · [한국어](docs/i18n/ko.md) · [Español](docs/i18n/es.md) · [Português](docs/i18n/pt-BR.md) · [Français](docs/i18n/fr.md) · [Deutsch](docs/i18n/de.md) · [Русский](docs/i18n/ru.md) · [العربية](docs/i18n/ar.md) · [हिन्दी](docs/i18n/hi.md) · [All languages](docs/i18n/README.md)
@@ -14,7 +14,7 @@ Clean-room-oriented Agent Skills for migrating bounded local coding-agent contex
 
 **Current release:** [`0.3.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3)
 · [PyPI](https://pypi.org/project/portable-resume/0.3.3/) · 64/64 packaging
-cells · 64/64 installed-runner cells · 7/7 exact native local
+cells (currently 8×8, derived from registries) · 64/64 installed-runner cells · 7/7 exact native local
 plugin/extension installs verified · 8/8 host-native headless Skill
 invocations verified · 6/6 compatible public marketplace installs verified.
 Cursor and Kimi marketplace pickers were also exercised; other visual Skill
@@ -79,7 +79,7 @@ The lower-level transactional command remains available for previews, custom
 roots, verification, and uninstall:
 
 ```bash
-# Inspect capabilities and the 8×8 matrix
+# Inspect capabilities and the registry-derived matrix (currently 8×8)
 PYTHONPATH=src python3 scripts/portable-resume self-check --json
 PYTHONPATH=src python3 scripts/install-resume-skills matrix --json
 PYTHONPATH=src python3 scripts/install-resume-skills hosts
