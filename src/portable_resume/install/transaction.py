@@ -263,9 +263,24 @@ def _supports_descriptor_relative_commit() -> bool:
 
 
 def _open_skill_root_descriptor(root: str) -> int:
+    """Open the skill root for descriptor-relative commits.
+
+    The skill-root path itself may be a symlink (common dotfiles layouts such as
+    `~/.claude/skills` → a shared directory). Resolve that one path with
+    ``realpath``, then open the final directory with ``O_NOFOLLOW`` so later
+    parent walks never follow symlinks. Intermediate payload components still
+    use no-follow opens under this root fd.
+    """
+    try:
+        resolved = os.path.realpath(root)
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    if not os.path.isdir(resolved) or os.path.islink(resolved):
+        # realpath should yield a non-link directory; refuse anything else.
+        raise DiagnosticError("E_INSTALL_CONFLICT")
     flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        return os.open(root, flags)
+        return os.open(resolved, flags)
     except OSError as error:
         raise DiagnosticError("E_INSTALL_CONFLICT") from error
 

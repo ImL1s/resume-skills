@@ -93,6 +93,20 @@ class InstallCommitContainmentTests(unittest.TestCase):
         self.assertEqual((Path(root) / "second.txt").read_bytes(), b"second\n")
 
     @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd commit path")
+    def test_symlinked_skill_root_install_succeeds(self) -> None:
+        """Dotfiles-style skill root symlink must still install on POSIX."""
+        real_root = Path(self._tmpdir.name) / "real-skills"
+        real_root.mkdir()
+        link_root = Path(self._tmpdir.name) / "link-skills"
+        link_root.symlink_to(real_root, target_is_directory=True)
+        plan = plan_install(host="claude", scope="project", root=str(link_root))
+        report = execute_install(plan)
+        self.assertTrue(report.get("ok"), msg=repr(report))
+        skill_md = real_root / "resume-claude" / "SKILL.md"
+        self.assertTrue(skill_md.is_file(), msg=f"missing {skill_md}; report={report!r}")
+        self.assertFalse(skill_md.is_symlink())
+
+    @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd commit path")
     def test_open_directory_under_root_closes_intermediate_fds(self) -> None:
         """Multi-component open must close intermediates and keep only the leaf."""
         root = Path(self._tmpdir.name) / "skill-root"
