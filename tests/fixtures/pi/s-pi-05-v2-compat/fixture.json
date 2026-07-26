@@ -1,0 +1,10 @@
+{
+  "case": "s-pi-05-v2-compat",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "pi-session-jsonl-v2",
+  "provenance_ref": "docs/source-formats.md#pi-pi-session-jsonl-v2",
+  "source": "pi",
+  "synthetic": true
+}
