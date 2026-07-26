@@ -50,6 +50,12 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertIn("stable_scan_lines", lowered)
         self.assertIn("not yet adopted", lowered)
 
+    def test_status_marks_issue_20_closed_via_pr_49(self) -> None:
+        text = Path("docs/STATUS.md").read_text(encoding="utf-8")
+        self.assertRegex(text, r"Installer recover containment \(#20\)")
+        self.assertRegex(text, r"\*\*Closed\*\* via \[PR #49\]")
+        self.assertIn("test_install_recover_containment.py", text)
+
 
 if __name__ == "__main__":
     unittest.main()
