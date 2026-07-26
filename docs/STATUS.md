@@ -6,9 +6,9 @@
 |---|---|
 | Source adapters | 9: Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi, **Pi (source only)** |
 | Destination profiles | 8 (Pi destination not supported) |
-| Packaging matrix | **72/72 pass locally** (currently **9×8=72**, derived from registries) |
-| Installed runner matrix | **72/72 pass locally** (currently **9×8=72**, derived from registries) |
-| Python test suite | **342 pass locally** (honesty follow-up after `d9152cd` / PR #51) |
+| Packaging matrix | **72/72 pass on `main`** (currently **9×8=72**, derived from registries; **not** claimed for published `0.3.3` PyPI/GitHub assets) |
+| Installed runner matrix | **72/72 pass on `main`** (currently **9×8=72**, derived from registries; published `0.3.3` remains 64-cell) |
+| Python test suite | **345 pass locally** (Codex #51 follow-up on `d9152cd`) |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
 | Host-native headless Skill activation | **8/8 pass** |
@@ -20,7 +20,7 @@
 | Phase 0 / Milestone N1 | **merged** [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c` |
 | `v0.3.2` release workflow | **pass**: [14 jobs through GitHub Release and PyPI](https://github.com/ImL1s/resume-skills/actions/runs/30093776529) |
 | Published release | **pass**: [GitHub Release v0.3.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2) / [v0.3.3](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3) |
-| Public PyPI installation | **pass for 0.3.3**: isolated install and registry-derived matrix self-check |
+| Public PyPI installation | **pass for 0.3.3** (64-cell release artifact); Pi source / 72-cell matrix is **unreleased on `main` only** until the next versioned release |
 | Cursor full bubble graph | **not claimed** |
 | Codex large-rollout budget + parent list filter (Issue #3) | **done on main** [PR #4](https://github.com/ImL1s/resume-skills/pull/4) merge `48746c4` — P0 hotfix (not full streaming) |
 | Codex probe head-only + list FS fallback | **not done** — [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + [plan 026](../plans/026-codex-probe-list-discovery.md) |
@@ -68,7 +68,8 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 - **Pi source adapter supported** (`pi-session-jsonl-v3` / v2 read-only); **Pi destination not-run**.
 - Verify at merge tip: **340** unittest, **72/72** installed-runner smoke, self_verify, secrets gate,
   [CI run 30203656076](https://github.com/ImL1s/resume-skills/actions/runs/30203656076) on `d9152cd`.
-- Honesty follow-up: suite **342** (corrupt-list warning + 17–30 MiB budget pad); STATUS/README counts aligned.
+- Honesty follow-up: suite **345** (tail-window list fix + max-tool-chars + UTF-8 header
+  regressions); README separates published `0.3.3` 64-cell claims from unreleased 72-cell `main`.
 
 ## Corrected and verified on main after 0.3.3 (PR #49)
 

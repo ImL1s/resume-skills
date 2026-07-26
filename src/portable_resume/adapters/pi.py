@@ -337,7 +337,13 @@ class PiAdapter:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=provider)
         if header["session_id"] != ref.session_id:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=provider)
-        turns, scan_warnings = self._scan_turns(ref.source_path, root, budget, provider=provider)
+        turns, scan_warnings = self._scan_turns(
+            ref.source_path,
+            root,
+            budget,
+            provider=provider,
+            query=query,
+        )
         summary = SessionSummary(
             source=self.key,
             session_id=ref.session_id,
@@ -359,7 +365,14 @@ class PiAdapter:
             budget=budget,
             hook=self._read_hook,
         )
-        first = windows.head.split(b"\n", 1)[0].decode("utf-8")
+        try:
+            first = windows.head.split(b"\n", 1)[0].decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise DiagnosticError(
+                "E_CORRUPT_RECORD",
+                source=self.key,
+                provider=FORMAT_ID_V3,
+            ) from error
         return self._parse_header_line(first)
 
     def _parse_header_line(self, first: str) -> tuple[dict[str, Any], str]:
@@ -411,18 +424,28 @@ class PiAdapter:
                 chunks.append((tail, windows.tail_offset > 0, True))
         first_line = True
         for chunk, starts_mid_line, ends_at_eof in chunks:
+            # Only the first fragment of a mid-line tail window is partial; clear
+            # the flag after skipping it so later complete records are scanned.
+            skip_leading_partial = starts_mid_line
             for raw in chunk.split(b"\n"):
                 if not raw.strip():
                     continue
                 if first_line:
                     first_line = False
-                    if starts_mid_line:
+                    if skip_leading_partial:
+                        skip_leading_partial = False
                         continue
-                    continue
-                if starts_mid_line:
+                    continue  # session header
+                if skip_leading_partial:
+                    skip_leading_partial = False
                     continue
                 try:
-                    record = _loads_line(raw.decode("utf-8"), provider=provider)
+                    text = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    warnings.append("W_BROKEN_CHAIN")
+                    continue
+                try:
+                    record = _loads_line(text, provider=provider)
                 except DiagnosticError as error:
                     if error.code == "E_CORRUPT_RECORD":
                         warnings.append("W_BROKEN_CHAIN")
@@ -433,16 +456,20 @@ class PiAdapter:
                     timestamps.append(stamp)
             if ends_at_eof:
                 break
-        tail_line = windows.tail.rsplit(b"\n", 1)[-1].strip()
-        if tail_line and windows.fingerprint.size > len(windows.head):
+        if windows.tail and windows.fingerprint.size > len(windows.head):
             try:
-                record = _loads_line(tail_line.decode("utf-8"), provider=provider)
-            except DiagnosticError:
-                pass
-            else:
-                stamp = _timestamp(record.get("timestamp"))
-                if stamp is not None:
-                    timestamps.append(stamp)
+                tail_line = windows.tail.rsplit(b"\n", 1)[-1].strip()
+            except (IndexError, ValueError):
+                tail_line = b""
+            if tail_line:
+                try:
+                    record = _loads_line(tail_line.decode("utf-8"), provider=provider)
+                except (DiagnosticError, UnicodeDecodeError):
+                    pass
+                else:
+                    stamp = _timestamp(record.get("timestamp"))
+                    if stamp is not None:
+                        timestamps.append(stamp)
         return {
             "created_at": min(timestamps) if timestamps else None,
             "updated_at": max(timestamps) if timestamps else None,
@@ -455,6 +482,7 @@ class PiAdapter:
         budget: ReadBudget,
         *,
         provider: str,
+        query: Query,
     ) -> tuple[list[Turn], list[str]]:
         entries: list[dict[str, Any]] = []
         warnings: list[str] = []
@@ -484,7 +512,14 @@ class PiAdapter:
         active = self._active_path(entries, provider=provider)
         turns: list[Turn] = []
         for entry in active:
-            emitted, found = self._entry_turns(entry, provider=provider, ordinal=len(turns), query=Query(source=self.key), budget=budget, warnings=warnings)
+            emitted, found = self._entry_turns(
+                entry,
+                provider=provider,
+                ordinal=len(turns),
+                query=query,
+                budget=budget,
+                warnings=warnings,
+            )
             warnings.extend(found)
             turns.extend(emitted)
         if not turns:

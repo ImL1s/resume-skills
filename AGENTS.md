@@ -27,6 +27,7 @@ Scripts under `scripts/` inject `src` onto `sys.path`. Unittest still needs `PYT
 - **Dual-OS release claim**: archive Actions URL + SHA in `docs/evidence-summary.md` / `docs/release-claim.md`.
 - **Cursor full bubble graph**: not claimed; multi-turn composerData is best-effort only.
 - Do not copy `~/.grok/bundled/skills/**` into this tree (clean-room).
+- **PR merge gate:** do **not** squash-merge until CI is green **and** Codex/`@codex review` (or equivalent PR AI review) has returned on the **current HEAD**. Address P1s before merge; document P2 disposition. Never merge on an empty review that has not finished yet.
 
 ## Fixtures
 

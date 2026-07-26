@@ -169,6 +169,85 @@ class PiAdapterTests(unittest.TestCase):
                 ADAPTER.list(current, ReadBudget())
             self.assertEqual(caught.exception.code, "E_UNSUPPORTED_FORMAT")
 
+
+    def test_list_uses_tail_window_timestamps_for_large_files(self) -> None:
+        """Regression: mid-line tail skip must not discard the whole tail chunk."""
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            agent = base / "agent" / "sessions" / "--tmp-project--"
+            agent.mkdir(parents=True)
+            path = agent / "wide.jsonl"
+            session_id = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+            lines = [
+                json.dumps(
+                    {
+                        "type": "session",
+                        "version": 3,
+                        "id": session_id,
+                        "timestamp": "2020-01-01T00:00:00.000Z",
+                        "cwd": CWD,
+                    },
+                    separators=(",", ":"),
+                )
+            ]
+            parent = None
+            # Inflate past the 64 KiB metadata head window.
+            padding = "p" * 800
+            for index in range(120):
+                entry_id = f"w{index:04d}"
+                stamp = f"2024-06-01T00:{index // 60:02d}:{index % 60:02d}.000Z"
+                lines.append(
+                    json.dumps(
+                        {
+                            "type": "message",
+                            "id": entry_id,
+                            "parentId": parent,
+                            "timestamp": stamp,
+                            "message": {
+                                "role": "user",
+                                "content": f"wide {index} {padding}",
+                                "timestamp": index,
+                            },
+                        },
+                        separators=(",", ":"),
+                    )
+                )
+                parent = entry_id
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            self.assertGreater(path.stat().st_size, 64 * 1024)
+            summaries = ADAPTER.list(query(base / "agent"), ReadBudget())
+            self.assertEqual(len(summaries), 1)
+            self.assertIsNotNone(summaries[0].updated_at)
+            self.assertTrue(
+                summaries[0].updated_at.startswith("2024-06-01"),
+                msg=summaries[0].updated_at,
+            )
+
+    def test_show_honors_max_tool_chars(self) -> None:
+        root = agent_root("s-pi-03-tool-and-custom")
+        current = query(root, max_tool_chars=12)
+        summaries = ADAPTER.list(current, ReadBudget())
+        session = ADAPTER.show(
+            resolved(summaries, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            current,
+            ReadBudget(),
+        )
+        tool_turns = [turn for turn in session.turns if turn.role == "tool"]
+        self.assertTrue(tool_turns)
+        for turn in tool_turns:
+            self.assertLessEqual(len(turn.content or ""), 12)
+
+    def test_non_utf8_header_returns_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            agent = base / "agent" / "sessions" / "--tmp-project--"
+            agent.mkdir(parents=True)
+            path = agent / "bad-header.jsonl"
+            path.write_bytes(b"\xff\xfe{" + b'"type":"session"}\n')
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.list(query(base / "agent"), ReadBudget())
+            self.assertIn(caught.exception.code, {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"})
+
     def test_large_synthetic_hits_budget_diagnostics(self) -> None:
         min_bytes = 17 * 1024 * 1024
         max_bytes = 30 * 1024 * 1024
