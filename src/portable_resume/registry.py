@@ -24,10 +24,19 @@ _SOURCE_FORMAT_IDS: dict[str, tuple[str, ...]] = {
         "codex-rollout-jsonl-v1",
         "codex-rollout-zstd-v1",
     ),
-    "cursor": ("cursor-cli-chat-v1", "cursor-desktop-vscdb-v1"),
+    "cursor": (
+        "cursor-cli-chat-v1",
+        "cursor-desktop-vscdb-v1",
+        "cursor-cli-store-v1",
+        "cursor-desktop-composer-v1",
+    ),
     "grok": ("grok-updates-jsonl-v1",),
     "kimi": ("kimi-code-wire-jsonl-v1", "kimi-legacy-context-jsonl-v1"),
-    "opencode": ("opencode-sqlite-v1", "opencode-file-store-v1"),
+    "opencode": (
+        "opencode-sqlite-v1",
+        "opencode-file-store-v1",
+        "opencode-export-file-v1",
+    ),
     "qwen": ("qwen-chat-jsonl-v1",),
 }
 
