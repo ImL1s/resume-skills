@@ -2,7 +2,7 @@
 
 All cases are independently authored (`synthetic: true`). No adapter or registry support is claimed.
 
-Pinned format: `openclaw-agent-sqlite-v1` with `PRAGMA user_version = 11` and matching `schema_meta.schema_version`.
+Pinned format: `openclaw-agent-sqlite-v1` with `PRAGMA user_version = 11` and matching `schema_meta.schema_version` for valid cases (`s-oc-05` intentionally mismatches).
 
 Privacy: fixture `entry_json` and `event_json` payloads are synthetic. No real phone numbers, emails, API keys, or home paths. Cwd-like fields use `/tmp/project` only.
 
