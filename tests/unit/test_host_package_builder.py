@@ -10,6 +10,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from portable_resume import __version__
+from portable_resume.diagnostics import SOURCE_KEYS
 from portable_resume.install.catalog import HOST_KEYS
 
 REPO = Path(__file__).resolve().parents[2]
@@ -66,7 +67,7 @@ class HostPackageBuilderTests(unittest.TestCase):
                     )
                     self.assertEqual(
                         len([name for name in names if name.endswith("/SKILL.md")]),
-                        8,
+                        len(SOURCE_KEYS),
                     )
                     self.assertTrue(
                         any(

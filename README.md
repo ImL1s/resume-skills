@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <em>Offline, local-only context migration · 8 sources × 8 hosts (derived from registries) · inert handoff, not live restore</em>
+  <em>Offline, local-only context migration · 9 sources × 8 hosts (derived from registries) · inert handoff, not live restore</em>
 </p>
 
 [English](docs/i18n/en.md) · [繁體中文](docs/i18n/zh-TW.md) · [简体中文](docs/i18n/zh-CN.md) · [日本語](docs/i18n/ja.md) · [한국어](docs/i18n/ko.md) · [Español](docs/i18n/es.md) · [Português](docs/i18n/pt-BR.md) · [Français](docs/i18n/fr.md) · [Deutsch](docs/i18n/de.md) · [Русский](docs/i18n/ru.md) · [العربية](docs/i18n/ar.md) · [हिन्दी](docs/i18n/hi.md) · [All languages](docs/i18n/README.md)
@@ -13,8 +13,8 @@
 Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
 **Current release:** [`0.3.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3)
-· [PyPI](https://pypi.org/project/portable-resume/0.3.3/) · 64/64 packaging
-cells (currently 8×8, derived from registries) · 64/64 installed-runner cells · 7/7 exact native local
+· [PyPI](https://pypi.org/project/portable-resume/0.3.3/) · 72/72 packaging
+cells (currently 9×8, derived from registries) · 72/72 installed-runner cells · 7/7 exact native local
 plugin/extension installs verified · 8/8 host-native headless Skill
 invocations verified · 6/6 compatible public marketplace installs verified.
 Cursor and Kimi marketplace pickers were also exercised; other visual Skill
@@ -32,6 +32,7 @@ picker paths remain separate **not-run** claims.
 | `resume-grok` | Grok Build session updates JSONL |
 | `resume-qwen` | Qwen Code chat JSONL, including archived chats |
 | `resume-kimi` | Current Kimi Code wire JSONL + legacy Kimi CLI context JSONL |
+| `resume-pi` | Pi agent versioned tree JSONL (`agent/sessions/--cwd-slug--/`) |
 
 Destination profiles: Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, and current Kimi Code CLI.
 

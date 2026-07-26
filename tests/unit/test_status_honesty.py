@@ -12,14 +12,14 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertNotIn("goose source: supported", text.lower())
         self.assertNotRegex(
             text,
-            r"(?i)\b(pi|openclaw|goose)\b[^.\n]{0,40}\bsupported\b",
+            r"(?i)\b(openclaw|goose)\b[^.\n]{0,40}\bsupported\b",
         )
 
     def test_status_describes_registry_derived_matrix(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
         self.assertIn("derived from registries", lowered)
-        self.assertRegex(text, r"8\s*[×x]\s*8\s*=\s*64|8×8=64|currently 8×8")
+        self.assertRegex(text, r"9\s*[×x]\s*8\s*=\s*72|9×8=72|currently 9×8")
 
     def test_status_open_work_links_next_wave_roadmap(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
@@ -32,7 +32,7 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertNotIn("six coding-agent sources", lowered)
         self.assertNotIn("36 cells", lowered)
         self.assertIn("derived from registries", lowered)
-        self.assertRegex(text, r"8\s*[×x]\s*8|enabled_source|enabled_destination|registry")
+        self.assertRegex(text, r"9\s*[×x]\s*8|enabled_source|enabled_destination|registry")
 
     def test_readme_and_host_support_note_registry_derived_matrix(self) -> None:
         for path in (Path("README.md"), Path("docs/host-support.md")):
@@ -44,11 +44,11 @@ class StatusHonestyTests(unittest.TestCase):
             )
 
 
-    def test_status_notes_stable_scan_lines_not_yet_adopted(self) -> None:
+    def test_status_notes_stable_scan_lines_adoption_is_partial(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
         self.assertIn("stable_scan_lines", lowered)
-        self.assertIn("not yet adopted", lowered)
+        self.assertTrue("adopted by pi" in lowered or "remaining adapters still pending" in lowered)
 
     def test_status_marks_issue_20_closed_via_pr_49(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")

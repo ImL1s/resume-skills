@@ -34,6 +34,7 @@ class RuntimePackageAllowlistTests(unittest.TestCase):
             "adapters/grok.py",
             "adapters/kimi.py",
             "adapters/opencode.py",
+            "adapters/pi.py",
             "adapters/qwen.py",
         }
         self.assertEqual(set(_RUNTIME_MODULES), expected)

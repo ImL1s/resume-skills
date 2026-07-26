@@ -108,6 +108,14 @@ SOURCE_PROFILES: dict[str, SourceProfile] = {
     for key in _EIGHT_KEYS
 }
 
+SOURCE_PROFILES["pi"] = SourceProfile(
+    key="pi",
+    adapter_module="portable_resume.adapters.pi",
+    format_ids=("pi-session-jsonl-v3", "pi-session-jsonl-v2"),
+    status="supported",
+    fixture_profile="pi-session-jsonl-v3",
+)
+
 DESTINATION_PROFILES: dict[str, DestinationProfile] = {
     key: DestinationProfile(
         key=key,

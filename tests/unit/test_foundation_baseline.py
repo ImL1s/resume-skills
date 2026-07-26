@@ -39,8 +39,8 @@ class FoundationBaselineTests(unittest.TestCase):
         # Count table status cells only (avoid matching prose "planned").
         planned = source_formats.count("| planned (fixtures-only) |")
         supported = source_formats.count("| supported (fixture/parser) |")
+        supported += source_formats.count("| supported (source only; fixture/parser) |")
         self.assertEqual(planned + supported, 9)
-        self.assertGreaterEqual(planned, 1)
         self.assertGreaterEqual(supported, 1)
         attestation = Path("docs/clean-room-attestation.md").read_text()
         self.assertIn("do **not** contain copied installed-bundle", attestation)
