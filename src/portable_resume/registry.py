@@ -144,18 +144,33 @@ def matrix_dimensions() -> dict[str, int]:
     }
 
 
-def validate_registries() -> None:
-    if len(SOURCE_PROFILES) != len({p.key for p in SOURCE_PROFILES.values()}):
+def _validate_maps(
+    sources: dict[str, SourceProfile],
+    destinations: dict[str, DestinationProfile],
+    packages: dict[str, PackageSurface],
+) -> None:
+    if len(sources) != len({p.key for p in sources.values()}):
         raise ValueError("duplicate source keys")
-    if len(DESTINATION_PROFILES) != len({p.key for p in DESTINATION_PROFILES.values()}):
+    if len(destinations) != len({p.key for p in destinations.values()}):
         raise ValueError("duplicate destination keys")
-    for surface in PACKAGE_SURFACES.values():
-        if surface.destination not in DESTINATION_PROFILES:
-            raise ValueError(f"package surface owner missing: {surface.key}")
-    for key, profile in SOURCE_PROFILES.items():
+    for surface in packages.values():
+        if surface.destination not in destinations:
+            raise ValueError(
+                f"package surface owner missing: {surface.destination}"
+            )
+    for key, profile in sources.items():
         if key != profile.key:
             raise ValueError(f"source map key mismatch: {key}")
+        if profile.status == "supported" and not profile.format_ids:
+            raise ValueError(f"supported source missing format_ids: {key}")
         if profile.status == "supported" and not profile.adapter_module.startswith(
             "portable_resume.adapters."
         ):
             raise ValueError(f"bad adapter_module: {key}")
+    for key, profile in destinations.items():
+        if key != profile.key:
+            raise ValueError(f"destination map key mismatch: {key}")
+
+
+def validate_registries() -> None:
+    _validate_maps(SOURCE_PROFILES, DESTINATION_PROFILES, PACKAGE_SURFACES)
