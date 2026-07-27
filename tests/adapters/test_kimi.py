@@ -87,6 +87,7 @@ class KimiAdapterTests(unittest.TestCase):
         self.assertEqual(summaries[0].cwd, CWD)
         session = adapter.show(resolved(summaries, LEGACY_ID), current, ReadBudget())
         self.assertEqual([turn.content for turn in session.turns], ["Legacy Kimi prompt", "Legacy Kimi answer"])
+        self.assertEqual(session.cwd, CWD)
         self.assertEqual(tree_snapshot(root), before)
 
         with tempfile.TemporaryDirectory() as temporary:

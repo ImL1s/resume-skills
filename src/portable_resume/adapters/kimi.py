@@ -407,7 +407,17 @@ class KimiAdapter:
         discovery_warnings: list[str] = []
         self._require_regular_transcript(path, root)
         state, state_warnings = self._read_state(os.path.dirname(path), root, budget)
-        meta = _metadata(state, fallback_cwd=None)
+        # Legacy cwd/title often live only in kimi.json (not state.json). Load
+        # that small metadata file only — never re-scan the full session tree.
+        fallback_cwd = None
+        legacy_title = None
+        if ref.provider == LEGACY_FORMAT_ID:
+            fallback_cwd, legacy_title = self._legacy_hints_for_show(
+                root, path, ref.session_id, budget
+            )
+        meta = _metadata(state, fallback_cwd=fallback_cwd)
+        if meta["title"] is None and legacy_title is not None:
+            meta = {**meta, "title": legacy_title}
         turns, transcript_warnings, transcript_times = self._parse_transcript(
             path, root, query, budget, include_turns=True
         )
@@ -570,13 +580,44 @@ class KimiAdapter:
                 )
         return output, list(dict.fromkeys(warnings))
 
-    def _legacy_records(self, root: str, budget: ReadBudget | None) -> tuple[list[dict[str, Any]], list[str]]:
+    def _load_legacy_metadata(
+        self, root: str, budget: ReadBudget | None
+    ) -> tuple[dict[str, str], dict[str, Mapping[str, Any]]]:
         metadata_path = os.path.join(root, "kimi.json")
         if not os.path.isfile(metadata_path):
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=LEGACY_FORMAT_ID)
-        read = stable_read_bytes(metadata_path, root=root, budget=budget, hook=self._read_hook)
+        read = stable_read_bytes(
+            metadata_path,
+            root=root,
+            max_bytes=DEFAULT_BOUNDS.record_bytes,
+            budget=budget,
+            hook=self._read_hook,
+        )
         value = _loads(read.data)
-        cwd_by_hash, session_meta = self._legacy_metadata(value)
+        return self._legacy_metadata(value)
+
+    def _legacy_hints_for_show(
+        self, root: str, path: str, session_id: str, budget: ReadBudget | None
+    ) -> tuple[str | None, str | None]:
+        try:
+            cwd_by_hash, session_meta = self._load_legacy_metadata(root, budget)
+        except DiagnosticError:
+            return None, None
+        cwd: str | None = None
+        sessions_root = os.path.join(root, "sessions")
+        if is_within(path, sessions_root):
+            relative = os.path.relpath(path, sessions_root)
+            bucket = relative.split(os.sep, 1)[0]
+            if _HASH.fullmatch(bucket) is not None:
+                cwd = cwd_by_hash.get(bucket.casefold())
+        title: str | None = None
+        meta = session_meta.get(session_id)
+        if isinstance(meta, Mapping):
+            title = _string(_first(meta, ("title", "name", "summary", "customTitle")))
+        return cwd, title
+
+    def _legacy_records(self, root: str, budget: ReadBudget | None) -> tuple[list[dict[str, Any]], list[str]]:
+        cwd_by_hash, session_meta = self._load_legacy_metadata(root, budget)
         sessions_root = os.path.join(root, "sessions")
         entries = self._safe_entries(sessions_root, allow_missing=True)
         output: list[dict[str, Any]] = []
