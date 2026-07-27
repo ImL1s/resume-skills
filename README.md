@@ -141,12 +141,12 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 `.github/workflows/ci.yml` runs those gates across Ubuntu/macOS and Python 3.11–3.14, then builds and smoke-installs the exact wheel and sdist. `.github/workflows/release.yml` accepts only annotated `vMAJOR.MINOR.PATCH` tags reachable from `main`, re-runs dual-OS gates, builds release bytes once, tests those exact bytes, creates SHA-256 checksums and GitHub attestations, stages a GitHub Release, and publishes through PyPI Trusted Publishing.
 
-Published release `v0.3.2` also verifies the GitHub Release layout itself:
+Published release `v0.3.4` also verifies the GitHub Release layout itself:
 every `SHA256SUMS` entry is a flat asset basename, and both Ubuntu and macOS
-validate a simulated flat download before publication. The immutable
-[release run](https://github.com/ImL1s/resume-skills/actions/runs/30093776529),
-commit, public artifact checks, GitHub Release, and PyPI evidence are archived
-in [`docs/evidence-summary.md`](docs/evidence-summary.md).
+validate a simulated flat download before publication. The immutable v0.3.4
+[release run](https://github.com/ImL1s/resume-skills/actions/runs/30269713516),
+commit, public checksum/attestation checks, GitHub Release, PyPI, and marketplace
+evidence are archived in [`docs/evidence-summary.md`](docs/evidence-summary.md).
 
 ## Key documentation
 
@@ -163,8 +163,9 @@ in [`docs/evidence-summary.md`](docs/evidence-summary.md).
 
 Apache-2.0. This project is not affiliated with the host vendors. Do not copy `~/.grok/bundled/skills/**` into this tree.
 
-Headless slash/name activation is verified on all eight hosts. Public
-marketplace installation is verified on all six compatible hosts, including
-Cursor and Kimi picker flows. Other visual Skill pickers and vendor-curated
-directory listings are not claimed; Cursor's full bubble graph is not claimed;
-redaction is not complete DLP.
+Eight host CLI surfaces have recorded headless slash/name activation evidence;
+Pi native activation remains **not-run**. Public marketplace installation on six
+compatible hosts, including Cursor and Kimi picker flows, is recorded for
+v0.3.2; fresh v0.3.4 host-by-host reinstall remains **not-run**. Other visual
+Skill pickers and vendor-curated directory listings are not claimed; Cursor's
+full bubble graph is not claimed; redaction is not complete DLP.

@@ -1,6 +1,6 @@
 # Host support matrix
 
-Status date: **2026-07-26**. Installer truth lives in `src/portable_resume/install/catalog.py` and `src/portable_resume/registry.py`; matrix dimensions are **derived from registries** (currently **9×9=81** cells). Detailed commands are in [`install-hosts.md`](install-hosts.md).
+Status date: **2026-07-27**. Installer truth lives in `src/portable_resume/install/catalog.py` and `src/portable_resume/registry.py`; matrix dimensions are **derived from registries** (currently **9×9=81** cells). Detailed commands are in [`install-hosts.md`](install-hosts.md).
 
 ## Evidence levels
 
