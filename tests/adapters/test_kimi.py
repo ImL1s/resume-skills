@@ -786,6 +786,10 @@ class KimiAdapterTests(unittest.TestCase):
                 )
                 self.assertEqual(code, 3)
                 self.assertIn("E_NO_MATCH", stderr.getvalue())
+                self.assertIn(
+                    "W_STALE_INDEX",
+                    json.loads(stdout.getvalue())["warnings"],
+                )
 
     def test_partial_index_merges_unindexed_session_from_fs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

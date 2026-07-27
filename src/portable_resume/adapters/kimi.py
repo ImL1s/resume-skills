@@ -381,6 +381,9 @@ class KimiAdapter:
             except ValueError:
                 exact_uuid = None
             if exact_uuid is not None:
+                exact_empty_selection: tuple[
+                    str, str, list[dict[str, Any]], list[str]
+                ] | None = None
                 for root, provider in roots:
                     try:
                         if provider == FORMAT_ID:
@@ -408,12 +411,14 @@ class KimiAdapter:
                     # current store, session only in legacy).
                     if records:
                         return root, provider, records, warnings
+                    if exact_empty_selection is None:
+                        exact_empty_selection = (root, provider, records, warnings)
                 # Exact UUID path finished without a hit. Do not fall through into
                 # a second full index reduce on the same ReadBudget (large
                 # append-only indexes would double-charge transcript_records and
                 # can turn a clean miss into E_LIMIT_EXCEEDED).
-                if roots:
-                    return roots[0][0], roots[0][1], [], []
+                if exact_empty_selection is not None:
+                    return exact_empty_selection
                 raise DiagnosticError(
                     "E_CAPABILITY_UNAVAILABLE" if not roots else "E_UNSUPPORTED_FORMAT",
                     source=self.key,
