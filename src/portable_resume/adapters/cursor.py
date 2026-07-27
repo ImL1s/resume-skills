@@ -456,9 +456,10 @@ def _desktop_summaries(path: str, root: str, query: Query, budget: ReadBudget) -
         list_limit = min(DEFAULT_BOUNDS.scanned_records, DEFAULT_BOUNDS.listed_sessions * 4) + 1
         try:
             if exact is not None:
+                # Case-insensitive UUID match: stored ids may not be lowercase yet.
                 rows = connection.execute(
                     "SELECT id,cwd,cwd_hash,title,created_at,updated_at,archived,composer_kind,git_branch "
-                    "FROM cursor_composers WHERE id=? "
+                    "FROM cursor_composers WHERE lower(id)=lower(?) "
                     "ORDER BY updated_at DESC,id ASC LIMIT ?",
                     (exact, list_limit),
                 ).fetchall()

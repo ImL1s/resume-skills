@@ -458,11 +458,26 @@ def _show_live_desktop(
     turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=max_tool_chars)
     structured = False
     if text_blob and len(text_blob) >= 1 and isinstance(text_blob[0], (str, bytes)):
-        blob_len = text_blob[1] if len(text_blob) >= 2 and isinstance(text_blob[1], int) else (
-            len(text_blob[0].encode("utf-8") if isinstance(text_blob[0], str) else text_blob[0])
+        raw_bytes = (
+            text_blob[0]
+            if isinstance(text_blob[0], (bytes, bytearray, memoryview))
+            else text_blob[0].encode("utf-8")
         )
-        budget.consume_bytes(blob_len)
-        raw = text_blob[0].decode("utf-8") if isinstance(text_blob[0], bytes) else text_blob[0]
+        actual_len = len(raw_bytes)
+        expected_len = text_blob[1] if len(text_blob) >= 2 and isinstance(text_blob[1], int) else actual_len
+        # Re-check after fetch: concurrent updates between length probe and value load
+        # must not admit an oversized body under a stale length charge.
+        remaining = min(
+            max(0, budget.limits.source_read_bytes - budget.bytes_read),
+            max(0, DEFAULT_BOUNDS.source_read_bytes - budget.bytes_read),
+            DEFAULT_BOUNDS.record_bytes,
+        )
+        if actual_len > remaining or actual_len > DEFAULT_BOUNDS.record_bytes:
+            raise DiagnosticError.limit_exceeded()
+        if expected_len != actual_len and actual_len > min(expected_len, remaining):
+            raise DiagnosticError.limit_exceeded()
+        budget.consume_bytes(actual_len)
+        raw = raw_bytes.decode("utf-8") if not isinstance(text_blob[0], str) else text_blob[0]
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
