@@ -8,7 +8,7 @@
 | Destination profiles | 9 including **Pi** (filesystem install supported) |
 | Packaging matrix | **81/81 pass on `main`** (currently **9×9=81**, derived from registries; **not** claimed for published `0.3.3` PyPI/GitHub assets) |
 | Installed runner matrix | **81/81 pass on `main`** (currently **9×9=81**, derived from registries; published `0.3.3` remains 64-cell) |
-| Python test suite | **365 pass locally** (includes Kimi #14 large-session regressions) |
+| Python test suite | **366 pass locally** (includes Kimi #14 large-session regressions) |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
 | Host-native headless Skill activation | **8/8 pass** |
