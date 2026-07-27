@@ -408,6 +408,7 @@ class KimiAdapter:
                     # current store, session only in legacy).
                     if records:
                         return root, provider, records, warnings
+        empty_selection: tuple[str, str, list[dict[str, Any]], list[str]] | None = None
         for root, provider in roots:
             try:
                 if provider == FORMAT_ID:
@@ -418,8 +419,16 @@ class KimiAdapter:
                 if error.code == "E_UNSUPPORTED_FORMAT" and query.source_root is None and self._configured_root is None:
                     continue
                 raise
-            # Empty is valid (e.g. all sessions tombstoned); still a supported root.
-            return root, provider, records, warnings
+            selection = (root, provider, records, warnings)
+            if records or query.source_root is not None or self._configured_root is not None:
+                return selection
+            # For implicit homes, an empty current provider does not hide a
+            # populated legacy provider. If every provider is empty, retain the
+            # first supported empty result so probe/list semantics stay stable.
+            if empty_selection is None:
+                empty_selection = selection
+        if empty_selection is not None:
+            return empty_selection
         raise DiagnosticError("E_CAPABILITY_UNAVAILABLE" if not roots else "E_UNSUPPORTED_FORMAT", source=self.key)
 
     def probe(self, query: Query) -> CapabilityReport:

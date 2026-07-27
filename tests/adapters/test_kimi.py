@@ -245,6 +245,40 @@ class KimiAdapterTests(unittest.TestCase):
             self.assertEqual(code, 0, stderr.getvalue())
             self.assertEqual(json.loads(stdout.getvalue())["sessions"][0]["session_id"], LEGACY_ID)
 
+        with tempfile.TemporaryDirectory() as temporary:
+            current = Path(temporary) / "current"
+            (current / "sessions").mkdir(parents=True)
+            (current / "session_index.jsonl").write_text("", encoding="utf-8")
+            self.assertEqual(
+                KimiAdapter(root=str(current)).list(
+                    query(current, within_min=0),
+                    ReadBudget(),
+                ),
+                [],
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"KIMI_CODE_HOME": str(current), "KIMI_SHARE_DIR": str(legacy)},
+                clear=False,
+            ):
+                adapter = KimiAdapter()
+                values = adapter.list(
+                    Query(source="kimi", cwd=CWD, within_min=0),
+                    ReadBudget(),
+                )
+                self.assertEqual(values[0].provider, LEGACY_FORMAT_ID)
+                stdout, stderr = io.StringIO(), io.StringIO()
+                code = run(
+                    ["kimi", "show", "latest", "--cwd", CWD, "--json"],
+                    stdout=stdout,
+                    stderr=stderr,
+                )
+                self.assertEqual(code, 0, stderr.getvalue())
+                self.assertEqual(
+                    json.loads(stdout.getvalue())["sessions"][0]["session_id"],
+                    LEGACY_ID,
+                )
+
     def test_partial_tail_only_is_warned_but_interior_and_duplicate_corruption_fail(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = materialize_current(Path(temporary) / "current")
