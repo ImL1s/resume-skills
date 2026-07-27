@@ -1452,22 +1452,37 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                     except DiagnosticError:
                         journal["orphans"][rel]["state"] = "skipped"
                         _write_journal(root, journal)
-            # write manifest last (atomic, no-follow control store)
+            # Durable intent before replacing the ownership manifest: on-disk journal
+            # records the target generation so recover can recognize a published
+            # generation even if the later ``complete`` journal write fails.
+            journal["state"] = "publishing_manifest"
+            journal["target_generation"] = plan.generation
+            _write_journal(root, journal)
             _atomic_write_support_file(
                 root,
                 MANIFEST_NAME,
                 plan.manifest.dumps().encode("utf-8"),
             )
             journal["state"] = "complete"
-            _write_journal(root, journal)
+            try:
+                _write_journal(root, journal)
+            except DiagnosticError:
+                # Manifest is already the ownership source of truth. Prefer dropping a
+                # stale incomplete journal so recover cannot rollback under gen N.
+                try:
+                    _unlink_support_control_file(root, JOURNAL_NAME)
+                except DiagnosticError:
+                    pass
             # After the new manifest is published, never payload-rollback on cleanup
-            # failure: leave the complete journal for recover_root instead.
+            # failure: leave a complete journal (or generation-matched stale journal)
+            # for recover_root instead.
             try:
                 _delete_authorized_support_subtree(root, stage_dir, role="stage")
             except DiagnosticError:
                 pass
             try:
-                _unlink_support_control_file(root, JOURNAL_NAME)
+                if os.path.lexists(journal_path(root)):
+                    _unlink_support_control_file(root, JOURNAL_NAME)
             except DiagnosticError:
                 pass
             result = {"ok": True, "dry_run": False, "plan": plan.to_dict(), "generation": plan.generation}
@@ -1478,7 +1493,7 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
             return result
         except Exception:
             if "journal" in locals() and isinstance(journal, dict):
-                if journal.get("state") != "complete":
+                if not _install_generation_is_published(root, journal):
                     _attempt_rollback(root, journal)
             raise
         finally:
@@ -1980,8 +1995,47 @@ def _rollback_paths(root: str, journal: dict[str, Any]) -> tuple[int, bool]:
     return restored, complete
 
 
-def _attempt_rollback(root: str, journal: dict[str, Any]) -> None:
+def _install_generation_is_published(root: str, journal: dict[str, Any]) -> bool:
+    """Return True when the on-disk ownership manifest matches this journal generation.
+
+    Used after the ownership manifest has been atomically replaced: a subsequent
+    failure to write ``state=complete`` must not let recover_root roll payload
+    back under the already-published generation.
+    """
     if journal.get("state") == "complete":
+        return True
+    target = journal.get("target_generation", journal.get("generation"))
+    if not isinstance(target, int):
+        return False
+    try:
+        manifest = load_manifest(root)
+    except DiagnosticError:
+        return False
+    if manifest is None:
+        return False
+    return manifest.generation == target
+
+
+def _clear_published_install_journal(root: str, journal: dict[str, Any]) -> dict[str, Any]:
+    """Clear stage/journal for a published generation without payload rollback."""
+    stage_dir = journal.get("stage_dir")
+    if stage_dir:
+        # Explicit recover must fail closed: do not clear the journal if
+        # authorized cleanup cannot complete.
+        _delete_authorized_support_subtree(root, stage_dir, role="stage")
+    # Force-with-backup trees are retained after a successful install for
+    # the caller; complete-journal recovery must not destroy them.
+    _unlink_support_control_file(root, JOURNAL_NAME)
+    action = (
+        "cleared_complete_journal"
+        if journal.get("state") == "complete"
+        else "cleared_published_generation_journal"
+    )
+    return {"ok": True, "recovered": True, "action": action}
+
+
+def _attempt_rollback(root: str, journal: dict[str, Any]) -> None:
+    if _install_generation_is_published(root, journal):
         # Manifest already published; do not undo payload under a new generation.
         return
     journal["state"] = "rollback"
@@ -2024,17 +2078,9 @@ def recover_root(root: str) -> dict[str, Any]:
             raise DiagnosticError("E_RECOVERY_REQUIRED") from error
         if not isinstance(journal, dict):
             raise DiagnosticError("E_RECOVERY_REQUIRED")
-        if journal.get("state") == "complete":
-            stage_dir = journal.get("stage_dir")
-            if stage_dir:
-                # Explicit recover must fail closed: do not clear the journal if
-                # authorized cleanup cannot complete.
-                _delete_authorized_support_subtree(root, stage_dir, role="stage")
-            # Force-with-backup trees are retained after a successful install for
-            # the caller; complete-journal recovery must not destroy them.
-            _unlink_support_control_file(root, JOURNAL_NAME)
-            return {"ok": True, "recovered": True, "action": "cleared_complete_journal"}
-        # incomplete: restore only transaction snapshots; keep journal on drift.
+        if _install_generation_is_published(root, journal):
+            return _clear_published_install_journal(root, journal)
+        # incomplete and not yet published: restore only transaction snapshots.
         restored, complete = _rollback_paths(root, journal)
         if not complete:
             raise DiagnosticError("E_RECOVERY_REQUIRED")

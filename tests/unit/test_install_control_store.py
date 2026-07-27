@@ -28,6 +28,8 @@ from portable_resume.install.transaction import (
     load_manifest,
     manifest_path,
     plan_install,
+    recover_root,
+    verify_root,
 )
 
 
@@ -213,3 +215,89 @@ class InstallControlStoreTests(unittest.TestCase):
         for path in self.outside.rglob("*"):
             if path.is_file():
                 self.assertNotIn(b"name:", path.read_bytes()[:200])
+
+    def test_complete_journal_write_failure_keeps_published_payload(self) -> None:
+        """Manifest publish + failed complete journal must not lose gen-N payload on recover."""
+        import portable_resume.install.transaction as transaction_module
+
+        execute_install(plan_install(host="claude", scope="project", root=self.root))
+        skill = Path(self.root) / "resume-claude" / "SKILL.md"
+        skill.write_bytes(skill.read_bytes() + b"\n# reinstall-tamper\n")
+        plan = plan_install(host="claude", scope="project", root=self.root)
+        original_write = transaction_module._write_journal
+
+        def fail_only_complete(root: str, journal: dict) -> None:
+            if journal.get("state") == "complete":
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            original_write(root, journal)
+
+        # Keep a stale on-disk journal after publish so recover_root is exercised.
+        original_unlink = transaction_module._unlink_support_control_file
+
+        def refuse_journal_unlink(root: str, name: str) -> None:
+            if name == JOURNAL_NAME:
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            original_unlink(root, name)
+
+        with (
+            mock.patch.object(transaction_module, "_write_journal", side_effect=fail_only_complete),
+            mock.patch.object(
+                transaction_module,
+                "_unlink_support_control_file",
+                side_effect=refuse_journal_unlink,
+            ),
+        ):
+            report = execute_install(plan)
+        self.assertTrue(report["ok"])
+        manifest = load_manifest(self.root)
+        self.assertIsNotNone(manifest)
+        assert manifest is not None
+        self.assertEqual(manifest.generation, plan.generation)
+        published = skill.read_bytes()
+        self.assertIn(b"name:", published[:200])
+
+        # Stale incomplete journal may remain (unlink refused); recover must not rollback.
+        self.assertTrue(os.path.isfile(journal_path(self.root)))
+        recovered = recover_root(self.root)
+        self.assertTrue(recovered["ok"])
+        self.assertIn(
+            recovered.get("action"),
+            {"cleared_complete_journal", "cleared_published_generation_journal"},
+        )
+        self.assertEqual(skill.read_bytes(), published)
+        verify_root(self.root)
+        self.assertFalse(os.path.isfile(journal_path(self.root)))
+
+    def test_recover_generation_match_skips_payload_rollback(self) -> None:
+        """Stale committing journal with matching manifest generation is treated as published."""
+        execute_install(plan_install(host="claude", scope="project", root=self.root))
+        manifest = load_manifest(self.root)
+        self.assertIsNotNone(manifest)
+        assert manifest is not None
+        skill = Path(self.root) / "resume-claude" / "SKILL.md"
+        before = skill.read_bytes()
+        entry = manifest.files["resume-claude/SKILL.md"]
+        _write_journal(
+            self.root,
+            {
+                "schema_version": "portable-resume/install-journal-v1",
+                "state": "committing",
+                "generation": manifest.generation,
+                "target_generation": manifest.generation,
+                "claim": next(iter(manifest.claims)),
+                "stage_dir": None,
+                "backup_root": None,
+                "paths": {
+                    "resume-claude/SKILL.md": {
+                        "state": "committed",
+                        "existed": False,
+                        "sha256": entry.sha256,
+                    }
+                },
+            },
+        )
+        recovered = recover_root(self.root)
+        self.assertTrue(recovered["ok"])
+        self.assertEqual(recovered.get("action"), "cleared_published_generation_journal")
+        self.assertEqual(skill.read_bytes(), before)
+        verify_root(self.root)
