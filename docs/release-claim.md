@@ -81,6 +81,12 @@ separate and require their own rows in
   passed dual-OS gates, exact-byte smoke, flat-download checksum verification,
   attestation, PyPI Trusted Publishing, and GitHub Release publication
   (`packaging_cells=81`, `installed_runner_cells=81`).
+- Kimi PR #58 received a current-head Codex callback with no major issues for
+  `4ecf2b5aa5` before merge
+  ([review evidence](https://github.com/ImL1s/resume-skills/pull/58#issuecomment-5091411213)).
+  The earlier PR #49 final-review bot exception remains documented in
+  [`STATUS.md`](STATUS.md) and is not retroactively claimed as a successful
+  callback.
 - Published outputs:
   [GitHub Release](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
   and [PyPI](https://pypi.org/project/portable-resume/0.3.4/).

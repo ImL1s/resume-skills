@@ -57,4 +57,7 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 Проверка host успешно выполнила 8/8 вызовов CLI и 7/7 точных локальных установок нативных пакетов. Установка из публичного marketplace прошла на 6/6 совместимых host; marketplace picker Cursor и Kimi также проверены. Остальные визуальные Skill picker и курируемые поставщиками каталоги не заявлены как завершённые.
 
+Эти результаты на уровне host относятся к свидетельствам v0.3.2. Повторная установка v0.3.4 на каждом host и picker-потоки остаются **not-run**.
+<!-- portable-resume-evidence-scope: v0.3.2-hosts v0.3.4-host-reinstall-not-run -->
+
 [Статус проекта](../STATUS.md) отделяет подтверждённые результаты от ещё не запущенных UI／release-проверок.

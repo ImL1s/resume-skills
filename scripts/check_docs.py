@@ -57,6 +57,10 @@ REQUIRED_EVIDENCE_MARKERS = (
     "7/7",
     "6/6",
 )
+EVIDENCE_SCOPE_MARKER = (
+    "<!-- portable-resume-evidence-scope: "
+    "v0.3.2-hosts v0.3.4-host-reinstall-not-run -->"
+)
 
 
 def check() -> dict[str, object]:
@@ -97,6 +101,10 @@ def check() -> dict[str, object]:
                 failures.append(
                     f"{path.relative_to(REPO)}: missing evidence marker {marker!r}"
                 )
+        if EVIDENCE_SCOPE_MARKER not in text:
+            failures.append(
+                f"{path.relative_to(REPO)}: missing version-scoped host evidence marker"
+            )
         for host in HOST_NAMES:
             if host not in text:
                 failures.append(f"{path.relative_to(REPO)}: missing host {host}")

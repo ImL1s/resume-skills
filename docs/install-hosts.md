@@ -163,8 +163,9 @@ covered **64/64** cells. Exact `0.3.2` local package installation passed on all 
 supported native plugin/extension surfaces, including Cursor. Host-native
 headless Skill invocation passed on all eight destination CLIs available at that
 time (nine destinations on `0.3.4`, with Pi native UI still not-run). Public
-marketplace installation passed on all six compatible hosts; Cursor and Kimi
-also passed their visual marketplace picker flows. Versions, commands, and
-archive digests are recorded in [`host-ui-smoke.md`](host-ui-smoke.md). Other
-visual Skill pickers and vendor-curated directory listings remain separate
-unclaimed gates.
+marketplace installation passed on all six compatible hosts on `v0.3.2`; Cursor
+and Kimi also passed their `v0.3.2` visual marketplace picker flows. Fresh
+`v0.3.4` host-by-host reinstall and picker evidence remains **not-run**.
+Versions, commands, and archive digests are recorded in
+[`host-ui-smoke.md`](host-ui-smoke.md). Other visual Skill pickers and
+vendor-curated directory listings remain separate unclaimed gates.

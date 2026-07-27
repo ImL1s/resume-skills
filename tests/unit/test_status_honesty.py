@@ -49,6 +49,44 @@ class StatusHonestyTests(unittest.TestCase):
                 msg=f"{path} missing registry-derived matrix note",
             )
 
+    def test_release_summary_scopes_historical_host_evidence(self) -> None:
+        readme_opening = "\n".join(
+            Path("README.md").read_text(encoding="utf-8").splitlines()[:30]
+        )
+        self.assertIn("v0.3.2", readme_opening)
+        compact_readme = " ".join(readme_opening.replace("**", "").split())
+        self.assertRegex(compact_readme, r"(?i)fresh v0\.3\.4.*not-run")
+
+        host = Path("docs/host-support.md").read_text(encoding="utf-8")
+        for label in (
+            "Native local plugin/extension installs",
+            "Public marketplace installation",
+            "Visual marketplace picker",
+        ):
+            row = next(line for line in host.splitlines() if f"| {label} |" in line)
+            self.assertIn("v0.3.2", row, label)
+        latest = next(
+            line
+            for line in host.splitlines()
+            if "| Latest archived remote CI/release |" in line
+        )
+        self.assertIn("v0.3.4", latest)
+
+        status = Path("docs/STATUS.md").read_text(encoding="utf-8")
+        headless = next(
+            line
+            for line in status.splitlines()
+            if "| Host-native headless Skill activation |" in line
+        )
+        self.assertIn("v0.3.2", headless)
+        self.assertIn("v0.3.4", headless)
+        self.assertIn("not-run", headless)
+
+    def test_historical_evidence_heading_is_version_scoped(self) -> None:
+        evidence = Path("docs/evidence-summary.md").read_text(encoding="utf-8")
+        self.assertNotIn("## Fresh local verification", evidence)
+        self.assertIn("## Historical local verification: v0.3.2-era", evidence)
+
 
     def test_status_notes_stable_scan_lines_adoption_is_partial(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")

@@ -57,4 +57,7 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 現在の host スモークでは 8/8 の CLI 呼び出しと、正確なローカルパッケージ 7/7 の導入が成功しました。公開 marketplace 導入は互換性のある 6/6 host で成功し、Cursor と Kimi の marketplace picker も成功しています。その他の視覚的 Skill picker とベンダー選定ディレクトリは未申告です。
 
+これらの host レベル結果は v0.3.2 時点の証拠です。v0.3.4 の host 別再インストールと picker フローは **not-run** のままです。
+<!-- portable-resume-evidence-scope: v0.3.2-hosts v0.3.4-host-reinstall-not-run -->
+
 検証済み事項と未実行の UI／release ゲートは[プロジェクト状況](../STATUS.md)を参照してください。
