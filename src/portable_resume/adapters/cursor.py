@@ -449,18 +449,32 @@ def _desktop_summaries(path: str, root: str, query: Query, budget: ReadBudget) -
     with private_sqlite_connection(path, root=root, provider=DESKTOP_FORMAT) as connection:
         if not _desktop_signature(connection):
             return False, []
+        exact = _exact_uuid_ref(query.ref)
+        # Filter archived/subagent before ORDER/LIMIT so they cannot crowd eligible
+        # parents out of the discovery window (issue #11). Exact ID still reaches
+        # archived/subagent rows via a dedicated lookup.
+        list_limit = min(DEFAULT_BOUNDS.scanned_records, DEFAULT_BOUNDS.listed_sessions * 4) + 1
         try:
-            rows = connection.execute(
-                "SELECT id,cwd,cwd_hash,title,created_at,updated_at,archived,composer_kind,git_branch "
-                "FROM cursor_composers ORDER BY updated_at DESC,id ASC LIMIT ?",
-                (DEFAULT_BOUNDS.scanned_records + 1,),
-            ).fetchall()
+            if exact is not None:
+                rows = connection.execute(
+                    "SELECT id,cwd,cwd_hash,title,created_at,updated_at,archived,composer_kind,git_branch "
+                    "FROM cursor_composers WHERE id=? "
+                    "ORDER BY updated_at DESC,id ASC LIMIT ?",
+                    (exact, list_limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT id,cwd,cwd_hash,title,created_at,updated_at,archived,composer_kind,git_branch "
+                    "FROM cursor_composers "
+                    "WHERE archived=0 AND composer_kind='project' "
+                    "ORDER BY updated_at DESC,id ASC LIMIT ?",
+                    (list_limit,),
+                ).fetchall()
         except sqlite3.Error as error:
             raise DiagnosticError("E_CORRUPT_RECORD", source="cursor", provider=DESKTOP_FORMAT) from error
-    if len(rows) > DEFAULT_BOUNDS.scanned_records:
+    if len(rows) > list_limit - 1:
         raise DiagnosticError.limit_exceeded()
     values: list[SessionSummary] = []
-    exact = _exact_uuid_ref(query.ref)
     for row in rows:
         budget.consume_records()
         if len(row) != 9:

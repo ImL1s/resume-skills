@@ -215,26 +215,33 @@ def _show_live_cli_store(
                 updated_at = _ms_to_rfc3339(meta.get("updatedAtMs"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, DiagnosticError):
             warnings.append("W_STALE_INDEX")
+    row_cap = min(budget.limits.transcript_records, DEFAULT_BOUNDS.transcript_records)
+    rows: list[Any] = []
     with ctx as connection:
         try:
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if "blobs" not in tables:
                 raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="cursor", provider=LIVE_CLI_FORMAT)
             # Deterministic order: rowid insertion order (stable), then id.
+            # Fetch transcript_records + 1 so a longer store fails closed instead of
+            # silently returning a prefix (issue #11).
             rows = connection.execute(
                 "SELECT id, data FROM blobs ORDER BY rowid ASC, id ASC LIMIT ?",
-                (DEFAULT_BOUNDS.scanned_records,),
+                (row_cap + 1,),
             ).fetchall()
         except sqlite3.Error as error:
             raise DiagnosticError("E_CORRUPT_RECORD", source="cursor", provider=LIVE_CLI_FORMAT) from error
+    if len(rows) > row_cap:
+        raise DiagnosticError.limit_exceeded()
     for row in rows:
-        budget.consume_records()
         if len(row) != 2 or not isinstance(row[0], str) or not isinstance(row[1], (bytes, memoryview)):
             continue
         data = bytes(row[1])
         if len(data) > DEFAULT_BOUNDS.record_bytes:
-            warnings.append("W_TRUNCATED")
-            continue
+            raise DiagnosticError.limit_exceeded()
+        # Charge each persisted blob row against the transcript window and source budget.
+        budget.consume_transcript_records()
+        budget.consume_bytes(len(data))
         try:
             payload = json.loads(data.decode("utf-8"), object_pairs_hook=_object)
         except (UnicodeDecodeError, json.JSONDecodeError, _DuplicateKey, RecursionError):
@@ -409,8 +416,9 @@ def _show_live_desktop(
             if "cursorDiskKV" in {
                 r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }:
+                # Length-gate composerData before materializing huge values (issue #11).
                 text_blob = connection.execute(
-                    "SELECT value FROM cursorDiskKV WHERE key=?",
+                    "SELECT value, length(CAST(value AS BLOB)) FROM cursorDiskKV WHERE key=?",
                     (f"composerData:{session_id}",),
                 ).fetchone()
         except sqlite3.Error as error:
@@ -434,7 +442,19 @@ def _show_live_desktop(
     turns: list[Turn] = []
     turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=max_tool_chars)
     structured = False
-    if text_blob and isinstance(text_blob[0], (str, bytes)):
+    if text_blob and len(text_blob) >= 2 and isinstance(text_blob[0], (str, bytes)):
+        blob_len = text_blob[1] if isinstance(text_blob[1], int) else None
+        if blob_len is None:
+            raw_probe = text_blob[0]
+            blob_len = len(raw_probe.encode("utf-8") if isinstance(raw_probe, str) else raw_probe)
+        remaining = min(
+            max(0, budget.limits.source_read_bytes - budget.bytes_read),
+            max(0, DEFAULT_BOUNDS.source_read_bytes - budget.bytes_read),
+            DEFAULT_BOUNDS.record_bytes,
+        )
+        if blob_len < 0 or blob_len > remaining or blob_len > DEFAULT_BOUNDS.record_bytes:
+            raise DiagnosticError.limit_exceeded()
+        budget.consume_bytes(blob_len)
         raw = text_blob[0].decode("utf-8") if isinstance(text_blob[0], bytes) else text_blob[0]
         try:
             data = json.loads(raw)
