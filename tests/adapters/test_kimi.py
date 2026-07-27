@@ -820,6 +820,33 @@ class KimiAdapterTests(unittest.TestCase):
             extra = next(item for item in values if item.session_id == extra_id)
             self.assertIn("W_STALE_INDEX", extra.warnings)
 
+    def test_missing_exact_uuid_does_not_double_charge_index_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            session_dir = next((root / "sessions").glob("*/*"))
+            index = root / "session_index.jsonl"
+            lines = [
+                json.dumps(
+                    {
+                        "sessionId": CURRENT_ID,
+                        "sessionDir": str(session_dir.resolve()),
+                        "workDir": CWD,
+                        "seq": i,
+                        "synthetic": True,
+                    }
+                )
+                for i in range(3_000)
+            ]
+            index.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            # One full index reduce fits; a second would exceed.
+            budget = ReadBudget(limits=Bounds(transcript_records=3_500))
+            missing = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+            values = KimiAdapter(root=str(root)).list(
+                query(root, missing, within_min=0),
+                budget,
+            )
+            self.assertEqual(values, [])
+
     def test_index_line_limit_is_not_softened_to_filesystem_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = materialize_current(Path(temporary) / "current")

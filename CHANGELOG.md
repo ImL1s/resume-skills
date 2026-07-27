@@ -17,6 +17,9 @@
 - Other adapters’ large-session streaming (#7/#8 Codex, Cursor/Qwen/OpenCode/Grok)
   remain open under [Issue #18](https://github.com/ImL1s/resume-skills/issues/18).
 - Still inert handoff only — not live process restore.
+- Residual: a syntactically corrupt index *tombstone* line is soft-skipped and
+  cannot apply that delete; prior valid tombstones remain authoritative. True
+  streaming yield for multi‑10 MiB wires remains deferred to #10/#8.
 
 ## [0.3.3] — 2026-07-25
 
