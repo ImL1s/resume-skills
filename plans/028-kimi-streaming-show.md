@@ -18,7 +18,7 @@ Stop treating whole Kimi `session_index.jsonl` / `wire.jsonl` as a single 16 M
 - [x] Read-only current-store filesystem fallback bounded + tested
 - [x] Full histories use `source_read_bytes` + per-line `record_bytes` + `transcript_records`
 - [x] Uses `#10` `stable_scan_lines`
-- [x] Four canonical project gates (self_verify, secrets, 363 unittest, 81/81 smoke)
+- [x] Four canonical project gates (self_verify, secrets, 374 unittest, 81/81 smoke)
 - [x] STATUS/CHANGELOG distinguish Kimi #14 vs other adapters
 
 ## Out of scope

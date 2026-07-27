@@ -26,10 +26,18 @@ class ResolvedRef:
     session_id: str
     source_path: str | None = None
     provider: str | None = None
+    title: str | None = None
+    cwd: str | None = None
 
     @classmethod
     def from_summary(cls, summary: SessionSummary) -> "ResolvedRef":
-        return cls(summary.session_id, summary.source_path, summary.provider)
+        return cls(
+            session_id=summary.session_id,
+            source_path=summary.source_path,
+            provider=summary.provider,
+            title=summary.title,
+            cwd=summary.cwd,
+        )
 
 
 @runtime_checkable

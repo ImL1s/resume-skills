@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -13,6 +14,7 @@ from portable_resume.adapters.kimi import FORMAT_ID, LEGACY_FORMAT_ID, KimiAdapt
 from portable_resume.bounds import Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.model import Query
+from portable_resume.reader import run
 from tests.helpers.core import tree_snapshot
 from tests.helpers.fixture_manifest import validate_fixture_tree
 
@@ -76,6 +78,19 @@ class KimiAdapterTests(unittest.TestCase):
             self.assertEqual([turn.content for turn in session.turns], ["Current Kimi prompt", "Current Kimi answer"])
             self.assertNotIn("hidden", " ".join(turn.content for turn in session.turns))
             self.assertEqual(tree_snapshot(root), before)
+
+    def test_show_preserves_current_summary_metadata_if_state_disappears(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            adapter = KimiAdapter(root=str(root))
+            current = query(root, CURRENT_ID)
+            summaries = adapter.list(current, ReadBudget())
+            expected = summaries[0]
+            next(root.rglob("state.json")).unlink()
+            shown = adapter.show(resolved(summaries, CURRENT_ID), current, ReadBudget())
+            self.assertEqual(shown.cwd, expected.cwd)
+            self.assertEqual(shown.title, expected.title)
+            self.assertIn("W_MISSING_BLOB", shown.warnings)
 
     def test_legacy_metadata_context_and_wire_fallback(self) -> None:
         root = fixture_root("s-kim-02")
@@ -479,6 +494,39 @@ class KimiAdapterTests(unittest.TestCase):
                 )
             self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
 
+    def test_reader_exact_path_bypasses_storewide_filesystem_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            transcript = next(root.rglob("wire.jsonl")).resolve()
+            (root / "session_index.jsonl").unlink()
+            next(root.rglob("state.json")).unlink()
+            for ref in (str(transcript), CURRENT_ID):
+                with self.subTest(ref=ref):
+                    stdout, stderr = io.StringIO(), io.StringIO()
+                    with mock.patch.object(
+                        KimiAdapter,
+                        "_fs_fallback_current",
+                        side_effect=DiagnosticError.limit_exceeded(),
+                    ):
+                        code = run(
+                            [
+                                "kimi",
+                                "show",
+                                ref,
+                                "--cwd",
+                                CWD,
+                                "--source-root",
+                                str(root),
+                                "--json",
+                            ],
+                            stdout=stdout,
+                            stderr=stderr,
+                        )
+                    self.assertEqual(code, 0, stderr.getvalue())
+                    payload = json.loads(stdout.getvalue())
+                    self.assertEqual(payload["sessions"][0]["session_id"], CURRENT_ID)
+                    self.assertIn("W_STALE_INDEX", payload["sessions"][0]["warnings"])
+
     def test_exact_show_survives_corrupt_index_and_separate_discovery_budget(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = materialize_current(Path(temporary) / "current")
@@ -547,6 +595,10 @@ class KimiAdapterTests(unittest.TestCase):
                 encoding="utf-8",
             )
             # Leftover on-disk session must not reappear after index tombstone.
+            values = KimiAdapter(root=str(root)).list(query(root, within_min=0), ReadBudget())
+            self.assertEqual(values, [])
+            with index.open("a", encoding="utf-8") as handle:
+                handle.write('{"corrupt":\n')
             values = KimiAdapter(root=str(root)).list(query(root, within_min=0), ReadBudget())
             self.assertEqual(values, [])
 

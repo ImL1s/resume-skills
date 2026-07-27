@@ -15,6 +15,7 @@ import math
 import os
 import re
 import stat
+import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
@@ -23,7 +24,13 @@ from .base import CapabilityReport, ResolvedRef
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
-from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
+from ..paths import (
+    canonical_root,
+    canonicalize_cwd,
+    is_within,
+    require_regular_no_symlinks,
+    same_cwd,
+)
 from ..sanitize import sanitize_turn_record
 from ..snapshot import stable_read_bytes, stable_scan_lines
 
@@ -243,14 +250,14 @@ def _absolute(value: object) -> str | None:
 
 
 def _eligible(summary: SessionSummary, query: Query) -> bool:
-    if query.cwd is not None and (summary.cwd is None or not same_cwd(summary.cwd, query.cwd)):
-        return False
     ref = query.ref.strip() if query.ref else None
     if ref == summary.session_id:
         return True
     if ref and os.path.isabs(ref) and summary.source_path is not None:
         if canonicalize_cwd(ref) == canonicalize_cwd(summary.source_path):
             return True
+    if query.cwd is not None and (summary.cwd is None or not same_cwd(summary.cwd, query.cwd)):
+        return False
     minutes = query.within_min if query.within_min is not None else DEFAULT_BOUNDS.listing_age_minutes
     if minutes is not None and minutes <= 0:
         return True
@@ -324,7 +331,50 @@ class KimiAdapter:
         return tuple(dict.fromkeys(root for root, _ in self._roots(query)))
 
     def _selected(self, query: Query, budget: ReadBudget | None) -> tuple[str, str, list[dict[str, Any]], list[str]]:
-        for root, provider in self._roots(query):
+        roots = self._roots(query)
+        ref = query.ref.strip() if query.ref else None
+        if ref and os.path.isabs(ref):
+            for root, provider in roots:
+                try:
+                    safe, _ = require_regular_no_symlinks(ref, root)
+                    path = canonicalize_cwd(safe)
+                    session_id = _identifier(
+                        _session_id_from_transcript(path, provider),
+                        provider=provider,
+                    )
+                    self._validate_transcript_shape(path, root, provider, session_id)
+                except DiagnosticError:
+                    continue
+                warnings = self._current_index_warnings(root) if provider == FORMAT_ID else []
+                return (
+                    root,
+                    provider,
+                    [
+                        {
+                            "session_id": session_id,
+                            "path": path,
+                            "cwd": None,
+                            "title": None,
+                        }
+                    ],
+                    warnings,
+                )
+            raise DiagnosticError.unsafe_path()
+        if ref:
+            try:
+                exact_uuid = str(uuid.UUID(ref))
+            except ValueError:
+                exact_uuid = None
+            if exact_uuid is not None and roots:
+                root, provider = roots[0]
+                if provider == FORMAT_ID:
+                    records, warnings = self._current_exact_id_records(
+                        root,
+                        exact_uuid,
+                        budget,
+                    )
+                    return root, provider, records, warnings
+        for root, provider in roots:
             try:
                 if provider == FORMAT_ID:
                     records, warnings = self._current_records(root, budget)
@@ -336,7 +386,7 @@ class KimiAdapter:
                 raise
             # Empty is valid (e.g. all sessions tombstoned); still a supported root.
             return root, provider, records, warnings
-        raise DiagnosticError("E_CAPABILITY_UNAVAILABLE" if not self._roots(query) else "E_UNSUPPORTED_FORMAT", source=self.key)
+        raise DiagnosticError("E_CAPABILITY_UNAVAILABLE" if not roots else "E_UNSUPPORTED_FORMAT", source=self.key)
 
     def probe(self, query: Query) -> CapabilityReport:
         roots = self._roots(query)
@@ -407,27 +457,22 @@ class KimiAdapter:
         # or doubling aggregate admitted source bytes.
         discovery_warnings: list[str] = []
         if ref.provider == FORMAT_ID:
-            index = os.path.join(root, "session_index.jsonl")
-            try:
-                index_mode = os.lstat(index).st_mode
-            except OSError:
-                discovery_warnings.append("W_STALE_INDEX")
-            else:
-                if stat.S_ISLNK(index_mode) or not stat.S_ISREG(index_mode):
-                    discovery_warnings.append("W_STALE_INDEX")
+            discovery_warnings.extend(self._current_index_warnings(root))
         self._require_regular_transcript(path, root)
         state, state_warnings = self._read_state(os.path.dirname(path), root, budget)
         # Legacy cwd/title often live only in kimi.json (not state.json). Load
         # that small metadata file only — never re-scan the full session tree.
-        fallback_cwd = None
-        legacy_title = None
+        fallback_cwd = ref.cwd
+        fallback_title = ref.title
         if ref.provider == LEGACY_FORMAT_ID:
-            fallback_cwd, legacy_title = self._legacy_hints_for_show(
+            legacy_cwd, legacy_title = self._legacy_hints_for_show(
                 root, path, ref.session_id, budget
             )
+            fallback_cwd = legacy_cwd or fallback_cwd
+            fallback_title = legacy_title or fallback_title
         meta = _metadata(state, fallback_cwd=fallback_cwd)
-        if meta["title"] is None and legacy_title is not None:
-            meta = {**meta, "title": legacy_title}
+        if meta["title"] is None and fallback_title is not None:
+            meta = {**meta, "title": fallback_title}
         turns, transcript_warnings, transcript_times = self._parse_transcript(
             path, root, query, budget, include_turns=True
         )
@@ -446,15 +491,95 @@ class KimiAdapter:
         )
         return _session_from(summary, turns, (*discovery_warnings, *state_warnings, *transcript_warnings))
 
+    def _current_exact_id_records(
+        self,
+        root: str,
+        session_id: str,
+        budget: ReadBudget | None,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        effective_budget = budget if budget is not None else ReadBudget()
+        index = os.path.join(root, "session_index.jsonl")
+        warnings: list[str] = []
+        if os.path.isfile(index):
+            try:
+                reduced, index_warnings, tombstones = self._reduce_current_index(
+                    index,
+                    root,
+                    effective_budget,
+                )
+            except DiagnosticError as error:
+                if error.code == "E_LIMIT_EXCEEDED":
+                    raise
+                return [], ["W_STALE_INDEX"]
+            warnings.extend(index_warnings)
+            if session_id in tombstones:
+                return [], list(dict.fromkeys(warnings))
+            match = next(
+                (record for record in reduced if record["session_id"] == session_id),
+                None,
+            )
+            if match is not None:
+                return [match], list(dict.fromkeys(warnings))
+        else:
+            warnings.append("W_STALE_INDEX")
+
+        sessions_root = os.path.join(root, "sessions")
+        for bucket in self._safe_entries(sessions_root, allow_missing=True):
+            effective_budget.consume_records()
+            if not bucket.is_dir(follow_symlinks=False):
+                continue
+            session_dir = os.path.join(bucket.path, session_id)
+            try:
+                transcript = self._choose_transcript(
+                    [session_dir],
+                    root,
+                    current=True,
+                )
+            except DiagnosticError as error:
+                if error.code == "E_UNSAFE_PATH":
+                    continue
+                raise
+            if transcript is None:
+                continue
+            warnings.append("W_STALE_INDEX")
+            return (
+                [
+                    {
+                        "session_id": session_id,
+                        "path": transcript,
+                        "cwd": None,
+                        "title": None,
+                    }
+                ],
+                list(dict.fromkeys(warnings)),
+            )
+        return [], list(dict.fromkeys(warnings))
+
+    def _index_presence(self, index: str) -> str:
+        """Return absent | regular | unreadable for session_index.jsonl."""
+
+        try:
+            mode = os.lstat(index).st_mode
+        except FileNotFoundError:
+            return "absent"
+        except OSError as error:
+            raise DiagnosticError.source_busy() from error
+        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+            return "unreadable"
+        return "regular"
+
     def _current_records(self, root: str, budget: ReadBudget | None) -> tuple[list[dict[str, Any]], list[str]]:
         effective_budget = budget if budget is not None else ReadBudget()
         index = os.path.join(root, "session_index.jsonl")
         warnings: list[str] = []
         output_by_id: dict[str, dict[str, Any]] = {}
         tombstones: set[str] = set()
-        had_index = os.path.isfile(index)
-        index_usable = False
-        if had_index:
+        index_state = self._index_presence(index)
+        if index_state == "unreadable":
+            # Present but not a regular no-follow file: fail closed for FS union.
+            warnings.append("W_STALE_INDEX")
+            return [], list(dict.fromkeys(warnings))
+        if index_state == "regular":
             try:
                 reduced, index_warnings, tombstones = self._reduce_current_index(
                     index, root, effective_budget
@@ -462,7 +587,6 @@ class KimiAdapter:
                 warnings.extend(index_warnings)
                 for record in reduced:
                     output_by_id[record["session_id"]] = record
-                index_usable = True
             except DiagnosticError as error:
                 if error.code == "E_LIMIT_EXCEEDED":
                     raise
@@ -484,19 +608,19 @@ class KimiAdapter:
                 if session_id not in output_by_id:
                     output_by_id[session_id] = record
                     warnings.append("W_STALE_INDEX")
-            if not had_index and output_by_id:
+            if index_state == "absent" and output_by_id:
                 warnings.append("W_STALE_INDEX")
         except DiagnosticError as error:
             if not output_by_id:
                 if error.code == "E_UNSAFE_PATH":
                     raise
-                if had_index:
+                if index_state == "regular":
                     return [], list(dict.fromkeys(warnings + ["W_STALE_INDEX"]))
                 raise
             warnings.append("W_STALE_INDEX")
         if output_by_id:
             return list(output_by_id.values()), list(dict.fromkeys(warnings))
-        if had_index or index_usable:
+        if index_state == "regular":
             return [], list(dict.fromkeys(warnings + ["W_STALE_INDEX"]))
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
 
@@ -510,7 +634,11 @@ class KimiAdapter:
         # Index events are physical history lines (≤ transcript_records) on the
         # list/probe discovery budget only — show does not call this path.
         for value, line_warnings, _terminated in self._iter_jsonl(
-            index, root, budget, charge_transcript=True
+            index,
+            root,
+            budget,
+            charge_transcript=True,
+            soft_corrupt=True,
         ):
             warnings.extend(line_warnings)
             if value is None:
@@ -832,6 +960,16 @@ class KimiAdapter:
         if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
             raise DiagnosticError.unsafe_path()
 
+    def _current_index_warnings(self, root: str) -> list[str]:
+        index = os.path.join(root, "session_index.jsonl")
+        try:
+            mode = os.lstat(index).st_mode
+        except OSError:
+            return ["W_STALE_INDEX"]
+        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+            return ["W_STALE_INDEX"]
+        return []
+
     def _validate_transcript_shape(
         self,
         path: str,
@@ -871,12 +1009,16 @@ class KimiAdapter:
         budget: ReadBudget | None,
         *,
         charge_transcript: bool,
+        soft_corrupt: bool = False,
     ) -> Iterable[tuple[Any, list[str], bool]]:
         """Yield decoded JSONL records under aggregate source_read_bytes.
 
         Per-line size uses record_bytes via stable_scan_lines. Physical line
         counts charge transcript_records when charge_transcript is True, else
         scanned_records. Does not retain the raw file body.
+
+        When ``soft_corrupt`` is True (index reduce), malformed terminated rows
+        are skipped with warnings so earlier tombstones stay authoritative.
         """
 
         for line in stable_scan_lines(
@@ -890,6 +1032,9 @@ class KimiAdapter:
                 if not line.terminated:
                     yield None, ["W_PARTIAL_TAIL"], False
                     continue
+                if soft_corrupt:
+                    yield None, ["W_STALE_INDEX"], True
+                    continue
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key)
             text = line.text.strip()
             if not text:
@@ -899,6 +1044,9 @@ class KimiAdapter:
             except DiagnosticError:
                 if not line.terminated:
                     yield None, ["W_PARTIAL_TAIL"], False
+                    continue
+                if soft_corrupt:
+                    yield None, ["W_STALE_INDEX"], True
                     continue
                 raise
             yield value, [], line.terminated
