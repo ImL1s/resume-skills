@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Security
+- Installer control plane (#21): pin `.portable-resume`, no-follow regular-file
+  opens for lock/journal/manifest, truncate lock metadata, and atomic journal/
+  manifest replace via unique temps under the support directory.
+- Installer payload plane (#31): rollback restore, orphan delete, uninstall, and
+  verify use descriptor-relative no-follow walks under the skill root so
+  parent-directory symlink swaps cannot redirect writes or deletes outside the
+  root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
+
 ### Fixed
 - Both console commands now support `--version` and report the package
   single-source version.

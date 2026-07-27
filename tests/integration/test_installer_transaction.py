@@ -233,7 +233,10 @@ class InstallerTransactionTests(unittest.TestCase):
         def fail_third_staged_replace(src, dst, **kwargs):
             nonlocal staged_replaces
             # Descriptor-relative payload commits pass both src_dir_fd and dst_dir_fd.
+            # Control-plane atomic journal/manifest replace also uses dir_fds — exclude those.
             if kwargs.get("src_dir_fd") is not None and kwargs.get("dst_dir_fd") is not None:
+                if dst in {"journal.json", "manifest.json"}:
+                    return original_replace(src, dst, **kwargs)
                 staged_replaces += 1
                 if staged_replaces == 3:
                     raise OSError("injected staged replace failure")
@@ -266,6 +269,8 @@ class InstallerTransactionTests(unittest.TestCase):
         def interrupt_second_staged_replace(src, dst, **kwargs):
             nonlocal staged_replaces
             if kwargs.get("src_dir_fd") is not None and kwargs.get("dst_dir_fd") is not None:
+                if dst in {"journal.json", "manifest.json"}:
+                    return original_replace(src, dst, **kwargs)
                 staged_replaces += 1
                 if staged_replaces == 2:
                     raise OSError("simulated process interruption")

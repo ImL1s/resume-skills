@@ -23,7 +23,7 @@ It is **not** a network service and does not restore live processes.
 |---|---|---|
 | Source store → reader | Path escape, symlink, special files, concurrent mutation | Approved roots, no-follow regular files, stable snapshot, fail closed |
 | Recovered text → destination model | Prompt injection | `inert`/`untrusted` markers, sanitizer, quoted handoff, re-check checklist |
-| Installer → skill roots | Overwrite non-owned files, path escape, malicious skill supply chain | Ownership/claims, refuse collisions, root lock, sandboxed journal paths, dry-run |
+| Installer → skill roots | Overwrite non-owned files, path escape, parent/control symlink races, malicious skill supply chain | Ownership/claims, refuse collisions, pinned root lock, no-follow control store (`.portable-resume` lock/journal/manifest atomic replace), descriptor-relative payload commit/rollback/uninstall/verify, sandboxed journal stage/backup cleanup, dry-run |
 | Optional zstd | Process boundary | Trusted absolute decoder paths only, fixed argv, `shell=False`, empty PATH, caps/timeouts |
 
 ### Supply chain (important)
@@ -47,13 +47,25 @@ Redaction is **best-effort**, not complete DLP. The tracked-tree secret gate (`s
 
 **Not guaranteed:** arbitrary JWTs, uncommon cloud tokens, free-form passwords, secrets split across turns or obfuscated. PEM / Slack / AIza shapes are best-effort covered above but residual secrets may still remain in handoff text and host logs.
 
+### Installer control plane and payload path races
+
+On POSIX (Linux/macOS) the installer:
+
+- Pins the skill root and rejects a symlinked or non-directory `.portable-resume` support dir.
+- Opens `install.lock`, `journal.json`, and `manifest.json` with no-follow regular-file checks; lock metadata is truncated before rewrite.
+- Writes journal and manifest via unique temporary names under the support dir, then atomic replace (not a predictable `*.tmp` pathname open).
+- Commits, rolls back, uninstalls, and verifies payload files through directory file descriptors (`O_NOFOLLOW`) so a parent directory swapped for a symlink after planning cannot redirect writes/deletes outside the skill root.
+
+Windows remains weaker: exclusive locking and full dirfd semantics are residual under issue #29; mutating install/uninstall fails closed where descriptor-relative primitives are unavailable rather than falling back to unsafe ambient pathname replace.
+
 ### Residual risks
 
 - Recovered text remains model-visible; operators must not treat handoff as instructions.
 - Temp snapshot directories may briefly hold session-derived bytes; failures should clean up, but crash windows exist.
 - Handoff on stdout may be captured by host logging.
-- Windows file locking is weaker than POSIX flock in V1.
+- Windows file locking is weaker than POSIX flock in V1; installer path races on Windows are gated fail-closed (#29) rather than claimed parity.
 - The only intentional child process is the optional trusted zstd decoder for compressed Codex rollouts.
+- Previous-manifest byte snapshots inside the journal for crash forensics remain best-effort via per-path rollback files; a richer previous-manifest generation record may still land under follow-up installer work.
 
 ## Supported versions
 
