@@ -117,6 +117,7 @@ jobs:
 
       - name: Generate release evidence
         env:
+          PYTHONPATH: src
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
           python - <<'PY'
@@ -126,6 +127,9 @@ jobs:
           import subprocess
           from pathlib import Path
 
+          from portable_resume.registry import matrix_dimensions
+
+          dimensions = matrix_dimensions()
           paths = sorted(
               [
                   *Path("dist").glob("*"),
@@ -146,8 +150,10 @@ jobs:
               ),
               "verified_os": ["ubuntu-latest", "macos-latest"],
               "verified_python": ["3.11", "3.14"],
-              "packaging_cells": 64,
-              "installed_runner_cells": 64,
+              "source_count": dimensions["sources"],
+              "destination_count": dimensions["destinations"],
+              "packaging_cells": dimensions["cells"],
+              "installed_runner_cells": dimensions["cells"],
               "host_ui_nl": "not-run",
               "marketplace_ui_install": "not-run",
               "cursor_full_graph": "not-claimed",

@@ -65,6 +65,11 @@ class ReleaseToolingTests(unittest.TestCase):
         self.assertIn("python scripts/write_release_checksums.py", release)
         self.assertIn("sha256sum --check SHA256SUMS", release)
         self.assertIn("shasum -a 256 --check SHA256SUMS", release)
+        self.assertIn("from portable_resume.registry import matrix_dimensions", release)
+        self.assertIn('"packaging_cells": dimensions["cells"]', release)
+        self.assertIn('"installed_runner_cells": dimensions["cells"]', release)
+        self.assertNotIn('"packaging_cells": 64', release)
+        self.assertNotIn('"installed_runner_cells": 64', release)
 
     def test_release_checksum_manifest_uses_flat_asset_names(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
