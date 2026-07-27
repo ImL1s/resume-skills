@@ -453,7 +453,9 @@ def _desktop_summaries(path: str, root: str, query: Query, budget: ReadBudget) -
         # Filter archived/subagent before ORDER/LIMIT so they cannot crowd eligible
         # parents out of the discovery window (issue #11). Exact ID still reaches
         # archived/subagent rows via a dedicated lookup.
-        list_limit = min(DEFAULT_BOUNDS.scanned_records, DEFAULT_BOUNDS.listed_sessions * 4) + 1
+        # Admit up to scanned_records (pre-#11 window size), not listed_sessions*4 —
+        # many eligible project composers must not hard-fail list at ~200.
+        list_limit = DEFAULT_BOUNDS.scanned_records + 1
         try:
             if exact is not None:
                 # Case-insensitive UUID match: stored ids may not be lowercase yet.
@@ -539,18 +541,20 @@ def _desktop_session(
         if not _desktop_signature(connection):
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="cursor", provider=DESKTOP_FORMAT)
         try:
+            # Case-fold: list normalizes session_id via uuid.UUID lowercase; stored ids may differ.
             row = connection.execute(
                 "SELECT id,cwd,cwd_hash,title,created_at,updated_at,archived,composer_kind,git_branch "
-                "FROM cursor_composers WHERE id=?",
+                "FROM cursor_composers WHERE lower(id)=lower(?)",
                 (identifier,),
             ).fetchone()
             links = connection.execute(
-                "SELECT ordinal,blob_key FROM cursor_transcript_links WHERE composer_id=? ORDER BY ordinal ASC,blob_key ASC LIMIT ?",
+                "SELECT ordinal,blob_key FROM cursor_transcript_links WHERE lower(composer_id)=lower(?) "
+                "ORDER BY ordinal ASC,blob_key ASC LIMIT ?",
                 (identifier, DEFAULT_BOUNDS.normalized_turns + 1),
             ).fetchall()
             blob_rows = connection.execute(
                 "SELECT blob_key,payload_json,length(CAST(payload_json AS BLOB)) FROM cursor_blobs WHERE blob_key IN "
-                "(SELECT blob_key FROM cursor_transcript_links WHERE composer_id=?)",
+                "(SELECT blob_key FROM cursor_transcript_links WHERE lower(composer_id)=lower(?))",
                 (identifier,),
             ).fetchall()
         except sqlite3.Error as error:

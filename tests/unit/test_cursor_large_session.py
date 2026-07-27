@@ -347,3 +347,136 @@ class CursorLargeSessionComposerDataTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CursorSkepticP1RegressionTests(unittest.TestCase):
+    """Post-merge skeptic P1s for #11 ship."""
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.cwd = self.root / "repo"
+        self.cwd.mkdir()
+
+    def _desktop(self, rows: list[tuple], links=None, blobs=None) -> Path:
+        import sqlite3
+
+        path = self.root / "state.vscdb"
+        conn = sqlite3.connect(path)
+        conn.executescript(
+            """
+            CREATE TABLE cursor_composers (
+                id TEXT, cwd TEXT, cwd_hash TEXT, title TEXT,
+                created_at TEXT, updated_at TEXT, archived INTEGER,
+                composer_kind TEXT, git_branch TEXT
+            );
+            CREATE TABLE cursor_transcript_links (
+                composer_id TEXT, ordinal INTEGER, blob_key TEXT
+            );
+            CREATE TABLE cursor_blobs (blob_key TEXT, payload_json TEXT);
+            """
+        )
+        conn.executemany("INSERT INTO cursor_composers VALUES (?,?,?,?,?,?,?,?,?)", rows)
+        if links:
+            conn.executemany("INSERT INTO cursor_transcript_links VALUES (?,?,?)", links)
+        if blobs:
+            conn.executemany("INSERT INTO cursor_blobs VALUES (?,?)", blobs)
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_many_eligible_project_composers_list_does_not_fail_at_200(self) -> None:
+        """scanned_records window (~2000) must admit 250 project rows (not listed*4=200)."""
+        rows = []
+        for i in range(250):
+            sid = str(uuid.uuid4())
+            rows.append(
+                (
+                    sid,
+                    str(self.cwd),
+                    cursor._cwd_hash(str(self.cwd)),
+                    f"proj-{i}",
+                    _stamp(-300 + i),
+                    _stamp(i),
+                    0,
+                    "project",
+                    "main",
+                )
+            )
+        self._desktop(rows)
+        query = Query("cursor", cwd=str(self.cwd), source_root=str(self.root), within_min=0)
+        listed = cursor.ADAPTER.list(query, ReadBudget())
+        self.assertGreaterEqual(len(listed), 50)
+        self.assertLessEqual(len(listed), 250)
+
+    def test_uppercase_stored_uuid_list_then_show(self) -> None:
+        """List normalizes id; show must still resolve case-folded stored UUID."""
+        raw_id = str(uuid.uuid4()).upper()
+        blob_key = "b0"
+        self._desktop(
+            [
+                (
+                    raw_id,
+                    str(self.cwd),
+                    cursor._cwd_hash(str(self.cwd)),
+                    "Upper chat",
+                    _stamp(-20),
+                    _stamp(20),
+                    0,
+                    "project",
+                    "main",
+                )
+            ],
+            links=[(raw_id, 0, blob_key)],
+            blobs=[
+                (
+                    blob_key,
+                    json.dumps({"type": "message", "role": "user", "content": "upper-user"}),
+                )
+            ],
+        )
+        query = Query("cursor", cwd=str(self.cwd), source_root=str(self.root), within_min=0)
+        listed = cursor.ADAPTER.list(query, ReadBudget())
+        self.assertEqual(len(listed), 1)
+        # session_id from list is lowercase normalized
+        self.assertEqual(listed[0].session_id, raw_id.lower())
+        session = cursor.ADAPTER.show(ResolvedRef.from_summary(listed[0]), query, ReadBudget())
+        self.assertEqual([t.content for t in session.turns], ["upper-user"])
+
+    def test_live_cli_blob_respects_budget_record_bytes(self) -> None:
+        import sqlite3
+
+        root = Path(self.temp.name) / ".cursor"
+        root.mkdir()
+        cwd = "/workspace/project"
+        h = cursor._cwd_hash(cwd)
+        sid = str(uuid.uuid4())
+        session_dir = root / "chats" / h / sid
+        session_dir.mkdir(parents=True)
+        store = session_dir / "store.db"
+        conn = sqlite3.connect(store)
+        conn.execute("CREATE TABLE blobs (id TEXT, data BLOB)")
+        # 2 MiB blob; Bounds(record_bytes=1MiB) must reject
+        payload = json.dumps({"role": "user", "content": "x" * (2 * 1024 * 1024)}).encode("utf-8")
+        self.assertGreater(len(payload), 1024 * 1024)
+        conn.execute("INSERT INTO blobs(id, data) VALUES (?, ?)", ("b0", payload))
+        conn.commit()
+        conn.close()
+        (session_dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "cwd": cwd,
+                    "title": "big-blob",
+                    "createdAtMs": 1_700_000_000_000,
+                    "updatedAtMs": 1_700_000_100_000,
+                }
+            ),
+            encoding="utf-8",
+        )
+        query = Query(source="cursor", cwd=cwd, source_root=str(root), within_min=0)
+        hit = next(s for s in cursor.ADAPTER.list(query, ReadBudget()) if s.session_id == sid)
+        tight = ReadBudget(limits=Bounds(record_bytes=1024 * 1024, transcript_records=100, scanned_records=100))
+        with self.assertRaises(DiagnosticError) as caught:
+            cursor.ADAPTER.show(ResolvedRef.from_summary(hit), query, tight)
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
