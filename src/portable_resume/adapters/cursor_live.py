@@ -416,11 +416,26 @@ def _show_live_desktop(
             if "cursorDiskKV" in {
                 r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }:
-                # Length-gate composerData before materializing huge values (issue #11).
-                text_blob = connection.execute(
-                    "SELECT value, length(CAST(value AS BLOB)) FROM cursorDiskKV WHERE key=?",
+                # Two-phase length gate: measure before loading full value (issue #11).
+                len_row = connection.execute(
+                    "SELECT length(CAST(value AS BLOB)) FROM cursorDiskKV WHERE key=?",
                     (f"composerData:{session_id}",),
                 ).fetchone()
+                if len_row is not None and isinstance(len_row[0], int):
+                    blob_len = len_row[0]
+                    remaining = min(
+                        max(0, budget.limits.source_read_bytes - budget.bytes_read),
+                        max(0, DEFAULT_BOUNDS.source_read_bytes - budget.bytes_read),
+                        DEFAULT_BOUNDS.record_bytes,
+                    )
+                    if blob_len < 0 or blob_len > remaining or blob_len > DEFAULT_BOUNDS.record_bytes:
+                        raise DiagnosticError.limit_exceeded()
+                    text_blob = connection.execute(
+                        "SELECT value FROM cursorDiskKV WHERE key=?",
+                        (f"composerData:{session_id}",),
+                    ).fetchone()
+                    # Stash measured length for charge after fetch.
+                    text_blob = (text_blob[0], blob_len) if text_blob is not None else None
         except sqlite3.Error as error:
             raise DiagnosticError("E_CORRUPT_RECORD", source="cursor", provider=LIVE_DESKTOP_FORMAT) from error
     if row is None:
@@ -442,18 +457,10 @@ def _show_live_desktop(
     turns: list[Turn] = []
     turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=max_tool_chars)
     structured = False
-    if text_blob and len(text_blob) >= 2 and isinstance(text_blob[0], (str, bytes)):
-        blob_len = text_blob[1] if isinstance(text_blob[1], int) else None
-        if blob_len is None:
-            raw_probe = text_blob[0]
-            blob_len = len(raw_probe.encode("utf-8") if isinstance(raw_probe, str) else raw_probe)
-        remaining = min(
-            max(0, budget.limits.source_read_bytes - budget.bytes_read),
-            max(0, DEFAULT_BOUNDS.source_read_bytes - budget.bytes_read),
-            DEFAULT_BOUNDS.record_bytes,
+    if text_blob and len(text_blob) >= 1 and isinstance(text_blob[0], (str, bytes)):
+        blob_len = text_blob[1] if len(text_blob) >= 2 and isinstance(text_blob[1], int) else (
+            len(text_blob[0].encode("utf-8") if isinstance(text_blob[0], str) else text_blob[0])
         )
-        if blob_len < 0 or blob_len > remaining or blob_len > DEFAULT_BOUNDS.record_bytes:
-            raise DiagnosticError.limit_exceeded()
         budget.consume_bytes(blob_len)
         raw = text_blob[0].decode("utf-8") if isinstance(text_blob[0], bytes) else text_blob[0]
         try:

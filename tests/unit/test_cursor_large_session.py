@@ -177,8 +177,6 @@ class CursorLargeSessionCliJsonlTests(unittest.TestCase):
         self.assertEqual(summaries[0].title, "Metadata title only")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class CursorLargeSessionLiveCliTests(unittest.TestCase):
@@ -262,9 +260,12 @@ class CursorLargeSessionDesktopFilterTests(unittest.TestCase):
     def test_archived_and_subagent_do_not_crowd_out_eligible_parent(self) -> None:
         eligible = str(uuid.uuid4())
         rows = []
-        # Many newer archived/subagent rows
-        for i in range(60):
+        # Enough newer archived/subagent rows to exceed the SQL discovery window
+        # (min(scanned_records, listed_sessions*4)+1 ≈ 201) if filters ran after LIMIT.
+        noise_ids = []
+        for i in range(250):
             sid = str(uuid.uuid4())
+            noise_ids.append(sid)
             kind = "subagent" if i % 2 == 0 else "project"
             archived = 0 if kind == "subagent" else 1
             rows.append(
@@ -280,7 +281,7 @@ class CursorLargeSessionDesktopFilterTests(unittest.TestCase):
                     "main",
                 )
             )
-        # Older eligible project composer (would be outside a 50-row unfiltered window)
+        # Older eligible project composer — outside an unfiltered crowded window
         rows.append(
             (
                 eligible,
@@ -299,14 +300,13 @@ class CursorLargeSessionDesktopFilterTests(unittest.TestCase):
         listed = cursor.ADAPTER.list(query, ReadBudget())
         ids = {item.session_id for item in listed}
         self.assertIn(eligible, ids)
-        # Noise archived/subagent must not appear in default list
-        self.assertTrue(all(item.session_id == eligible or True for item in listed))
-        for item in listed:
-            # All default list rows must be eligible project (not only archived noise)
-            pass
+        self.assertTrue(ids.isdisjoint(set(noise_ids)))
         # exact archived still reachable
-        archived_id = rows[1][0]
-        exact = cursor.ADAPTER.list(Query("cursor", ref=archived_id, cwd=str(self.cwd), source_root=str(self.root), within_min=0), ReadBudget())
+        archived_id = noise_ids[1]  # archived project row (i=1 -> project archived=1)
+        exact = cursor.ADAPTER.list(
+            Query("cursor", ref=archived_id, cwd=str(self.cwd), source_root=str(self.root), within_min=0),
+            ReadBudget(),
+        )
         self.assertTrue(any(item.session_id == archived_id for item in exact))
 
 
@@ -343,3 +343,7 @@ class CursorLargeSessionComposerDataTests(unittest.TestCase):
         with self.assertRaises(DiagnosticError) as caught:
             _show_live_desktop(str(db), sid, ReadBudget(), max_tool_chars=4000)
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+
+if __name__ == "__main__":
+    unittest.main()
