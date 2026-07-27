@@ -42,6 +42,7 @@ class ScannedLine:
     text: str
     byte_offset: int
     terminated: bool
+    utf8_valid: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,20 +361,26 @@ def _collect_scanned_lines(
         drain_complete_lines()
 
     reject_oversize_unterminated_line()
-    # JSONL often omits a trailing newline; treat remaining buffer as a final line.
+    # JSONL often omits a trailing newline; treat remaining buffer as a final
+    # line. An incomplete terminal UTF-8 sequence is live-writer tail state,
+    # not interior corruption. Preserve the line boundary and let adapters
+    # downgrade the unterminated record to W_PARTIAL_TAIL.
     if buffer:
         check_record_budget()
         pending_records += 1
+        utf8_valid = True
         try:
             text = bytes(buffer).decode("utf-8").removesuffix("\r")
-        except UnicodeDecodeError as error:
-            raise DiagnosticError("E_CORRUPT_RECORD") from error
+        except UnicodeDecodeError:
+            text = bytes(buffer).decode("utf-8", errors="replace").removesuffix("\r")
+            utf8_valid = False
         collected.append(
             ScannedLine(
                 ordinal=len(collected),
                 text=text,
                 byte_offset=absolute_offset,
                 terminated=False,
+                utf8_valid=utf8_valid,
             )
         )
     return collected, pending_bytes, pending_records, digest.hexdigest()

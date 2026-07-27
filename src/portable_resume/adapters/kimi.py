@@ -400,11 +400,21 @@ class KimiAdapter:
         path = canonicalize_cwd(ref.source_path)
         if _session_id_from_transcript(path, ref.provider) != ref.session_id:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=ref.provider)
+        self._validate_transcript_shape(path, root, ref.provider, ref.session_id)
         # Exact path is authoritative: do not scan index/FS here. That keeps
         # the caller's single source_read_bytes / transcript_records budget for
         # the selected wire and prevents optional discovery from blocking show
         # or doubling aggregate admitted source bytes.
         discovery_warnings: list[str] = []
+        if ref.provider == FORMAT_ID:
+            index = os.path.join(root, "session_index.jsonl")
+            try:
+                index_mode = os.lstat(index).st_mode
+            except OSError:
+                discovery_warnings.append("W_STALE_INDEX")
+            else:
+                if stat.S_ISLNK(index_mode) or not stat.S_ISREG(index_mode):
+                    discovery_warnings.append("W_STALE_INDEX")
         self._require_regular_transcript(path, root)
         state, state_warnings = self._read_state(os.path.dirname(path), root, budget)
         # Legacy cwd/title often live only in kimi.json (not state.json). Load
@@ -437,25 +447,35 @@ class KimiAdapter:
         return _session_from(summary, turns, (*discovery_warnings, *state_warnings, *transcript_warnings))
 
     def _current_records(self, root: str, budget: ReadBudget | None) -> tuple[list[dict[str, Any]], list[str]]:
+        effective_budget = budget if budget is not None else ReadBudget()
         index = os.path.join(root, "session_index.jsonl")
         warnings: list[str] = []
         output_by_id: dict[str, dict[str, Any]] = {}
         tombstones: set[str] = set()
-        if os.path.isfile(index):
+        had_index = os.path.isfile(index)
+        index_usable = False
+        if had_index:
             try:
-                reduced, index_warnings, tombstones = self._reduce_current_index(index, root, budget)
+                reduced, index_warnings, tombstones = self._reduce_current_index(
+                    index, root, effective_budget
+                )
                 warnings.extend(index_warnings)
                 for record in reduced:
                     output_by_id[record["session_id"]] = record
-            except DiagnosticError:
-                # Index is an untrusted hint: fall through to FS recovery.
+                index_usable = True
+            except DiagnosticError as error:
+                if error.code == "E_LIMIT_EXCEEDED":
+                    raise
+                # Index present but not fully reduced (busy/unreadable). Do not
+                # FS-resurrect sessions whose deleted tombstones may be lost.
                 warnings.append("W_STALE_INDEX")
-                tombstones = set()
+                return list(output_by_id.values()), list(dict.fromkeys(warnings))
         # Union read-only FS discovery so unindexed / partial-index sessions surface.
         # Index tombstones (deleted: true) must not be revived from leftover dirs.
-        had_index = os.path.isfile(index)
         try:
-            fallback, fallback_warnings = self._fs_fallback_current(root, budget)
+            fallback, fallback_warnings = self._fs_fallback_current(
+                root, effective_budget
+            )
             warnings.extend(fallback_warnings)
             for record in fallback:
                 session_id = record["session_id"]
@@ -476,7 +496,7 @@ class KimiAdapter:
             warnings.append("W_STALE_INDEX")
         if output_by_id:
             return list(output_by_id.values()), list(dict.fromkeys(warnings))
-        if had_index:
+        if had_index or index_usable:
             return [], list(dict.fromkeys(warnings + ["W_STALE_INDEX"]))
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
 
@@ -495,17 +515,24 @@ class KimiAdapter:
             warnings.extend(line_warnings)
             if value is None:
                 continue
-            if not isinstance(value, Mapping):
-                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
-            session_id = _identifier(value.get("sessionId"), provider=FORMAT_ID)
-            if value.get("deleted") is True:
-                output_by_id.pop(session_id, None)
-                tombstones.add(session_id)
-                continue
-            cwd = value.get("workDir")
-            session_dir = value.get("sessionDir")
-            if not isinstance(cwd, str) or not isinstance(session_dir, str):
-                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+            try:
+                if not isinstance(value, Mapping):
+                    raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+                session_id = _identifier(value.get("sessionId"), provider=FORMAT_ID)
+                if value.get("deleted") is True:
+                    output_by_id.pop(session_id, None)
+                    tombstones.add(session_id)
+                    continue
+                cwd = value.get("workDir")
+                session_dir = value.get("sessionDir")
+                if not isinstance(cwd, str) or not isinstance(session_dir, str):
+                    raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+            except DiagnosticError as error:
+                # Soft-skip bad index rows so earlier tombstones remain authoritative.
+                if error.code == "E_CORRUPT_RECORD":
+                    warnings.append("W_STALE_INDEX")
+                    continue
+                raise
             # Current Kimi Code treats the append-only index as an untrusted
             # hint: only absolute session directories immediately keyed by the
             # indexed session ID and contained under <home>/sessions survive.
@@ -537,6 +564,7 @@ class KimiAdapter:
     def _fs_fallback_current(
         self, root: str, budget: ReadBudget | None
     ) -> tuple[list[dict[str, Any]], list[str]]:
+        effective_budget = budget if budget is not None else ReadBudget()
         sessions_root = os.path.join(root, "sessions")
         output: list[dict[str, Any]] = []
         warnings: list[str] = []
@@ -551,8 +579,7 @@ class KimiAdapter:
                     continue
                 raise
             for session in sessions:
-                if budget is not None:
-                    budget.consume_records()
+                effective_budget.consume_records()
                 if not session.is_dir(follow_symlinks=False):
                     continue
                 try:
@@ -805,6 +832,38 @@ class KimiAdapter:
         if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
             raise DiagnosticError.unsafe_path()
 
+    def _validate_transcript_shape(
+        self,
+        path: str,
+        root: str,
+        provider: str,
+        session_id: str,
+    ) -> None:
+        relative = os.path.relpath(path, root)
+        parts = tuple(part for part in relative.split(os.sep) if part not in {"", "."})
+        if any(part == os.pardir for part in parts):
+            raise DiagnosticError.unsafe_path()
+        if provider == FORMAT_ID:
+            valid = (
+                len(parts) == 6
+                and parts[0] == "sessions"
+                and parts[2] == session_id
+                and parts[3:] == ("agents", "main", "wire.jsonl")
+            )
+        else:
+            valid = (
+                len(parts) == 4
+                and parts[0] == "sessions"
+                and parts[2] == session_id
+                and parts[3] in {"context.jsonl", "wire.jsonl"}
+            ) or (
+                len(parts) == 3
+                and parts[0] == "sessions"
+                and parts[2] == f"{session_id}.jsonl"
+            )
+        if not valid:
+            raise DiagnosticError.unsafe_path()
+
     def _iter_jsonl(
         self,
         path: str,
@@ -827,6 +886,11 @@ class KimiAdapter:
             charge_transcript=charge_transcript,
             hook=self._read_hook,
         ):
+            if not line.utf8_valid:
+                if not line.terminated:
+                    yield None, ["W_PARTIAL_TAIL"], False
+                    continue
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key)
             text = line.text.strip()
             if not text:
                 continue

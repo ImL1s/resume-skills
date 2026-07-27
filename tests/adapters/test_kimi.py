@@ -10,7 +10,7 @@ from unittest import mock
 
 from portable_resume.adapters.base import ResolvedRef
 from portable_resume.adapters.kimi import FORMAT_ID, LEGACY_FORMAT_ID, KimiAdapter
-from portable_resume.bounds import ReadBudget
+from portable_resume.bounds import Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.model import Query
 from tests.helpers.core import tree_snapshot
@@ -203,6 +203,37 @@ class KimiAdapterTests(unittest.TestCase):
                     adapter.show(resolved(values, CURRENT_ID), query(root, CURRENT_ID), ReadBudget())
                 self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
 
+    def test_truncated_multibyte_utf8_tail_is_warned(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            transcript = next(root.rglob("wire.jsonl"))
+            transcript.write_bytes(transcript.read_bytes() + b'{"message":"\xe4\xb8')
+            adapter = KimiAdapter(root=str(root))
+            values = adapter.list(query(root, CURRENT_ID), ReadBudget())
+            shown = adapter.show(resolved(values, CURRENT_ID), query(root, CURRENT_ID), ReadBudget())
+            self.assertIn("W_PARTIAL_TAIL", shown.warnings)
+
+    def test_nonfinite_depth_and_container_overflow_fail_closed(self) -> None:
+        nested = b'{"role":"user","content":' + (b"[" * 34) + b'"deep"' + (b"]" * 34) + b"}\n"
+        oversized = json.dumps(
+            {
+                "role": "user",
+                "content": "wide",
+                "metadata": {str(index): index for index in range(513)},
+            }
+        ).encode("utf-8") + b"\n"
+        corruptions = (b'{"role":"user","content":"bad","value":NaN}\n', nested, oversized)
+        for corruption in corruptions:
+            with self.subTest(corruption=corruption[:64]), tempfile.TemporaryDirectory() as temporary:
+                root = materialize_current(Path(temporary) / "current")
+                transcript = next(root.rglob("wire.jsonl"))
+                transcript.write_bytes(corruption + transcript.read_bytes())
+                adapter = KimiAdapter(root=str(root))
+                values = adapter.list(query(root, CURRENT_ID), ReadBudget())
+                with self.assertRaises(DiagnosticError) as caught:
+                    adapter.show(resolved(values, CURRENT_ID), query(root, CURRENT_ID), ReadBudget())
+                self.assertIn(caught.exception.code, {"E_CORRUPT_RECORD", "E_LIMIT_EXCEEDED"})
+
     def test_current_tool_result_is_recovered_without_tool_call_replay(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = materialize_current(Path(temporary) / "current")
@@ -336,6 +367,7 @@ class KimiAdapterTests(unittest.TestCase):
                 )
             )
             lines.append(json.dumps({"sessionId": other, "deleted": True, "synthetic": True}))
+            lines.append(json.dumps({"sessionId": CURRENT_ID, "deleted": True, "synthetic": True}))
             lines.append(
                 json.dumps(
                     {
@@ -424,7 +456,28 @@ class KimiAdapterTests(unittest.TestCase):
             )
             # Exact show does not re-scan the index; title/cwd come from state.json.
             self.assertEqual(shown.turns[0].content, "Current Kimi prompt")
+            self.assertIn("W_STALE_INDEX", shown.warnings)
             self.assertEqual(tree_snapshot(root), before)
+
+    def test_exact_show_rejects_wrong_current_provider_path_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            original = next(root.rglob("wire.jsonl"))
+            wrong = root / "elsewhere" / CURRENT_ID / "agents" / "main" / "wire.jsonl"
+            wrong.parent.mkdir(parents=True)
+            wrong.write_bytes(original.read_bytes())
+            adapter = KimiAdapter(root=str(root))
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.show(
+                    ResolvedRef(
+                        session_id=CURRENT_ID,
+                        source_path=str(wrong),
+                        provider=FORMAT_ID,
+                    ),
+                    query(root, CURRENT_ID),
+                    ReadBudget(),
+                )
+            self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
 
     def test_exact_show_survives_corrupt_index_and_separate_discovery_budget(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -529,6 +582,34 @@ class KimiAdapterTests(unittest.TestCase):
             self.assertIn(extra_id, ids)
             extra = next(item for item in values if item.session_id == extra_id)
             self.assertIn("W_STALE_INDEX", extra.warnings)
+
+    def test_index_line_limit_is_not_softened_to_filesystem_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            index = root / "session_index.jsonl"
+            index.write_text(index.read_text(encoding="utf-8") * 2, encoding="utf-8")
+            limits = Bounds(transcript_records=1)
+            with self.assertRaises(DiagnosticError) as caught:
+                KimiAdapter(root=str(root)).list(
+                    query(root, within_min=0),
+                    ReadBudget(limits=limits),
+                )
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_probe_filesystem_fallback_uses_default_aggregate_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            (root / "session_index.jsonl").unlink()
+            source = next(root.rglob("wire.jsonl"))
+            extra_id = "55555555-5555-4555-8555-555555555555"
+            extra = root / "sessions" / "other-bucket" / extra_id / "agents" / "main" / "wire.jsonl"
+            extra.parent.mkdir(parents=True)
+            extra.write_bytes(source.read_bytes())
+            tight = ReadBudget(limits=Bounds(scanned_records=1))
+            with mock.patch("portable_resume.adapters.kimi.ReadBudget", return_value=tight):
+                with self.assertRaises(DiagnosticError) as caught:
+                    KimiAdapter(root=str(root)).probe(query(root, within_min=0))
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
     def test_transcript_line_budget_and_oversize_line_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

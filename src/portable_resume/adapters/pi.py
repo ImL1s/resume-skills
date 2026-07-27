@@ -514,6 +514,11 @@ class PiAdapter:
             charge_transcript=True,
             hook=self._read_hook,
         ):
+            if not line.utf8_valid:
+                if not line.terminated:
+                    warnings.append("W_PARTIAL_TAIL")
+                    continue
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=provider)
             if first:
                 first = False
                 continue
