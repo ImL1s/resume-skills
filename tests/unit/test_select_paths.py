@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import tempfile
 import unittest
 import unicodedata
@@ -43,14 +42,18 @@ class SelectionAndPathTests(unittest.TestCase):
                 self.assertEqual(select_session(values, ref=ref, cwd=str(self.cwd)).selected.session_id, "new")
 
     def test_u007_exact_id(self) -> None:
-        selected = select_session([self.summary("native-42", updated=None)], ref="native-42", cwd=str(self.cwd))
+        selected = select_session(
+            [self.summary("native-42", updated=None, cwd=self.other)],
+            ref="native-42",
+            cwd=str(self.cwd),
+        )
         self.assertEqual(selected.selected.session_id, "native-42")
 
     def test_u008_exact_safe_path(self) -> None:
         record = self.root / "session.jsonl"
         record.write_text("{}")
         selected = select_session(
-            [self.summary("s", updated=None, source_path=record)],
+            [self.summary("s", updated=None, cwd=self.other, source_path=record)],
             ref=str(record),
             cwd=str(self.cwd),
             approved_roots=(str(self.root),),

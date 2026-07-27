@@ -56,13 +56,24 @@ class StableScanLinesTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
     def test_invalid_utf8_raises_corrupt_record(self) -> None:
+        for payload in (b"\xff\n", b'{"content":"\xff'):
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                path = root / "bad.jsonl"
+                path.write_bytes(payload)
+                with self.assertRaises(DiagnosticError) as caught:
+                    list(stable_scan_lines(str(path), root=str(root)))
+                self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
+    def test_unterminated_incomplete_utf8_is_marked_as_a_partial_line(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            path = root / "bad.jsonl"
-            path.write_bytes(b"\xff\n")
-            with self.assertRaises(DiagnosticError) as caught:
-                list(stable_scan_lines(str(path), root=str(root)))
-            self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+            path = root / "partial.jsonl"
+            path.write_bytes(b'{"content":"\xe4\xb8')
+            lines = list(stable_scan_lines(str(path), root=str(root)))
+            self.assertEqual(len(lines), 1)
+            self.assertFalse(lines[0].terminated)
+            self.assertFalse(lines[0].utf8_valid)
 
     def test_same_size_mtime_spoof_is_detected_by_second_content_read(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

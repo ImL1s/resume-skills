@@ -15,6 +15,7 @@ import math
 import os
 import re
 import stat
+import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
@@ -23,9 +24,15 @@ from .base import CapabilityReport, ResolvedRef
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
-from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
+from ..paths import (
+    canonical_root,
+    canonicalize_cwd,
+    is_within,
+    require_regular_no_symlinks,
+    same_cwd,
+)
 from ..sanitize import sanitize_turn_record
-from ..snapshot import stable_read_bytes
+from ..snapshot import stable_read_bytes, stable_scan_lines
 
 FORMAT_ID = "kimi-code-wire-jsonl-v1"
 LEGACY_FORMAT_ID = "kimi-legacy-context-jsonl-v1"
@@ -243,14 +250,20 @@ def _absolute(value: object) -> str | None:
 
 
 def _eligible(summary: SessionSummary, query: Query) -> bool:
-    if query.cwd is not None and (summary.cwd is None or not same_cwd(summary.cwd, query.cwd)):
-        return False
     ref = query.ref.strip() if query.ref else None
     if ref == summary.session_id:
         return True
+    if ref:
+        try:
+            if str(uuid.UUID(ref)) == str(uuid.UUID(summary.session_id)):
+                return True
+        except ValueError:
+            pass
     if ref and os.path.isabs(ref) and summary.source_path is not None:
         if canonicalize_cwd(ref) == canonicalize_cwd(summary.source_path):
             return True
+    if query.cwd is not None and (summary.cwd is None or not same_cwd(summary.cwd, query.cwd)):
+        return False
     minutes = query.within_min if query.within_min is not None else DEFAULT_BOUNDS.listing_age_minutes
     if minutes is not None and minutes <= 0:
         return True
@@ -300,11 +313,13 @@ class KimiAdapter:
     def _roots(self, query: Query) -> tuple[tuple[str, str], ...]:
         explicit = self._explicit_root(query)
         if explicit is not None:
-            current = os.path.isfile(os.path.join(explicit, "session_index.jsonl"))
-            legacy = os.path.isfile(os.path.join(explicit, "kimi.json"))
-            if current:
+            has_index = os.path.isfile(os.path.join(explicit, "session_index.jsonl"))
+            has_legacy = os.path.isfile(os.path.join(explicit, "kimi.json"))
+            has_sessions = os.path.isdir(os.path.join(explicit, "sessions"))
+            # Current store may lack session_index.jsonl; FS fallback still applies.
+            if has_index or (has_sessions and not has_legacy):
                 return ((explicit, FORMAT_ID),)
-            if legacy:
+            if has_legacy:
                 return ((explicit, LEGACY_FORMAT_ID),)
             return ()
         current_path = os.environ.get("KIMI_CODE_HOME") or os.path.expanduser("~/.kimi-code")
@@ -322,7 +337,94 @@ class KimiAdapter:
         return tuple(dict.fromkeys(root for root, _ in self._roots(query)))
 
     def _selected(self, query: Query, budget: ReadBudget | None) -> tuple[str, str, list[dict[str, Any]], list[str]]:
-        for root, provider in self._roots(query):
+        roots = self._roots(query)
+        ref = query.ref.strip() if query.ref else None
+        if ref and os.path.isabs(ref):
+            for root, provider in roots:
+                try:
+                    safe, _ = require_regular_no_symlinks(ref, root)
+                    path = canonicalize_cwd(safe)
+                    session_id = _identifier(
+                        _session_id_from_transcript(path, provider),
+                        provider=provider,
+                    )
+                    self._validate_transcript_shape(path, root, provider, session_id)
+                except DiagnosticError:
+                    continue
+                cwd: str | None = None
+                title: str | None = None
+                warnings: list[str] = []
+                if provider == FORMAT_ID:
+                    cwd, title, warnings = self._current_exact_path_hints(
+                        root,
+                        session_id,
+                        path,
+                        budget,
+                    )
+                return (
+                    root,
+                    provider,
+                    [
+                        {
+                            "session_id": session_id,
+                            "path": path,
+                            "cwd": cwd,
+                            "title": title,
+                        }
+                    ],
+                    warnings,
+                )
+            raise DiagnosticError.unsafe_path()
+        if ref:
+            try:
+                exact_uuid = str(uuid.UUID(ref))
+            except ValueError:
+                exact_uuid = None
+            if exact_uuid is not None:
+                exact_empty_selection: tuple[
+                    str, str, list[dict[str, Any]], list[str]
+                ] | None = None
+                for root, provider in roots:
+                    try:
+                        if provider == FORMAT_ID:
+                            records, warnings = self._current_exact_id_records(
+                                root,
+                                exact_uuid,
+                                budget,
+                            )
+                        else:
+                            all_records, warnings = self._legacy_records(root, budget)
+                            records = [
+                                record
+                                for record in all_records
+                                if record["session_id"] == exact_uuid
+                            ]
+                    except DiagnosticError as error:
+                        if (
+                            error.code == "E_UNSUPPORTED_FORMAT"
+                            and query.source_root is None
+                            and self._configured_root is None
+                        ):
+                            continue
+                        raise
+                    # Miss on this root: try the next provider/home (e.g. empty
+                    # current store, session only in legacy).
+                    if records:
+                        return root, provider, records, warnings
+                    if exact_empty_selection is None:
+                        exact_empty_selection = (root, provider, records, warnings)
+                # Exact UUID path finished without a hit. Do not fall through into
+                # a second full index reduce on the same ReadBudget (large
+                # append-only indexes would double-charge transcript_records and
+                # can turn a clean miss into E_LIMIT_EXCEEDED).
+                if exact_empty_selection is not None:
+                    return exact_empty_selection
+                raise DiagnosticError(
+                    "E_CAPABILITY_UNAVAILABLE" if not roots else "E_UNSUPPORTED_FORMAT",
+                    source=self.key,
+                )
+        empty_selection: tuple[str, str, list[dict[str, Any]], list[str]] | None = None
+        for root, provider in roots:
             try:
                 if provider == FORMAT_ID:
                     records, warnings = self._current_records(root, budget)
@@ -332,9 +434,17 @@ class KimiAdapter:
                 if error.code == "E_UNSUPPORTED_FORMAT" and query.source_root is None and self._configured_root is None:
                     continue
                 raise
-            if records:
-                return root, provider, records, warnings
-        raise DiagnosticError("E_CAPABILITY_UNAVAILABLE" if not self._roots(query) else "E_UNSUPPORTED_FORMAT", source=self.key)
+            selection = (root, provider, records, warnings)
+            if records or query.source_root is not None or self._configured_root is not None:
+                return selection
+            # For implicit homes, an empty current provider does not hide a
+            # populated legacy provider. If every provider is empty, retain the
+            # first supported empty result so probe/list semantics stay stable.
+            if empty_selection is None:
+                empty_selection = selection
+        if empty_selection is not None:
+            return empty_selection
+        raise DiagnosticError("E_CAPABILITY_UNAVAILABLE" if not roots else "E_UNSUPPORTED_FORMAT", source=self.key)
 
     def probe(self, query: Query) -> CapabilityReport:
         roots = self._roots(query)
@@ -367,9 +477,7 @@ class KimiAdapter:
             session_id = record["session_id"]
             state, state_warnings = self._read_state(os.path.dirname(path), root, budget)
             meta = _metadata(state, fallback_cwd=record.get("cwd"))
-            _, transcript_warnings, transcript_times = self._parse_transcript(
-                path, root, query, budget, include_turns=False
-            )
+            file_time = self._transcript_mtime(path)
             summary = SessionSummary(
                 source=self.key,
                 session_id=session_id,
@@ -377,11 +485,11 @@ class KimiAdapter:
                 title=meta["title"] or record.get("title"),
                 cwd=meta["cwd"],
                 branch=meta["branch"],
-                created_at=meta["created_at"] or transcript_times[0],
-                updated_at=meta["updated_at"] or transcript_times[1],
+                created_at=meta["created_at"] or file_time,
+                updated_at=meta["updated_at"] or file_time,
                 source_repo_root=meta["source_repo_root"],
                 provider=provider,
-                warnings=tuple(dict.fromkeys((*discovery_warnings, *state_warnings, *transcript_warnings))),
+                warnings=tuple(dict.fromkeys((*discovery_warnings, *state_warnings))),
             )
             if _eligible(summary, query):
                 output.append(summary)
@@ -397,24 +505,32 @@ class KimiAdapter:
         root = next((item for item in roots if is_within(ref.source_path, item)), None)
         if root is None:
             raise DiagnosticError.unsafe_path()
-        path = canonicalize_cwd(ref.source_path)
+        path, _ = require_regular_no_symlinks(ref.source_path, root)
         if _session_id_from_transcript(path, ref.provider) != ref.session_id:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=ref.provider)
-        records, discovery_warnings = (
-            self._current_records(root, budget) if ref.provider == FORMAT_ID else self._legacy_records(root, budget)
-        )
-        match = next(
-            (
-                record
-                for record in records
-                if record["session_id"] == ref.session_id and canonicalize_cwd(record["path"]) == path
-            ),
-            None,
-        )
-        if match is None:
-            raise DiagnosticError("E_NO_MATCH", source=self.key, provider=ref.provider)
+        self._validate_transcript_shape(path, root, ref.provider, ref.session_id)
+        # Exact path is authoritative: do not scan index/FS here. That keeps
+        # the caller's single source_read_bytes / transcript_records budget for
+        # the selected wire and prevents optional discovery from blocking show
+        # or doubling aggregate admitted source bytes.
+        discovery_warnings: list[str] = list(ref.warnings)
+        if ref.provider == FORMAT_ID:
+            discovery_warnings.extend(self._current_index_warnings(root))
+        self._require_regular_transcript(path, root)
         state, state_warnings = self._read_state(os.path.dirname(path), root, budget)
-        meta = _metadata(state, fallback_cwd=match.get("cwd"))
+        # Legacy cwd/title often live only in kimi.json (not state.json). Load
+        # that small metadata file only — never re-scan the full session tree.
+        fallback_cwd = ref.cwd
+        fallback_title = ref.title
+        if ref.provider == LEGACY_FORMAT_ID:
+            legacy_cwd, legacy_title = self._legacy_hints_for_show(
+                root, path, ref.session_id, budget
+            )
+            fallback_cwd = legacy_cwd or fallback_cwd
+            fallback_title = legacy_title or fallback_title
+        meta = _metadata(state, fallback_cwd=fallback_cwd)
+        if meta["title"] is None and fallback_title is not None:
+            meta = {**meta, "title": fallback_title}
         turns, transcript_warnings, transcript_times = self._parse_transcript(
             path, root, query, budget, include_turns=True
         )
@@ -422,7 +538,7 @@ class KimiAdapter:
             source=self.key,
             session_id=ref.session_id,
             source_path=path,
-            title=meta["title"] or match.get("title"),
+            title=meta["title"],
             cwd=meta["cwd"],
             branch=meta["branch"],
             created_at=meta["created_at"] or transcript_times[0],
@@ -433,19 +549,204 @@ class KimiAdapter:
         )
         return _session_from(summary, turns, (*discovery_warnings, *state_warnings, *transcript_warnings))
 
-    def _current_records(self, root: str, budget: ReadBudget | None) -> tuple[list[dict[str, Any]], list[str]]:
+    def _current_exact_id_records(
+        self,
+        root: str,
+        session_id: str,
+        budget: ReadBudget | None,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        effective_budget = budget if budget is not None else ReadBudget()
         index = os.path.join(root, "session_index.jsonl")
-        if not os.path.isfile(index):
+        warnings: list[str] = []
+        index_state = self._index_presence(index)
+        if index_state == "unreadable":
+            return [], ["W_STALE_INDEX"]
+        if index_state == "regular":
+            try:
+                reduced, index_warnings, tombstones = self._reduce_current_index(
+                    index,
+                    root,
+                    effective_budget,
+                )
+            except DiagnosticError as error:
+                if error.code == "E_LIMIT_EXCEEDED":
+                    raise
+                return [], ["W_STALE_INDEX"]
+            warnings.extend(index_warnings)
+            if session_id in tombstones:
+                return [], list(dict.fromkeys(warnings))
+            match = next(
+                (record for record in reduced if record["session_id"] == session_id),
+                None,
+            )
+            if match is not None:
+                return [match], list(dict.fromkeys(warnings))
+        else:
+            warnings.append("W_STALE_INDEX")
+
+        sessions_root = os.path.join(root, "sessions")
+        buckets = self._safe_entries(sessions_root, allow_missing=True)
+        if index_state == "absent" and not buckets:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
-        entries, warnings, _ = self._read_jsonl(index, root, budget, metadata=True)
+        for bucket in buckets:
+            effective_budget.consume_records()
+            if not bucket.is_dir(follow_symlinks=False):
+                continue
+            session_dir = os.path.join(bucket.path, session_id)
+            try:
+                transcript = self._choose_transcript(
+                    [session_dir],
+                    root,
+                    current=True,
+                )
+            except DiagnosticError as error:
+                if error.code == "E_UNSAFE_PATH":
+                    continue
+                raise
+            if transcript is None:
+                continue
+            warnings.append("W_STALE_INDEX")
+            return (
+                [
+                    {
+                        "session_id": session_id,
+                        "path": transcript,
+                        "cwd": None,
+                        "title": None,
+                    }
+                ],
+                list(dict.fromkeys(warnings)),
+            )
+        return [], list(dict.fromkeys(warnings))
+
+    def _current_exact_path_hints(
+        self,
+        root: str,
+        session_id: str,
+        path: str,
+        budget: ReadBudget | None,
+    ) -> tuple[str | None, str | None, list[str]]:
+        """Optionally reconcile an exact path with the append-only index.
+
+        Exact path recovery remains authoritative. Index absence, staleness, or
+        limits only remove optional metadata and add W_STALE_INDEX.
+        """
+
+        index = os.path.join(root, "session_index.jsonl")
+        if self._index_presence(index) != "regular":
+            return None, None, ["W_STALE_INDEX"]
+        try:
+            reduced, warnings, tombstones = self._reduce_current_index(
+                index,
+                root,
+                budget if budget is not None else ReadBudget(),
+            )
+        except DiagnosticError:
+            return None, None, ["W_STALE_INDEX"]
+        if session_id in tombstones:
+            return None, None, list(dict.fromkeys((*warnings, "W_STALE_INDEX")))
+        match = next(
+            (record for record in reduced if record["session_id"] == session_id),
+            None,
+        )
+        if match is None or canonicalize_cwd(match["path"]) != path:
+            return None, None, list(dict.fromkeys((*warnings, "W_STALE_INDEX")))
+        return match.get("cwd"), match.get("title"), list(dict.fromkeys(warnings))
+
+    def _index_presence(self, index: str) -> str:
+        """Return absent | regular | unreadable for session_index.jsonl."""
+
+        try:
+            mode = os.lstat(index).st_mode
+        except FileNotFoundError:
+            return "absent"
+        except OSError as error:
+            raise DiagnosticError.source_busy() from error
+        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+            return "unreadable"
+        return "regular"
+
+    def _current_records(self, root: str, budget: ReadBudget | None) -> tuple[list[dict[str, Any]], list[str]]:
+        effective_budget = budget if budget is not None else ReadBudget()
+        index = os.path.join(root, "session_index.jsonl")
+        warnings: list[str] = []
+        output_by_id: dict[str, dict[str, Any]] = {}
+        tombstones: set[str] = set()
+        index_state = self._index_presence(index)
+        if index_state == "unreadable":
+            # Present but not a regular no-follow file: fail closed for FS union.
+            warnings.append("W_STALE_INDEX")
+            return [], list(dict.fromkeys(warnings))
+        if index_state == "regular":
+            try:
+                reduced, index_warnings, tombstones = self._reduce_current_index(
+                    index, root, effective_budget
+                )
+                warnings.extend(index_warnings)
+                for record in reduced:
+                    output_by_id[record["session_id"]] = record
+            except DiagnosticError as error:
+                if error.code == "E_LIMIT_EXCEEDED":
+                    raise
+                # Index present but not fully reduced (busy/unreadable). Do not
+                # FS-resurrect sessions whose deleted tombstones may be lost.
+                warnings.append("W_STALE_INDEX")
+                return list(output_by_id.values()), list(dict.fromkeys(warnings))
+        # Union read-only FS discovery so unindexed / partial-index sessions surface.
+        # Index tombstones (deleted: true) must not be revived from leftover dirs.
+        try:
+            fallback, fallback_warnings = self._fs_fallback_current(
+                root, effective_budget
+            )
+            warnings.extend(fallback_warnings)
+            for record in fallback:
+                session_id = record["session_id"]
+                if session_id in tombstones:
+                    continue
+                if session_id not in output_by_id:
+                    output_by_id[session_id] = record
+                    warnings.append("W_STALE_INDEX")
+            if index_state == "absent" and output_by_id:
+                warnings.append("W_STALE_INDEX")
+        except DiagnosticError as error:
+            if not output_by_id:
+                if error.code == "E_UNSAFE_PATH":
+                    raise
+                if index_state == "regular":
+                    return [], list(dict.fromkeys(warnings + ["W_STALE_INDEX"]))
+                raise
+            warnings.append("W_STALE_INDEX")
+        if output_by_id:
+            return list(output_by_id.values()), list(dict.fromkeys(warnings))
+        if index_state == "regular":
+            return [], list(dict.fromkeys(warnings + ["W_STALE_INDEX"]))
+        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+
+    def _reduce_current_index(
+        self, index: str, root: str, budget: ReadBudget | None
+    ) -> tuple[list[dict[str, Any]], list[str], set[str]]:
         sessions_root = os.path.join(root, "sessions")
         output_by_id: dict[str, dict[str, Any]] = {}
-        for value in entries:
+        tombstones: set[str] = set()
+        warnings: list[str] = []
+        # Index events are physical history lines (≤ transcript_records) on the
+        # list/probe discovery budget only — show does not call this path.
+        for value, line_warnings, _terminated in self._iter_jsonl(
+            index,
+            root,
+            budget,
+            charge_transcript=True,
+            soft_corrupt=True,
+        ):
+            warnings.extend(line_warnings)
+            if value is None:
+                continue
             if not isinstance(value, Mapping):
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
             session_id = _identifier(value.get("sessionId"), provider=FORMAT_ID)
             if value.get("deleted") is True:
                 output_by_id.pop(session_id, None)
+                tombstones.add(session_id)
                 continue
             cwd = value.get("workDir")
             session_dir = value.get("sessionDir")
@@ -459,25 +760,110 @@ class KimiAdapter:
             canonical_dir = canonicalize_cwd(session_dir)
             if not is_within(canonical_dir, sessions_root) or os.path.basename(canonical_dir) != session_id:
                 continue
-            transcript = self._choose_transcript([canonical_dir], root, current=True)
+            try:
+                transcript = self._choose_transcript([session_dir], root, current=True)
+            except DiagnosticError as error:
+                if error.code == "E_UNSAFE_PATH":
+                    warnings.append("W_MISSING_BLOB")
+                    output_by_id.pop(session_id, None)
+                    continue
+                raise
             if transcript is None:
                 warnings.append("W_MISSING_BLOB")
                 output_by_id.pop(session_id, None)
                 continue
+            tombstones.discard(session_id)
             output_by_id[session_id] = {
                 "session_id": session_id,
                 "path": transcript,
                 "cwd": canonicalize_cwd(cwd) if os.path.isabs(cwd) else None,
             }
-        return list(output_by_id.values()), list(dict.fromkeys(warnings))
+        return list(output_by_id.values()), list(dict.fromkeys(warnings)), tombstones
 
-    def _legacy_records(self, root: str, budget: ReadBudget | None) -> tuple[list[dict[str, Any]], list[str]]:
+    def _fs_fallback_current(
+        self, root: str, budget: ReadBudget | None
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        effective_budget = budget if budget is not None else ReadBudget()
+        sessions_root = os.path.join(root, "sessions")
+        output: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        for bucket in self._safe_entries(sessions_root, allow_missing=True):
+            if not bucket.is_dir(follow_symlinks=False):
+                continue
+            try:
+                sessions = self._safe_entries(bucket.path)
+            except DiagnosticError as error:
+                if error.code == "E_UNSAFE_PATH":
+                    warnings.append("W_STALE_INDEX")
+                    continue
+                raise
+            for session in sessions:
+                effective_budget.consume_records()
+                if not session.is_dir(follow_symlinks=False):
+                    continue
+                try:
+                    session_id = _identifier(session.name, provider=FORMAT_ID)
+                except DiagnosticError:
+                    continue
+                if os.path.basename(session.path) != session_id:
+                    continue
+                try:
+                    transcript = self._choose_transcript([session.path], root, current=True)
+                except DiagnosticError as error:
+                    if error.code == "E_UNSAFE_PATH":
+                        warnings.append("W_MISSING_BLOB")
+                        continue
+                    raise
+                if transcript is None:
+                    continue
+                output.append(
+                    {
+                        "session_id": session_id,
+                        "path": transcript,
+                        "cwd": None,
+                        "title": None,
+                    }
+                )
+        return output, list(dict.fromkeys(warnings))
+
+    def _load_legacy_metadata(
+        self, root: str, budget: ReadBudget | None
+    ) -> tuple[dict[str, str], dict[str, Mapping[str, Any]]]:
         metadata_path = os.path.join(root, "kimi.json")
         if not os.path.isfile(metadata_path):
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=LEGACY_FORMAT_ID)
-        read = stable_read_bytes(metadata_path, root=root, budget=budget, hook=self._read_hook)
+        read = stable_read_bytes(
+            metadata_path,
+            root=root,
+            max_bytes=DEFAULT_BOUNDS.record_bytes,
+            budget=budget,
+            hook=self._read_hook,
+        )
         value = _loads(read.data)
-        cwd_by_hash, session_meta = self._legacy_metadata(value)
+        return self._legacy_metadata(value)
+
+    def _legacy_hints_for_show(
+        self, root: str, path: str, session_id: str, budget: ReadBudget | None
+    ) -> tuple[str | None, str | None]:
+        try:
+            cwd_by_hash, session_meta = self._load_legacy_metadata(root, budget)
+        except DiagnosticError:
+            return None, None
+        cwd: str | None = None
+        sessions_root = os.path.join(root, "sessions")
+        if is_within(path, sessions_root):
+            relative = os.path.relpath(path, sessions_root)
+            bucket = relative.split(os.sep, 1)[0]
+            if _HASH.fullmatch(bucket) is not None:
+                cwd = cwd_by_hash.get(bucket.casefold())
+        title: str | None = None
+        meta = session_meta.get(session_id)
+        if isinstance(meta, Mapping):
+            title = _string(_first(meta, ("title", "name", "summary", "customTitle")))
+        return cwd, title
+
+    def _legacy_records(self, root: str, budget: ReadBudget | None) -> tuple[list[dict[str, Any]], list[str]]:
+        cwd_by_hash, session_meta = self._load_legacy_metadata(root, budget)
         sessions_root = os.path.join(root, "sessions")
         entries = self._safe_entries(sessions_root, allow_missing=True)
         output: list[dict[str, Any]] = []
@@ -618,7 +1004,8 @@ class KimiAdapter:
                     raise DiagnosticError.source_busy() from error
                 if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
                     raise DiagnosticError.unsafe_path()
-                return canonicalize_cwd(candidate)
+                safe, _ = require_regular_no_symlinks(candidate, root)
+                return safe
         return None
 
     def _read_state(
@@ -632,43 +1019,131 @@ class KimiAdapter:
         path = os.path.join(session_dir, "state.json")
         if not os.path.exists(path):
             return {}, ["W_MISSING_BLOB"]
-        read = stable_read_bytes(path, root=root, budget=budget, hook=self._read_hook)
+        read = stable_read_bytes(
+            path,
+            root=root,
+            max_bytes=DEFAULT_BOUNDS.record_bytes,
+            budget=budget,
+            hook=self._read_hook,
+        )
         value = _loads(read.data)
         if not isinstance(value, Mapping):
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key)
         return value, []
 
-    def _read_jsonl(
+    def _transcript_mtime(self, path: str) -> str | None:
+        try:
+            mtime_ns = os.lstat(path).st_mtime_ns
+        except OSError:
+            return None
+        return (
+            datetime.fromtimestamp(mtime_ns / 1_000_000_000, timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
+
+    def _require_regular_transcript(self, path: str, root: str) -> None:
+        if not is_within(path, root):
+            raise DiagnosticError.unsafe_path()
+        try:
+            mode = os.lstat(path).st_mode
+        except OSError as error:
+            raise DiagnosticError.source_busy() from error
+        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+            raise DiagnosticError.unsafe_path()
+
+    def _current_index_warnings(self, root: str) -> list[str]:
+        index = os.path.join(root, "session_index.jsonl")
+        try:
+            mode = os.lstat(index).st_mode
+        except OSError:
+            return ["W_STALE_INDEX"]
+        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+            return ["W_STALE_INDEX"]
+        return []
+
+    def _validate_transcript_shape(
+        self,
+        path: str,
+        root: str,
+        provider: str,
+        session_id: str,
+    ) -> None:
+        relative = os.path.relpath(path, root)
+        parts = tuple(part for part in relative.split(os.sep) if part not in {"", "."})
+        if any(part == os.pardir for part in parts):
+            raise DiagnosticError.unsafe_path()
+        if provider == FORMAT_ID:
+            valid = (
+                len(parts) == 6
+                and parts[0] == "sessions"
+                and parts[2] == session_id
+                and parts[3:] == ("agents", "main", "wire.jsonl")
+            )
+        else:
+            valid = (
+                len(parts) == 4
+                and parts[0] == "sessions"
+                and _HASH.fullmatch(parts[1]) is not None
+                and parts[2] == session_id
+                and parts[3] in {"context.jsonl", "wire.jsonl"}
+            ) or (
+                len(parts) == 3
+                and parts[0] == "sessions"
+                and _HASH.fullmatch(parts[1]) is not None
+                and parts[2] == f"{session_id}.jsonl"
+            )
+        if not valid:
+            raise DiagnosticError.unsafe_path()
+
+    def _iter_jsonl(
         self,
         path: str,
         root: str,
         budget: ReadBudget | None,
         *,
-        metadata: bool,
-    ) -> tuple[list[Any], list[str], str | None]:
-        read = stable_read_bytes(path, root=root, budget=budget, hook=self._read_hook)
-        lines = read.data.split(b"\n")
-        trailing_fragment = bool(lines and lines[-1])
-        nonempty = [(index, raw.strip()) for index, raw in enumerate(lines) if raw.strip()]
-        output: list[Any] = []
-        warnings: list[str] = []
-        for position, (line_index, raw) in enumerate(nonempty):
+        charge_transcript: bool,
+        soft_corrupt: bool = False,
+    ) -> Iterable[tuple[Any, list[str], bool]]:
+        """Yield decoded JSONL records under aggregate source_read_bytes.
+
+        Per-line size uses record_bytes via stable_scan_lines. Physical line
+        counts charge transcript_records when charge_transcript is True, else
+        scanned_records. Does not retain the raw file body.
+
+        When ``soft_corrupt`` is True (index reduce), malformed terminated rows
+        are skipped with warnings so earlier tombstones stay authoritative.
+        """
+
+        for line in stable_scan_lines(
+            path,
+            root=root,
+            budget=budget,
+            charge_transcript=charge_transcript,
+            hook=self._read_hook,
+        ):
+            if not line.utf8_valid:
+                if not line.terminated:
+                    yield None, ["W_PARTIAL_TAIL"], False
+                    continue
+                if soft_corrupt:
+                    yield None, ["W_STALE_INDEX"], True
+                    continue
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key)
+            text = line.text.strip()
+            if not text:
+                continue
             try:
-                value = _loads(raw)
+                value = _loads(text.encode("utf-8"))
             except DiagnosticError:
-                tail = position == len(nonempty) - 1 and trailing_fragment and line_index == len(lines) - 1
-                if tail:
-                    warnings.append("W_PARTIAL_TAIL")
+                if not line.terminated:
+                    yield None, ["W_PARTIAL_TAIL"], False
+                    continue
+                if soft_corrupt:
+                    yield None, ["W_STALE_INDEX"], True
                     continue
                 raise
-            if budget is not None:
-                if metadata:
-                    budget.consume_records()
-                else:
-                    budget.consume_transcript_records()
-            output.append(value)
-        file_time = datetime.fromtimestamp(read.fingerprint.mtime_ns / 1_000_000_000, timezone.utc)
-        return output, warnings, file_time.isoformat(timespec="seconds").replace("+00:00", "Z")
+            yield value, [], line.terminated
 
     def _parse_transcript(
         self,
@@ -679,12 +1154,18 @@ class KimiAdapter:
         *,
         include_turns: bool,
     ) -> tuple[list[Turn], list[str], tuple[str | None, str | None]]:
-        records, warnings, file_time = self._read_jsonl(path, root, budget, metadata=False)
         turns: list[Turn] = []
         pending_turns: list[tuple[dict[str, Any], str | None]] = []
         timestamps: list[str] = []
+        warnings: list[str] = []
         recognized = 0
-        for value in records:
+        file_time = self._transcript_mtime(path)
+        for value, line_warnings, _terminated in self._iter_jsonl(
+            path, root, budget, charge_transcript=True
+        ):
+            warnings.extend(line_warnings)
+            if value is None:
+                continue
             if not isinstance(value, Mapping):
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key)
             timestamp = _timestamp(_first(value, ("timestamp", "createdAt", "created_at", "time")))

@@ -83,7 +83,7 @@ def select_session(
         ref_uuid = None
     exact_id = [
         value
-        for value in eligible
+        for value in values
         if value.session_id == normalized_ref
         or (ref_uuid is not None and value.session_id == ref_uuid)
     ]
@@ -120,7 +120,7 @@ def select_session(
             raise DiagnosticError.unsafe_path()
         exact_path = [
             value
-            for value in eligible
+            for value in values
             if value.source_path is not None and canonicalize_cwd(value.source_path) == canonical_match
         ]
         if len(exact_path) == 1:

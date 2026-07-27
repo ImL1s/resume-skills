@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Fixed
+- Kimi current-store readers no longer treat whole `session_index.jsonl` /
+  `wire.jsonl` files as a single 16 MiB record. Index reduce and transcript
+  show stream via `stable_scan_lines` under `source_read_bytes` (aggregate) and
+  `record_bytes` (per line). List is metadata-only (state + mtime). Exact-path
+  show does not re-scan index/FS (single call budget for the wire; state.json
+  supplies title/cwd). List discovery uses append-only index reduce plus
+  read-only `sessions/` union, honoring index `deleted` tombstones and skipping
+  unsafe per-session candidates without mutating the store
+  ([Issue #14](https://github.com/ImL1s/resume-skills/issues/14)).
+
+### Notes
+- Other adapters’ large-session streaming (#7/#8 Codex, Cursor/Qwen/OpenCode/Grok)
+  remain open under [Issue #18](https://github.com/ImL1s/resume-skills/issues/18).
+- Still inert handoff only — not live process restore.
+- Residual: a syntactically corrupt index *tombstone* line is soft-skipped and
+  cannot apply that delete; prior valid tombstones remain authoritative. True
+  streaming yield for multi‑10 MiB wires remains deferred to #10/#8.
+
 ## [0.3.3] — 2026-07-25
 
 ### Fixed
