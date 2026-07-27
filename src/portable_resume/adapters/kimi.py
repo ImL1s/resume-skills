@@ -500,7 +500,10 @@ class KimiAdapter:
         effective_budget = budget if budget is not None else ReadBudget()
         index = os.path.join(root, "session_index.jsonl")
         warnings: list[str] = []
-        if os.path.isfile(index):
+        index_state = self._index_presence(index)
+        if index_state == "unreadable":
+            return [], ["W_STALE_INDEX"]
+        if index_state == "regular":
             try:
                 reduced, index_warnings, tombstones = self._reduce_current_index(
                     index,
