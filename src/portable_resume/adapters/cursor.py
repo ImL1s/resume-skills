@@ -19,7 +19,13 @@ from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
 from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
 from ..sanitize import sanitize_turn_record
-from ..snapshot import StableRead, private_sqlite_connection, query_only_live_sqlite, stable_read_bytes
+from ..snapshot import (
+    StableRead,
+    private_sqlite_connection,
+    query_only_live_sqlite,
+    stable_read_bytes,
+    stable_scan_lines,
+)
 from .base import CapabilityReport, ResolvedRef
 
 CLI_FORMAT = "cursor-cli-chat-v1"
@@ -276,26 +282,50 @@ def _transcript_paths(metadata_path: str, metadata: Mapping[str, Any], root: str
     return output, tuple(dict.fromkeys(warnings))
 
 
+def _path_mtime(path: str) -> str:
+    try:
+        mtime_ns = os.lstat(path).st_mtime_ns
+    except OSError as error:
+        raise DiagnosticError.source_busy(provider=CLI_FORMAT) from error
+    return datetime.fromtimestamp(mtime_ns / 1_000_000_000, timezone.utc).isoformat(
+        timespec="microseconds"
+    ).replace("+00:00", "Z")
+
+
 def _parse_transcript(
     path: str,
     session_dir: str,
     root: str,
     budget: ReadBudget,
 ) -> tuple[list[dict[str, Any]], tuple[str, ...], str]:
-    observation = stable_read_bytes(path, root=root, max_bytes=DEFAULT_BOUNDS.record_bytes, budget=budget)
+    """Parse CLI JSONL under source_read_bytes + per-line record_bytes + transcript_records.
+
+    Streams via ``stable_scan_lines(..., charge_transcript=True)`` so a large file
+    of small lines is not capped by the single-record ``record_bytes`` whole-file
+    read used previously. ``content_blob`` payloads still use ``stable_read_bytes``
+    with ``record_bytes``.
+    """
+
     warnings: list[str] = []
     output: list[dict[str, Any]] = []
-    lines = observation.data.splitlines(keepends=True)
-    for index, raw in enumerate(lines):
-        budget.consume_records()
-        partial = index == len(lines) - 1 and not raw.endswith((b"\n", b"\r"))
-        stripped = raw.strip()
+    for line in stable_scan_lines(
+        path,
+        root=root,
+        budget=budget,
+        charge_transcript=True,
+    ):
+        if not line.utf8_valid:
+            if not line.terminated:
+                warnings.append("W_PARTIAL_TAIL")
+                break
+            raise DiagnosticError("E_CORRUPT_RECORD", source="cursor", provider=CLI_FORMAT)
+        stripped = line.text.strip()
         if not stripped:
             continue
         try:
-            value = json.loads(stripped.decode("utf-8"), object_pairs_hook=_object)
-        except (UnicodeDecodeError, json.JSONDecodeError, _DuplicateKey, RecursionError) as error:
-            if partial:
+            value = json.loads(stripped, object_pairs_hook=_object)
+        except (json.JSONDecodeError, _DuplicateKey, RecursionError) as error:
+            if not line.terminated:
                 warnings.append("W_PARTIAL_TAIL")
                 break
             raise DiagnosticError("E_CORRUPT_RECORD", source="cursor", provider=CLI_FORMAT) from error
@@ -307,7 +337,9 @@ def _parse_transcript(
         if content is None and isinstance(value.get("content_blob"), str):
             blob = _safe_relative(session_dir, value["content_blob"], root, required_prefix="blobs")
             try:
-                blob_read = stable_read_bytes(blob, root=root, max_bytes=DEFAULT_BOUNDS.record_bytes, budget=budget)
+                blob_read = stable_read_bytes(
+                    blob, root=root, max_bytes=DEFAULT_BOUNDS.record_bytes, budget=budget
+                )
             except DiagnosticError as error:
                 if error.code == "E_UNSAFE_PATH" and not os.path.lexists(blob):
                     warnings.append("W_MISSING_BLOB")
@@ -329,7 +361,7 @@ def _parse_transcript(
                 "tool_name": value.get("tool_name") if isinstance(value.get("tool_name"), str) else None,
             }
         )
-    return output, tuple(dict.fromkeys(warnings)), _mtime(observation)
+    return output, tuple(dict.fromkeys(warnings)), _path_mtime(path)
 
 
 def _cli_summary(path: str, root: str, query: Query, budget: ReadBudget) -> SessionSummary | None:
@@ -417,18 +449,33 @@ def _desktop_summaries(path: str, root: str, query: Query, budget: ReadBudget) -
     with private_sqlite_connection(path, root=root, provider=DESKTOP_FORMAT) as connection:
         if not _desktop_signature(connection):
             return False, []
+        exact = _exact_uuid_ref(query.ref)
+        # Filter archived/subagent before ORDER/LIMIT so they cannot crowd eligible
+        # parents out of the discovery window (issue #11). Exact ID still reaches
+        # archived/subagent rows via a dedicated lookup.
+        list_limit = min(DEFAULT_BOUNDS.scanned_records, DEFAULT_BOUNDS.listed_sessions * 4) + 1
         try:
-            rows = connection.execute(
-                "SELECT id,cwd,cwd_hash,title,created_at,updated_at,archived,composer_kind,git_branch "
-                "FROM cursor_composers ORDER BY updated_at DESC,id ASC LIMIT ?",
-                (DEFAULT_BOUNDS.scanned_records + 1,),
-            ).fetchall()
+            if exact is not None:
+                # Case-insensitive UUID match: stored ids may not be lowercase yet.
+                rows = connection.execute(
+                    "SELECT id,cwd,cwd_hash,title,created_at,updated_at,archived,composer_kind,git_branch "
+                    "FROM cursor_composers WHERE lower(id)=lower(?) "
+                    "ORDER BY updated_at DESC,id ASC LIMIT ?",
+                    (exact, list_limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT id,cwd,cwd_hash,title,created_at,updated_at,archived,composer_kind,git_branch "
+                    "FROM cursor_composers "
+                    "WHERE archived=0 AND composer_kind='project' "
+                    "ORDER BY updated_at DESC,id ASC LIMIT ?",
+                    (list_limit,),
+                ).fetchall()
         except sqlite3.Error as error:
             raise DiagnosticError("E_CORRUPT_RECORD", source="cursor", provider=DESKTOP_FORMAT) from error
-    if len(rows) > DEFAULT_BOUNDS.scanned_records:
+    if len(rows) > list_limit - 1:
         raise DiagnosticError.limit_exceeded()
     values: list[SessionSummary] = []
-    exact = _exact_uuid_ref(query.ref)
     for row in rows:
         budget.consume_records()
         if len(row) != 9:

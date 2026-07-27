@@ -1105,8 +1105,11 @@ class CursorAdapterTests(unittest.TestCase):
         metadata.write_text(json.dumps(value))
         summary = cursor.ADAPTER.list(self.query(), ReadBudget())[0]
         with self.assertRaises(DiagnosticError) as bounded:
+            # Show charges transcript_records via stable_scan_lines (issue #11), not scanned_records.
             cursor.ADAPTER.show(
-                ResolvedRef.from_summary(summary), self.query(), ReadBudget(Bounds(scanned_records=1))
+                ResolvedRef.from_summary(summary),
+                self.query(),
+                ReadBudget(Bounds(transcript_records=1)),
             )
         self.assertEqual(bounded.exception.code, "E_LIMIT_EXCEEDED")
 

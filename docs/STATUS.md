@@ -27,6 +27,7 @@
 | Codex probe head-only + list FS fallback | **not done** — [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + [plan 026](../plans/026-codex-probe-list-discovery.md) |
 | Codex streaming show / reducer | **not done** — [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + [plan 027](../plans/027-codex-streaming-show.md) (PR #4 removed eager `splitlines`; still whole-file + `list[dict]`) |
 | Kimi index/wire large-session recovery (Issue #14) | **done on main** [PR #58](https://github.com/ImL1s/resume-skills/pull/58) → `79d32ae` — stream index + wire via `stable_scan_lines`; metadata-only list; exact-path show + FS fallback; no silent 16 MiB whole-file reject. Issue **closed** 2026-07-27. CI green: [run 30267866248](https://github.com/ImL1s/resume-skills/actions/runs/30267866248). Current-head Codex review returned no major issues for `4ecf2b5` before merge: [review callback](https://github.com/ImL1s/resume-skills/pull/58#issuecomment-5091411213). |
+| Cursor large-session silent truncation (Issue #11) | **in flight** on branch `fix/cursor-large-session-p0-issue-11` — CLI JSONL `stable_scan_lines`; live CLI blob `LIMIT n+1` fail-closed; Desktop SQL filter-before-LIMIT; live Desktop composerData length gate. Full bubble graph still **not claimed**. |
 | Codex-native live resume / `codex resume` from hosts | **not claimed** (inert handoff only) |
 
 ## PR #49 AI review disposition (closed for merge)
