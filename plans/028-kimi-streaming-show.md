@@ -4,7 +4,9 @@
 
 ## Status
 
-**DONE** on branch `fix/issue-14-kimi-streaming` (implementation + synthetic regressions).
+**DONE** on `main` via [PR #58](https://github.com/ImL1s/resume-skills/pull/58) → `79d32ae`
+([Issue #14](https://github.com/ImL1s/resume-skills/issues/14) closed COMPLETED).
+Post-merge CI: [run 30267866248](https://github.com/ImL1s/resume-skills/actions/runs/30267866248).
 
 ## Summary
 
@@ -20,6 +22,7 @@ Stop treating whole Kimi `session_index.jsonl` / `wire.jsonl` as a single 16 M
 - [x] Uses `#10` `stable_scan_lines`
 - [x] Four canonical project gates (self_verify, secrets, 375 unittest, 81/81 smoke)
 - [x] STATUS/CHANGELOG distinguish Kimi #14 vs other adapters
+- [x] Merged to `main` (`79d32ae`); issue closed; post-merge CI green
 
 ## Out of scope
 

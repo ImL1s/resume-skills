@@ -25,7 +25,7 @@
 | Codex large-rollout budget + parent list filter (Issue #3) | **done on main** [PR #4](https://github.com/ImL1s/resume-skills/pull/4) merge `48746c4` — P0 hotfix (not full streaming) |
 | Codex probe head-only + list FS fallback | **not done** — [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + [plan 026](../plans/026-codex-probe-list-discovery.md) |
 | Codex streaming show / reducer | **not done** — [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + [plan 027](../plans/027-codex-streaming-show.md) (PR #4 removed eager `splitlines`; still whole-file + `list[dict]`) |
-| Kimi index/wire large-session recovery (Issue #14) | **done on branch** — stream index + wire via `stable_scan_lines`; metadata-only list; exact-path show + FS fallback; no silent 16 MiB whole-file reject |
+| Kimi index/wire large-session recovery (Issue #14) | **done on main** [PR #58](https://github.com/ImL1s/resume-skills/pull/58) → `79d32ae` — stream index + wire via `stable_scan_lines`; metadata-only list; exact-path show + FS fallback; no silent 16 MiB whole-file reject. Issue **closed** 2026-07-27. CI green: [run 30267866248](https://github.com/ImL1s/resume-skills/actions/runs/30267866248) |
 | Codex-native live resume / `codex resume` from hosts | **not claimed** (inert handoff only) |
 
 ## PR #49 AI review disposition (closed for merge)
@@ -57,7 +57,7 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 | Peak memory on large show | [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + plan 027 | P1b: true chunked stable streaming + reducer + synthetic 17–30 MiB test. |
 | Capability registries + dynamic matrix | [Issue #36](https://github.com/ImL1s/resume-skills/issues/36) | **Partial via PR #49:** source/destination registries + dynamic direct-runner matrix (now **9×9=81** with Pi destination filesystem install). `PACKAGE_SURFACES` scaffold empty; package builders not registry-driven. Keep #36 open. |
 | Shared `stable_scan_lines` (#10) | [Issue #10](https://github.com/ImL1s/resume-skills/issues/10) + PR #49 | Foundation on main; **adopted by Pi + Kimi** source adapters; remaining adapters still pending. True streaming yield remains with #8. |
-| Kimi append-only index + wire (#14) | [Issue #14](https://github.com/ImL1s/resume-skills/issues/14) | **Done on branch** (stream reduce, metadata list, exact show, FS fallback). Close issue after merge + CI. |
+| Kimi append-only index + wire (#14) | [Issue #14](https://github.com/ImL1s/resume-skills/issues/14) | **Closed / COMPLETED** via [PR #58](https://github.com/ImL1s/resume-skills/pull/58) → `79d32ae` (stream reduce, metadata list, exact show, FS fallback). Residual: corrupt tombstone soft-skip; true streaming yield still #10/#8. |
 | ReadBudget raise clamp (#17) | [Issue #17](https://github.com/ImL1s/resume-skills/issues/17) + PR #49 | **Partial:** four consume counters clamp to `DEFAULT_BOUNDS`. Full Bounds construction-time validation still open. |
 | Installer recover containment (#20) | **Closed** via [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c` | Typed stage/backup authorization + pinned support dirfd deletes + adversarial tests in `tests/unit/test_install_recover_containment.py`. |
 | Descriptor-relative install (#31) | [Issue #31](https://github.com/ImL1s/resume-skills/issues/31) + PR #49 | **Partial:** POSIX forward commit is dirfd-based; rollback/manifest/orphan/Windows still pathname or fail-closed. |
