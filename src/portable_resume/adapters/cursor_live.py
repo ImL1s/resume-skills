@@ -237,7 +237,8 @@ def _show_live_cli_store(
         if len(row) != 2 or not isinstance(row[0], str) or not isinstance(row[1], (bytes, memoryview)):
             continue
         data = bytes(row[1])
-        if len(data) > DEFAULT_BOUNDS.record_bytes:
+        max_blob = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
+        if len(data) > max_blob:
             raise DiagnosticError.limit_exceeded()
         # Charge each persisted blob row against the transcript window and source budget.
         budget.consume_transcript_records()
