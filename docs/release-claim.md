@@ -119,12 +119,14 @@ separate and require their own rows in
   Publishing, and GitHub Release publication.
 - `v0.2.3`: historical archived CI claim only; see evidence summary.
 
-Separate local evidence verifies headless Skill invocation on all eight current
-host CLIs and exact local installation of all seven supported native package
-formats, including Cursor. This release workflow does not reproduce those
-credentialed host checks. Separate post-release evidence verifies public
-marketplace installation on all six compatible hosts and Cursor/Kimi
-marketplace picker flows; sanitized readbacks are retained in
+Separate v0.3.2-era local evidence verifies headless Skill invocation on eight
+host CLI surfaces and exact local installation of all seven supported native
+package formats, including Cursor. Pi native activation remains **not-run**.
+This release workflow does not reproduce those credentialed host checks.
+Separate v0.3.2 post-release evidence verifies public marketplace installation
+on all six compatible hosts and Cursor/Kimi marketplace picker flows; fresh
+v0.3.4 host-by-host reinstall remains **not-run**. Sanitized readbacks are
+retained in
 [`evidence/public-marketplace-v0.3.2.json`](evidence/public-marketplace-v0.3.2.json).
 Other visual Skill pickers, vendor-curated
 Claude/Cursor directory listings, and Cursor full bubble-graph completeness

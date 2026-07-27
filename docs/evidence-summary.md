@@ -32,6 +32,18 @@ the matrix to 9×9=81, and registry-derived release evidence cell counts.
 | `portable_resume-0.3.4-py3-none-any.whl` | 157541 | `60a73e376e1be436353b00a8984eccd5156130684c2895c643e9e95a4689959f` |
 | `portable_resume-0.3.4.tar.gz` | 135285 | `0eefc5bb0ec1541f39ccc2256e747b1130e99f1a95a77d016534246e46cafb33` |
 
+A fresh public download retrieved all 22 GitHub Release assets and verified all
+21 `SHA256SUMS` entries. `gh attestation verify` passed for the 21 intended
+attested assets against `.github/workflows/release.yml` and source commit
+`fa1344bf62eb26332baea7b7ef4540a1a37acba8`; the extra
+`host-packages-build.json` asset is checksum-covered and byte-identical to the
+attested `host-packages.json`.
+
+PyPI and GitHub Release report matching SHA-256 digests for both Python
+artifacts. A fresh isolated public PyPI install reported version `0.3.4`, no
+runtime dependencies, and passed both `self-check` and installer matrix
+readback at **81/81** cells.
+
 ### Public marketplace synchronization: v0.3.4
 
 | Field | Evidence |
