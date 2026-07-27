@@ -253,6 +253,12 @@ def _eligible(summary: SessionSummary, query: Query) -> bool:
     ref = query.ref.strip() if query.ref else None
     if ref == summary.session_id:
         return True
+    if ref:
+        try:
+            if str(uuid.UUID(ref)) == str(uuid.UUID(summary.session_id)):
+                return True
+        except ValueError:
+            pass
     if ref and os.path.isabs(ref) and summary.source_path is not None:
         if canonicalize_cwd(ref) == canonicalize_cwd(summary.source_path):
             return True
@@ -345,7 +351,16 @@ class KimiAdapter:
                     self._validate_transcript_shape(path, root, provider, session_id)
                 except DiagnosticError:
                     continue
-                warnings = self._current_index_warnings(root) if provider == FORMAT_ID else []
+                cwd: str | None = None
+                title: str | None = None
+                warnings: list[str] = []
+                if provider == FORMAT_ID:
+                    cwd, title, warnings = self._current_exact_path_hints(
+                        root,
+                        session_id,
+                        path,
+                        budget,
+                    )
                 return (
                     root,
                     provider,
@@ -353,8 +368,8 @@ class KimiAdapter:
                         {
                             "session_id": session_id,
                             "path": path,
-                            "cwd": None,
-                            "title": None,
+                            "cwd": cwd,
+                            "title": title,
                         }
                     ],
                     warnings,
@@ -365,15 +380,34 @@ class KimiAdapter:
                 exact_uuid = str(uuid.UUID(ref))
             except ValueError:
                 exact_uuid = None
-            if exact_uuid is not None and roots:
-                root, provider = roots[0]
-                if provider == FORMAT_ID:
-                    records, warnings = self._current_exact_id_records(
-                        root,
-                        exact_uuid,
-                        budget,
-                    )
-                    return root, provider, records, warnings
+            if exact_uuid is not None:
+                for root, provider in roots:
+                    try:
+                        if provider == FORMAT_ID:
+                            records, warnings = self._current_exact_id_records(
+                                root,
+                                exact_uuid,
+                                budget,
+                            )
+                        else:
+                            all_records, warnings = self._legacy_records(root, budget)
+                            records = [
+                                record
+                                for record in all_records
+                                if record["session_id"] == exact_uuid
+                            ]
+                    except DiagnosticError as error:
+                        if (
+                            error.code == "E_UNSUPPORTED_FORMAT"
+                            and query.source_root is None
+                            and self._configured_root is None
+                        ):
+                            continue
+                        raise
+                    # Miss on this root: try the next provider/home (e.g. empty
+                    # current store, session only in legacy).
+                    if records:
+                        return root, provider, records, warnings
         for root, provider in roots:
             try:
                 if provider == FORMAT_ID:
@@ -447,7 +481,7 @@ class KimiAdapter:
         root = next((item for item in roots if is_within(ref.source_path, item)), None)
         if root is None:
             raise DiagnosticError.unsafe_path()
-        path = canonicalize_cwd(ref.source_path)
+        path, _ = require_regular_no_symlinks(ref.source_path, root)
         if _session_id_from_transcript(path, ref.provider) != ref.session_id:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=ref.provider)
         self._validate_transcript_shape(path, root, ref.provider, ref.session_id)
@@ -455,7 +489,7 @@ class KimiAdapter:
         # the caller's single source_read_bytes / transcript_records budget for
         # the selected wire and prevents optional discovery from blocking show
         # or doubling aggregate admitted source bytes.
-        discovery_warnings: list[str] = []
+        discovery_warnings: list[str] = list(ref.warnings)
         if ref.provider == FORMAT_ID:
             discovery_warnings.extend(self._current_index_warnings(root))
         self._require_regular_transcript(path, root)
@@ -527,7 +561,10 @@ class KimiAdapter:
             warnings.append("W_STALE_INDEX")
 
         sessions_root = os.path.join(root, "sessions")
-        for bucket in self._safe_entries(sessions_root, allow_missing=True):
+        buckets = self._safe_entries(sessions_root, allow_missing=True)
+        if index_state == "absent" and not buckets:
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+        for bucket in buckets:
             effective_budget.consume_records()
             if not bucket.is_dir(follow_symlinks=False):
                 continue
@@ -557,6 +594,40 @@ class KimiAdapter:
                 list(dict.fromkeys(warnings)),
             )
         return [], list(dict.fromkeys(warnings))
+
+    def _current_exact_path_hints(
+        self,
+        root: str,
+        session_id: str,
+        path: str,
+        budget: ReadBudget | None,
+    ) -> tuple[str | None, str | None, list[str]]:
+        """Optionally reconcile an exact path with the append-only index.
+
+        Exact path recovery remains authoritative. Index absence, staleness, or
+        limits only remove optional metadata and add W_STALE_INDEX.
+        """
+
+        index = os.path.join(root, "session_index.jsonl")
+        if self._index_presence(index) != "regular":
+            return None, None, ["W_STALE_INDEX"]
+        try:
+            reduced, warnings, tombstones = self._reduce_current_index(
+                index,
+                root,
+                budget if budget is not None else ReadBudget(),
+            )
+        except DiagnosticError:
+            return None, None, ["W_STALE_INDEX"]
+        if session_id in tombstones:
+            return None, None, list(dict.fromkeys((*warnings, "W_STALE_INDEX")))
+        match = next(
+            (record for record in reduced if record["session_id"] == session_id),
+            None,
+        )
+        if match is None or canonicalize_cwd(match["path"]) != path:
+            return None, None, list(dict.fromkeys((*warnings, "W_STALE_INDEX")))
+        return match.get("cwd"), match.get("title"), list(dict.fromkeys(warnings))
 
     def _index_presence(self, index: str) -> str:
         """Return absent | regular | unreadable for session_index.jsonl."""
@@ -646,24 +717,17 @@ class KimiAdapter:
             warnings.extend(line_warnings)
             if value is None:
                 continue
-            try:
-                if not isinstance(value, Mapping):
-                    raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
-                session_id = _identifier(value.get("sessionId"), provider=FORMAT_ID)
-                if value.get("deleted") is True:
-                    output_by_id.pop(session_id, None)
-                    tombstones.add(session_id)
-                    continue
-                cwd = value.get("workDir")
-                session_dir = value.get("sessionDir")
-                if not isinstance(cwd, str) or not isinstance(session_dir, str):
-                    raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
-            except DiagnosticError as error:
-                # Soft-skip bad index rows so earlier tombstones remain authoritative.
-                if error.code == "E_CORRUPT_RECORD":
-                    warnings.append("W_STALE_INDEX")
-                    continue
-                raise
+            if not isinstance(value, Mapping):
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+            session_id = _identifier(value.get("sessionId"), provider=FORMAT_ID)
+            if value.get("deleted") is True:
+                output_by_id.pop(session_id, None)
+                tombstones.add(session_id)
+                continue
+            cwd = value.get("workDir")
+            session_dir = value.get("sessionDir")
+            if not isinstance(cwd, str) or not isinstance(session_dir, str):
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
             # Current Kimi Code treats the append-only index as an untrusted
             # hint: only absolute session directories immediately keyed by the
             # indexed session ID and contained under <home>/sessions survive.
@@ -673,7 +737,7 @@ class KimiAdapter:
             if not is_within(canonical_dir, sessions_root) or os.path.basename(canonical_dir) != session_id:
                 continue
             try:
-                transcript = self._choose_transcript([canonical_dir], root, current=True)
+                transcript = self._choose_transcript([session_dir], root, current=True)
             except DiagnosticError as error:
                 if error.code == "E_UNSAFE_PATH":
                     warnings.append("W_MISSING_BLOB")
@@ -916,7 +980,8 @@ class KimiAdapter:
                     raise DiagnosticError.source_busy() from error
                 if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
                     raise DiagnosticError.unsafe_path()
-                return canonicalize_cwd(candidate)
+                safe, _ = require_regular_no_symlinks(candidate, root)
+                return safe
         return None
 
     def _read_state(
@@ -995,11 +1060,13 @@ class KimiAdapter:
             valid = (
                 len(parts) == 4
                 and parts[0] == "sessions"
+                and _HASH.fullmatch(parts[1]) is not None
                 and parts[2] == session_id
                 and parts[3] in {"context.jsonl", "wire.jsonl"}
             ) or (
                 len(parts) == 3
                 and parts[0] == "sessions"
+                and _HASH.fullmatch(parts[1]) is not None
                 and parts[2] == f"{session_id}.jsonl"
             )
         if not valid:
