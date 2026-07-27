@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+- Both console commands now support `--version` and report the package
+  single-source version.
+- PyPI package metadata now includes project, documentation, repository, issue,
+  and changelog links for the next publication.
+- Current-release documentation scopes 7/7 native-package, 8/8 headless, 6/6
+  marketplace, and Cursor/Kimi picker evidence to the recorded v0.3.2-era runs;
+  fresh v0.3.4 host reinstall and picker flows remain `not-run`.
+
 ## [0.3.4] — 2026-07-27
 
 ### Fixed

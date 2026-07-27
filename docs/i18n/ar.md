@@ -57,4 +57,7 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 نجح اختبار host في 8/8 من استدعاءات CLI وفي 7/7 من عمليات تثبيت الحزم الأصلية المحلية الدقيقة. نجح التثبيت من marketplace العام على 6/6 من hosts المتوافقة، كما نجحت أدوات اختيار marketplace في Cursor وKimi. لا يُدّعى اكتمال أدوات اختيار Skill المرئية الأخرى أو الأدلة المنسقة من الموردين.
 
+نتائج مستوى host هذه هي أدلة من حقبة v0.3.2. ما تزال إعادة تثبيت v0.3.4 لكل host ومسارات picker في حالة **not-run**.
+<!-- portable-resume-evidence-scope: v0.3.2-hosts v0.3.4-host-reinstall-not-run -->
+
 يوضح [حالة المشروع](../STATUS.md) الأدلة المثبتة وبوابات UI／release التي لم تُشغّل بعد.

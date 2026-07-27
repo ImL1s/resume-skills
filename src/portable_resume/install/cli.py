@@ -8,6 +8,7 @@ import os
 import sys
 from typing import Any, Sequence
 
+from .. import __version__
 from ..diagnostics import DiagnosticError, SOURCE_KEYS, emit_diagnostic
 from .catalog import HOST_KEYS, hosts_report, resolve_skill_root
 from .manifest import claim_key
@@ -28,6 +29,11 @@ from .transaction import (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="install-resume-skills")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     for name in ("install", "verify", "uninstall"):

@@ -57,4 +57,7 @@ Ative `resume-<source>` pela sintaxe do host e verifique novamente o repository 
 
 O smoke de hosts passou em 8/8 invocações de CLI e 7/7 instalações locais de pacotes nativos exatos. A instalação pelo marketplace público passou em 6/6 hosts compatíveis; os seletores de marketplace do Cursor e Kimi também passaram. Os demais seletores visuais de Skill e diretórios selecionados pelos fornecedores não são declarados concluídos.
 
+Esses resultados por host são evidências da v0.3.2. A reinstalação host a host e os fluxos de seletor da v0.3.4 continuam **not-run**.
+<!-- portable-resume-evidence-scope: v0.3.2-hosts v0.3.4-host-reinstall-not-run -->
+
 Consulte o [status do projeto](../STATUS.md) para separar evidências verificadas de etapas UI／release ainda não executadas.

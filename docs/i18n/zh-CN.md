@@ -57,4 +57,7 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 当前 host 冒烟测试已通过 8/8 个 CLI 调用和 7/7 种精确的本地原生软件包安装。公开 marketplace 安装已通过 6/6 个兼容 host，Cursor 与 Kimi 的 marketplace 选择器也已通过。其他可视化 Skill 选择器与厂商精选目录仍未声明完成。
 
+这些 host 级结果属于 v0.3.2 时期证据；v0.3.4 的逐 host 重新安装与 picker 流程仍为 **not-run**。
+<!-- portable-resume-evidence-scope: v0.3.2-hosts v0.3.4-host-reinstall-not-run -->
+
 已验证项目与尚未执行的 UI／release 门槛见[项目状态](../STATUS.md)。

@@ -9,6 +9,7 @@ import os
 import sys
 from typing import Any, Sequence
 
+from . import __version__
 from .adapters.base import CAPABILITY_STATES, ResolvedRef, SourceAdapter
 from .bounds import DEFAULT_BOUNDS, ReadBudget
 from .contracts import validate_envelope
@@ -28,6 +29,11 @@ class DiagnosticArgumentParser(argparse.ArgumentParser):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = DiagnosticArgumentParser(prog="portable-resume", description="Read inert local session context without invoking a source CLI.")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "source",
         nargs="?",

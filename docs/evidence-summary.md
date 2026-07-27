@@ -24,6 +24,12 @@ UI rows remain under older archive sections).
 Primary product changes in this release: Kimi large-session streaming under
 `source_read_bytes` (Issue #14 / PR #58), Pi destination Skill profile expanding
 the matrix to 9×9=81, and registry-derived release evidence cell counts.
+PR #58 received a current-head Codex callback with no major issues for
+`4ecf2b5aa5` before merge
+([evidence](https://github.com/ImL1s/resume-skills/pull/58#issuecomment-5091411213)).
+The earlier PR #49 final-review bot exception remains explicitly recorded in
+[`STATUS.md`](STATUS.md); this archive does not rewrite that historical process
+exception as a successful callback.
 
 ### Published Python artifacts
 
@@ -197,7 +203,7 @@ prefixed paths. A basename-aware local check verified all 20 referenced
 artifacts. `v0.3.2` supersedes this manifest layout and adds dual-OS regression
 coverage; the immutable `v0.3.1` assets are not replaced.
 
-## Fresh local verification
+## Historical local verification: v0.3.2-era
 
 Local verification on 2026-07-24 used:
 

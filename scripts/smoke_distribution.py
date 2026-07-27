@@ -20,6 +20,13 @@ sys.path.insert(0, str(SRC))
 from portable_resume.registry import matrix_dimensions  # noqa: E402
 
 EXPECTED_MATRIX_CELLS = matrix_dimensions()["cells"]
+EXPECTED_PROJECT_URLS = {
+    "Homepage": "https://github.com/ImL1s/resume-skills",
+    "Documentation": "https://github.com/ImL1s/resume-skills/tree/main/docs",
+    "Repository": "https://github.com/ImL1s/resume-skills",
+    "Issues": "https://github.com/ImL1s/resume-skills/issues",
+    "Changelog": "https://github.com/ImL1s/resume-skills/blob/main/CHANGELOG.md",
+}
 
 
 def _run(
@@ -97,10 +104,12 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
                 "-c",
                 (
                     "import json,portable_resume;"
-                    "from importlib.metadata import version;"
+                    "from importlib.metadata import metadata,version;"
+                    "m=metadata('portable-resume');"
                     "print(json.dumps({'module':portable_resume.__file__,"
                     "'source_version':portable_resume.__version__,"
-                    "'metadata_version':version('portable-resume')}))"
+                    "'metadata_version':version('portable-resume'),"
+                    "'project_urls':m.get_all('Project-URL') or []}))"
                 ),
             ],
             cwd=base,
@@ -112,6 +121,27 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
         module_path = str(identity.get("module", ""))
         if str(REPO) in module_path:
             raise RuntimeError("installed import leaked to source checkout")
+        project_urls: dict[str, str] = {}
+        for item in identity.get("project_urls") or []:
+            name, separator, url = str(item).partition(", ")
+            if not separator:
+                raise RuntimeError("installed project URL metadata is malformed")
+            project_urls[name] = url
+        if project_urls != EXPECTED_PROJECT_URLS:
+            raise RuntimeError("installed project URL metadata is incomplete")
+
+        for command in ("portable-resume", "install-resume-skills"):
+            version_output = _run(
+                [str(_console(venv_root, command)), "--version"],
+                cwd=base,
+                env=environment,
+            )
+            if (
+                version_output.returncode != 0
+                or version_output.stdout.strip() != f"{command} {version}"
+                or version_output.stderr
+            ):
+                raise RuntimeError(f"installed {command} version output is invalid")
 
         self_check = _json_stdout(
             _run(

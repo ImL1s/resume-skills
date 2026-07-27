@@ -15,11 +15,11 @@ Clean-room-oriented Agent Skills for migrating bounded local coding-agent contex
 **Current release:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
 · [PyPI](https://pypi.org/project/portable-resume/0.3.4/) · **81/81** packaging and
 installed-runner cells (9 sources × 9 destinations, including Pi filesystem
-install) · 7/7 exact native local plugin/extension installs verified · 8/8
-host-native headless Skill invocations verified · 6/6 compatible public
-marketplace installs verified. Cursor and Kimi marketplace pickers were also
-exercised; other visual Skill picker paths and **Pi native UI / picker** remain
-separate **not-run** claims.
+install). Separate **v0.3.2-era** host evidence records 7/7 exact native local
+plugin/extension installs, 8/8 host-native headless Skill invocations, and 6/6
+compatible public marketplace installs, including Cursor and Kimi marketplace
+pickers. Fresh **v0.3.4** host-by-host reinstall and picker flows, other visual
+Skill pickers, and **Pi native UI / picker** remain separate **not-run** claims.
 
 ## Sources and destinations
 
@@ -82,6 +82,8 @@ roots, verification, and uninstall:
 
 ```bash
 # Inspect capabilities and the registry-derived matrix (currently 9×9)
+PYTHONPATH=src python3 scripts/portable-resume --version
+PYTHONPATH=src python3 scripts/install-resume-skills --version
 PYTHONPATH=src python3 scripts/portable-resume self-check --json
 PYTHONPATH=src python3 scripts/install-resume-skills matrix --json
 PYTHONPATH=src python3 scripts/install-resume-skills hosts

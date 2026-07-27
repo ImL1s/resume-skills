@@ -8,15 +8,15 @@
 | Destination profiles | 9 including **Pi** (filesystem install supported) |
 | Packaging matrix | **81/81 pass** (currently **9×9=81**, derived from registries; claimed for this `0.3.4` release) |
 | Installed runner matrix | **81/81 pass** (currently **9×9=81**, derived from registries; claimed for this `0.3.4` release) |
-| Python test suite | **375 pass locally** (includes Kimi #14 large-session regressions) |
+| Python test suite | **378 pass locally** on post-release main (the v0.3.4 tag passed 375; includes Kimi #14 large-session regressions) |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
-| Host-native headless Skill activation | **8/8 tested CLI surfaces pass**; Pi native activation **not-run** |
+| Host-native headless Skill activation | **8/8 tested CLI surfaces pass** in v0.3.2-era evidence; fresh v0.3.4 host activation and Pi native activation **not-run** |
 | Public marketplace installation | **6/6 compatible hosts pass on v0.3.2**; fresh v0.3.4 host reinstall **not-run** |
 | Visual marketplace picker | **Cursor and Kimi pass on v0.3.2**; fresh v0.3.4 picker flow **not-run** |
 | Other visual Skill picker activation | **not-run** |
 | Vendor-curated directory listing | **not submitted** |
-| CI (main @ `fa1344b`) | **pass**: [Ubuntu + macOS × Python 3.11–3.14 + dist smoke](https://github.com/ImL1s/resume-skills/actions/runs/30269684151) |
+| CI (v0.3.4 release commit @ `fa1344b`) | **pass**: [Ubuntu + macOS × Python 3.11–3.14 + dist smoke](https://github.com/ImL1s/resume-skills/actions/runs/30269684151) |
 | Phase 0 / Milestone N1 | **merged** [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c` |
 | `v0.3.4` release workflow | **pass**: [14 jobs through GitHub Release and PyPI](https://github.com/ImL1s/resume-skills/actions/runs/30269713516) |
 | Published release | **pass**: [GitHub Release v0.3.4](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4) |
@@ -26,7 +26,7 @@
 | Codex large-rollout budget + parent list filter (Issue #3) | **done on main** [PR #4](https://github.com/ImL1s/resume-skills/pull/4) merge `48746c4` — P0 hotfix (not full streaming) |
 | Codex probe head-only + list FS fallback | **not done** — [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + [plan 026](../plans/026-codex-probe-list-discovery.md) |
 | Codex streaming show / reducer | **not done** — [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + [plan 027](../plans/027-codex-streaming-show.md) (PR #4 removed eager `splitlines`; still whole-file + `list[dict]`) |
-| Kimi index/wire large-session recovery (Issue #14) | **done on main** [PR #58](https://github.com/ImL1s/resume-skills/pull/58) → `79d32ae` — stream index + wire via `stable_scan_lines`; metadata-only list; exact-path show + FS fallback; no silent 16 MiB whole-file reject. Issue **closed** 2026-07-27. CI green: [run 30267866248](https://github.com/ImL1s/resume-skills/actions/runs/30267866248) |
+| Kimi index/wire large-session recovery (Issue #14) | **done on main** [PR #58](https://github.com/ImL1s/resume-skills/pull/58) → `79d32ae` — stream index + wire via `stable_scan_lines`; metadata-only list; exact-path show + FS fallback; no silent 16 MiB whole-file reject. Issue **closed** 2026-07-27. CI green: [run 30267866248](https://github.com/ImL1s/resume-skills/actions/runs/30267866248). Current-head Codex review returned no major issues for `4ecf2b5` before merge: [review callback](https://github.com/ImL1s/resume-skills/pull/58#issuecomment-5091411213). |
 | Codex-native live resume / `codex resume` from hosts | **not claimed** (inert handoff only) |
 
 ## PR #49 AI review disposition (closed for merge)
@@ -132,14 +132,14 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 
 | Area | Status | Required evidence |
 |---|---|---|
-| Current local release gates | pass | 375 tests + 81/81 installed-runner, 2026-07-27 |
+| Current local release gates | pass | 378 tests + 81/81 installed-runner, 2026-07-27 |
 | `v0.3.4` dual-OS release | pass | [Actions run 30269713516](https://github.com/ImL1s/resume-skills/actions/runs/30269713516), commit `fa1344bf62eb26332baea7b7ef4540a1a37acba8` |
 | `v0.3.4` PyPI publication | pass | [portable-resume 0.3.4](https://pypi.org/project/portable-resume/0.3.4/), public isolated 81-cell self-check |
 | `v0.3.2` dual-OS release | pass | [Actions run 30093776529](https://github.com/ImL1s/resume-skills/actions/runs/30093776529), commit `284865a4dc8c1c3dca16ee40f5204053cabb3a92` |
 | `v0.3.2` PyPI publication | pass | [portable-resume 0.3.2](https://pypi.org/project/portable-resume/0.3.2/) |
 | `v0.3.1` dual-OS release | pass | [Actions run 30089194956](https://github.com/ImL1s/resume-skills/actions/runs/30089194956), commit `d50a1e33db2824830dabc469b7d566031aa45697` |
 | `v0.3.1` PyPI publication | pass | [portable-resume 0.3.1](https://pypi.org/project/portable-resume/0.3.1/) |
-| Host-native headless activation | 8/8 tested CLI surfaces pass; Pi not-run | rows in `docs/host-ui-smoke.md` |
+| Host-native headless activation | 8/8 tested CLI surfaces pass in v0.3.2-era evidence; fresh v0.3.4 host activation and Pi native activation not-run | rows in `docs/host-ui-smoke.md` |
 | Native plugin/extension install | 7/7 pass | exact 0.3.2 rows in `docs/host-ui-smoke.md` |
 | Public marketplace catalog | v0.3.4 published | [marketplace release v0.3.4](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.4) and CI in `docs/evidence-summary.md` |
 | Public marketplace host install | 6/6 compatible hosts pass on v0.3.2; v0.3.4 not-run | install rows and `docs/evidence/public-marketplace-v0.3.2.json` |
