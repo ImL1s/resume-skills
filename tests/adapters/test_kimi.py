@@ -274,9 +274,8 @@ class KimiAdapterTests(unittest.TestCase):
             transcript.symlink_to(target)
             with mock.patch("subprocess.run") as run:
                 # Discovery skips unsafe index/FS candidates rather than aborting the store.
-                with self.assertRaises(DiagnosticError) as caught:
-                    KimiAdapter(root=str(root)).list(query(root, CURRENT_ID), ReadBudget())
-            self.assertIn(caught.exception.code, {"E_UNSUPPORTED_FORMAT", "E_NO_MATCH", "E_CAPABILITY_UNAVAILABLE"})
+                values = KimiAdapter(root=str(root)).list(query(root, CURRENT_ID), ReadBudget())
+            self.assertEqual(values, [])
             run.assert_not_called()
             # Exact show still hard-rejects a symlink path (do not resolve through it).
             with self.assertRaises(DiagnosticError) as show_caught:
@@ -422,7 +421,7 @@ class KimiAdapterTests(unittest.TestCase):
                 query(root, CURRENT_ID),
                 ReadBudget(),
             )
-            self.assertIn("W_STALE_INDEX", shown.warnings)
+            # Exact show does not re-scan the index; title/cwd come from state.json.
             self.assertEqual(shown.turns[0].content, "Current Kimi prompt")
             self.assertEqual(tree_snapshot(root), before)
 
@@ -470,9 +469,32 @@ class KimiAdapterTests(unittest.TestCase):
                 query(root, CURRENT_ID),
                 ReadBudget(),
             )
-            self.assertIn("W_STALE_INDEX", shown.warnings)
+            # Corrupt/large index must not be consulted on exact-path show.
             self.assertEqual(shown.turns[0].content, "Current Kimi prompt")
             self.assertEqual(tree_snapshot(root), before)
+
+    def test_index_tombstone_is_not_revived_by_fs_union(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            session_dir = next((root / "sessions").glob("*/*"))
+            index = root / "session_index.jsonl"
+            index.write_text(
+                json.dumps(
+                    {
+                        "sessionId": CURRENT_ID,
+                        "sessionDir": str(session_dir.resolve()),
+                        "workDir": CWD,
+                        "synthetic": True,
+                    }
+                )
+                + "\n"
+                + json.dumps({"sessionId": CURRENT_ID, "deleted": True, "synthetic": True})
+                + "\n",
+                encoding="utf-8",
+            )
+            # Leftover on-disk session must not reappear after index tombstone.
+            values = KimiAdapter(root=str(root)).list(query(root, within_min=0), ReadBudget())
+            self.assertEqual(values, [])
 
     def test_partial_index_merges_unindexed_session_from_fs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

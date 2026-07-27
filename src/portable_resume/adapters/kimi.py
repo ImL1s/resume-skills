@@ -334,8 +334,8 @@ class KimiAdapter:
                 if error.code == "E_UNSUPPORTED_FORMAT" and query.source_root is None and self._configured_root is None:
                     continue
                 raise
-            if records:
-                return root, provider, records, warnings
+            # Empty is valid (e.g. all sessions tombstoned); still a supported root.
+            return root, provider, records, warnings
         raise DiagnosticError("E_CAPABILITY_UNAVAILABLE" if not self._roots(query) else "E_UNSUPPORTED_FORMAT", source=self.key)
 
     def probe(self, query: Query) -> CapabilityReport:
@@ -400,35 +400,14 @@ class KimiAdapter:
         path = canonicalize_cwd(ref.source_path)
         if _session_id_from_transcript(path, ref.provider) != ref.session_id:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=ref.provider)
-        # Exact path is authoritative. Do not share the show ReadBudget with
-        # optional index/FS discovery (would starve transcript_records /
-        # source_read_bytes). Hints use a separate best-effort budget only.
+        # Exact path is authoritative: do not scan index/FS here. That keeps
+        # the caller's single source_read_bytes / transcript_records budget for
+        # the selected wire and prevents optional discovery from blocking show
+        # or doubling aggregate admitted source bytes.
         discovery_warnings: list[str] = []
-        match: dict[str, Any] | None = None
-        try:
-            hint_budget = ReadBudget()
-            records, discovery_warnings = (
-                self._current_records(root, hint_budget)
-                if ref.provider == FORMAT_ID
-                else self._legacy_records(root, hint_budget)
-            )
-            match = next(
-                (
-                    record
-                    for record in records
-                    if record["session_id"] == ref.session_id and canonicalize_cwd(record["path"]) == path
-                ),
-                None,
-            )
-            if match is None:
-                discovery_warnings.append("W_STALE_INDEX")
-        except DiagnosticError:
-            # Corrupt/busy/unsafe/oversized discovery must not block exact show.
-            discovery_warnings.append("W_STALE_INDEX")
-            match = None
         self._require_regular_transcript(path, root)
         state, state_warnings = self._read_state(os.path.dirname(path), root, budget)
-        meta = _metadata(state, fallback_cwd=None if match is None else match.get("cwd"))
+        meta = _metadata(state, fallback_cwd=None)
         turns, transcript_warnings, transcript_times = self._parse_transcript(
             path, root, query, budget, include_turns=True
         )
@@ -436,7 +415,7 @@ class KimiAdapter:
             source=self.key,
             session_id=ref.session_id,
             source_path=path,
-            title=meta["title"] or (None if match is None else match.get("title")),
+            title=meta["title"],
             cwd=meta["cwd"],
             branch=meta["branch"],
             created_at=meta["created_at"] or transcript_times[0],
@@ -451,23 +430,29 @@ class KimiAdapter:
         index = os.path.join(root, "session_index.jsonl")
         warnings: list[str] = []
         output_by_id: dict[str, dict[str, Any]] = {}
+        tombstones: set[str] = set()
         if os.path.isfile(index):
             try:
-                reduced, index_warnings = self._reduce_current_index(index, root, budget)
+                reduced, index_warnings, tombstones = self._reduce_current_index(index, root, budget)
                 warnings.extend(index_warnings)
                 for record in reduced:
                     output_by_id[record["session_id"]] = record
             except DiagnosticError:
                 # Index is an untrusted hint: fall through to FS recovery.
                 warnings.append("W_STALE_INDEX")
+                tombstones = set()
         # Union read-only FS discovery so unindexed / partial-index sessions surface.
+        # Index tombstones (deleted: true) must not be revived from leftover dirs.
         had_index = os.path.isfile(index)
         try:
             fallback, fallback_warnings = self._fs_fallback_current(root, budget)
             warnings.extend(fallback_warnings)
             for record in fallback:
-                if record["session_id"] not in output_by_id:
-                    output_by_id[record["session_id"]] = record
+                session_id = record["session_id"]
+                if session_id in tombstones:
+                    continue
+                if session_id not in output_by_id:
+                    output_by_id[session_id] = record
                     warnings.append("W_STALE_INDEX")
             if not had_index and output_by_id:
                 warnings.append("W_STALE_INDEX")
@@ -487,12 +472,13 @@ class KimiAdapter:
 
     def _reduce_current_index(
         self, index: str, root: str, budget: ReadBudget | None
-    ) -> tuple[list[dict[str, Any]], list[str]]:
+    ) -> tuple[list[dict[str, Any]], list[str], set[str]]:
         sessions_root = os.path.join(root, "sessions")
         output_by_id: dict[str, dict[str, Any]] = {}
+        tombstones: set[str] = set()
         warnings: list[str] = []
-        # Index events are physical history lines (≤ transcript_records on the
-        # discovery budget). Show uses a separate ReadBudget for the wire.
+        # Index events are physical history lines (≤ transcript_records) on the
+        # list/probe discovery budget only — show does not call this path.
         for value, line_warnings, _terminated in self._iter_jsonl(
             index, root, budget, charge_transcript=True
         ):
@@ -504,6 +490,7 @@ class KimiAdapter:
             session_id = _identifier(value.get("sessionId"), provider=FORMAT_ID)
             if value.get("deleted") is True:
                 output_by_id.pop(session_id, None)
+                tombstones.add(session_id)
                 continue
             cwd = value.get("workDir")
             session_dir = value.get("sessionDir")
@@ -529,12 +516,13 @@ class KimiAdapter:
                 warnings.append("W_MISSING_BLOB")
                 output_by_id.pop(session_id, None)
                 continue
+            tombstones.discard(session_id)
             output_by_id[session_id] = {
                 "session_id": session_id,
                 "path": transcript,
                 "cwd": canonicalize_cwd(cwd) if os.path.isabs(cwd) else None,
             }
-        return list(output_by_id.values()), list(dict.fromkeys(warnings))
+        return list(output_by_id.values()), list(dict.fromkeys(warnings)), tombstones
 
     def _fs_fallback_current(
         self, root: str, budget: ReadBudget | None
