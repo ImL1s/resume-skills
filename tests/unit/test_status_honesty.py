@@ -77,10 +77,12 @@ class StatusHonestyTests(unittest.TestCase):
             and "source" in lowered
             and "supported" in lowered
         )
-        # Published 0.3.3 must not silently absorb unreleased 81-cell claims.
+        # Published 0.3.4 claims the 81-cell matrix; keep Pi native UI unclaimed.
         readme = Path("README.md").read_text(encoding="utf-8")
-        self.assertIn("Unreleased `main`", readme)
-        self.assertRegex(readme, r"0\.3\.3[^\n]*64/64|64/64[^\n]*0\.3\.3")
+        self.assertRegex(readme, r"0\.3\.4")
+        self.assertRegex(readme, r"81/81")
+        self.assertRegex(readme, r"(?i)pi native UI|Pi native UI")
+        self.assertRegex(readme, r"not-run")
 
 
 if __name__ == "__main__":

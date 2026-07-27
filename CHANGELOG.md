@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.3.4] — 2026-07-27
+
 ### Fixed
 - Kimi current-store readers no longer treat whole `session_index.jsonl` /
   `wire.jsonl` files as a single 16 MiB record. Index reduce and transcript
@@ -11,12 +13,18 @@
   supplies title/cwd). List discovery uses append-only index reduce plus
   read-only `sessions/` union, honoring index `deleted` tombstones and skipping
   unsafe per-session candidates without mutating the store
-  ([Issue #14](https://github.com/ImL1s/resume-skills/issues/14)).
+  ([Issue #14](https://github.com/ImL1s/resume-skills/issues/14) / [PR #58](https://github.com/ImL1s/resume-skills/pull/58)).
+
+### Added
+- Pi destination filesystem install (`.pi/skills` / `~/.pi/agent/skills`), bringing
+  the registry-derived packaging and installed-runner matrix to **9×9=81** cells
+  on this release ([PR #56](https://github.com/ImL1s/resume-skills/pull/56)).
 
 ### Notes
 - Other adapters’ large-session streaming (#7/#8 Codex, Cursor/Qwen/OpenCode/Grok)
   remain open under [Issue #18](https://github.com/ImL1s/resume-skills/issues/18).
 - Still inert handoff only — not live process restore.
+- Pi native host UI / picker activation remains **not-run**.
 - Residual: a syntactically corrupt index *tombstone* line is soft-skipped and
   cannot apply that delete; prior valid tombstones remain authoritative. True
   streaming yield for multi‑10 MiB wires remains deferred to #10/#8.

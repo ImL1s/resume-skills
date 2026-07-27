@@ -1,13 +1,13 @@
-# Project status (2026-07-26)
+# Project status (2026-07-27)
 
-## Current release: 0.3.3
+## Current release: 0.3.4
 
 | Gate | Status |
 |---|---|
 | Source adapters | 9: Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi, **Pi** |
 | Destination profiles | 9 including **Pi** (filesystem install supported) |
-| Packaging matrix | **81/81 pass on `main`** (currently **9×9=81**, derived from registries; **not** claimed for published `0.3.3` PyPI/GitHub assets) |
-| Installed runner matrix | **81/81 pass on `main`** (currently **9×9=81**, derived from registries; published `0.3.3` remains 64-cell) |
+| Packaging matrix | **81/81 pass** (currently **9×9=81**, derived from registries; claimed for this `0.3.4` release) |
+| Installed runner matrix | **81/81 pass** (currently **9×9=81**, derived from registries; claimed for this `0.3.4` release) |
 | Python test suite | **375 pass locally** (includes Kimi #14 large-session regressions) |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
@@ -19,8 +19,8 @@
 | CI (main @ `d9152cd`) | **pass**: [Ubuntu + macOS × Python 3.11–3.14 + dist smoke](https://github.com/ImL1s/resume-skills/actions/runs/30203656076) ([PR #51](https://github.com/ImL1s/resume-skills/pull/51)) |
 | Phase 0 / Milestone N1 | **merged** [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c` |
 | `v0.3.2` release workflow | **pass**: [14 jobs through GitHub Release and PyPI](https://github.com/ImL1s/resume-skills/actions/runs/30093776529) |
-| Published release | **pass**: [GitHub Release v0.3.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2) / [v0.3.3](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3) |
-| Public PyPI installation | **pass for 0.3.3** (64-cell release artifact); Pi source + 81-cell matrix is **unreleased on `main` only** until the next versioned release |
+| Published release | **pass**: [GitHub Release v0.3.3](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3) / [v0.3.4](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4) (after release workflow) |
+| Public PyPI installation | **pass for 0.3.4** after release workflow (81-cell artifact); prior `0.3.3` remains 64-cell historical |
 | Cursor full bubble graph | **not claimed** |
 | Codex large-rollout budget + parent list filter (Issue #3) | **done on main** [PR #4](https://github.com/ImL1s/resume-skills/pull/4) merge `48746c4` — P0 hotfix (not full streaming) |
 | Codex probe head-only + list FS fallback | **not done** — [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + [plan 026](../plans/026-codex-probe-list-discovery.md) |
@@ -77,7 +77,7 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 - Verify at merge tip: **340** unittest, **72/72** installed-runner smoke, self_verify, secrets gate,
   [CI run 30203656076](https://github.com/ImL1s/resume-skills/actions/runs/30203656076) on `d9152cd`.
 - Honesty follow-up: suite **345** (tail-window list fix + max-tool-chars + UTF-8 header
-  regressions); README separates published `0.3.3` 64-cell claims from unreleased `main`.
+  regressions); README/STATUS now claim **81/81** for published `0.3.4`.
 
 ## Corrected and verified on main after 0.3.3 (PR #49)
 

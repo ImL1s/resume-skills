@@ -10,11 +10,11 @@ PYTHONPATH=src python3 scripts/install-resume-skills matrix --json
 python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
-On current `main`, the package builder creates nine `*-<host>-skills.zip` archives
-(one per enabled destination, including Pi), seven supported plugin/marketplace
-archives, and `host-packages.json` with SHA-256 digests. Published `0.3.3`
-release assets remain eight direct archives. Replace `<version>` below with the
-release version.
+The package builder creates nine `*-<host>-skills.zip` archives (one per
+enabled destination, including Pi), seven supported plugin/marketplace
+archives, and `host-packages.json` with SHA-256 digests. Published `0.3.4`
+release assets include those nine direct archives. Replace `<version>` below
+with the release version.
 
 Download and verify an exact release before installing a plugin:
 
@@ -157,14 +157,14 @@ For direct archives, extract the archive contents into the selected Skill root. 
 
 ## Evidence boundary
 
-Historical published evidence for `0.3.2` / `0.3.3` (not current unreleased `main`
-**9×9=81** matrix): filesystem render/install/verify and installed `run_reader`
-behavior cover **64/64** cells. Exact `0.3.2` local package installation passed on all seven
+Published `0.3.4` claims registry-derived **9×9=81** packaging and installed-runner
+cells (including Pi filesystem destination). Historical `0.3.2` / `0.3.3` evidence
+covered **64/64** cells. Exact `0.3.2` local package installation passed on all seven
 supported native plugin/extension surfaces, including Cursor. Host-native
-headless Skill invocation passed on all eight destination CLIs. Public
+headless Skill invocation passed on all eight destination CLIs available at that
+time (nine destinations on `0.3.4`, with Pi native UI still not-run). Public
 marketplace installation passed on all six compatible hosts; Cursor and Kimi
 also passed their visual marketplace picker flows. Versions, commands, and
 archive digests are recorded in [`host-ui-smoke.md`](host-ui-smoke.md). Other
 visual Skill pickers and vendor-curated directory listings remain separate
-unclaimed gates. Pi destination on `main` is filesystem packaging only until
-PR D native activation rows exist.
+unclaimed gates.

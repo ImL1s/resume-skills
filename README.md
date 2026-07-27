@@ -12,19 +12,14 @@
 
 Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
-**Current release:** [`0.3.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3)
-· [PyPI](https://pypi.org/project/portable-resume/0.3.3/) · **64/64** packaging and
-installed-runner cells on that published tag · 7/7 exact native local
-plugin/extension installs verified · 8/8 host-native headless Skill
-invocations verified · 6/6 compatible public marketplace installs verified.
-Cursor and Kimi marketplace pickers were also exercised; other visual Skill
-picker paths remain separate **not-run** claims.
-
-**Unreleased `main` (post-0.3.3):** registry-derived **9×9=81** cells including
-Pi source and **Pi destination filesystem install** (`.pi/skills` /
-`~/.pi/agent/skills`). Not claimed for the linked PyPI/GitHub `0.3.3`
-artifacts until the next versioned release. Pi native host UI / picker
-activation remains **not-run**.
+**Current release:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
+· [PyPI](https://pypi.org/project/portable-resume/0.3.4/) · **81/81** packaging and
+installed-runner cells (9 sources × 9 destinations, including Pi filesystem
+install) · 7/7 exact native local plugin/extension installs verified · 8/8
+host-native headless Skill invocations verified · 6/6 compatible public
+marketplace installs verified. Cursor and Kimi marketplace pickers were also
+exercised; other visual Skill picker paths and **Pi native UI / picker** remain
+separate **not-run** claims.
 
 ## Sources and destinations
 
@@ -112,7 +107,7 @@ Full roots, activation grammar, direct archives, and marketplace/plugin routes a
 python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
-On current `main` this produces nine direct-skill ZIPs (including Pi) plus supported Claude, Codex, Cursor, Antigravity, Grok, Qwen, and Kimi plugin/marketplace bundles. Published `0.3.3` assets remain eight direct ZIPs. OpenCode remains a direct Skill install because its plugin surface is executable JavaScript/TypeScript rather than a Skill bundle.
+Release archives include nine direct-skill ZIPs (including Pi) plus supported Claude, Codex, Cursor, Antigravity, Grok, Qwen, and Kimi plugin/marketplace bundles. OpenCode remains a direct Skill install because its plugin surface is executable JavaScript/TypeScript rather than a Skill bundle.
 
 ## Skill contract
 

@@ -1,7 +1,7 @@
-<!-- portable-resume-i18n: ja v0.3.3 -->
+<!-- portable-resume-i18n: ja v0.3.4 -->
 # Portable Resume — 日本語クイックスタート
 
-**現在の公開版：** [`0.3.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3)
+**現在の公開版：** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
 
 Portable Resume は、Claude、Codex、Cursor、OpenCode、Antigravity、Grok、Qwen、Kimi の限定されたローカル文脈を**新しい**コーディングエージェントのセッションへ移行します。実行中プロセスやセッションの復元ではありません。リーダーはオフラインかつ Python 標準ライブラリのみで動作し、元の CLI を起動せず、復元テキストを不活性・未信頼として扱います。
 
@@ -26,7 +26,7 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-`main` で有効な宛先は Claude Code、Codex、Cursor、OpenCode、Antigravity、Grok Build、Qwen Code、Kimi Code CLI、および Pi（ファイルシステム導入；ネイティブ UI は not-run）です。公開済み `0.3.3` は引き続き 8 宛先です。各 host の直接 Skill、extension、plugin、marketplace の正確な手順は[インストールガイド](../install-hosts.md)を参照してください。plugin を信頼する前に内容と release SHA-256 を確認します。
+`main` で有効な宛先は Claude Code、Codex、Cursor、OpenCode、Antigravity、Grok Build、Qwen Code、Kimi Code CLI、および Pi（ファイルシステム導入；ネイティブ UI は not-run）です。公開済み `0.3.4` は Pi（ファイルシステム導入）を含む 9 宛先です（ネイティブ UI は not-run）。各 host の直接 Skill、extension、plugin、marketplace の正確な手順は[インストールガイド](../install-hosts.md)を参照してください。plugin を信頼する前に内容と release SHA-256 を確認します。
 
 ## 公開 marketplace
 

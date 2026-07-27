@@ -1,7 +1,7 @@
-<!-- portable-resume-i18n: zh-CN v0.3.3 -->
+<!-- portable-resume-i18n: zh-CN v0.3.4 -->
 # Portable Resume — 简体中文快速指南
 
-**当前已发布版本：** [`0.3.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3)
+**当前已发布版本：** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
 
 Portable Resume 可将 Claude、Codex、Cursor、OpenCode、Antigravity、Grok、Qwen、Kimi 的有限本地上下文迁移到**全新**的编程代理会话；它不是实时进程或会话恢复。读取器离线、仅使用 Python 标准库、不会调用来源 CLI，并将恢复内容标记为惰性且不受信任。
 
@@ -26,7 +26,7 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-`main` 上启用的目标端包括 Claude Code、Codex、Cursor、OpenCode、Antigravity、Grok Build、Qwen Code、Kimi Code CLI，以及 Pi（文件系统安装；原生 UI 仍为 not-run）。已发布的 `0.3.3` 仍为八个目标端。各 host 的直接 Skill、extension、plugin 与 marketplace 命令见[安装指南](../install-hosts.md)。信任第三方 plugin 前，请检查内容并核对 release SHA-256。
+`main` 上启用的目标端包括 Claude Code、Codex、Cursor、OpenCode、Antigravity、Grok Build、Qwen Code、Kimi Code CLI，以及 Pi（文件系统安装；原生 UI 仍为 not-run）。已发布的 `0.3.4` 含九个目标端（含 Pi 文件系统安装；原生 UI 仍为 not-run）。各 host 的直接 Skill、extension、plugin 与 marketplace 命令见[安装指南](../install-hosts.md)。信任第三方 plugin 前，请检查内容并核对 release SHA-256。
 
 ## 公开 marketplace
 

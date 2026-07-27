@@ -1,7 +1,7 @@
-<!-- portable-resume-i18n: ko v0.3.3 -->
+<!-- portable-resume-i18n: ko v0.3.4 -->
 # Portable Resume — 한국어 빠른 시작
 
-**현재 공개 릴리스:** [`0.3.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3)
+**현재 공개 릴리스:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
 
 Portable Resume은 Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi의 제한된 로컬 컨텍스트를 **새로운** 코딩 에이전트 세션으로 이전합니다. 실행 중인 프로세스나 세션을 복원하지 않습니다. 리더는 오프라인·Python 표준 라이브러리 전용이며 원본 CLI를 실행하지 않고, 복구된 텍스트를 비활성·신뢰할 수 없는 데이터로 표시합니다.
 
@@ -26,7 +26,7 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-`main`에서 활성화된 대상은 Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI, 그리고 Pi(파일시스템 설치; 네이티브 UI는 not-run)입니다. 게시된 `0.3.3`은 여전히 8개 대상입니다. host별 직접 Skill, extension, plugin, marketplace 명령은 [설치 가이드](../install-hosts.md)를 확인하세요. plugin을 신뢰하기 전에 내용과 release SHA-256을 검증해야 합니다.
+`main`에서 활성화된 대상은 Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI, 그리고 Pi(파일시스템 설치; 네이티브 UI는 not-run)입니다. 게시된 `0.3.4`은 Pi(파일시스템 설치)를 포함한 9개 대상입니다(네이티브 UI는 not-run). host별 직접 Skill, extension, plugin, marketplace 명령은 [설치 가이드](../install-hosts.md)를 확인하세요. plugin을 신뢰하기 전에 내용과 release SHA-256을 검증해야 합니다.
 
 ## 공개 marketplace
 

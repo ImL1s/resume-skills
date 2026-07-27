@@ -1,7 +1,7 @@
-<!-- portable-resume-i18n: hi v0.3.3 -->
+<!-- portable-resume-i18n: hi v0.3.4 -->
 # Portable Resume — हिन्दी त्वरित शुरुआत
 
-**वर्तमान प्रकाशित संस्करण:** [`0.3.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3)
+**वर्तमान प्रकाशित संस्करण:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
 
 Portable Resume, Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen या Kimi के सीमित स्थानीय context को एक **नई** coding-agent session में ले जाता है। यह चलती process या session को restore नहीं करता। reader offline और केवल Python standard library पर चलता है, source CLI कभी नहीं चलाता, तथा मिले हुए text को inert और untrusted चिह्नित करता है।
 
@@ -26,7 +26,7 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-`main` पर सक्षम destination हैं Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI और Pi (filesystem install; native UI not-run)। प्रकाशित `0.3.3` अभी भी आठ destinations रखता है। सही direct Skill, extension, plugin और marketplace commands के लिए [installation guide](../install-hosts.md) देखें। किसी plugin पर भरोसा करने से पहले उसकी सामग्री और release SHA-256 जाँचें।
+`main` पर सक्षम destination हैं Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI और Pi (filesystem install; native UI not-run)। प्रकाशित `0.3.4` में Pi (filesystem install; native UI not-run) सहित नौ destinations हैं। सही direct Skill, extension, plugin और marketplace commands के लिए [installation guide](../install-hosts.md) देखें। किसी plugin पर भरोसा करने से पहले उसकी सामग्री और release SHA-256 जाँचें।
 
 ## सार्वजनिक marketplace
 

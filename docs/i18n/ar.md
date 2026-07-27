@@ -1,7 +1,7 @@
-<!-- portable-resume-i18n: ar v0.3.3 -->
+<!-- portable-resume-i18n: ar v0.3.4 -->
 # Portable Resume — دليل البدء السريع بالعربية
 
-**الإصدار الحالي المنشور:** [`0.3.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3)
+**الإصدار الحالي المنشور:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
 
 ينقل Portable Resume سياقًا محليًا محدودًا من Claude وCodex وCursor وOpenCode وAntigravity وGrok وQwen وKimi إلى جلسة وكيل برمجي **جديدة**. لا يستعيد عملية أو جلسة عاملة. تعمل أدوات القراءة دون شبكة وبمكتبة Python القياسية فقط، ولا تشغّل CLI المصدر، وتوسم النص المستعاد بأنه خامل وغير موثوق.
 
@@ -26,7 +26,7 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-الوجهات المفعّلة على `main` هي Claude Code وCodex وCursor وOpenCode وAntigravity وGrok Build وQwen Code وKimi Code CLI وPi (تثبيت ملفات فقط؛ واجهة المستخدم الأصلية not-run). إصدار `0.3.3` المنشور ما زال بثمانية وجهات. راجع [دليل التثبيت](../install-hosts.md) لأوامر Skill وextension وplugin وmarketplace الدقيقة. افحص أي plugin وتحقق من SHA-256 الخاص بالـ release قبل منحه الثقة.
+الوجهات المفعّلة على `main` هي Claude Code وCodex وCursor وOpenCode وAntigravity وGrok Build وQwen Code وKimi Code CLI وPi (تثبيت ملفات فقط؛ واجهة المستخدم الأصلية not-run). إصدار `0.3.4` المنشور يشمل تسع وجهات مع Pi (تثبيت ملفات؛ الواجهة الأصلية not-run). راجع [دليل التثبيت](../install-hosts.md) لأوامر Skill وextension وplugin وmarketplace الدقيقة. افحص أي plugin وتحقق من SHA-256 الخاص بالـ release قبل منحه الثقة.
 
 ## Marketplace عام
 

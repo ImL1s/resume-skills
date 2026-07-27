@@ -1,7 +1,7 @@
-<!-- portable-resume-i18n: fr v0.3.3 -->
+<!-- portable-resume-i18n: fr v0.3.4 -->
 # Portable Resume — démarrage rapide en français
 
-**Version publiée actuelle :** [`0.3.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3)
+**Version publiée actuelle :** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
 
 Portable Resume transfère un contexte local limité de Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen ou Kimi vers une session **neuve** d’agent de programmation. Il ne restaure ni processus ni session en cours. Les lecteurs restent hors ligne, utilisent uniquement la bibliothèque standard Python, n’exécutent jamais le CLI source et marquent le texte récupéré comme inerte et non fiable.
 
@@ -26,7 +26,7 @@ Pour installer Qwen uniquement dans le projet courant :
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-Les destinations activées sur `main` sont Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI et Pi (installation fichiers ; UI native not-run). Le `0.3.3` publié reste à huit destinations. Le [guide d’installation](../install-hosts.md) donne les commandes exactes pour Skill, extension, plugin et marketplace. Inspectez tout plugin et vérifiez le SHA-256 du release avant de lui faire confiance.
+Les destinations activées sur `main` sont Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI et Pi (installation fichiers ; UI native not-run). Le `0.3.4` publié inclut neuf destinations avec Pi (installation fichiers ; UI native not-run). Le [guide d’installation](../install-hosts.md) donne les commandes exactes pour Skill, extension, plugin et marketplace. Inspectez tout plugin et vérifiez le SHA-256 du release avant de lui faire confiance.
 
 ## Marketplace public
 
