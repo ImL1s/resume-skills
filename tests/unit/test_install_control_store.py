@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from unittest import mock
+
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.install.catalog import resolve_skill_root
 from portable_resume.install.transaction import (
@@ -18,6 +20,7 @@ from portable_resume.install.transaction import (
     SUPPORT_DIR,
     _atomic_write_support_file,
     _ensure_support_directory,
+    _rollback_paths,
     _supports_descriptor_relative_commit,
     _write_journal,
     execute_install,
@@ -174,3 +177,39 @@ class InstallControlStoreTests(unittest.TestCase):
         lock = Path(self.root) / SUPPORT_DIR / LOCK_NAME
         self.assertTrue(lock.is_file())
         self.assertTrue(stat.S_ISREG(lock.stat().st_mode))
+
+    def test_support_swap_during_stage_does_not_write_outside_payload(self) -> None:
+        """After support pin, swapping .portable-resume to outside must not stage files there."""
+        import portable_resume.install.transaction as transaction_module
+
+        plan = plan_install(host="claude", scope="project", root=self.root)
+        original_mkdir = transaction_module._mkdir_unique_under_fd
+        swapped = {"done": False}
+
+        def swap_support_then_mkdir(parent_fd: int, prefix: str) -> str:
+            if not swapped["done"] and prefix.startswith("portable-resume-stage-"):
+                support = Path(self.root) / SUPPORT_DIR
+                if support.is_dir() and not support.is_symlink():
+                    backup = Path(self.root) / ".portable-resume.bak-swap"
+                    if backup.exists():
+                        import shutil
+
+                        shutil.rmtree(backup)
+                    support.rename(backup)
+                    support.symlink_to(self.outside, target_is_directory=True)
+                    swapped["done"] = True
+            return original_mkdir(parent_fd, prefix)
+
+        with mock.patch.object(
+            transaction_module,
+            "_mkdir_unique_under_fd",
+            side_effect=swap_support_then_mkdir,
+        ):
+            with self.assertRaises(DiagnosticError):
+                execute_install(plan)
+        # Outside must not receive staged skill trees.
+        outside_names = {p.name for p in self.outside.iterdir()}
+        self.assertNotIn("resume-claude", outside_names)
+        for path in self.outside.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(b"name:", path.read_bytes()[:200])

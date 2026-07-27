@@ -174,3 +174,47 @@ class InstallPayloadLifecycleContainmentTests(unittest.TestCase):
         un = uninstall_claim(host="claude", scope="project", root=self.root)
         self.assertTrue(un["ok"])
         self.assertTrue(un["removed_files"])
+
+    def test_rollback_missing_sha_does_not_delete_or_complete(self) -> None:
+        self._install()
+        skill = Path(self.root) / "resume-claude" / "SKILL.md"
+        before = skill.read_bytes()
+        journal = {
+            "paths": {
+                "resume-claude/SKILL.md": {
+                    "state": "committed",
+                    "existed": False,
+                    # Missing/invalid sha256 must not authorize delete.
+                    "sha256": None,
+                }
+            }
+        }
+        restored, complete = _rollback_paths(self.root, journal)
+        self.assertFalse(complete)
+        self.assertEqual(restored, 0)
+        self.assertEqual(skill.read_bytes(), before)
+
+    def test_rollback_requires_original_sha_for_snapshot_restore(self) -> None:
+        self._install()
+        skill = Path(self.root) / "resume-claude" / "SKILL.md"
+        before = skill.read_bytes()
+        support = Path(self.root) / ".portable-resume"
+        stage = support / "portable-resume-stage-sha-unit"
+        rb = stage / ".rollback" / "resume-claude"
+        rb.mkdir(parents=True)
+        snap = rb / "SKILL.md"
+        snap.write_bytes(before + b"\n# evil-restore\n")
+        journal = {
+            "paths": {
+                "resume-claude/SKILL.md": {
+                    "state": "committed",
+                    "existed": True,
+                    "rollback_backup": str(snap),
+                    # Missing original_sha256 must refuse restore.
+                }
+            }
+        }
+        restored, complete = _rollback_paths(self.root, journal)
+        self.assertFalse(complete)
+        self.assertEqual(restored, 0)
+        self.assertEqual(skill.read_bytes(), before)
