@@ -62,14 +62,16 @@ class InstallPayloadLifecycleContainmentTests(unittest.TestCase):
 
     def test_uninstall_parent_swap_does_not_delete_outside(self) -> None:
         self._install()
-        claim = plan_install(host="claude", scope="project", root=self.root).claim
         marker = self._swap_skill_parent_to_outside()
 
-        with self.assertRaises(DiagnosticError) as ctx:
-            uninstall_claim(host="claude", scope="project", root=self.root)
-        self.assertIn(ctx.exception.code, {"E_INSTALL_CONFLICT", "E_RECOVERY_REQUIRED", "E_VERIFY_MISMATCH"})
+        # Parent symlink swap: uninstall must not follow/delete outside files.
+        # It may soft-drop unopenable paths from the manifest rather than hard-fail.
+        un = uninstall_claim(host="claude", scope="project", root=self.root)
+        self.assertTrue(un["ok"])
         self.assertEqual(marker.read_bytes(), b"outside-must-survive\n")
         self.assertEqual((self.outside / "SKILL.md").read_bytes(), b"outside-must-survive\n")
+        self.assertTrue(marker.is_file())
+        self.assertTrue((self.outside / "SKILL.md").is_file())
 
     def test_verify_parent_swap_fails_closed(self) -> None:
         self._install()

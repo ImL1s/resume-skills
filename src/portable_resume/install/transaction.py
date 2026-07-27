@@ -511,6 +511,24 @@ def _atomic_write_support_file(root: str, name: str, data: bytes) -> None:
             finally:
                 os.close(fd)
             try:
+                existing = os.lstat(name, dir_fd=support_fd)
+            except FileNotFoundError:
+                existing = None
+            except OSError as error:
+                try:
+                    os.unlink(tmp_name, dir_fd=support_fd)
+                except OSError:
+                    pass
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            if existing is not None and (
+                stat_mod.S_ISLNK(existing.st_mode) or not stat_mod.S_ISREG(existing.st_mode)
+            ):
+                try:
+                    os.unlink(tmp_name, dir_fd=support_fd)
+                except OSError:
+                    pass
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            try:
                 os.replace(tmp_name, name, src_dir_fd=support_fd, dst_dir_fd=support_fd)
             except OSError as error:
                 try:
@@ -1282,6 +1300,7 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                         st = os.fstat(src_fd)
                         if not stat_mod.S_ISREG(st.st_mode):
                             raise DiagnosticError("E_INSTALL_CONFLICT")
+                        snap_mode = stat_mod.S_IMODE(st.st_mode)
                         chunks: list[bytes] = []
                         while True:
                             chunk = os.read(src_fd, 1024 * 1024)
@@ -1296,7 +1315,7 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                         os.close(src_parent_fd)
                 payload_digest = sha256_bytes(body)
                 rollback_rel = f".rollback/{safe}"
-                _materialize_bytes_under_fd(stage_fd, rollback_rel, body, mode=0o644)
+                _materialize_bytes_under_fd(stage_fd, rollback_rel, body, mode=snap_mode)
                 target = os.path.join(stage_dir, ".rollback", safe)
                 journal["paths"][safe]["existed"] = True
                 journal["paths"][safe]["rollback_backup"] = target
@@ -1441,9 +1460,16 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
             )
             journal["state"] = "complete"
             _write_journal(root, journal)
-            # cleanup stage and completed journal — never ambient-fallback delete
-            _delete_authorized_support_subtree(root, stage_dir, role="stage")
-            _unlink_support_control_file(root, JOURNAL_NAME)
+            # After the new manifest is published, never payload-rollback on cleanup
+            # failure: leave the complete journal for recover_root instead.
+            try:
+                _delete_authorized_support_subtree(root, stage_dir, role="stage")
+            except DiagnosticError:
+                pass
+            try:
+                _unlink_support_control_file(root, JOURNAL_NAME)
+            except DiagnosticError:
+                pass
             result = {"ok": True, "dry_run": False, "plan": plan.to_dict(), "generation": plan.generation}
             if orphan_removed:
                 result["orphan_removed"] = orphan_removed
@@ -1452,7 +1478,8 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
             return result
         except Exception:
             if "journal" in locals() and isinstance(journal, dict):
-                _attempt_rollback(root, journal)
+                if journal.get("state") != "complete":
+                    _attempt_rollback(root, journal)
             raise
         finally:
             if stage_fd is not None:
@@ -1954,6 +1981,9 @@ def _rollback_paths(root: str, journal: dict[str, Any]) -> tuple[int, bool]:
 
 
 def _attempt_rollback(root: str, journal: dict[str, Any]) -> None:
+    if journal.get("state") == "complete":
+        # Manifest already published; do not undo payload under a new generation.
+        return
     journal["state"] = "rollback"
     try:
         _write_journal(root, journal)
@@ -2131,13 +2161,29 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
                     except DiagnosticError as error:
                         raise DiagnosticError("E_INSTALL_CONFLICT") from error
                 else:
-                    # Parent-swap / missing / drift: do not ambient-delete; retain drift when file
-                    # cannot be proven under the pinned root, but surface symlink parents as conflict.
+                    # Parent-swap / missing / drift: never ambient-delete.
+                    # Missing parents/files count as already removed. Existing non-regular
+                    # leaf is a conflict. Unopenable parents (symlink swap / missing) drop
+                    # the manifest entry without deleting outside.
                     try:
-                        _open_parent_under_root_fd(root_fd, path, create=False)
+                        parent_fd, basename, owns_parent = _open_parent_under_root_fd(
+                            root_fd, path, create=False
+                        )
+                    except DiagnosticError:
+                        del manifest.files[path]
+                        continue
+                    try:
+                        try:
+                            st = os.lstat(basename, dir_fd=parent_fd)
+                        except FileNotFoundError:
+                            del manifest.files[path]
+                            continue
+                        if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISREG(st.st_mode):
+                            raise DiagnosticError("E_INSTALL_CONFLICT")
                         retained_drift.append(path)
-                    except DiagnosticError as error:
-                        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                    finally:
+                        if owns_parent:
+                            os.close(parent_fd)
                 del manifest.files[path]
         finally:
             os.close(root_fd)
