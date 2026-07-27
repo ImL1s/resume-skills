@@ -25,7 +25,7 @@ from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
 from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
 from ..sanitize import sanitize_turn_record
-from ..snapshot import stable_read_bytes
+from ..snapshot import stable_read_bytes, stable_scan_lines
 
 FORMAT_ID = "kimi-code-wire-jsonl-v1"
 LEGACY_FORMAT_ID = "kimi-legacy-context-jsonl-v1"
@@ -300,11 +300,13 @@ class KimiAdapter:
     def _roots(self, query: Query) -> tuple[tuple[str, str], ...]:
         explicit = self._explicit_root(query)
         if explicit is not None:
-            current = os.path.isfile(os.path.join(explicit, "session_index.jsonl"))
-            legacy = os.path.isfile(os.path.join(explicit, "kimi.json"))
-            if current:
+            has_index = os.path.isfile(os.path.join(explicit, "session_index.jsonl"))
+            has_legacy = os.path.isfile(os.path.join(explicit, "kimi.json"))
+            has_sessions = os.path.isdir(os.path.join(explicit, "sessions"))
+            # Current store may lack session_index.jsonl; FS fallback still applies.
+            if has_index or (has_sessions and not has_legacy):
                 return ((explicit, FORMAT_ID),)
-            if legacy:
+            if has_legacy:
                 return ((explicit, LEGACY_FORMAT_ID),)
             return ()
         current_path = os.environ.get("KIMI_CODE_HOME") or os.path.expanduser("~/.kimi-code")
@@ -367,9 +369,7 @@ class KimiAdapter:
             session_id = record["session_id"]
             state, state_warnings = self._read_state(os.path.dirname(path), root, budget)
             meta = _metadata(state, fallback_cwd=record.get("cwd"))
-            _, transcript_warnings, transcript_times = self._parse_transcript(
-                path, root, query, budget, include_turns=False
-            )
+            file_time = self._transcript_mtime(path)
             summary = SessionSummary(
                 source=self.key,
                 session_id=session_id,
@@ -377,11 +377,11 @@ class KimiAdapter:
                 title=meta["title"] or record.get("title"),
                 cwd=meta["cwd"],
                 branch=meta["branch"],
-                created_at=meta["created_at"] or transcript_times[0],
-                updated_at=meta["updated_at"] or transcript_times[1],
+                created_at=meta["created_at"] or file_time,
+                updated_at=meta["updated_at"] or file_time,
                 source_repo_root=meta["source_repo_root"],
                 provider=provider,
-                warnings=tuple(dict.fromkeys((*discovery_warnings, *state_warnings, *transcript_warnings))),
+                warnings=tuple(dict.fromkeys((*discovery_warnings, *state_warnings))),
             )
             if _eligible(summary, query):
                 output.append(summary)
@@ -400,21 +400,35 @@ class KimiAdapter:
         path = canonicalize_cwd(ref.source_path)
         if _session_id_from_transcript(path, ref.provider) != ref.session_id:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=ref.provider)
-        records, discovery_warnings = (
-            self._current_records(root, budget) if ref.provider == FORMAT_ID else self._legacy_records(root, budget)
-        )
-        match = next(
-            (
-                record
-                for record in records
-                if record["session_id"] == ref.session_id and canonicalize_cwd(record["path"]) == path
-            ),
-            None,
-        )
-        if match is None:
-            raise DiagnosticError("E_NO_MATCH", source=self.key, provider=ref.provider)
+        # Exact path is authoritative. Do not share the show ReadBudget with
+        # optional index/FS discovery (would starve transcript_records /
+        # source_read_bytes). Hints use a separate best-effort budget only.
+        discovery_warnings: list[str] = []
+        match: dict[str, Any] | None = None
+        try:
+            hint_budget = ReadBudget()
+            records, discovery_warnings = (
+                self._current_records(root, hint_budget)
+                if ref.provider == FORMAT_ID
+                else self._legacy_records(root, hint_budget)
+            )
+            match = next(
+                (
+                    record
+                    for record in records
+                    if record["session_id"] == ref.session_id and canonicalize_cwd(record["path"]) == path
+                ),
+                None,
+            )
+            if match is None:
+                discovery_warnings.append("W_STALE_INDEX")
+        except DiagnosticError:
+            # Corrupt/busy/unsafe/oversized discovery must not block exact show.
+            discovery_warnings.append("W_STALE_INDEX")
+            match = None
+        self._require_regular_transcript(path, root)
         state, state_warnings = self._read_state(os.path.dirname(path), root, budget)
-        meta = _metadata(state, fallback_cwd=match.get("cwd"))
+        meta = _metadata(state, fallback_cwd=None if match is None else match.get("cwd"))
         turns, transcript_warnings, transcript_times = self._parse_transcript(
             path, root, query, budget, include_turns=True
         )
@@ -422,7 +436,7 @@ class KimiAdapter:
             source=self.key,
             session_id=ref.session_id,
             source_path=path,
-            title=meta["title"] or match.get("title"),
+            title=meta["title"] or (None if match is None else match.get("title")),
             cwd=meta["cwd"],
             branch=meta["branch"],
             created_at=meta["created_at"] or transcript_times[0],
@@ -435,12 +449,56 @@ class KimiAdapter:
 
     def _current_records(self, root: str, budget: ReadBudget | None) -> tuple[list[dict[str, Any]], list[str]]:
         index = os.path.join(root, "session_index.jsonl")
-        if not os.path.isfile(index):
-            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
-        entries, warnings, _ = self._read_jsonl(index, root, budget, metadata=True)
+        warnings: list[str] = []
+        output_by_id: dict[str, dict[str, Any]] = {}
+        if os.path.isfile(index):
+            try:
+                reduced, index_warnings = self._reduce_current_index(index, root, budget)
+                warnings.extend(index_warnings)
+                for record in reduced:
+                    output_by_id[record["session_id"]] = record
+            except DiagnosticError:
+                # Index is an untrusted hint: fall through to FS recovery.
+                warnings.append("W_STALE_INDEX")
+        # Union read-only FS discovery so unindexed / partial-index sessions surface.
+        had_index = os.path.isfile(index)
+        try:
+            fallback, fallback_warnings = self._fs_fallback_current(root, budget)
+            warnings.extend(fallback_warnings)
+            for record in fallback:
+                if record["session_id"] not in output_by_id:
+                    output_by_id[record["session_id"]] = record
+                    warnings.append("W_STALE_INDEX")
+            if not had_index and output_by_id:
+                warnings.append("W_STALE_INDEX")
+        except DiagnosticError as error:
+            if not output_by_id:
+                if error.code == "E_UNSAFE_PATH":
+                    raise
+                if had_index:
+                    return [], list(dict.fromkeys(warnings + ["W_STALE_INDEX"]))
+                raise
+            warnings.append("W_STALE_INDEX")
+        if output_by_id:
+            return list(output_by_id.values()), list(dict.fromkeys(warnings))
+        if had_index:
+            return [], list(dict.fromkeys(warnings + ["W_STALE_INDEX"]))
+        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+
+    def _reduce_current_index(
+        self, index: str, root: str, budget: ReadBudget | None
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         sessions_root = os.path.join(root, "sessions")
         output_by_id: dict[str, dict[str, Any]] = {}
-        for value in entries:
+        warnings: list[str] = []
+        # Index events are physical history lines (≤ transcript_records on the
+        # discovery budget). Show uses a separate ReadBudget for the wire.
+        for value, line_warnings, _terminated in self._iter_jsonl(
+            index, root, budget, charge_transcript=True
+        ):
+            warnings.extend(line_warnings)
+            if value is None:
+                continue
             if not isinstance(value, Mapping):
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
             session_id = _identifier(value.get("sessionId"), provider=FORMAT_ID)
@@ -459,7 +517,14 @@ class KimiAdapter:
             canonical_dir = canonicalize_cwd(session_dir)
             if not is_within(canonical_dir, sessions_root) or os.path.basename(canonical_dir) != session_id:
                 continue
-            transcript = self._choose_transcript([canonical_dir], root, current=True)
+            try:
+                transcript = self._choose_transcript([canonical_dir], root, current=True)
+            except DiagnosticError as error:
+                if error.code == "E_UNSAFE_PATH":
+                    warnings.append("W_MISSING_BLOB")
+                    output_by_id.pop(session_id, None)
+                    continue
+                raise
             if transcript is None:
                 warnings.append("W_MISSING_BLOB")
                 output_by_id.pop(session_id, None)
@@ -470,6 +535,52 @@ class KimiAdapter:
                 "cwd": canonicalize_cwd(cwd) if os.path.isabs(cwd) else None,
             }
         return list(output_by_id.values()), list(dict.fromkeys(warnings))
+
+    def _fs_fallback_current(
+        self, root: str, budget: ReadBudget | None
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        sessions_root = os.path.join(root, "sessions")
+        output: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        for bucket in self._safe_entries(sessions_root, allow_missing=True):
+            if not bucket.is_dir(follow_symlinks=False):
+                continue
+            try:
+                sessions = self._safe_entries(bucket.path)
+            except DiagnosticError as error:
+                if error.code == "E_UNSAFE_PATH":
+                    warnings.append("W_STALE_INDEX")
+                    continue
+                raise
+            for session in sessions:
+                if budget is not None:
+                    budget.consume_records()
+                if not session.is_dir(follow_symlinks=False):
+                    continue
+                try:
+                    session_id = _identifier(session.name, provider=FORMAT_ID)
+                except DiagnosticError:
+                    continue
+                if os.path.basename(session.path) != session_id:
+                    continue
+                try:
+                    transcript = self._choose_transcript([session.path], root, current=True)
+                except DiagnosticError as error:
+                    if error.code == "E_UNSAFE_PATH":
+                        warnings.append("W_MISSING_BLOB")
+                        continue
+                    raise
+                if transcript is None:
+                    continue
+                output.append(
+                    {
+                        "session_id": session_id,
+                        "path": transcript,
+                        "cwd": None,
+                        "title": None,
+                    }
+                )
+        return output, list(dict.fromkeys(warnings))
 
     def _legacy_records(self, root: str, budget: ReadBudget | None) -> tuple[list[dict[str, Any]], list[str]]:
         metadata_path = os.path.join(root, "kimi.json")
@@ -632,43 +743,72 @@ class KimiAdapter:
         path = os.path.join(session_dir, "state.json")
         if not os.path.exists(path):
             return {}, ["W_MISSING_BLOB"]
-        read = stable_read_bytes(path, root=root, budget=budget, hook=self._read_hook)
+        read = stable_read_bytes(
+            path,
+            root=root,
+            max_bytes=DEFAULT_BOUNDS.record_bytes,
+            budget=budget,
+            hook=self._read_hook,
+        )
         value = _loads(read.data)
         if not isinstance(value, Mapping):
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key)
         return value, []
 
-    def _read_jsonl(
+    def _transcript_mtime(self, path: str) -> str | None:
+        try:
+            mtime_ns = os.lstat(path).st_mtime_ns
+        except OSError:
+            return None
+        return (
+            datetime.fromtimestamp(mtime_ns / 1_000_000_000, timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
+
+    def _require_regular_transcript(self, path: str, root: str) -> None:
+        if not is_within(path, root):
+            raise DiagnosticError.unsafe_path()
+        try:
+            mode = os.lstat(path).st_mode
+        except OSError as error:
+            raise DiagnosticError.source_busy() from error
+        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+            raise DiagnosticError.unsafe_path()
+
+    def _iter_jsonl(
         self,
         path: str,
         root: str,
         budget: ReadBudget | None,
         *,
-        metadata: bool,
-    ) -> tuple[list[Any], list[str], str | None]:
-        read = stable_read_bytes(path, root=root, budget=budget, hook=self._read_hook)
-        lines = read.data.split(b"\n")
-        trailing_fragment = bool(lines and lines[-1])
-        nonempty = [(index, raw.strip()) for index, raw in enumerate(lines) if raw.strip()]
-        output: list[Any] = []
-        warnings: list[str] = []
-        for position, (line_index, raw) in enumerate(nonempty):
+        charge_transcript: bool,
+    ) -> Iterable[tuple[Any, list[str], bool]]:
+        """Yield decoded JSONL records under aggregate source_read_bytes.
+
+        Per-line size uses record_bytes via stable_scan_lines. Physical line
+        counts charge transcript_records when charge_transcript is True, else
+        scanned_records. Does not retain the raw file body.
+        """
+
+        for line in stable_scan_lines(
+            path,
+            root=root,
+            budget=budget,
+            charge_transcript=charge_transcript,
+            hook=self._read_hook,
+        ):
+            text = line.text.strip()
+            if not text:
+                continue
             try:
-                value = _loads(raw)
+                value = _loads(text.encode("utf-8"))
             except DiagnosticError:
-                tail = position == len(nonempty) - 1 and trailing_fragment and line_index == len(lines) - 1
-                if tail:
-                    warnings.append("W_PARTIAL_TAIL")
+                if not line.terminated:
+                    yield None, ["W_PARTIAL_TAIL"], False
                     continue
                 raise
-            if budget is not None:
-                if metadata:
-                    budget.consume_records()
-                else:
-                    budget.consume_transcript_records()
-            output.append(value)
-        file_time = datetime.fromtimestamp(read.fingerprint.mtime_ns / 1_000_000_000, timezone.utc)
-        return output, warnings, file_time.isoformat(timespec="seconds").replace("+00:00", "Z")
+            yield value, [], line.terminated
 
     def _parse_transcript(
         self,
@@ -679,12 +819,18 @@ class KimiAdapter:
         *,
         include_turns: bool,
     ) -> tuple[list[Turn], list[str], tuple[str | None, str | None]]:
-        records, warnings, file_time = self._read_jsonl(path, root, budget, metadata=False)
         turns: list[Turn] = []
         pending_turns: list[tuple[dict[str, Any], str | None]] = []
         timestamps: list[str] = []
+        warnings: list[str] = []
         recognized = 0
-        for value in records:
+        file_time = self._transcript_mtime(path)
+        for value, line_warnings, _terminated in self._iter_jsonl(
+            path, root, budget, charge_transcript=True
+        ):
+            warnings.extend(line_warnings)
+            if value is None:
+                continue
             if not isinstance(value, Mapping):
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key)
             timestamp = _timestamp(_first(value, ("timestamp", "createdAt", "created_at", "time")))

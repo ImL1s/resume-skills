@@ -182,6 +182,8 @@ class KimiAdapterTests(unittest.TestCase):
             transcript.write_bytes(transcript.read_bytes() + b'{"message":')
             adapter = KimiAdapter(root=str(root))
             values = adapter.list(query(root, CURRENT_ID), ReadBudget())
+            # list is metadata-only and must not fail on a partial terminal wire line
+            self.assertEqual([item.session_id for item in values], [CURRENT_ID])
             shown = adapter.show(resolved(values, CURRENT_ID), query(root, CURRENT_ID), ReadBudget())
             self.assertIn("W_PARTIAL_TAIL", shown.warnings)
 
@@ -194,8 +196,10 @@ class KimiAdapterTests(unittest.TestCase):
                 root = materialize_current(Path(temporary) / "current")
                 transcript = next(root.rglob("wire.jsonl"))
                 transcript.write_bytes(corruption + transcript.read_bytes())
+                adapter = KimiAdapter(root=str(root))
+                values = adapter.list(query(root, CURRENT_ID), ReadBudget())
                 with self.assertRaises(DiagnosticError) as caught:
-                    KimiAdapter(root=str(root)).list(query(root, CURRENT_ID), ReadBudget())
+                    adapter.show(resolved(values, CURRENT_ID), query(root, CURRENT_ID), ReadBudget())
                 self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
 
     def test_current_tool_result_is_recovered_without_tool_call_replay(self) -> None:
@@ -269,10 +273,23 @@ class KimiAdapterTests(unittest.TestCase):
             transcript.unlink()
             transcript.symlink_to(target)
             with mock.patch("subprocess.run") as run:
+                # Discovery skips unsafe index/FS candidates rather than aborting the store.
                 with self.assertRaises(DiagnosticError) as caught:
                     KimiAdapter(root=str(root)).list(query(root, CURRENT_ID), ReadBudget())
-            self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+            self.assertIn(caught.exception.code, {"E_UNSUPPORTED_FORMAT", "E_NO_MATCH", "E_CAPABILITY_UNAVAILABLE"})
             run.assert_not_called()
+            # Exact show still hard-rejects a symlink path (do not resolve through it).
+            with self.assertRaises(DiagnosticError) as show_caught:
+                KimiAdapter(root=str(root)).show(
+                    ResolvedRef(
+                        session_id=CURRENT_ID,
+                        source_path=str(transcript),
+                        provider=FORMAT_ID,
+                    ),
+                    query(root, CURRENT_ID),
+                    ReadBudget(),
+                )
+            self.assertEqual(show_caught.exception.code, "E_UNSAFE_PATH")
 
     def test_changing_source_exhausts_stable_read(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -284,9 +301,238 @@ class KimiAdapterTests(unittest.TestCase):
                         handle.write(b" ")
 
             adapter = KimiAdapter(root=str(root), read_hook=race)
+            values = adapter.list(query(root, CURRENT_ID), ReadBudget())
             with self.assertRaises(DiagnosticError) as caught:
-                adapter.list(query(root, CURRENT_ID), ReadBudget())
+                adapter.show(resolved(values, CURRENT_ID), query(root, CURRENT_ID), ReadBudget())
             self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+
+    def test_append_only_index_reducer_survives_many_updates_and_delete_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            session_dir = next((root / "sessions").glob("*/*"))
+            index = root / "session_index.jsonl"
+            lines: list[str] = []
+            for i in range(10_000):
+                lines.append(
+                    json.dumps(
+                        {
+                            "sessionId": CURRENT_ID,
+                            "sessionDir": str(session_dir.resolve()),
+                            "workDir": CWD,
+                            "seq": i,
+                            "synthetic": True,
+                        }
+                    )
+                )
+            other = "33333333-3333-4333-8333-333333333333"
+            lines.append(
+                json.dumps(
+                    {
+                        "sessionId": other,
+                        "sessionDir": str((session_dir.parent / other).resolve()),
+                        "workDir": CWD,
+                        "synthetic": True,
+                    }
+                )
+            )
+            lines.append(json.dumps({"sessionId": other, "deleted": True, "synthetic": True}))
+            lines.append(
+                json.dumps(
+                    {
+                        "sessionId": CURRENT_ID,
+                        "sessionDir": str(session_dir.resolve()),
+                        "workDir": CWD,
+                        "final": True,
+                        "synthetic": True,
+                    }
+                )
+            )
+            index.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            before = tree_snapshot(root)
+            adapter = KimiAdapter(root=str(root))
+            values = adapter.list(query(root, within_min=0), ReadBudget())
+            self.assertEqual([item.session_id for item in values], [CURRENT_ID])
+            self.assertEqual(tree_snapshot(root), before)
+
+    def test_large_wire_list_is_metadata_only_and_show_uses_source_read_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            transcript = next(root.rglob("wire.jsonl"))
+            # ~17 MiB of small synthetic lines: under source_read_bytes, over record_bytes.
+            filler = (
+                json.dumps(
+                    {
+                        "type": "context.append_loop_event",
+                        "event": {
+                            "type": "content.part",
+                            "uuid": "p",
+                            "turnId": "t",
+                            "step": 0,
+                            "stepUuid": "s",
+                            "part": {"type": "text", "text": "x" * 200},
+                        },
+                        "time": 1784851400,
+                        "synthetic": True,
+                    }
+                )
+                + "\n"
+            )
+            target = 17 * 1024 * 1024
+            with transcript.open("ab") as handle:
+                written = 0
+                while written < target:
+                    handle.write(filler.encode("utf-8"))
+                    written += len(filler)
+            self.assertGreater(transcript.stat().st_size, 16 * 1024 * 1024)
+            before = tree_snapshot(root)
+
+            wire_opens = {"count": 0}
+
+            def count_wire(phase: str, _attempt: int, path: str) -> None:
+                if phase == "before-read" and path.endswith("wire.jsonl"):
+                    wire_opens["count"] += 1
+
+            adapter = KimiAdapter(root=str(root), read_hook=count_wire)
+            values = adapter.list(query(root, CURRENT_ID, within_min=0), ReadBudget())
+            self.assertEqual([item.session_id for item in values], [CURRENT_ID])
+            self.assertEqual(wire_opens["count"], 0, "list must not open wire content")
+
+            shown = adapter.show(resolved(values, CURRENT_ID), query(root, CURRENT_ID), ReadBudget())
+            self.assertGreaterEqual(wire_opens["count"], 1)
+            self.assertEqual(shown.turns[0].content, "Current Kimi prompt")
+            self.assertIn("Current Kimi", " ".join(turn.content for turn in shown.turns if turn.role == "assistant"))
+            self.assertEqual(tree_snapshot(root), before)
+
+    def test_exact_path_show_with_missing_index_warns_stale_and_fs_fallback_lists(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            transcript = next(root.rglob("wire.jsonl"))
+            (root / "session_index.jsonl").unlink()
+            before = tree_snapshot(root)
+            adapter = KimiAdapter(root=str(root))
+            values = adapter.list(query(root, within_min=0), ReadBudget())
+            self.assertEqual([item.session_id for item in values], [CURRENT_ID])
+            self.assertIn("W_STALE_INDEX", values[0].warnings)
+            shown = adapter.show(
+                ResolvedRef(
+                    session_id=CURRENT_ID,
+                    source_path=str(transcript.resolve()),
+                    provider=FORMAT_ID,
+                ),
+                query(root, CURRENT_ID),
+                ReadBudget(),
+            )
+            self.assertIn("W_STALE_INDEX", shown.warnings)
+            self.assertEqual(shown.turns[0].content, "Current Kimi prompt")
+            self.assertEqual(tree_snapshot(root), before)
+
+    def test_exact_show_survives_corrupt_index_and_separate_discovery_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            transcript = next(root.rglob("wire.jsonl"))
+            index = root / "session_index.jsonl"
+            # Poison index: interior corrupt line would fail reduce if hard-gated.
+            index.write_text(
+                index.read_text(encoding="utf-8")
+                + '{"sessionId":"bad","sessionDir":"/x","workDir":"/y"\n'
+                + json.dumps({"not": "a session"})
+                + "\n",
+                encoding="utf-8",
+            )
+            # Large-but-valid index history must not share show transcript budget.
+            session_dir = next((root / "sessions").glob("*/*"))
+            with index.open("a", encoding="utf-8") as handle:
+                for i in range(8_000):
+                    handle.write(
+                        json.dumps(
+                            {
+                                "sessionId": CURRENT_ID,
+                                "sessionDir": str(session_dir.resolve()),
+                                "workDir": CWD,
+                                "seq": i,
+                                "synthetic": True,
+                            }
+                        )
+                        + "\n"
+                    )
+            filler = json.dumps({"type": "metadata", "synthetic": True, "n": 0}) + "\n"
+            with transcript.open("ab") as handle:
+                for i in range(3_000):
+                    handle.write(filler.replace('"n": 0', f'"n": {i}').encode("utf-8"))
+            before = tree_snapshot(root)
+            adapter = KimiAdapter(root=str(root))
+            shown = adapter.show(
+                ResolvedRef(
+                    session_id=CURRENT_ID,
+                    source_path=str(transcript.resolve()),
+                    provider=FORMAT_ID,
+                ),
+                query(root, CURRENT_ID),
+                ReadBudget(),
+            )
+            self.assertIn("W_STALE_INDEX", shown.warnings)
+            self.assertEqual(shown.turns[0].content, "Current Kimi prompt")
+            self.assertEqual(tree_snapshot(root), before)
+
+    def test_partial_index_merges_unindexed_session_from_fs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            sessions = root / "sessions"
+            bucket = next(sessions.iterdir())
+            extra_id = "44444444-4444-4444-8444-444444444444"
+            extra_dir = bucket / extra_id
+            (extra_dir / "agents" / "main").mkdir(parents=True)
+            (extra_dir / "agents" / "main" / "wire.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "context.append_message",
+                        "message": {"role": "user", "content": "extra only on disk"},
+                        "time": 1784851600,
+                        "synthetic": True,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (extra_dir / "state.json").write_text(
+                json.dumps({"synthetic": True, "workDir": CWD, "customTitle": "extra"}),
+                encoding="utf-8",
+            )
+            # Index still only mentions CURRENT_ID (partial / incomplete index).
+            adapter = KimiAdapter(root=str(root))
+            values = adapter.list(query(root, within_min=0), ReadBudget())
+            ids = {item.session_id for item in values}
+            self.assertIn(CURRENT_ID, ids)
+            self.assertIn(extra_id, ids)
+            extra = next(item for item in values if item.session_id == extra_id)
+            self.assertIn("W_STALE_INDEX", extra.warnings)
+
+    def test_transcript_line_budget_and_oversize_line_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            transcript = next(root.rglob("wire.jsonl"))
+            base = transcript.read_bytes()
+            adapter = KimiAdapter(root=str(root))
+            values = adapter.list(query(root, CURRENT_ID), ReadBudget())
+            ref = resolved(values, CURRENT_ID)
+
+            # 50_001 physical transcript lines → explicit limit (no partial Session).
+            line = b'{"type":"metadata","synthetic":true}\n'
+            with transcript.open("wb") as handle:
+                handle.write(base)
+                for _ in range(50_001):
+                    handle.write(line)
+            with self.assertRaises(DiagnosticError) as too_many:
+                adapter.show(ref, query(root, CURRENT_ID), ReadBudget())
+            self.assertEqual(too_many.exception.code, "E_LIMIT_EXCEEDED")
+
+            # Single line larger than record_bytes.
+            with transcript.open("wb") as handle:
+                handle.write(base)
+                handle.write(b'{"type":"metadata","blob":"' + (b"a" * (16 * 1024 * 1024 + 8)) + b'"}\n')
+            with self.assertRaises(DiagnosticError) as oversize:
+                adapter.show(ref, query(root, CURRENT_ID), ReadBudget())
+            self.assertEqual(oversize.exception.code, "E_LIMIT_EXCEEDED")
 
 
 if __name__ == "__main__":
