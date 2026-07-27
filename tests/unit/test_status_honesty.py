@@ -73,14 +73,26 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertIn("v0.3.4", latest)
 
         status = Path("docs/STATUS.md").read_text(encoding="utf-8")
-        headless = next(
+        headless_rows = [
             line
             for line in status.splitlines()
-            if "| Host-native headless Skill activation |" in line
+            if line.startswith("| Host-native headless")
+        ]
+        self.assertEqual(len(headless_rows), 2)
+        for row in headless_rows:
+            self.assertIn("v0.3.2", row)
+            self.assertIn("v0.3.4", row)
+            self.assertIn("not-run", row)
+
+        host_ui = Path("docs/host-ui-smoke.md").read_text(encoding="utf-8")
+        host_ui_headless = next(
+            line
+            for line in host_ui.splitlines()
+            if "| Host-native headless activation |" in line
         )
-        self.assertIn("v0.3.2", headless)
-        self.assertIn("v0.3.4", headless)
-        self.assertIn("not-run", headless)
+        self.assertIn("v0.3.2", host_ui_headless)
+        self.assertIn("v0.3.4", host_ui_headless)
+        self.assertIn("not-run", host_ui_headless)
 
     def test_historical_evidence_heading_is_version_scoped(self) -> None:
         evidence = Path("docs/evidence-summary.md").read_text(encoding="utf-8")

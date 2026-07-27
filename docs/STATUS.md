@@ -139,7 +139,7 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 | `v0.3.2` PyPI publication | pass | [portable-resume 0.3.2](https://pypi.org/project/portable-resume/0.3.2/) |
 | `v0.3.1` dual-OS release | pass | [Actions run 30089194956](https://github.com/ImL1s/resume-skills/actions/runs/30089194956), commit `d50a1e33db2824830dabc469b7d566031aa45697` |
 | `v0.3.1` PyPI publication | pass | [portable-resume 0.3.1](https://pypi.org/project/portable-resume/0.3.1/) |
-| Host-native headless activation | 8/8 tested CLI surfaces pass; Pi not-run | rows in `docs/host-ui-smoke.md` |
+| Host-native headless activation | 8/8 tested CLI surfaces pass in v0.3.2-era evidence; fresh v0.3.4 host activation and Pi native activation not-run | rows in `docs/host-ui-smoke.md` |
 | Native plugin/extension install | 7/7 pass | exact 0.3.2 rows in `docs/host-ui-smoke.md` |
 | Public marketplace catalog | v0.3.4 published | [marketplace release v0.3.4](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.4) and CI in `docs/evidence-summary.md` |
 | Public marketplace host install | 6/6 compatible hosts pass on v0.3.2; v0.3.4 not-run | install rows and `docs/evidence/public-marketplace-v0.3.2.json` |
