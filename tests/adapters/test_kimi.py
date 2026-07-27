@@ -86,11 +86,30 @@ class KimiAdapterTests(unittest.TestCase):
             current = query(root, CURRENT_ID)
             summaries = adapter.list(current, ReadBudget())
             expected = summaries[0]
+            transcript = next(root.rglob("wire.jsonl"))
             next(root.rglob("state.json")).unlink()
             shown = adapter.show(resolved(summaries, CURRENT_ID), current, ReadBudget())
             self.assertEqual(shown.cwd, expected.cwd)
             self.assertEqual(shown.title, expected.title)
             self.assertIn("W_MISSING_BLOB", shown.warnings)
+
+            stdout, stderr = io.StringIO(), io.StringIO()
+            code = run(
+                [
+                    "kimi",
+                    "show",
+                    str(transcript),
+                    "--cwd",
+                    CWD,
+                    "--source-root",
+                    str(root),
+                    "--json",
+                ],
+                stdout=stdout,
+                stderr=stderr,
+            )
+            self.assertEqual(code, 0, stderr.getvalue())
+            self.assertEqual(json.loads(stdout.getvalue())["sessions"][0]["cwd"], CWD)
 
     def test_legacy_metadata_context_and_wire_fallback(self) -> None:
         root = fixture_root("s-kim-02")
@@ -139,6 +158,32 @@ class KimiAdapterTests(unittest.TestCase):
             self.assertEqual([item.session_id for item in by_path], [CURRENT_ID])
             other = Query(source="kimi", cwd="/different", source_root=str(root), within_min=0)
             self.assertEqual(adapter.list(other, ReadBudget()), [])
+
+            letter_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+            session_dir = next((root / "sessions").glob("*/*"))
+            renamed = session_dir.with_name(letter_id)
+            session_dir.rename(renamed)
+            (root / "session_index.jsonl").write_text(
+                json.dumps(
+                    {
+                        "sessionId": letter_id,
+                        "sessionDir": str(renamed.resolve()),
+                        "workDir": CWD,
+                        "synthetic": True,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            uppercase = Query(
+                source="kimi",
+                ref=letter_id.upper(),
+                cwd="/different",
+                source_root=str(root),
+                within_min=0,
+            )
+            values = KimiAdapter(root=str(root)).list(uppercase, ReadBudget())
+            self.assertEqual([item.session_id for item in values], [letter_id])
 
     def test_current_index_requires_absolute_contained_session_dir_and_replays_updates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -191,6 +236,15 @@ class KimiAdapterTests(unittest.TestCase):
             values = adapter.list(Query(source="kimi", cwd=CWD, within_min=0), ReadBudget())
             self.assertEqual(values[0].provider, LEGACY_FORMAT_ID)
 
+            stdout, stderr = io.StringIO(), io.StringIO()
+            code = run(
+                ["kimi", "show", LEGACY_ID, "--cwd", CWD, "--json"],
+                stdout=stdout,
+                stderr=stderr,
+            )
+            self.assertEqual(code, 0, stderr.getvalue())
+            self.assertEqual(json.loads(stdout.getvalue())["sessions"][0]["session_id"], LEGACY_ID)
+
     def test_partial_tail_only_is_warned_but_interior_and_duplicate_corruption_fail(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = materialize_current(Path(temporary) / "current")
@@ -227,6 +281,16 @@ class KimiAdapterTests(unittest.TestCase):
             values = adapter.list(query(root, CURRENT_ID), ReadBudget())
             shown = adapter.show(resolved(values, CURRENT_ID), query(root, CURRENT_ID), ReadBudget())
             self.assertIn("W_PARTIAL_TAIL", shown.warnings)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            transcript = next(root.rglob("wire.jsonl"))
+            transcript.write_bytes(transcript.read_bytes() + b'{"message":"\xff')
+            adapter = KimiAdapter(root=str(root))
+            values = adapter.list(query(root, CURRENT_ID), ReadBudget())
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.show(resolved(values, CURRENT_ID), query(root, CURRENT_ID), ReadBudget())
+            self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
 
     def test_nonfinite_depth_and_container_overflow_fail_closed(self) -> None:
         nested = b'{"role":"user","content":' + (b"[" * 34) + b'"deep"' + (b"]" * 34) + b"}\n"
@@ -454,7 +518,8 @@ class KimiAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = materialize_current(Path(temporary) / "current")
             transcript = next(root.rglob("wire.jsonl"))
-            (root / "session_index.jsonl").unlink()
+            index = root / "session_index.jsonl"
+            index.unlink()
             before = tree_snapshot(root)
             adapter = KimiAdapter(root=str(root))
             values = adapter.list(query(root, within_min=0), ReadBudget())
@@ -473,6 +538,16 @@ class KimiAdapterTests(unittest.TestCase):
             self.assertEqual(shown.turns[0].content, "Current Kimi prompt")
             self.assertIn("W_STALE_INDEX", shown.warnings)
             self.assertEqual(tree_snapshot(root), before)
+
+            index.write_text("", encoding="utf-8")
+            exact = adapter.list(query(root, str(transcript), within_min=0), ReadBudget())
+            self.assertIn("W_STALE_INDEX", exact[0].warnings)
+            shown = adapter.show(
+                resolved(exact, CURRENT_ID),
+                query(root, str(transcript), within_min=0),
+                ReadBudget(),
+            )
+            self.assertIn("W_STALE_INDEX", shown.warnings)
 
     def test_exact_show_rejects_wrong_current_provider_path_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -493,6 +568,36 @@ class KimiAdapterTests(unittest.TestCase):
                     ReadBudget(),
                 )
             self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "legacy"
+            shutil.copytree(fixture_root("s-kim-02"), root)
+            original = next(root.rglob("context.jsonl"))
+            wrong = root / "sessions" / "not-a-md5-hash" / LEGACY_ID / "context.jsonl"
+            wrong.parent.mkdir(parents=True)
+            wrong.write_bytes(original.read_bytes())
+            with self.assertRaises(DiagnosticError) as caught:
+                KimiAdapter(root=str(root)).list(
+                    query(root, str(wrong), within_min=0),
+                    ReadBudget(),
+                )
+            self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = materialize_current(Path(temporary) / "current")
+            (root / "session_index.jsonl").unlink()
+            session_dir = next((root / "sessions").glob("*/*"))
+            holding = root / "holding" / CURRENT_ID
+            holding.parent.mkdir()
+            session_dir.rename(holding)
+            session_dir.symlink_to(holding, target_is_directory=True)
+            records, warnings = KimiAdapter(root=str(root))._current_exact_id_records(
+                str(root.resolve()),
+                CURRENT_ID,
+                ReadBudget(),
+            )
+            self.assertEqual(records, [])
+            self.assertIn("W_STALE_INDEX", warnings)
 
     def test_reader_exact_path_bypasses_storewide_filesystem_discovery(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -579,6 +684,9 @@ class KimiAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = materialize_current(Path(temporary) / "current")
             session_dir = next((root / "sessions").glob("*/*"))
+            extra_id = "33333333-3333-4333-8333-333333333333"
+            extra_dir = session_dir.with_name(extra_id)
+            shutil.copytree(session_dir, extra_dir)
             index = root / "session_index.jsonl"
             index.write_text(
                 json.dumps(
@@ -591,16 +699,59 @@ class KimiAdapterTests(unittest.TestCase):
                 )
                 + "\n"
                 + json.dumps({"sessionId": CURRENT_ID, "deleted": True, "synthetic": True})
+                + "\n"
+                + json.dumps(
+                    {
+                        "sessionId": extra_id,
+                        "sessionDir": str(extra_dir.resolve()),
+                        "workDir": CWD,
+                        "synthetic": True,
+                    }
+                )
                 + "\n",
                 encoding="utf-8",
             )
             # Leftover on-disk session must not reappear after index tombstone.
             values = KimiAdapter(root=str(root)).list(query(root, within_min=0), ReadBudget())
-            self.assertEqual(values, [])
+            self.assertEqual([item.session_id for item in values], [extra_id])
             with index.open("a", encoding="utf-8") as handle:
                 handle.write('{"corrupt":\n')
             values = KimiAdapter(root=str(root)).list(query(root, within_min=0), ReadBudget())
+            self.assertEqual([item.session_id for item in values], [extra_id])
+
+            # Decoded-but-structurally-invalid events fail the authoritative
+            # index closed rather than being mistaken for harmless syntax.
+            with index.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"not": "a session", "synthetic": True}) + "\n")
+            values = KimiAdapter(root=str(root)).list(query(root, within_min=0), ReadBudget())
             self.assertEqual(values, [])
+
+        for kind in ("directory", "dangling-symlink"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temporary:
+                root = materialize_current(Path(temporary) / "current")
+                index = root / "session_index.jsonl"
+                index.unlink()
+                if kind == "directory":
+                    index.mkdir()
+                else:
+                    index.symlink_to(root / "missing-index")
+                stdout, stderr = io.StringIO(), io.StringIO()
+                code = run(
+                    [
+                        "kimi",
+                        "show",
+                        CURRENT_ID,
+                        "--cwd",
+                        CWD,
+                        "--source-root",
+                        str(root),
+                        "--json",
+                    ],
+                    stdout=stdout,
+                    stderr=stderr,
+                )
+                self.assertEqual(code, 3)
+                self.assertIn("E_NO_MATCH", stderr.getvalue())
 
     def test_partial_index_merges_unindexed_session_from_fs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

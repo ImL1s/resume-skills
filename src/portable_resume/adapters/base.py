@@ -28,6 +28,7 @@ class ResolvedRef:
     provider: str | None = None
     title: str | None = None
     cwd: str | None = None
+    warnings: tuple[str, ...] = ()
 
     @classmethod
     def from_summary(cls, summary: SessionSummary) -> "ResolvedRef":
@@ -37,6 +38,7 @@ class ResolvedRef:
             provider=summary.provider,
             title=summary.title,
             cwd=summary.cwd,
+            warnings=summary.warnings,
         )
 
 

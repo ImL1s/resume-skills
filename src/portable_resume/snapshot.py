@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from .bounds import DEFAULT_BOUNDS, Bounds, ReadBudget
 from .diagnostics import DiagnosticError
-from .paths import canonical_root, require_regular_no_symlinks
+from .paths import require_regular_no_symlinks
 
 AttemptHook = Callable[[str, int, str], None]
 
@@ -371,7 +371,9 @@ def _collect_scanned_lines(
         utf8_valid = True
         try:
             text = bytes(buffer).decode("utf-8").removesuffix("\r")
-        except UnicodeDecodeError:
+        except UnicodeDecodeError as error:
+            if error.reason != "unexpected end of data" or error.end != len(buffer):
+                raise DiagnosticError("E_CORRUPT_RECORD") from error
             text = bytes(buffer).decode("utf-8", errors="replace").removesuffix("\r")
             utf8_valid = False
         collected.append(
