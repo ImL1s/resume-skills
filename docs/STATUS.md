@@ -16,11 +16,12 @@
 | Visual marketplace picker | **Cursor and Kimi pass** |
 | Other visual Skill picker activation | **not-run** |
 | Vendor-curated directory listing | **not submitted** |
-| CI (main @ `d9152cd`) | **pass**: [Ubuntu + macOS × Python 3.11–3.14 + dist smoke](https://github.com/ImL1s/resume-skills/actions/runs/30203656076) ([PR #51](https://github.com/ImL1s/resume-skills/pull/51)) |
+| CI (main @ `fa1344b`) | **pass**: [Ubuntu + macOS × Python 3.11–3.14 + dist smoke](https://github.com/ImL1s/resume-skills/actions/runs/30269684151) |
 | Phase 0 / Milestone N1 | **merged** [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c` |
-| `v0.3.2` release workflow | **pass**: [14 jobs through GitHub Release and PyPI](https://github.com/ImL1s/resume-skills/actions/runs/30093776529) |
-| Published release | **pass**: [GitHub Release v0.3.3](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.3) / [v0.3.4](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4) (after release workflow) |
-| Public PyPI installation | **pass for 0.3.4** after release workflow (81-cell artifact); prior `0.3.3` remains 64-cell historical |
+| `v0.3.4` release workflow | **pass**: [14 jobs through GitHub Release and PyPI](https://github.com/ImL1s/resume-skills/actions/runs/30269713516) |
+| Published release | **pass**: [GitHub Release v0.3.4](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4) |
+| Public PyPI installation | **pass for 0.3.4** ([portable-resume 0.3.4](https://pypi.org/project/portable-resume/0.3.4/), 81-cell artifact); prior `0.3.3` remains 64-cell historical |
+| Public marketplace catalog | **synced** [`portable-resume-marketplace@7833e4a`](https://github.com/ImL1s/portable-resume-marketplace/commit/7833e4a3628213f78eb8458f30e9873d43a95fa6) / [marketplace `v0.3.4`](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.4); fresh host reinstall **not-run** |
 | Cursor full bubble graph | **not claimed** |
 | Codex large-rollout budget + parent list filter (Issue #3) | **done on main** [PR #4](https://github.com/ImL1s/resume-skills/pull/4) merge `48746c4` — P0 hotfix (not full streaming) |
 | Codex probe head-only + list FS fallback | **not done** — [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + [plan 026](../plans/026-codex-probe-list-discovery.md) |

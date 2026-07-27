@@ -74,6 +74,24 @@ separate and require their own rows in
 
 ### Current state
 
+- `v0.3.4`: **published** from annotated tag object
+  `f952856476dbf7742d16c0f42638497c0a930b28` at commit
+  `fa1344bf62eb26332baea7b7ef4540a1a37acba8`.
+  [Release run 30269713516, attempt 1](https://github.com/ImL1s/resume-skills/actions/runs/30269713516)
+  passed dual-OS gates, exact-byte smoke, flat-download checksum verification,
+  attestation, PyPI Trusted Publishing, and GitHub Release publication
+  (`packaging_cells=81`, `installed_runner_cells=81`).
+- Published outputs:
+  [GitHub Release](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
+  and [PyPI](https://pypi.org/project/portable-resume/0.3.4/).
+- Public marketplace:
+  [`ImL1s/portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
+  at commit `7833e4a3628213f78eb8458f30e9873d43a95fa6`.
+  [Marketplace CI 30270409963](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30270409963)
+  and [marketplace release 30270407710](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30270407710)
+  passed after the nine-skill catalog test fix; its
+  [`v0.3.4` release](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.4)
+  is public. Fresh 0.3.4 host reinstall UI evidence remains **not-run**.
 - `v0.3.2`: **published** from annotated tag object
   `a1a17fc21a7ea65bd2717b2ce3faa89fe21d0b5a` at commit
   `284865a4dc8c1c3dca16ee40f5204053cabb3a92`.
@@ -81,18 +99,12 @@ separate and require their own rows in
   passed 14 jobs: dual-OS gates, exact-byte smoke, flat-download checksum
   verification, attestation, PyPI Trusted Publishing, and GitHub Release
   publication.
-- Published outputs:
+- Published outputs (historical):
   [GitHub Release](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.2)
   and [PyPI](https://pypi.org/project/portable-resume/0.3.2/).
-- Public marketplace:
-  [`ImL1s/portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
-  at current commit `0806e186674d22925f23aaa57d83a403ebfb8515`.
-  [Marketplace CI 30103298262](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30103298262)
-  and [sync run 30103342413](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30103342413)
-  passed, including immutable-tag index verification; its
-  [`v0.3.2` release](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.2)
-  is public and its editable Release body contains the corrected Cursor/Qwen
-  commands without moving the annotated tag.
+- Public marketplace (historical v0.3.2 trees superseded on main):
+  earlier publication commit `0806e186674d22925f23aaa57d83a403ebfb8515` and
+  [`v0.3.2` release](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.2).
 - `v0.3.1`: archived published release from annotated tag object
   `bf483ebd503143faa1ce73bc5aa95fac95bc0648` at commit
   `d50a1e33db2824830dabc469b7d566031aa45697`.

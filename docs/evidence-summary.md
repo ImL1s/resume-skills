@@ -1,5 +1,57 @@
 # Evidence summary
 
+## Published archive: v0.3.4
+
+| Field | Evidence |
+|---|---|
+| Date / maintainer | 2026-07-27 / `ImL1s` |
+| Annotated tag | `v0.3.4`; tag object `f952856476dbf7742d16c0f42638497c0a930b28` |
+| Release commit | `fa1344bf62eb26332baea7b7ef4540a1a37acba8` |
+| Main CI | [run 30269684151](https://github.com/ImL1s/resume-skills/actions/runs/30269684151) |
+| Release CI/CD | [run 30269713516, attempt 1](https://github.com/ImL1s/resume-skills/actions/runs/30269713516) |
+| GitHub Release | [Portable Resume v0.3.4](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4) |
+| PyPI | [portable-resume 0.3.4](https://pypi.org/project/portable-resume/0.3.4/) |
+
+The release run passed annotated-tag validation; dual-OS release gates on Python
+3.11 and 3.14; one-time artifact build; exact wheel/sdist smoke on all four
+release cells; flat-download checksum verification; artifact attestation; PyPI
+Trusted Publishing; and staged GitHub Release publication.
+`release-evidence.json` records `packaging_cells=81`,
+`installed_runner_cells=81`, `source_count=9`, `destination_count=9`, and keeps
+`host_ui_nl` / `marketplace_ui_install` as **not-run** for this tag (prior host
+UI rows remain under older archive sections).
+
+Primary product changes in this release: Kimi large-session streaming under
+`source_read_bytes` (Issue #14 / PR #58), Pi destination Skill profile expanding
+the matrix to 9×9=81, and registry-derived release evidence cell counts.
+
+### Published Python artifacts
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `portable_resume-0.3.4-py3-none-any.whl` | 157541 | `60a73e376e1be436353b00a8984eccd5156130684c2895c643e9e95a4689959f` |
+| `portable_resume-0.3.4.tar.gz` | 135285 | `0eefc5bb0ec1541f39ccc2256e747b1130e99f1a95a77d016534246e46cafb33` |
+
+### Public marketplace synchronization: v0.3.4
+
+| Field | Evidence |
+|---|---|
+| Public repository | [`ImL1s/portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace) |
+| Sync commit | `7833e4a3628213f78eb8458f30e9873d43a95fa6` |
+| Annotated tag | `v0.3.4`; tag object `a3b8a2a5f14a8dbef4d901ff8ee87a5f9ad76a8c` |
+| Marketplace release | [`v0.3.4`](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.4) |
+| Marketplace CI | [run 30270409963](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30270409963) |
+| Marketplace release workflow | [run 30270407710](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30270407710) |
+
+The first automated `Sync upstream release` dispatch for `v0.3.4`
+([run 30270168250](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30270168250))
+failed because the marketplace unit test still expected eight Skills after the
+Pi destination skill landed. The catalog test was updated to nine Skills
+(including `resume-pi`), `scripts/sync_release.py --tag v0.3.4` was re-run, and
+the synchronized trees were committed and tagged. Fresh host-by-host marketplace
+reinstall for **0.3.4** remains **not-run** (see `release-evidence.json`); the
+6/6 host install claim below stays bound to the earlier v0.3.2 evidence section.
+
 ## Published archive: v0.3.2
 
 | Field | Evidence |
