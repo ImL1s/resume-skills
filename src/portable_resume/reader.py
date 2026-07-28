@@ -290,24 +290,21 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
                 approved_roots=_approved_roots(adapter, query),
             )
         except AmbiguousSelection as error:
-            # Public candidates: preserve native session_id tokens; redact free text/paths.
+            # Project each candidate from its own fields (not first-match by ID):
+            # duplicate native IDs with different title/cwd must stay distinguishable.
             public_candidates = []
             for candidate in error.candidates:
-                # Rebuild from matching internal summary when possible for full sanitize.
-                match = next(
-                    (
-                        item
-                        for item in internal
-                        if item.source == candidate.source and item.session_id == candidate.session_id
-                    ),
-                    None,
+                stub = SessionSummary(
+                    source=candidate.source,
+                    session_id=candidate.session_id,
+                    title=candidate.title,
+                    cwd=candidate.cwd,
+                    branch=candidate.branch,
+                    updated_at=candidate.updated_at,
                 )
-                if match is not None:
-                    item, warnings = sanitize_summary(match)
-                    envelope_warnings.extend(warnings)
-                    public_candidates.append(item.candidate())
-                else:
-                    public_candidates.append(candidate)
+                item, warnings = sanitize_summary(stub)
+                envelope_warnings.extend(warnings)
+                public_candidates.append(item.candidate())
             envelope = Envelope.create(
                 operation="show",
                 query=query,

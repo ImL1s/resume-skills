@@ -108,6 +108,44 @@ class InternalIdentitySelectionTests(unittest.TestCase):
             validate_structural_summary(raw)
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
+    def test_ambiguous_public_candidates_keep_per_row_metadata(self) -> None:
+        """Duplicate session_id rows must not collapse title/cwd via first-match lookup."""
+        a = SessionSummary(
+            source="claude",
+            session_id="dup-id",
+            title="first-title",
+            cwd="/tmp/a",
+            source_path="/tmp/a/session.jsonl",
+            updated_at="2026-01-01T00:00:00Z",
+        )
+        b = SessionSummary(
+            source="claude",
+            session_id="dup-id",
+            title="second-title",
+            cwd="/tmp/b",
+            source_path="/tmp/b/session.jsonl",
+            updated_at="2026-01-02T00:00:00Z",
+        )
+        adapter = _SyntheticAdapter([a, b])
+
+        def _load(_source: str) -> Any:
+            return adapter
+
+        stdout = __import__("io").StringIO()
+        stderr = __import__("io").StringIO()
+        with mock.patch("portable_resume.reader._load_adapter", side_effect=_load):
+            code = run(
+                ["claude", "show", "dup-id", "--format", "json"],
+                stdout=stdout,
+                stderr=stderr,
+            )
+        self.assertEqual(code, 4, stderr.getvalue())  # E_AMBIGUOUS
+        payload = json.loads(stdout.getvalue())
+        titles = {item["title"] for item in payload["candidates"]}
+        cwds = {item["cwd"] for item in payload["candidates"]}
+        self.assertEqual(titles, {"first-title", "second-title"})
+        self.assertEqual(cwds, {"/tmp/a", "/tmp/b"})
+
     def test_reader_show_passes_raw_path_to_adapter(self) -> None:
         sid = _secret_id()
         secret_path = "/tmp/api_key=abcdefghijklmnop/session.jsonl"
