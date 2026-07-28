@@ -18,7 +18,7 @@ from .base import CapabilityReport, ResolvedRef
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
-from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
+from ..paths import canonical_root, canonicalize_cwd, is_within, require_regular_no_symlinks, same_cwd
 from ..sanitize import sanitize_turn_record
 from ..snapshot import stable_read_bytes
 
@@ -242,13 +242,17 @@ class AntigravityAdapter:
             return None
         if os.path.isabs(ref):
             path = ref
-            if os.path.isdir(path):
+            if os.path.isdir(path) and not os.path.islink(path):
                 path = os.path.join(path, ".system_generated", "logs", "transcript.jsonl")
             if os.path.basename(path) != "transcript.jsonl":
                 return None
-            if not is_within(path, root) or os.path.islink(path):
-                raise DiagnosticError.unsafe_path()
-            return path if os.path.isfile(path) else None
+            try:
+                safe, _ = require_regular_no_symlinks(path, root)
+            except DiagnosticError as error:
+                if error.code == "E_UNSAFE_PATH":
+                    raise
+                return None
+            return safe
         if _ID.fullmatch(ref) is None or ref in {"latest", ".", ".."}:
             return None
         path = self._conversation_path(brain, ref)

@@ -20,7 +20,7 @@ from .base import CapabilityReport, ResolvedRef
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
-from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
+from ..paths import canonical_root, canonicalize_cwd, is_within, require_regular_no_symlinks, same_cwd
 from ..sanitize import sanitize_turn_record
 from ..snapshot import stable_read_windows, stable_scan_lines
 
@@ -223,10 +223,10 @@ class PiAdapter:
     def _session_paths(self, root: str, query: Query, budget: ReadBudget) -> list[str]:
         ref = query.ref.strip() if query.ref else None
         if ref and os.path.isabs(ref):
-            path = canonicalize_cwd(ref)
-            if not is_within(path, root) or os.path.islink(path):
-                raise DiagnosticError.unsafe_path()
-            if os.path.isfile(path) and path.endswith(".jsonl"):
+            # Lexical no-symlink validation before any realpath identity use.
+            safe, _ = require_regular_no_symlinks(ref, root)
+            path = canonicalize_cwd(safe)
+            if path.endswith(".jsonl"):
                 return [path]
             raise DiagnosticError("E_NO_MATCH", source=self.key)
         if query.cwd is None:
