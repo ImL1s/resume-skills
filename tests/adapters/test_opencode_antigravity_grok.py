@@ -333,11 +333,12 @@ class OpenCodeIssue13Tests(unittest.TestCase):
             self.assertEqual(tight_scan.records, 0)
 
             # Overflow probe: transcript_records+1 fails closed (no partial Session).
+            # scanned_records must stay at/under DEFAULT_BOUNDS (no raised ceilings).
             with self.assertRaises(DiagnosticError) as caught:
                 adapter.show(
                     resolve(summaries, session_id),
                     current,
-                    ReadBudget(Bounds(transcript_records=10, scanned_records=5_000)),
+                    ReadBudget(Bounds(transcript_records=10, scanned_records=20)),
                 )
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
