@@ -1666,11 +1666,11 @@ def validate_state_root(
     # Permanent complete sink requires full eligibility, not structural nulls only.
     if pointer["status"] == "complete":
         terminal_now = _derive_terminal_issues_from_receipts(receipts)
-        if len(terminal_now) != ISSUE_COUNT:
+        if terminal_now != frozenset(activation_issue_numbers):
             raise ProgramStateError(
                 ERROR_STATE_SCHEMA,
-                f"complete requires {ISSUE_COUNT} terminal issues from receipts, "
-                f"got {len(terminal_now)}",
+                "complete requires receipt-derived terminal set to equal "
+                "the activation inventory exactly",
             )
         if projection:
             still_open = [
@@ -1721,6 +1721,18 @@ def validate_state_root(
                 else None,
                 acceptance_complete=bool(receipt.get("acceptance_complete", False)),
             )
+        elif previous_view is not None and from_status in STATUS_ENUM:
+            # Claimed source state must match the prior replayed tip.
+            if str(from_status) != previous_view.status:
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    "receipt from_status does not match prior replayed status",
+                )
+            if from_phase is not None and str(from_phase) != previous_view.phase:
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    "receipt from_phase does not match prior replayed phase",
+                )
         if previous_view is not None and to_status in STATUS_ENUM:
             request = TransitionRequest(
                 event_type=operation,
@@ -1766,8 +1778,36 @@ def validate_state_root(
                 ),
             )
 
+    # Final replayed receipt tip must match the persisted pointer when replay ran.
+    if previous_view is not None:
+        if previous_view.status != pointer["status"]:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "replayed receipt tip status does not match pointer.status",
+            )
+        if previous_view.phase != pointer["phase"]:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "replayed receipt tip phase does not match pointer.phase",
+            )
+        if previous_view.epoch != pointer["epoch"]:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "replayed receipt tip epoch does not match pointer.epoch",
+            )
+        if previous_view.owner_token != pointer.get("owner_token"):
+            raise ProgramStateError(
+                ERROR_OWNER_MISMATCH,
+                "replayed receipt tip owner_token does not match pointer",
+            )
+        if previous_view.active_issue_number != pointer.get("active_issue_number"):
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "replayed receipt tip active_issue_number does not match pointer",
+            )
+
     # Per-pair supersession: non-bootstrap events for a pair must keep dependency_id
-    # and supersede the previous tip for that ordered pair when declared.
+    # and must name the previous pair-tip hash.
     latest_by_pair: dict[tuple[int, int], dict[str, Any]] = {}
     for _path, event in dep_events:
         key = (
@@ -1791,13 +1831,11 @@ def validate_state_root(
             supersedes = event.get("supersedes_event_sha256") or event.get(
                 "previous_pair_event_sha256"
             )
-            if supersedes not in (None, "", prev.get("event_sha256")):
-                # If the event declares supersession, it must name the current tip.
-                if supersedes is not None and supersedes != prev.get("event_sha256"):
-                    raise ProgramStateError(
-                        ERROR_STATE_HASH,
-                        "dependency update must supersede the current pair-tip event",
-                    )
+            if supersedes != prev.get("event_sha256"):
+                raise ProgramStateError(
+                    ERROR_STATE_HASH,
+                    "dependency update must supersede the current pair-tip event hash",
+                )
         latest_by_pair[key] = dict(event)
 
     return {
