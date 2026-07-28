@@ -22,9 +22,13 @@ from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
 from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
 from ..sanitize import sanitize_turn_record
-from ..snapshot import stable_read_bytes
+from ..snapshot import stable_read_windows, stable_scan_lines
 
 FORMAT_ID = "qwen-chat-jsonl-v1"
+
+# List/probe metadata windows: keep discovery off the full transcript budget.
+_METADATA_HEAD_BYTES = 4 * 1024 * 1024
+_METADATA_TAIL_BYTES = 64 * 1024
 
 _ALLOWED_TYPES = frozenset({"user", "assistant", "tool_result", "system"})
 _LEGACY_TEXT_PART_TYPES = frozenset({"text", "input_text", "output_text"})
@@ -83,18 +87,31 @@ def _check_shape(value: Any, depth: int = 0) -> None:
             _check_shape(item, depth + 1)
 
 
-def _decode_record(raw: bytes, *, terminal_partial: bool) -> tuple[dict[str, Any] | None, str | None]:
-    stripped = raw.strip()
+def _decode_record(
+    raw: str | bytes,
+    *,
+    terminal_partial: bool,
+) -> tuple[dict[str, Any] | None, str | None]:
+    if isinstance(raw, bytes):
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as error:
+            if terminal_partial:
+                return None, "W_PARTIAL_TAIL"
+            raise DiagnosticError("E_CORRUPT_RECORD", source="qwen", provider=FORMAT_ID) from error
+    else:
+        text = raw
+    stripped = text.strip()
     if not stripped:
         return None, None
     try:
         value = json.loads(
-            stripped.decode("utf-8"),
+            stripped,
             object_pairs_hook=_object,
             parse_constant=_reject_constant,
             parse_float=_finite_float,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, _DuplicateKey, ValueError, RecursionError) as error:
+    except (json.JSONDecodeError, _DuplicateKey, ValueError, RecursionError) as error:
         if terminal_partial:
             return None, "W_PARTIAL_TAIL"
         raise DiagnosticError("E_CORRUPT_RECORD", source="qwen", provider=FORMAT_ID) from error
@@ -399,22 +416,87 @@ class QwenAdapter:
         root = self._root(query)
         return (root,) if root is not None else ()
 
+    @staticmethod
+    def _chat_layout_ok(path: str, root: str) -> bool:
+        """Return True when path is projects/*/chats/*.jsonl or archive shape."""
+
+        if not is_within(path, root):
+            return False
+        relative = os.path.relpath(path, root)
+        parts = relative.split(os.sep)
+        active_shape = len(parts) == 4 and parts[0] == "projects" and parts[2] == "chats"
+        archive_shape = (
+            len(parts) == 5
+            and parts[0] == "projects"
+            and parts[2] == "chats"
+            and parts[3] == "archive"
+        )
+        if not active_shape and not archive_shape:
+            return False
+        basename = os.path.basename(path)
+        if not basename.endswith(".jsonl") or basename.endswith(".runtime.json"):
+            return False
+        try:
+            _identifier(basename[:-6])
+        except DiagnosticError:
+            return False
+        return True
+
+    def _exact_chat_path(self, root: str, query: Query) -> str | None:
+        """Resolve an absolute path ref without store-wide discovery when possible."""
+
+        ref = query.ref.strip() if query.ref else None
+        if not ref or not os.path.isabs(ref):
+            return None
+        path = os.path.abspath(ref)
+        if os.path.islink(path):
+            raise DiagnosticError.unsafe_path()
+        if not is_within(path, root):
+            raise DiagnosticError.unsafe_path()
+        if not self._chat_layout_ok(path, root):
+            raise DiagnosticError.unsafe_path()
+        try:
+            mode = os.lstat(path).st_mode
+        except OSError as error:
+            raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID) from error
+        if not stat.S_ISREG(mode):
+            raise DiagnosticError.unsafe_path()
+        return path
+
     def _session_paths(self, root: str) -> list[str]:
+        """Discover chat JSONL paths under projects/*/chats{,/archive}.
+
+        Directory membership is bounded *before* sorting or materializing an
+        unbounded ``sorted(os.scandir(...))`` snapshot: each observed entry
+        increments the counter and exceeding ``scanned_records`` fails closed.
+        Only the admitted set is sorted; final ranking is mtime newest-first.
+        """
+
         projects = os.path.join(root, "projects")
         if not os.path.exists(projects):
             return []
         if os.path.islink(projects) or not os.path.isdir(projects):
             raise DiagnosticError.unsafe_path()
+        admitted_projects: list[Any] = []
         paths: list[str] = []
         observed = 0
-        try:
-            project_entries = sorted(os.scandir(projects), key=lambda entry: entry.name)
-        except OSError as error:
-            raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
-        for project in project_entries:
+
+        def _observe() -> None:
+            nonlocal observed
             observed += 1
             if observed > DEFAULT_BOUNDS.scanned_records:
                 raise DiagnosticError.limit_exceeded()
+
+        try:
+            with os.scandir(projects) as project_it:
+                for project in project_it:
+                    _observe()
+                    admitted_projects.append(project)
+        except OSError as error:
+            raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
+
+        admitted_projects.sort(key=lambda entry: entry.name)
+        for project in admitted_projects:
             if project.is_symlink():
                 raise DiagnosticError.unsafe_path()
             mode = project.stat(follow_symlinks=False).st_mode
@@ -433,14 +515,16 @@ class QwenAdapter:
                         continue
                     if os.path.islink(directory) or not os.path.isdir(directory):
                         raise DiagnosticError.unsafe_path()
+                chat_admitted: list[Any] = []
                 try:
-                    chat_entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
+                    with os.scandir(directory) as chat_it:
+                        for entry in chat_it:
+                            _observe()
+                            chat_admitted.append(entry)
                 except OSError as error:
                     raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
-                for entry in chat_entries:
-                    observed += 1
-                    if observed > DEFAULT_BOUNDS.scanned_records:
-                        raise DiagnosticError.limit_exceeded()
+                chat_admitted.sort(key=lambda entry: entry.name)
+                for entry in chat_admitted:
                     if entry.is_symlink():
                         raise DiagnosticError.unsafe_path()
                     entry_mode = entry.stat(follow_symlinks=False).st_mode
@@ -462,7 +546,16 @@ class QwenAdapter:
         root = self._root(query)
         if root is None:
             return CapabilityReport(self.key, None, "unavailable")
-        paths = self._session_paths(root)
+        exact = None
+        if query.ref and os.path.isabs(query.ref.strip()):
+            try:
+                exact = self._exact_chat_path(root, query)
+            except DiagnosticError as error:
+                if error.code == "E_NO_MATCH":
+                    exact = None
+                else:
+                    raise
+        paths = [exact] if exact is not None else self._session_paths(root)
         if not paths:
             return CapabilityReport(self.key, FORMAT_ID, "unsupported", root=root)
         return CapabilityReport(
@@ -476,14 +569,22 @@ class QwenAdapter:
     def list(self, query: Query, budget: ReadBudget) -> list[SessionSummary]:
         root = self._root(query, required=True)
         assert root is not None
-        paths = self._session_paths(root)
+        exact = self._exact_chat_path(root, query)
+        if exact is not None:
+            paths = [exact]
+        else:
+            paths = self._session_paths(root)
         if not paths:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
         output: list[SessionSummary] = []
         for path in paths:
             session_id = _identifier(os.path.basename(path)[:-6])
-            records, warnings = self._records(path, root, budget, transcript=False, expected_id=session_id)
-            summary = self._summary(path, session_id, records, warnings)
+            summary = self._list_summary_from_path(
+                path,
+                root,
+                budget,
+                expected_id=session_id,
+            )
             if _eligible(summary, query):
                 output.append(summary)
                 if len(output) >= DEFAULT_BOUNDS.listed_sessions:
@@ -497,20 +598,9 @@ class QwenAdapter:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=ref.provider)
         if ref.source_path is None or not is_within(ref.source_path, root):
             raise DiagnosticError.unsafe_path()
-        relative = os.path.relpath(ref.source_path, root)
-        parts = relative.split(os.sep)
-        active_shape = len(parts) == 4 and parts[0] == "projects" and parts[2] == "chats"
-        archive_shape = (
-            len(parts) == 5
-            and parts[0] == "projects"
-            and parts[2] == "chats"
-            and parts[3] == "archive"
-        )
-        if not active_shape and not archive_shape:
+        if not self._chat_layout_ok(ref.source_path, root):
             raise DiagnosticError.unsafe_path()
         basename = os.path.basename(ref.source_path)
-        if not basename.endswith(".jsonl") or basename.endswith(".runtime.json"):
-            raise DiagnosticError.unsafe_path()
         if _identifier(basename[:-6]) != ref.session_id:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
         records, warnings = self._records(
@@ -563,6 +653,191 @@ class QwenAdapter:
             warnings=tuple(dict.fromkeys(turn_warnings)),
         )
 
+    def _scan_metadata_chunk(
+        self,
+        data: bytes,
+        *,
+        budget: ReadBudget,
+        expected_id: str,
+        timestamps: list[str],
+        state: dict[str, Any],
+        warnings: list[str],
+        starts_mid_line: bool,
+        ends_at_eof: bool,
+        stop_when_primary_ready: bool,
+    ) -> None:
+        """Decode metadata lines from a head/tail window under scanned_records."""
+
+        lines = data.splitlines(keepends=True)
+        start = 1 if starts_mid_line and lines else 0
+        for index in range(start, len(lines)):
+            raw = lines[index]
+            is_last = index == len(lines) - 1
+            has_terminator = raw.endswith((b"\n", b"\r"))
+            if is_last and not has_terminator and not ends_at_eof:
+                # Incomplete mid-file boundary — not a terminal partial.
+                break
+            budget.consume_records()
+            terminal_partial = is_last and not has_terminator and ends_at_eof
+            record, warning = _decode_record(raw, terminal_partial=terminal_partial)
+            if warning is not None:
+                warnings.append(warning)
+            if record is None:
+                if terminal_partial and warning == "W_PARTIAL_TAIL":
+                    break
+                continue
+            state["recognized"] = int(state.get("recognized", 0)) + 1
+            record_session = record.get("sessionId")
+            if record_session is not None and record_session != expected_id:
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+            if _is_artifact(record):
+                continue
+            stamp = _timestamp(record.get("timestamp"))
+            if stamp is not None:
+                timestamps.append(stamp)
+            raw_cwd = record.get("cwd")
+            if isinstance(raw_cwd, str) and os.path.isabs(raw_cwd):
+                # Prefer later absolute cwd (tail windows update this).
+                state["cwd"] = canonicalize_cwd(raw_cwd)
+            if state.get("title") is None and str(record.get("type", "")).casefold() == "user":
+                text, _ = _message_text(record.get("message"))
+                if text:
+                    state["title"] = text[: DEFAULT_BOUNDS.title_chars]
+            if (
+                stop_when_primary_ready
+                and state.get("title") is not None
+                and state.get("cwd") is not None
+                and timestamps
+            ):
+                break
+
+    def _list_summary_from_path(
+        self,
+        path: str,
+        root: str,
+        budget: ReadBudget,
+        *,
+        expected_id: str,
+    ) -> SessionSummary:
+        """Build a SessionSummary from bounded head/tail metadata only.
+
+        Does not build the UUID lineage graph or charge ``transcript_records``.
+        Aggregate file size uses ``source_read_bytes`` via ``stable_read_windows``;
+        each decoded metadata line charges ``scanned_records``.
+        """
+
+        windows = stable_read_windows(
+            path,
+            root=root,
+            head_bytes=_METADATA_HEAD_BYTES,
+            tail_bytes=_METADATA_TAIL_BYTES,
+            max_bytes=min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes),
+            attempts=min(budget.limits.snapshot_attempts, DEFAULT_BOUNDS.snapshot_attempts),
+            membership_limit=min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records),
+            budget=budget,
+            hook=self._read_hook,
+        )
+        timestamps: list[str] = []
+        warnings: list[str] = []
+        state: dict[str, Any] = {"recognized": 0, "cwd": None, "title": None}
+        full_in_head = windows.fingerprint.size <= len(windows.head)
+        self._scan_metadata_chunk(
+            windows.head,
+            budget=budget,
+            expected_id=expected_id,
+            timestamps=timestamps,
+            state=state,
+            warnings=warnings,
+            starts_mid_line=False,
+            ends_at_eof=full_in_head,
+            # Large chats: stop once list fields are known so head lines do not
+            # exhaust scanned_records; small files still scan to EOF for accuracy.
+            stop_when_primary_ready=not full_in_head,
+        )
+        if not full_in_head and windows.tail:
+            tail = windows.tail
+            starts_mid_line = windows.tail_offset > 0
+            if windows.tail_offset < len(windows.head):
+                overlap = len(windows.head) - windows.tail_offset
+                tail = tail[min(overlap, len(tail)) :]
+                starts_mid_line = bool(tail)
+            self._scan_metadata_chunk(
+                tail,
+                budget=budget,
+                expected_id=expected_id,
+                timestamps=timestamps,
+                state=state,
+                warnings=warnings,
+                starts_mid_line=starts_mid_line,
+                ends_at_eof=True,
+                stop_when_primary_ready=False,
+            )
+        # A single valid JSONL record larger than the head window but within
+        # record_bytes is invisible to head/tail splits; stream first lines.
+        if int(state["recognized"]) == 0:
+            for line in stable_scan_lines(
+                path,
+                root=root,
+                budget=budget,
+                charge_transcript=False,
+                hook=self._read_hook,
+            ):
+                if not line.utf8_valid:
+                    if not line.terminated:
+                        warnings.append("W_PARTIAL_TAIL")
+                        break
+                    raise DiagnosticError(
+                        "E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID
+                    )
+                terminal_partial = not line.terminated
+                record, warning = _decode_record(
+                    line.text.encode("utf-8"),
+                    terminal_partial=terminal_partial,
+                )
+                if warning is not None:
+                    warnings.append(warning)
+                if record is None:
+                    if terminal_partial and warning == "W_PARTIAL_TAIL":
+                        break
+                    continue
+                state["recognized"] = int(state.get("recognized", 0)) + 1
+                record_session = record.get("sessionId")
+                if record_session is not None and record_session != expected_id:
+                    raise DiagnosticError(
+                        "E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID
+                    )
+                if not _is_artifact(record):
+                    stamp = _timestamp(record.get("timestamp"))
+                    if stamp is not None:
+                        timestamps.append(stamp)
+                    raw_cwd = record.get("cwd")
+                    if isinstance(raw_cwd, str) and os.path.isabs(raw_cwd):
+                        state["cwd"] = canonicalize_cwd(raw_cwd)
+                    if (
+                        state.get("title") is None
+                        and str(record.get("type", "")).casefold() == "user"
+                    ):
+                        text, _ = _message_text(record.get("message"))
+                        if text:
+                            state["title"] = text[: DEFAULT_BOUNDS.title_chars]
+                # One successful stream line is enough to admit list metadata.
+                break
+        if int(state["recognized"]) == 0:
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+        known_times = timestamps
+        return SessionSummary(
+            source=self.key,
+            session_id=expected_id,
+            source_path=path,
+            title=state.get("title") if isinstance(state.get("title"), str) else None,
+            cwd=state.get("cwd") if isinstance(state.get("cwd"), str) else None,
+            created_at=min(known_times) if known_times else None,
+            updated_at=max(known_times) if known_times else None,
+            source_repo_root=None,
+            provider=FORMAT_ID,
+            warnings=tuple(dict.fromkeys(warnings)),
+        )
+
     def _records(
         self,
         path: str,
@@ -572,22 +847,36 @@ class QwenAdapter:
         transcript: bool,
         expected_id: str,
     ) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
-        read = stable_read_bytes(path, root=root, budget=budget, hook=self._read_hook)
-        lines = read.data.splitlines(keepends=True)
+        """Stream JSONL under source_read_bytes + per-line record_bytes.
+
+        When ``transcript`` is True (show), physical lines charge
+        ``transcript_records``. List no longer uses this path for full files;
+        callers pass ``transcript=True`` for show lineage parsing.
+        """
+
         records: list[dict[str, Any]] = []
         warnings: list[str] = []
         recognized = 0
-        for index, raw in enumerate(lines):
-            if transcript:
-                budget.consume_transcript_records()
-            else:
-                budget.consume_records()
-            terminal_partial = index == len(lines) - 1 and not raw.endswith((b"\n", b"\r"))
-            record, warning = _decode_record(raw, terminal_partial=terminal_partial)
+        for line in stable_scan_lines(
+            path,
+            root=root,
+            budget=budget,
+            charge_transcript=transcript,
+            hook=self._read_hook,
+        ):
+            if not line.utf8_valid:
+                if not line.terminated:
+                    warnings.append("W_PARTIAL_TAIL")
+                    continue
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+            text = line.text.strip()
+            if not text:
+                continue
+            record, warning = _decode_record(text, terminal_partial=not line.terminated)
             if warning is not None:
                 warnings.append(warning)
             if record is None:
-                if terminal_partial and warning == "W_PARTIAL_TAIL":
+                if not line.terminated and warning == "W_PARTIAL_TAIL":
                     break
                 continue
             recognized += 1
