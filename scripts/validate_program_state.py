@@ -1390,40 +1390,67 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
     # Projection from dependency events must match the authoritative manifest.
     projection: list[dict[str, Any]] = []
     if dep_events:
-        projection = projection_from_events([event for _, event in dep_events])
+        # Derive effective-terminal issue numbers from manifest projections so
+        # blocking→satisfied status can be replayed correctly.
+        terminal_issues: set[int] = set()
+        for entry in manifest.get("resolved_issues") or []:
+            if isinstance(entry, Mapping) and _is_int(entry.get("issue_number")):
+                terminal_issues.add(int(entry["issue_number"]))
+        for entry in manifest.get("terminal_lineage") or []:
+            if not isinstance(entry, Mapping):
+                continue
+            if _is_int(entry.get("issue_number")):
+                terminal_issues.add(int(entry["issue_number"]))
+            targets = entry.get("target_issue_numbers") or entry.get("targets") or []
+            if isinstance(targets, list):
+                for target in targets:
+                    if _is_int(target):
+                        terminal_issues.add(int(target))
+                    elif isinstance(target, Mapping) and _is_int(
+                        target.get("issue_number")
+                    ):
+                        terminal_issues.add(int(target["issue_number"]))
+
+        projection = projection_from_events(
+            [event for _, event in dep_events],
+            effective_terminal=frozenset(terminal_issues),
+        )
         manifest_projection = manifest.get("dependency_projection")
         if not isinstance(manifest_projection, list):
             raise ProgramStateError(
                 ERROR_STATE_PROJECTION,
                 "manifest.dependency_projection must be a list",
             )
-        # Compare canonical rows (ignore ordering differences by sorting on
-        # subject/related issue numbers).
+
+        def _normalize_proj_row(row: Mapping[str, Any]) -> dict[str, Any]:
+            # Full closed projection fields from build_dependency_projection.
+            return {
+                "dependency_id": row.get("dependency_id"),
+                "subject_issue_number": row.get("subject_issue_number"),
+                "related_issue_number": row.get("related_issue_number"),
+                "related_issue_node_id": row.get("related_issue_node_id"),
+                "related_is_baseline": row.get("related_is_baseline"),
+                "classification": row.get("classification"),
+                "predecessor_issue_number": row.get("predecessor_issue_number"),
+                "successor_issue_number": row.get("successor_issue_number"),
+                "status": row.get("status"),
+                "current_event_sha256": row.get("current_event_sha256"),
+            }
+
         def _proj_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
             return (
                 row.get("subject_issue_number"),
                 row.get("related_issue_number"),
-                row.get("status"),
+                row.get("dependency_id"),
             )
 
         got = sorted(
-            (
-                {
-                    "subject_issue_number": r.get("subject_issue_number"),
-                    "related_issue_number": r.get("related_issue_number"),
-                    "status": r.get("status"),
-                }
-                for r in projection
-            ),
+            (_normalize_proj_row(r) for r in projection if isinstance(r, Mapping)),
             key=_proj_key,
         )
         want = sorted(
             (
-                {
-                    "subject_issue_number": r.get("subject_issue_number"),
-                    "related_issue_number": r.get("related_issue_number"),
-                    "status": r.get("status"),
-                }
+                _normalize_proj_row(r)
                 for r in manifest_projection
                 if isinstance(r, Mapping)
             ),
@@ -1434,12 +1461,24 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
                 ERROR_STATE_PROJECTION,
                 "manifest.dependency_projection does not match replayed event chain",
             )
-        if len(projection) != manifest.get("dependency_pair_count") and len(
-            dep_events
-        ) == manifest.get("dependency_pair_count"):
+        # Unique ordered-pair count is independent of append-only event count
+        # (reclassifications supersede; D stays the frozen unique-pair count).
+        claimed_pair_count = manifest.get("dependency_pair_count")
+        if not _is_int(claimed_pair_count):
             raise ProgramStateError(
                 ERROR_STATE_PROJECTION,
-                "projection row count must equal dependency_pair_count when full set present",
+                "manifest.dependency_pair_count must be an integer",
+            )
+        if len(projection) != claimed_pair_count:
+            raise ProgramStateError(
+                ERROR_STATE_PROJECTION,
+                "replayed projection row count must equal "
+                f"dependency_pair_count ({claimed_pair_count}), got {len(projection)}",
+            )
+        if len(manifest_projection) != claimed_pair_count:
+            raise ProgramStateError(
+                ERROR_STATE_PROJECTION,
+                "manifest.dependency_projection length must equal dependency_pair_count",
             )
     else:
         if manifest.get("dependency_projection") not in ([], None):
