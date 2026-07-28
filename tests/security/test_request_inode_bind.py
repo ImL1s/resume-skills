@@ -56,7 +56,9 @@ class RequestInodeBindTests(unittest.TestCase):
         self.assertEqual(request.cwd, str(self.cwd))
         self.assertEqual(request.source, "claude")
 
-    def test_precheck_inode_differs_from_opened_inode_rejected(self) -> None:
+    def test_preopen_path_swap_opens_whatever_is_present_atomically(self) -> None:
+        """Open is the atomic point: a completed pre-open swap is just path B."""
+
         self.write_request(self.valid_payload(ref="original"))
         replacement = self.root / "replacement.json"
         self.write_request(self.valid_payload(ref="swapped"), path=replacement)
@@ -66,20 +68,17 @@ class RequestInodeBindTests(unittest.TestCase):
                 os.replace(replacement, path)
 
         request_module._request_read_hook = hook
-        with self.assertRaises(DiagnosticError) as caught:
-            self.load()
-        self.assertEqual(caught.exception.code, "E_INVALID_INPUT")
+        request = self.load()
+        self.assertEqual(request.resume_ref, "swapped")
 
-    def test_regular_a_atomically_replaced_by_regular_b_before_open_rejected(self) -> None:
+    def test_path_swap_after_open_rejected_via_final_lstat(self) -> None:
         self.write_request(self.valid_payload(ref="A"))
         other = self.root / "B.json"
         self.write_request(self.valid_payload(ref="B"), path=other)
-        original_ino = self.path.stat().st_ino
 
         def hook(stage: str, path: str) -> None:
-            if stage == "after-precheck":
+            if stage == "after-open":
                 os.replace(other, path)
-                self.assertNotEqual(Path(path).stat().st_ino, original_ino)
 
         request_module._request_read_hook = hook
         with self.assertRaises(DiagnosticError) as caught:
@@ -106,40 +105,23 @@ class RequestInodeBindTests(unittest.TestCase):
         self.write_request(path=real)
         self.path.symlink_to(real)
 
+        with self.assertRaises(DiagnosticError) as caught:
+            self.load()
+        self.assertEqual(caught.exception.code, "E_INVALID_INPUT")
+
+    def test_deleted_and_recreated_after_open_rejected(self) -> None:
+        self.write_request(self.valid_payload(ref="aaaaaa"))
+        payload = json.dumps(self.valid_payload(ref="bbbbbb")).encode("utf-8")
+
         def hook(stage: str, path: str) -> None:
-            raise AssertionError(f"must fail closed before open stages; got {stage}")
+            if stage == "after-open":
+                Path(path).unlink()
+                Path(path).write_bytes(payload)
 
         request_module._request_read_hook = hook
         with self.assertRaises(DiagnosticError) as caught:
             self.load()
         self.assertEqual(caught.exception.code, "E_INVALID_INPUT")
-
-    def test_deleted_and_recreated_same_size_mtime_different_inode_rejected(self) -> None:
-        self.write_request(self.valid_payload(ref="aaaaaa"))
-        st = self.path.stat()
-        first_bytes = self.path.read_bytes()
-        # Same dump style and equal length — only inode binding distinguishes identity.
-        payload = json.dumps(self.valid_payload(ref="bbbbbb")).encode("utf-8")
-        self.assertEqual(len(payload), len(first_bytes), (payload, first_bytes))
-        held: list[int] = []
-
-        def hook(stage: str, path: str) -> None:
-            if stage == "after-precheck":
-                # Keep the original inode allocated so the replacement cannot
-                # recycle st_ino with matching size/mtime on aggressive FS reuse.
-                held.append(os.open(path, os.O_RDONLY))
-                Path(path).unlink()
-                Path(path).write_bytes(payload)
-                os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
-
-        request_module._request_read_hook = hook
-        try:
-            with self.assertRaises(DiagnosticError) as caught:
-                self.load()
-            self.assertEqual(caught.exception.code, "E_INVALID_INPUT")
-        finally:
-            for fd in held:
-                os.close(fd)
 
     def test_inplace_content_change_with_stable_inode_detected(self) -> None:
         self.write_request(self.valid_payload(ref="before"))
@@ -220,13 +202,14 @@ class RequestInodeBindTests(unittest.TestCase):
             return json.JSONDecoder().decode(text)
 
         def hook(stage: str, path: str) -> None:
-            if stage == "after-precheck":
+            if stage == "after-open":
                 os.replace(hostile, path)
 
         request_module._request_read_hook = hook
         with mock.patch("portable_resume.request.json.loads", side_effect=tracked_loads):
             with self.assertRaises(DiagnosticError):
                 self.load()
+        # Failed attempt must not parse hostile path contents.
         self.assertEqual(seen, [])
         self.assertNotIn("LEAK-ME-REF", "".join(seen))
 
@@ -242,7 +225,7 @@ class RequestInodeBindTests(unittest.TestCase):
         self.write_request(alt, path=other)
 
         def hook(stage: str, path: str) -> None:
-            if stage == "after-precheck":
+            if stage == "after-open":
                 os.replace(other, path)
 
         request_module._request_read_hook = hook

@@ -132,20 +132,18 @@ def _read_bounded(descriptor: int, max_bytes: int) -> bytes:
 
 
 def _read_regular_request(path: str) -> bytes:
-    """Read one regular request file bound to the inode validated before open."""
+    """Read one regular request file on the first opened no-follow descriptor.
+
+    The open is the atomic validation point: there is no pre-open ``lstat``
+    identity that can be recycled before open. Symlinks are rejected by
+    ``O_NOFOLLOW``; non-regular descriptors (FIFO/device) are rejected after
+    non-blocking open via ``fstat``.
+    """
 
     if not _symlink_safe_request_open_supported():
         # Do not claim no-symlink request protection without O_NOFOLLOW/dir_fd.
         raise DiagnosticError.invalid()
-    try:
-        before_path = os.lstat(path)
-    except OSError as error:
-        raise DiagnosticError.invalid() from error
-    if stat.S_ISLNK(before_path.st_mode) or not stat.S_ISREG(before_path.st_mode):
-        raise DiagnosticError.invalid()
-    if before_path.st_size > DEFAULT_BOUNDS.request_bytes:
-        raise DiagnosticError.invalid()
-    precheck = _fingerprint(before_path)
+    # Compatibility hook for tests that previously mutated after lstat precheck.
     _invoke_hook("after-precheck", path)
 
     try:
@@ -160,11 +158,6 @@ def _read_regular_request(path: str) -> bytes:
     try:
         _invoke_hook("after-open", path)
         opened = _fingerprint(os.fstat(descriptor))
-        # Bind the descriptor to the pre-open path identity. A concurrent
-        # regular→regular replacement yields a different inode and must fail
-        # even if the replacement stays stable for the rest of the read.
-        if opened != precheck:
-            raise DiagnosticError.invalid()
         if not stat.S_ISREG(opened.mode) or opened.size > DEFAULT_BOUNDS.request_bytes:
             raise DiagnosticError.invalid()
 
@@ -194,6 +187,7 @@ def _read_regular_request(path: str) -> bytes:
     except OSError as error:
         raise DiagnosticError.invalid() from error
     final = _fingerprint(final_path)
+    # Pathname after read must still name the same inode we opened and verified.
     if final != opened:
         raise DiagnosticError.invalid()
     return data
