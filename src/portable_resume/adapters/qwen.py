@@ -772,6 +772,56 @@ class QwenAdapter:
                 ends_at_eof=True,
                 stop_when_primary_ready=False,
             )
+        # A single valid JSONL record larger than the head window but within
+        # record_bytes is invisible to head/tail splits; stream first lines.
+        if int(state["recognized"]) == 0:
+            for line in stable_scan_lines(
+                path,
+                root=root,
+                budget=budget,
+                charge_transcript=False,
+                hook=self._read_hook,
+            ):
+                if not line.utf8_valid:
+                    if not line.terminated:
+                        warnings.append("W_PARTIAL_TAIL")
+                        break
+                    raise DiagnosticError(
+                        "E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID
+                    )
+                terminal_partial = not line.terminated
+                record, warning = _decode_record(
+                    line.text.encode("utf-8"),
+                    terminal_partial=terminal_partial,
+                )
+                if warning is not None:
+                    warnings.append(warning)
+                if record is None:
+                    if terminal_partial and warning == "W_PARTIAL_TAIL":
+                        break
+                    continue
+                state["recognized"] = int(state.get("recognized", 0)) + 1
+                record_session = record.get("sessionId")
+                if record_session is not None and record_session != expected_id:
+                    raise DiagnosticError(
+                        "E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID
+                    )
+                if not _is_artifact(record):
+                    stamp = _timestamp(record.get("timestamp"))
+                    if stamp is not None:
+                        timestamps.append(stamp)
+                    raw_cwd = record.get("cwd")
+                    if isinstance(raw_cwd, str) and os.path.isabs(raw_cwd):
+                        state["cwd"] = canonicalize_cwd(raw_cwd)
+                    if (
+                        state.get("title") is None
+                        and str(record.get("type", "")).casefold() == "user"
+                    ):
+                        text, _ = _message_text(record.get("message"))
+                        if text:
+                            state["title"] = text[: DEFAULT_BOUNDS.title_chars]
+                # One successful stream line is enough to admit list metadata.
+                break
         if int(state["recognized"]) == 0:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
         known_times = timestamps
