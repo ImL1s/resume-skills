@@ -1175,8 +1175,20 @@ def _derive_terminal_issues_from_receipts(
 def _derive_external_satisfied_ids(
     evidence: Sequence[tuple[Path, Mapping[str, Any]]],
 ) -> frozenset[str]:
-    """Collect dependency IDs proven satisfied via typed external evidence."""
+    """Collect dependency IDs proven satisfied via typed external evidence.
+
+    Fabricated local records that only carry a UUID + type/status are rejected:
+    closed provenance fields are required before a dependency can become
+    satisfied via external evidence.
+    """
     satisfied: set[str] = set()
+    required_provenance = (
+        "provider",
+        "provider_object_id",
+        "observed_at",
+        "readback_url",
+        "schema_version",
+    )
     for _path, record in evidence:
         evidence_type = str(
             record.get("evidence_type") or record.get("type") or ""
@@ -1190,9 +1202,37 @@ def _derive_external_satisfied_ids(
         if status not in {"satisfied", "complete", "terminal", "effective-terminal"}:
             continue
         dep_id = record.get("dependency_id")
-        if isinstance(dep_id, str) and dep_id:
-            require_uuid_v4(dep_id, label="dependency_id")
-            satisfied.add(dep_id)
+        if not isinstance(dep_id, str) or not dep_id:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "external dependency evidence requires dependency_id",
+            )
+        require_uuid_v4(dep_id, label="dependency_id")
+        require_uuid_v4(record.get("evidence_id"), label="evidence_id")
+        missing = [key for key in required_provenance if not record.get(key)]
+        if missing:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "external dependency evidence missing provenance fields: "
+                + ", ".join(missing),
+            )
+        if str(record.get("provider")).lower() not in {
+            "github",
+            "gitlab",
+            "azure-devops",
+            "other",
+        }:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "external dependency evidence provider is not a closed enum value",
+            )
+        # Optional but if present must be self-consistent.
+        if record.get("related_is_baseline") is True:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "external-dependency-state evidence is only for non-baseline targets",
+            )
+        satisfied.add(dep_id)
     return frozenset(satisfied)
 
 
@@ -1590,7 +1630,8 @@ def validate_state_root(
         terminal_issues = _derive_terminal_issues_from_receipts(receipts)
         external_satisfied = _derive_external_satisfied_ids(evidence)
 
-        # If the manifest claims a different terminal set, fail closed.
+        # Manifest terminal lists must equal receipt-derived terminal set even
+        # when both are empty (omissions are not allowed).
         claimed_terminal: set[int] = set()
         for entry in manifest.get("resolved_issues") or []:
             if isinstance(entry, Mapping) and _is_int(entry.get("issue_number")):
@@ -1600,10 +1641,10 @@ def validate_state_root(
         for entry in manifest.get("terminal_lineage") or []:
             if isinstance(entry, Mapping) and _is_int(entry.get("issue_number")):
                 claimed_terminal.add(int(entry["issue_number"]))
-        if claimed_terminal and claimed_terminal != set(terminal_issues):
+        if claimed_terminal != set(terminal_issues):
             raise ProgramStateError(
                 ERROR_STATE_PROJECTION,
-                "manifest resolved/terminal claims do not match receipt-derived terminal set",
+                "manifest resolved/terminal claims must equal receipt-derived terminal set",
             )
 
         projection = projection_from_events(
