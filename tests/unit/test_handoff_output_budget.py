@@ -97,6 +97,26 @@ class HandoffOutputBudgetTests(unittest.TestCase):
         self.assertIn("LATEST_USER_MARKER", rendered)
         self.assertIn(UNTRUSTED_BANNER, rendered)
 
+    def test_many_turns_fit_without_quadratic_stall(self) -> None:
+        # Codex P1: one-turn-at-a-time rebuild stalled on ~2k newline-heavy turns.
+        turns = tuple(Turn(ordinal=i, role="user", content=("x\n" * 80)) for i in range(2_000))
+        session = self._session(user="USER", assistant="ASSIST", turns=turns)
+        rendered = render_session(session)
+        self.assertLessEqual(len(rendered.encode("utf-8")), DEFAULT_BOUNDS.handoff_output_bytes)
+        self.assertIn(UNTRUSTED_BANNER, rendered)
+        self.assertIn("USER", rendered)
+
+    def test_envelope_warnings_generator_not_exhausted_on_retry(self) -> None:
+        session = self._session(user="y" * 500_000, assistant="z" * 500_000)
+        # Force truncation path so assemble runs more than once.
+        def warnings() -> Iterable[str]:
+            yield "W_STALE_INDEX"
+
+        from typing import Iterable
+
+        rendered = render_session(session, envelope_warnings=warnings())
+        self.assertIn("W_STALE_INDEX", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

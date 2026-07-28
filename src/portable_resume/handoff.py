@@ -213,9 +213,11 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
     """
 
     maximum = DEFAULT_BOUNDS.handoff_output_bytes
+    # Materialize once: generators would be exhausted on the first assemble pass.
+    env_warnings = tuple(envelope_warnings)
     full = _assemble(
         session,
-        envelope_warnings=envelope_warnings,
+        envelope_warnings=env_warnings,
         user_text=session.last_user_request,
         assistant_text=session.last_assistant_action,
         turns=session.turns,
@@ -224,24 +226,42 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
     if _utf8_size(full) <= maximum:
         return full
 
-    # Drop oldest turns first (keep newest), always mark output truncation.
-    turns = list(session.turns)
-    while turns:
-        turns = turns[1:]
+    # Keep the newest K turns that fit (O(log n) assemblies — not one-per-drop).
+    total = len(session.turns)
+    lo, hi = 0, total
+    best_turns: tuple[Turn, ...] = ()
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        kept = session.turns[total - mid :] if mid else ()
         candidate = _assemble(
             session,
-            envelope_warnings=envelope_warnings,
+            envelope_warnings=env_warnings,
             user_text=session.last_user_request,
             assistant_text=session.last_assistant_action,
-            turns=tuple(turns),
+            turns=kept,
             output_truncated=True,
         )
         if _utf8_size(candidate) <= maximum:
-            return candidate
+            best_turns = kept
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    if best_turns or total == 0:
+        # mid=0 may still fit with empty turns; re-assemble once for the best.
+        fitted = _assemble(
+            session,
+            envelope_warnings=env_warnings,
+            user_text=session.last_user_request,
+            assistant_text=session.last_assistant_action,
+            turns=best_turns,
+            output_truncated=True,
+        )
+        if _utf8_size(fitted) <= maximum:
+            return fitted
 
     empty_turns = _assemble(
         session,
-        envelope_warnings=envelope_warnings,
+        envelope_warnings=env_warnings,
         user_text=session.last_user_request,
         assistant_text=session.last_assistant_action,
         turns=(),
@@ -252,7 +272,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
 
     # Shrink user/assistant quoted bodies while keeping section structure.
     header = _header(session)
-    footer = _footer(tuple(session.warnings) + tuple(envelope_warnings), output_truncated=True)
+    footer = _footer(tuple(session.warnings) + env_warnings, output_truncated=True)
     structure = _document(
         header
         + [
@@ -268,10 +288,9 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
     )
     structure_size = _utf8_size(structure)
     if structure_size > maximum:
-        # Even empty quotes may overflow only if metadata is pathological.
         minimal = _assemble(
             session,
-            envelope_warnings=envelope_warnings,
+            envelope_warnings=env_warnings,
             user_text=None,
             assistant_text=None,
             turns=(),
@@ -295,7 +314,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
 
     document = _assemble(
         session,
-        envelope_warnings=envelope_warnings,
+        envelope_warnings=env_warnings,
         user_text=session.last_user_request,
         assistant_text=session.last_assistant_action,
         turns=(),
@@ -306,7 +325,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
     if _utf8_size(document) > maximum:
         document = _assemble(
             session,
-            envelope_warnings=envelope_warnings,
+            envelope_warnings=env_warnings,
             user_text=None,
             assistant_text=None,
             turns=(),
