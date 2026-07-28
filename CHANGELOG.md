@@ -12,14 +12,17 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
-- Cursor large sessions (#11): CLI JSONL transcripts stream via
-  `stable_scan_lines` under `source_read_bytes` / per-line `record_bytes` /
-  `transcript_records` (no whole-file 16 MiB reject for small lines). Live CLI
-  `store.db` fails closed on blob count overflow (`LIMIT n+1`) instead of
-  silently returning a 2 000-row prefix. Synthetic Desktop list filters
-  archived/subagent rows in SQL before `ORDER BY … LIMIT`. Live Desktop
-  `composerData` is length-gated and charged before JSON decode. Full Cursor
-  bubble-graph restore remains **not claimed**.
+- Cursor large sessions (#11 / [PR #71](https://github.com/ImL1s/resume-skills/pull/71),
+  [PR #72](https://github.com/ImL1s/resume-skills/pull/72)): CLI JSONL
+  transcripts stream via `stable_scan_lines` under `source_read_bytes` /
+  per-line `record_bytes` / `transcript_records` (no whole-file 16 MiB reject
+  for small lines). Live CLI `store.db` fails closed on blob count overflow
+  (`LIMIT n+1`) and honors caller `Bounds.record_bytes` for blob payloads.
+  Synthetic Desktop list filters archived/subagent rows in SQL before
+  `ORDER BY … LIMIT` while admitting up to `scanned_records`; show resolves
+  list-normalized UUIDs via case-folded `id`/`composer_id` lookups. Live
+  Desktop `composerData` uses a two-phase length gate and re-checks size after
+  fetch. Full Cursor bubble-graph restore remains **not claimed**.
 - Both console commands now support `--version` and report the package
   single-source version.
 - PyPI package metadata now includes project, documentation, repository, issue,

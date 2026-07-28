@@ -1,4 +1,4 @@
-# Project status (2026-07-27)
+# Project status (2026-07-28)
 
 ## Current release: 0.3.4
 
@@ -8,7 +8,7 @@
 | Destination profiles | 9 including **Pi** (filesystem install supported) |
 | Packaging matrix | **81/81 pass** (currently **9×9=81**, derived from registries; claimed for this `0.3.4` release) |
 | Installed runner matrix | **81/81 pass** (currently **9×9=81**, derived from registries; claimed for this `0.3.4` release) |
-| Python test suite | **378 pass locally** on post-release main (the v0.3.4 tag passed 375; includes Kimi #14 large-session regressions) |
+| Python test suite | **407 collected** on current `main` post-#11/#72 (v0.3.4 tag was 375; post-release main had ~378 with Kimi #14; later installer + Cursor P0 work grew the suite) |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
 | Host-native headless Skill activation | **8/8 tested CLI surfaces pass** in v0.3.2-era evidence; fresh v0.3.4 host activation and Pi native activation **not-run** |
@@ -27,7 +27,7 @@
 | Codex probe head-only + list FS fallback | **not done** — [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + [plan 026](../plans/026-codex-probe-list-discovery.md) |
 | Codex streaming show / reducer | **not done** — [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + [plan 027](../plans/027-codex-streaming-show.md) (PR #4 removed eager `splitlines`; still whole-file + `list[dict]`) |
 | Kimi index/wire large-session recovery (Issue #14) | **done on main** [PR #58](https://github.com/ImL1s/resume-skills/pull/58) → `79d32ae` — stream index + wire via `stable_scan_lines`; metadata-only list; exact-path show + FS fallback; no silent 16 MiB whole-file reject. Issue **closed** 2026-07-27. CI green: [run 30267866248](https://github.com/ImL1s/resume-skills/actions/runs/30267866248). Current-head Codex review returned no major issues for `4ecf2b5` before merge: [review callback](https://github.com/ImL1s/resume-skills/pull/58#issuecomment-5091411213). |
-| Cursor large-session silent truncation (Issue #11) | **Closed** via [PR #71](https://github.com/ImL1s/resume-skills/pull/71) on main — CLI JSONL `stable_scan_lines`; live CLI blob `LIMIT n+1` fail-closed; Desktop SQL filter-before-LIMIT; live Desktop composerData length gate. Full bubble graph still **not claimed**. |
+| Cursor large-session silent truncation (Issue #11) | **Closed** via [PR #71](https://github.com/ImL1s/resume-skills/pull/71) + skeptic follow-up [PR #72](https://github.com/ImL1s/resume-skills/pull/72) (`3e94dea`) — CLI JSONL `stable_scan_lines`; live CLI blob `LIMIT n+1` fail-closed + honor `budget.record_bytes`; Desktop SQL filter-before-LIMIT with `scanned_records+1` admit window; show path `lower(id)`/`lower(composer_id)` after list normalizes UUIDs; live Desktop composerData two-phase length gate. Full bubble graph still **not claimed**. |
 | Codex-native live resume / `codex resume` from hosts | **not claimed** (inert handoff only) |
 
 ## PR #49 AI review disposition (closed for merge)
@@ -65,6 +65,7 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 | Installer control-plane pin/atomic (#21) | [Issue #21](https://github.com/ImL1s/resume-skills/issues/21) | **Closed** via [PR #64](https://github.com/ImL1s/resume-skills/pull/64) on main: support-dir pin through staging, no-follow lock/journal/manifest, lock truncate, unique-tmp atomic replace, no ambient destructive control fallbacks. Residual: Windows exclusive lock productization (#29); optional previous-manifest generation journal enrichment. |
 | Descriptor-relative install (#31) | [Issue #31](https://github.com/ImL1s/resume-skills/issues/31) + PR #49/#64 | **Closed** via [PR #64](https://github.com/ImL1s/resume-skills/pull/64) on main for commit + stage pin + rollback + orphan delete + uninstall + verify (dirfd/`O_NOFOLLOW`, quarantine unlink, required snapshot digests, no post-manifest payload rollback). Windows mutating ops fail closed without dirfd (#29). |
 | Post-manifest stale journal recover (#64 gate P1) | [PR #70](https://github.com/ImL1s/resume-skills/pull/70) → `e6a26b1` | **Fixed on main:** if complete journal write fails after ownership manifest publish, `recover_root` matches journal target generation to on-disk manifest and clears stage/journal only (no payload rollback). Regressions in `test_install_control_store`. |
+| Cursor #11 post-merge skeptic P1s | [PR #72](https://github.com/ImL1s/resume-skills/pull/72) → `3e94dea` | **Fixed on main:** Desktop list window = `scanned_records+1` (not `listed_sessions*4`); show case-fold for stored UUID; live CLI blob respects lowered `Bounds.record_bytes`. CI green on pre-merge HEAD. |
 | Next-wave agent roadmap (Pi, OpenClaw, goose, …) | [Issue #48](https://github.com/ImL1s/resume-skills/issues/48) + [Issue #38](https://github.com/ImL1s/resume-skills/issues/38) | Phase 0 on `7b5192c`. **Pi PR B: source adapter supported** (`pi-session-jsonl-v3` / v2 read-only). **Pi PR C: destination filesystem install supported** (`.pi/skills` / `~/.pi/agent/skills`; 81-cell smoke pass). **Pi PR D: native host UI / picker activation not-run**. **OpenClaw PR A: fixtures-only** (`openclaw-agent-sqlite-v1`, no adapter). **goose PR A: fixtures-only** (`goose-sessions-sqlite-v15` synthetic; adapter #39 not landed). |
 
 `/resume-codex` remains **context migration** (Skill + reader), not Grok Build native `/resume` and not Codex CLI live resume.
