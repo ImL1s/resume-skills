@@ -51,6 +51,10 @@ EXPECTED_ORDER_SHA256 = (
 EXPECTED_LEDGER_SHA256 = (
     "d9543e78de5b2c38bd1b67251f59f464723a98c3f37b2492f9e138c8302cb651"
 )
+EXPECTED_ACTIVATION_MAIN_SHA = (
+    "ef2a2f709290cb9e56c6c669bca03f15a12829a9"
+)
+EXPECTED_SNAPSHOT_AT = "2026-07-28T01:23:52Z"
 
 EXPECTED_ORDER_ISSUE_SEQUENCE = [
     12,
@@ -201,7 +205,7 @@ def detect_repo_root(start: Path | None = None) -> Path:
     for parent in (here.parent, *here.parents):
         if (parent / JSONL_REL).is_file() and (parent / "scripts").is_dir():
             return parent
-        if (parent / "Agents.md").is_file() and (parent / "scripts").is_dir():
+        if (parent / "AGENTS.md").is_file() and (parent / "scripts").is_dir():
             return parent
     cwd = Path.cwd().resolve()
     if (cwd / JSONL_REL).is_file():
@@ -287,6 +291,22 @@ def validate_record(record: Any, *, line_no: int) -> int:
         raise ValidationError(
             "E_RECORD_SCHEMA",
             f"JSONL line {line_no}/#{issue_number}: schema_version must be 1",
+        )
+    if record.get("activation_updated_at") != record.get("enrichment_updated_at"):
+        raise ValidationError(
+            "E_RECORD_UPDATED_AT",
+            f"JSONL line {line_no}/#{issue_number}: "
+            "activation_updated_at must equal enrichment_updated_at",
+        )
+    if record.get("activation_main_sha") != EXPECTED_ACTIVATION_MAIN_SHA:
+        raise ValidationError(
+            "E_RECORD_MAIN_SHA",
+            f"JSONL line {line_no}/#{issue_number}: activation_main_sha mismatch",
+        )
+    if record.get("snapshot_at") != EXPECTED_SNAPSHOT_AT:
+        raise ValidationError(
+            "E_RECORD_SNAPSHOT",
+            f"JSONL line {line_no}/#{issue_number}: snapshot_at mismatch",
         )
 
     body_normalized = record["body_normalized"]

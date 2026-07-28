@@ -26,13 +26,7 @@ host-packages/
 .qwen/skills/resume-*/
 .kimi-code/skills/resume-*/
 
-# oh-my-grok
-.omg/
-.omg/state/
-.omg/artifacts/
-.omg/handoffs/
-.omg/ultragoal/
-.omg/wiki/
+# oh-my-grok local state (`.omg/` already ignored above)
 *.pid
 .env
 .env.*
