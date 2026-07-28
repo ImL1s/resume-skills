@@ -6,12 +6,17 @@ import json
 import os
 import stat
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from .bounds import DEFAULT_BOUNDS
 from .contracts import REQUEST_KEYS
 from .diagnostics import DiagnosticError, SOURCE_KEYS
 from .paths import reject_controls, validate_canonical_absolute
+
+# Test-only seam: (stage, path) -> None. Not public API; never receives file bytes.
+# Stages: after-precheck, after-open, after-read, after-verify, before-final.
+RequestReadHook = Callable[[str, str], None]
+_request_read_hook: RequestReadHook | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +37,17 @@ class PortableRequest:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class _RequestFingerprint:
+    """Identity + stability metadata for one request pathname/descriptor."""
+
+    device: int
+    inode: int
+    mode: int
+    size: int
+    mtime_ns: int
+
+
 class _DuplicateKey(ValueError):
     pass
 
@@ -45,7 +61,76 @@ def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return output
 
 
+def _fingerprint(stat_result: os.stat_result) -> _RequestFingerprint:
+    return _RequestFingerprint(
+        stat_result.st_dev,
+        stat_result.st_ino,
+        stat_result.st_mode,
+        stat_result.st_size,
+        stat_result.st_mtime_ns,
+    )
+
+
+def _symlink_safe_request_open_supported() -> bool:
+    """True when final-component no-follow open can be guaranteed."""
+
+    return os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
+
+
+def _invoke_hook(stage: str, path: str) -> None:
+    hook = _request_read_hook
+    if hook is not None:
+        hook(stage, path)
+
+
+def _open_request_descriptor(path: str) -> int:
+    """Open the request basename descriptor-relative with O_NOFOLLOW.
+
+    Intermediate components of the parent path may resolve OS-owned aliases
+    (for example macOS ``/var`` → ``/private/var``). Only the final request
+    component is opened with ``O_NOFOLLOW`` so a regular→symlink swap cannot
+    be followed.
+    """
+
+    if not _symlink_safe_request_open_supported():
+        raise DiagnosticError.invalid()
+    parent = os.path.dirname(path) or os.curdir
+    basename = os.path.basename(path)
+    if not basename or basename in (".", ".."):
+        raise DiagnosticError.invalid()
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
+    try:
+        parent_fd = os.open(parent, dir_flags)
+    except OSError as error:
+        raise DiagnosticError.invalid() from error
+    try:
+        try:
+            return os.open(basename, file_flags, dir_fd=parent_fd)
+        except (OSError, NotImplementedError) as error:
+            raise DiagnosticError.invalid() from error
+    finally:
+        os.close(parent_fd)
+
+
+def _read_bounded(descriptor: int, max_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = max_bytes + 1
+    while remaining:
+        chunk = os.read(descriptor, min(4096, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
 def _read_regular_request(path: str) -> bytes:
+    """Read one regular request file bound to the inode validated before open."""
+
+    if not _symlink_safe_request_open_supported():
+        # Do not claim no-symlink request protection without O_NOFOLLOW/dir_fd.
+        raise DiagnosticError.invalid()
     try:
         before_path = os.lstat(path)
     except OSError as error:
@@ -54,51 +139,56 @@ def _read_regular_request(path: str) -> bytes:
         raise DiagnosticError.invalid()
     if before_path.st_size > DEFAULT_BOUNDS.request_bytes:
         raise DiagnosticError.invalid()
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    precheck = _fingerprint(before_path)
+    _invoke_hook("after-precheck", path)
+
     try:
-        descriptor = os.open(path, flags)
+        descriptor = _open_request_descriptor(path)
+    except DiagnosticError:
+        raise
     except OSError as error:
         raise DiagnosticError.invalid() from error
+
+    opened: _RequestFingerprint
+    data: bytes
     try:
-        before = os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode) or before.st_size > DEFAULT_BOUNDS.request_bytes:
+        _invoke_hook("after-open", path)
+        opened = _fingerprint(os.fstat(descriptor))
+        # Bind the descriptor to the pre-open path identity. A concurrent
+        # regular→regular replacement yields a different inode and must fail
+        # even if the replacement stays stable for the rest of the read.
+        if opened != precheck:
             raise DiagnosticError.invalid()
-        chunks: list[bytes] = []
-        remaining = DEFAULT_BOUNDS.request_bytes + 1
-        while remaining:
-            chunk = os.read(descriptor, min(4096, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        data = b"".join(chunks)
-        after = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.mode) or opened.size > DEFAULT_BOUNDS.request_bytes:
+            raise DiagnosticError.invalid()
+
+        data = _read_bounded(descriptor, DEFAULT_BOUNDS.request_bytes)
+        if len(data) > DEFAULT_BOUNDS.request_bytes or len(data) != opened.size:
+            raise DiagnosticError.invalid()
+        _invoke_hook("after-read", path)
+
+        # Second content pass detects same-stat in-place mutation on this inode.
+        try:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+        except OSError as error:
+            raise DiagnosticError.invalid() from error
+        verified = _read_bounded(descriptor, DEFAULT_BOUNDS.request_bytes)
+        if verified != data:
+            raise DiagnosticError.invalid()
+        after = _fingerprint(os.fstat(descriptor))
+        if after != opened or after.size != len(data):
+            raise DiagnosticError.invalid()
+        _invoke_hook("after-verify", path)
     finally:
         os.close(descriptor)
+
+    _invoke_hook("before-final", path)
     try:
         final_path = os.lstat(path)
     except OSError as error:
         raise DiagnosticError.invalid() from error
-    stable = (
-        before.st_dev,
-        before.st_ino,
-        before.st_mode,
-        before.st_size,
-        before.st_mtime_ns,
-    ) == (
-        after.st_dev,
-        after.st_ino,
-        after.st_mode,
-        after.st_size,
-        after.st_mtime_ns,
-    ) == (
-        final_path.st_dev,
-        final_path.st_ino,
-        final_path.st_mode,
-        final_path.st_size,
-        final_path.st_mtime_ns,
-    )
-    if not stable or len(data) > DEFAULT_BOUNDS.request_bytes:
+    final = _fingerprint(final_path)
+    if final != opened:
         raise DiagnosticError.invalid()
     return data
 

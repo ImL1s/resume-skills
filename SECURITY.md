@@ -22,9 +22,21 @@ It is **not** a network service and does not restore live processes.
 | Boundary | Threat | Control |
 |---|---|---|
 | Source store → reader | Path escape, symlink, special files, concurrent mutation | Approved roots, no-follow regular files, stable snapshot, fail closed |
+| request-v1 file → reader | Pathname swap / symlink race on `--request-file` | Pre-open `lstat` identity bound to opened fd; final-component `dir_fd` + `O_NOFOLLOW`; double-read content verify; fail closed without symlink-safe open primitives |
 | Recovered text → destination model | Prompt injection | `inert`/`untrusted` markers, sanitizer, quoted handoff, re-check checklist |
 | Installer → skill roots | Overwrite non-owned files, path escape, parent/control symlink races, malicious skill supply chain | Ownership/claims, refuse collisions, pinned root lock, no-follow control store (`.portable-resume` lock/journal/manifest atomic replace), descriptor-relative payload commit/rollback/uninstall/verify, sandboxed journal stage/backup cleanup, dry-run |
 | Optional zstd | Process boundary | Trusted absolute decoder paths only, fixed argv, `shell=False`, empty PATH, caps/timeouts |
+
+### request-v1 file boundary
+
+Optional `portable-resume/request-v1` documents are read only as regular, non-symlink files bounded by `DEFAULT_BOUNDS.request_bytes`. On POSIX platforms with `O_NOFOLLOW` / `O_DIRECTORY` / `dir_fd`:
+
+1. Pre-open `lstat` requires a small regular file and records `(st_dev, st_ino, mode, size, mtime_ns)`.
+2. The basename is opened descriptor-relative under the parent with `O_NOFOLLOW` (intermediate parent-path aliases such as macOS `/var` may still resolve).
+3. The first `fstat` must match the pre-open fingerprint so a concurrent regular→regular pathname replacement cannot be accepted as the originally validated inode.
+4. Bytes are read twice from the same descriptor; metadata must remain stable through a final pathname `lstat`.
+
+Platforms that cannot guarantee symlink-safe final-component open (including Windows without these primitives) fail closed for request-file mode rather than claiming no-follow protection from a raceable pathname check alone. Mutation or replacement fails deterministically with content-free `E_INVALID_INPUT` diagnostics — request bytes from a failed attempt never reach JSON parsing.
 
 ### Supply chain (important)
 
