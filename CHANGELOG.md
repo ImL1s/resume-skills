@@ -12,6 +12,10 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- ReadBudget / Bounds no-raise ceilings (#17): every `Bounds` field is validated
+  at construction so callers may lower defaults but cannot raise them; invalid
+  or negative ceilings fail with content-free `E_INVALID_INPUT` before source
+  I/O. Consume paths still take `min(limits, DEFAULT_BOUNDS)` as defense in depth.
 - Session selection identity vs display sanitization (#61): list/show selection
   and `ResolvedRef` use validated raw structural fields (`session_id`,
   `source_path`, `cwd`); public envelopes still redact free-text and path

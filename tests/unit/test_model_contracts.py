@@ -135,12 +135,13 @@ class ModelContractTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
     def test_transcript_budget_cannot_raise_global_ceiling(self) -> None:
-        budget = ReadBudget(
-            Bounds(transcript_records=DEFAULT_BOUNDS.transcript_records + 1)
-        )
+        # Raised ceilings fail at Bounds construction (before any consume/I/O).
         with self.assertRaises(DiagnosticError) as caught:
-            budget.consume_transcript_records(DEFAULT_BOUNDS.transcript_records + 1)
-        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+            Bounds(transcript_records=DEFAULT_BOUNDS.transcript_records + 1)
+        self.assertEqual(caught.exception.code, "E_INVALID_INPUT")
+        with self.assertRaises(DiagnosticError) as caught_budget:
+            ReadBudget(Bounds(transcript_records=DEFAULT_BOUNDS.transcript_records + 1))
+        self.assertEqual(caught_budget.exception.code, "E_INVALID_INPUT")
 
     def test_u024_diagnostic_is_closed_bounded_and_content_free(self) -> None:
         # Construct at runtime so public-tree hygiene does not flag synthetic secrets.
