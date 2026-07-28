@@ -963,6 +963,11 @@ def check_forbidden_transition(
 
     # reject release to idle with incomplete acceptance
     if request.event_type == "issue-released":
+        if current.status != "owned":
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "issue-released requires owned status",
+            )
         complete = (
             request.acceptance_complete
             if request.acceptance_complete is not None
@@ -977,6 +982,27 @@ def check_forbidden_transition(
             raise ProgramStateError(
                 ERROR_STATE_SCHEMA,
                 "issue-released must target idle",
+            )
+        if (
+            request.issue_number is not None
+            and request.issue_number != current.active_issue_number
+        ):
+            raise ProgramStateError(
+                ERROR_OWNER_MISMATCH,
+                "issue-released cannot name a different issue than the active owner holds",
+            )
+        if (
+            request.owner_token is not None
+            and request.owner_token != current.owner_token
+        ):
+            raise ProgramStateError(
+                ERROR_OWNER_MISMATCH,
+                "issue-released owner_token must match current owner",
+            )
+        if request.epoch is not None and request.epoch != current.epoch:
+            raise ProgramStateError(
+                ERROR_EPOCH_MISMATCH,
+                "issue-released epoch must match current epoch",
             )
 
 
@@ -1209,14 +1235,15 @@ def _derive_external_satisfied_ids(
             )
         require_uuid_v4(dep_id, label="dependency_id")
         require_uuid_v4(record.get("evidence_id"), label="evidence_id")
-        missing = [key for key in required_provenance if not record.get(key)]
-        if missing:
-            raise ProgramStateError(
-                ERROR_STATE_SCHEMA,
-                "external dependency evidence missing provenance fields: "
-                + ", ".join(missing),
-            )
-        if str(record.get("provider")).lower() not in {
+        for key in required_provenance:
+            value = record.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    f"external dependency evidence.{key} must be a non-empty string",
+                )
+        provider = str(record.get("provider")).lower()
+        if provider not in {
             "github",
             "gitlab",
             "azure-devops",
@@ -1226,6 +1253,31 @@ def _derive_external_satisfied_ids(
                 ERROR_STATE_SCHEMA,
                 "external dependency evidence provider is not a closed enum value",
             )
+        # RFC3339-ish timestamp (strict enough to reject bools/empty placeholders).
+        observed_at = str(record["observed_at"])
+        if "T" not in observed_at or len(observed_at) < 16:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "external dependency evidence.observed_at must be RFC3339-like",
+            )
+        readback = str(record["readback_url"])
+        if not (
+            readback.startswith("https://") or readback.startswith("http://")
+        ):
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "external dependency evidence.readback_url must be an http(s) URL",
+            )
+        schema_version = record.get("schema_version")
+        if not (
+            (isinstance(schema_version, int) and not isinstance(schema_version, bool))
+            or (isinstance(schema_version, str) and schema_version.strip().isdigit())
+        ):
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "external dependency evidence.schema_version must be an integer-like value",
+            )
+        # provider_object_id already validated as non-empty string above.
         # Optional but if present must be self-consistent.
         if record.get("related_is_baseline") is True:
             raise ProgramStateError(
@@ -1802,8 +1854,20 @@ def validate_state_root(
                 "complete pointer must clear owner and active issue",
             )
 
-    # Soft closed-schema transition replay when receipts expose transition fields.
+    # Transition receipts must enter replay; issue-released/program-completed
+    # and any status-bearing receipt cannot skip from/to fields.
     previous_view: PointerView | None = None
+    transition_ops = {
+        "issue-acquired",
+        "pr-opened",
+        "pr-checkpointed",
+        "issue-released",
+        "program-completed",
+        "program-blocked",
+        "program-resumed",
+        "dependency-updated",
+        "evidence-corrected",
+    }
     for _path, receipt in receipts:
         operation = str(receipt.get("operation") or receipt.get("event_type") or "")
         if not operation:
@@ -1812,6 +1876,12 @@ def validate_state_root(
         to_status = receipt.get("to_status") or receipt.get("status")
         from_phase = receipt.get("from_phase") or receipt.get("previous_phase")
         to_phase = receipt.get("to_phase") or receipt.get("phase")
+        if operation in transition_ops:
+            if from_status not in STATUS_ENUM or to_status not in STATUS_ENUM:
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    f"transition receipt {operation} requires valid from_status/to_status",
+                )
         if previous_view is None and from_status in STATUS_ENUM:
             previous_view = PointerView(
                 status=str(from_status),
