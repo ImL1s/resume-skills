@@ -1115,6 +1115,7 @@ def projection_from_events(
     events: Sequence[Mapping[str, Any]],
     *,
     effective_terminal: frozenset[int] | None = None,
+    external_satisfied_ids: frozenset[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one-row-per-pair projection from an ordered event list (latest wins)."""
     latest: dict[tuple[int, int], PairSpec] = {}
@@ -1142,7 +1143,106 @@ def projection_from_events(
     return build_dependency_projection(
         list(latest.values()),
         effective_terminal=effective_terminal,
+        external_satisfied_ids=external_satisfied_ids,
     )
+
+
+def _derive_terminal_issues_from_receipts(
+    receipts: Sequence[tuple[Path, Mapping[str, Any]]],
+) -> frozenset[int]:
+    """Independently derive terminal issue numbers from validated receipt history."""
+    terminal: set[int] = set()
+    for _path, receipt in receipts:
+        operation = str(receipt.get("operation") or receipt.get("event_type") or "")
+        if operation not in {"issue-released", "program-completed"}:
+            continue
+        for key in (
+            "issue_number",
+            "active_issue_number",
+            "released_issue_number",
+        ):
+            value = receipt.get(key)
+            if _is_int(value):
+                terminal.add(int(value))
+        for item in receipt.get("resolved_issues") or []:
+            if _is_int(item):
+                terminal.add(int(item))
+            elif isinstance(item, Mapping) and _is_int(item.get("issue_number")):
+                terminal.add(int(item["issue_number"]))
+    return frozenset(terminal)
+
+
+def _derive_external_satisfied_ids(
+    evidence: Sequence[tuple[Path, Mapping[str, Any]]],
+) -> frozenset[str]:
+    """Collect dependency IDs proven satisfied via typed external evidence."""
+    satisfied: set[str] = set()
+    for _path, record in evidence:
+        evidence_type = str(
+            record.get("evidence_type") or record.get("type") or ""
+        )
+        if evidence_type not in {
+            "external-dependency-state",
+            "external_dependency_satisfied",
+        }:
+            continue
+        status = str(record.get("status") or record.get("state") or "").lower()
+        if status not in {"satisfied", "complete", "terminal", "effective-terminal"}:
+            continue
+        dep_id = record.get("dependency_id")
+        if isinstance(dep_id, str) and dep_id:
+            require_uuid_v4(dep_id, label="dependency_id")
+            satisfied.add(dep_id)
+    return frozenset(satisfied)
+
+
+def _load_frozen_pair_keys(repo_root: Path | None) -> set[tuple[int, int, bool]]:
+    """Load frozen (subject, related, related_is_baseline) from tracked pairs."""
+    candidates: list[Path] = []
+    if repo_root is not None:
+        candidates.append(repo_root / PAIRS_SOURCE_PATH)
+    # Script lives in scripts/; repo root is parent.
+    script_repo = Path(__file__).resolve().parents[1]
+    candidates.append(script_repo / PAIRS_SOURCE_PATH)
+    for path in candidates:
+        if not path.is_file():
+            continue
+        raw = path.read_bytes()
+        if sha256_hex(raw) != PAIRS_SOURCE_SHA256:
+            raise ProgramStateError(
+                ERROR_STATE_HASH,
+                f"frozen pairs file hash mismatch at {path}",
+            )
+        payload = strict_loads(raw.decode("utf-8"))
+        pairs = payload.get("pairs")
+        if not isinstance(pairs, list):
+            raise ProgramStateError(ERROR_STATE_SCHEMA, "frozen pairs.pairs must be list")
+        keys: set[tuple[int, int, bool]] = set()
+        for item in pairs:
+            if not isinstance(item, Mapping):
+                raise ProgramStateError(ERROR_STATE_SCHEMA, "frozen pair row must be object")
+            keys.add(
+                (
+                    int(item["subject_issue_number"]),
+                    int(item["related_issue_number"]),
+                    bool(item["related_is_baseline"]),
+                )
+            )
+        return keys
+    raise ProgramStateError(
+        ERROR_STATE_PATH,
+        f"cannot locate frozen pairs file {PAIRS_SOURCE_PATH}",
+    )
+
+
+def _find_repo_root_near(start: Path) -> Path | None:
+    current = start.resolve()
+    for parent in [current, *current.parents]:
+        if (parent / "plans" / "all-open-issues-sequential-prs").is_dir() and (
+            parent / "scripts"
+        ).is_dir():
+            return parent
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1189,6 +1289,17 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
             ERROR_STATE_SEQUENCE,
             "pointer/manifest state_sequence mismatch",
         )
+
+    activation_issue_numbers = {
+        int(n) for n in manifest["activation"]["issue_numbers"] if _is_int(n)
+    }
+    if pointer["status"] == "owned":
+        active = pointer.get("active_issue_number")
+        if not _is_int(active) or int(active) not in activation_issue_numbers:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "owned pointer.active_issue_number must be in activation issue set",
+            )
 
     receipts = _load_json_dir(state_root / "receipts")
     dep_events = _load_json_dir(state_root / "dependency-events")
@@ -1390,30 +1501,31 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
     # Projection from dependency events must match the authoritative manifest.
     projection: list[dict[str, Any]] = []
     if dep_events:
-        # Derive effective-terminal issue numbers from manifest projections so
-        # blocking→satisfied status can be replayed correctly.
-        terminal_issues: set[int] = set()
+        # Terminality and external satisfaction come from independently
+        # validated receipts/evidence — not from self-asserted manifest fields.
+        terminal_issues = _derive_terminal_issues_from_receipts(receipts)
+        external_satisfied = _derive_external_satisfied_ids(evidence)
+
+        # If the manifest claims a different terminal set, fail closed.
+        claimed_terminal: set[int] = set()
         for entry in manifest.get("resolved_issues") or []:
             if isinstance(entry, Mapping) and _is_int(entry.get("issue_number")):
-                terminal_issues.add(int(entry["issue_number"]))
+                claimed_terminal.add(int(entry["issue_number"]))
+            elif _is_int(entry):
+                claimed_terminal.add(int(entry))
         for entry in manifest.get("terminal_lineage") or []:
-            if not isinstance(entry, Mapping):
-                continue
-            if _is_int(entry.get("issue_number")):
-                terminal_issues.add(int(entry["issue_number"]))
-            targets = entry.get("target_issue_numbers") or entry.get("targets") or []
-            if isinstance(targets, list):
-                for target in targets:
-                    if _is_int(target):
-                        terminal_issues.add(int(target))
-                    elif isinstance(target, Mapping) and _is_int(
-                        target.get("issue_number")
-                    ):
-                        terminal_issues.add(int(target["issue_number"]))
+            if isinstance(entry, Mapping) and _is_int(entry.get("issue_number")):
+                claimed_terminal.add(int(entry["issue_number"]))
+        if claimed_terminal and claimed_terminal != set(terminal_issues):
+            raise ProgramStateError(
+                ERROR_STATE_PROJECTION,
+                "manifest resolved/terminal claims do not match receipt-derived terminal set",
+            )
 
         projection = projection_from_events(
             [event for _, event in dep_events],
-            effective_terminal=frozenset(terminal_issues),
+            effective_terminal=terminal_issues,
+            external_satisfied_ids=external_satisfied,
         )
         manifest_projection = manifest.get("dependency_projection")
         if not isinstance(manifest_projection, list):
@@ -1480,6 +1592,24 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
                 ERROR_STATE_PROJECTION,
                 "manifest.dependency_projection length must equal dependency_pair_count",
             )
+
+        # Membership must match the frozen pair source advertised by the manifest.
+        if manifest.get("dependency_pair_source_sha256") == PAIRS_SOURCE_SHA256:
+            repo_root = _find_repo_root_near(state_root)
+            frozen_keys = _load_frozen_pair_keys(repo_root)
+            replay_keys = {
+                (
+                    int(row["subject_issue_number"]),
+                    int(row["related_issue_number"]),
+                    bool(row["related_is_baseline"]),
+                )
+                for row in projection
+            }
+            if replay_keys != frozen_keys:
+                raise ProgramStateError(
+                    ERROR_STATE_PROJECTION,
+                    "replayed pair keys/related_is_baseline must equal frozen pair source",
+                )
     else:
         if manifest.get("dependency_projection") not in ([], None):
             raise ProgramStateError(
