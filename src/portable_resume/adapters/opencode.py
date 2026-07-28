@@ -654,15 +654,20 @@ class OpenCodeAdapter:
                     (ref.session_id, row_cap + 1),
                 )
                 rows = []
+                charged_messages: set[str] = set()
                 for row in cursor:
                     if len(rows) >= row_cap:
                         raise DiagnosticError.limit_exceeded()
-                    # Charge payload bytes as each row is admitted.
-                    for field in (row[2], row[5]):
-                        if isinstance(field, (bytes, bytearray, memoryview)):
-                            budget.consume_bytes(len(field))
-                        elif isinstance(field, str):
-                            budget.consume_bytes(len(field.encode("utf-8")))
+                    # Charge once per admitted row field as it streams in.
+                    message_key = str(row[0])
+                    message_data = row[2]
+                    part_data = row[5]
+                    if message_key not in charged_messages:
+                        charged_messages.add(message_key)
+                        _charge_sql_text_field(message_data, budget)
+                    if part_data is not None:
+                        _charge_sql_text_field(part_data, budget)
+                    budget.consume_transcript_records()
                     rows.append(row)
                 orphan_count = connection.execute(
                     'SELECT COUNT(*) FROM "part" AS p LEFT JOIN "message" AS m '
@@ -672,17 +677,6 @@ class OpenCodeAdapter:
                 ).fetchone()
         except sqlite3.DatabaseError as error:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=SQLITE_FORMAT) from error
-        charged_messages: set[str] = set()
-        for row in rows:
-            budget.consume_transcript_records()
-            message_key = str(row[0])
-            message_data = row[2]
-            part_data = row[5]
-            if message_key not in charged_messages:
-                charged_messages.add(message_key)
-                _charge_sql_text_field(message_data, budget)
-            if part_data is not None:
-                _charge_sql_text_field(part_data, budget)
         warnings: list[str] = []
         if orphan_count and int(orphan_count[0]) > 0:
             warnings.append("W_BROKEN_CHAIN")
