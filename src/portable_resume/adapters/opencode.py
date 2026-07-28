@@ -643,14 +643,27 @@ class OpenCodeAdapter:
                 if summary_row is None:
                     raise DiagnosticError("E_NO_MATCH", source=self.key)
                 # Transcript ceiling + 1: overflow fails closed (no silent prefix).
-                rows = connection.execute(
+                # Stream rows (no fetchall) so record_bytes / source_read_bytes
+                # can fail closed without materializing the full join first.
+                cursor = connection.execute(
                     'SELECT m.id,m.time_created,m.data,p.id,p.time_created,p.data '
                     'FROM "message" AS m LEFT JOIN "part" AS p '
                     "ON p.message_id=m.id AND p.session_id=m.session_id "
                     "WHERE m.session_id=? "
                     "ORDER BY m.time_created ASC,m.id ASC,p.time_created ASC,p.id ASC LIMIT ?",
                     (ref.session_id, row_cap + 1),
-                ).fetchall()
+                )
+                rows = []
+                for row in cursor:
+                    if len(rows) >= row_cap:
+                        raise DiagnosticError.limit_exceeded()
+                    # Charge payload bytes as each row is admitted.
+                    for field in (row[2], row[5]):
+                        if isinstance(field, (bytes, bytearray, memoryview)):
+                            budget.consume_bytes(len(field))
+                        elif isinstance(field, str):
+                            budget.consume_bytes(len(field.encode("utf-8")))
+                    rows.append(row)
                 orphan_count = connection.execute(
                     'SELECT COUNT(*) FROM "part" AS p LEFT JOIN "message" AS m '
                     "ON m.id=p.message_id AND m.session_id=p.session_id "
@@ -659,8 +672,6 @@ class OpenCodeAdapter:
                 ).fetchone()
         except sqlite3.DatabaseError as error:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=SQLITE_FORMAT) from error
-        if len(rows) > row_cap:
-            raise DiagnosticError.limit_exceeded()
         charged_messages: set[str] = set()
         for row in rows:
             budget.consume_transcript_records()
@@ -739,7 +750,11 @@ class OpenCodeAdapter:
         # Scope to storage/message/<sessionID>/ — do not enumerate unrelated sessions.
         message_dir = os.path.join(storage, "message", ref.session_id)
         messages: dict[str, tuple[Mapping[str, Any], str]] = {}
-        if os.path.isdir(message_dir) and not os.path.islink(message_dir) and is_within(message_dir, root):
+        if os.path.lexists(message_dir):
+            if os.path.islink(message_dir) or not os.path.isdir(message_dir):
+                raise DiagnosticError.unsafe_path()
+            if not is_within(message_dir, root):
+                raise DiagnosticError.unsafe_path()
             for path in _regular_json_files(message_dir, root):
                 budget.consume_transcript_records()
                 value = self._read_json_file(path, root, budget)
@@ -758,8 +773,12 @@ class OpenCodeAdapter:
         # Scope to storage/part/<messageID>/ for admitted messages only.
         for message_id in messages:
             part_dir = os.path.join(storage, "part", message_id)
-            if not os.path.isdir(part_dir) or os.path.islink(part_dir) or not is_within(part_dir, root):
+            if not os.path.lexists(part_dir):
                 continue
+            if os.path.islink(part_dir) or not os.path.isdir(part_dir):
+                raise DiagnosticError.unsafe_path()
+            if not is_within(part_dir, root):
+                raise DiagnosticError.unsafe_path()
             for path in _regular_json_files(part_dir, root):
                 budget.consume_transcript_records()
                 value = self._read_json_file(path, root, budget)
