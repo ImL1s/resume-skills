@@ -8,7 +8,7 @@
 | Destination profiles | 9 including **Pi** (filesystem install supported) |
 | Packaging matrix | **81/81 pass** (currently **9×9=81**, derived from registries; claimed for this `0.3.4` release) |
 | Installed runner matrix | **81/81 pass** (currently **9×9=81**, derived from registries; claimed for this `0.3.4` release) |
-| Python test suite | **407 collected** on current `main` post-#11/#72 (v0.3.4 tag was 375; post-release main had ~378 with Kimi #14; later installer + Cursor P0 work grew the suite) |
+| Python test suite | **426 pass locally** (**426 collected**) after Wave 0 activation baseline validators (pre-Wave 0 main was **407** post-#11/#72; v0.3.4 tag was 375; historical Pi destination PR C local suite remains **359**). |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
 | Host-native headless Skill activation | **8/8 tested CLI surfaces pass** in v0.3.2-era evidence; fresh v0.3.4 host activation and Pi native activation **not-run** |
@@ -136,7 +136,7 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 
 | Area | Status | Required evidence |
 |---|---|---|
-| Current local release gates | pass | 378 tests + 81/81 installed-runner, 2026-07-27 |
+| Current local release gates | pass | **426 pass locally** + 81/81 installed-runner after Wave 0 baseline validators (2026-07-28); pre-Wave 0 main was 407; historical 378-tests claim is pre-#11/#72 growth |
 | `v0.3.4` dual-OS release | pass | [Actions run 30269713516](https://github.com/ImL1s/resume-skills/actions/runs/30269713516), commit `fa1344bf62eb26332baea7b7ef4540a1a37acba8` |
 | `v0.3.4` PyPI publication | pass | [portable-resume 0.3.4](https://pypi.org/project/portable-resume/0.3.4/), public isolated 81-cell self-check |
 | `v0.3.2` dual-OS release | pass | [Actions run 30093776529](https://github.com/ImL1s/resume-skills/actions/runs/30093776529), commit `284865a4dc8c1c3dca16ee40f5204053cabb3a92` |

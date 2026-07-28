@@ -40,10 +40,14 @@ SENSITIVE_SHAPES = [
     ),
 ]
 
-# Relative paths allowed to embed synthetic secret *shapes* for redaction unit tests.
+# Relative paths allowed to embed synthetic secret *shapes* for redaction unit
+# tests, or inert frozen issue-body examples (not live credentials).
 SENSITIVE_ALLOWLIST = frozenset(
     {
         "tests/unit/test_sanitize_handoff.py",
+        # Wave 0 activation baseline: frozen issue bodies include synthetic
+        # sk-/api_key examples for identity-vs-display acceptance text (#61).
+        "plans/all-open-issues-sequential-prs/activation-baseline-20260728.jsonl",
     }
 )
 
@@ -69,17 +73,11 @@ def main() -> int:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        under_tests = rel.startswith("tests/")
         for pat, label in PRODUCT_FORBIDDEN:
             if pat.search(text):
                 hits.append(f"{rel}: {label}")
-        if under_tests and rel in SENSITIVE_ALLOWLIST:
-            continue
-        if under_tests:
-            # tests/ still scanned for SENSITIVE_SHAPES except allowlisted redaction fixtures
-            for pat, label in SENSITIVE_SHAPES:
-                if pat.search(text):
-                    hits.append(f"{rel}: {label}")
+        # Allowlisted paths may hold synthetic shapes only; product-forbidden still applies.
+        if rel in SENSITIVE_ALLOWLIST:
             continue
         for pat, label in SENSITIVE_SHAPES:
             if pat.search(text):

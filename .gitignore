@@ -25,3 +25,15 @@ host-packages/
 .opencode/skills/resume-*/
 .qwen/skills/resume-*/
 .kimi-code/skills/resume-*/
+
+# oh-my-grok
+.omg/
+.omg/state/
+.omg/artifacts/
+.omg/handoffs/
+.omg/ultragoal/
+.omg/wiki/
+*.pid
+.env
+.env.*
+!.env.example
