@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import Iterable
 
 from .bounds import DEFAULT_BOUNDS
+from .diagnostics import DiagnosticError
 from .model import Candidate, Envelope, Session
-from .sanitize import sanitize_inline
+from .sanitize import sanitize_inline, validate_structural_identity
 from .select import candidate_sort_key
 
 UNTRUSTED_BANNER = (
@@ -31,6 +32,24 @@ def _value(value: str | None) -> str:
     return cleaned.replace("`", "'").replace("[", "(").replace("]", ")") or "unknown"
 
 
+def _identity_value(value: str | None) -> str:
+    """Render a selection token without secret redaction or identity-changing rewrites.
+
+    Exact follow-up requires the displayed token to match the native ID. Only the
+    Markdown code-span terminator (backtick) is neutralized; brackets and other
+    ID characters are preserved so providers that allow them (e.g. ``session[1]``)
+    remain pasteable.
+    """
+
+    if value is None or value == "":
+        return "unknown"
+    try:
+        token = validate_structural_identity(value, max_chars=DEFAULT_BOUNDS.ref_chars)
+    except DiagnosticError:
+        return _value(value)
+    return token.replace("`", "'") or "unknown"
+
+
 def _quote(text: str | None) -> list[str]:
     if not text:
         return ["> _(not persisted)_"]
@@ -49,7 +68,7 @@ def render_candidates(candidates: Iterable[Candidate], *, warnings: Iterable[str
         lines.append("> - none")
     for item in ordered:
         lines.append(
-            f"> - `{_value(item.source)}` / `{_value(item.session_id)}` — title: {_value(item.title)}; "
+            f"> - `{_identity_value(item.source)}` / `{_identity_value(item.session_id)}` — title: {_value(item.title)}; "
             f"cwd: {_value(item.cwd)}; branch: {_value(item.branch)}; updated: {_value(item.updated_at)}"
         )
     lines.extend(("", "## Warnings", *_warning_lines(warnings), "", "Select one exact native session ID; do not guess from recovered text."))
@@ -63,8 +82,8 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
         UNTRUSTED_BANNER,
         "",
         "## Stale session metadata",
-        f"> - Source: `{_value(session.source)}`",
-        f"> - Session ID: `{_value(session.session_id)}`",
+        f"> - Source: `{_identity_value(session.source)}`",
+        f"> - Session ID: `{_identity_value(session.session_id)}`",
         f"> - Title: {_value(session.title)}",
         f"> - Persisted cwd (stale): {_value(session.cwd)}",
         f"> - Persisted branch (stale): {_value(session.branch)}",

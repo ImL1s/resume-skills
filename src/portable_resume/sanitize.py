@@ -133,6 +133,74 @@ def sanitize_inline(value: str | bytes, *, max_chars: int) -> SanitizedText:
     return SanitizedText(single_line, _dedupe(warnings), cleaned.truncated or "W_TRUNCATED" in warnings)
 
 
+def validate_structural_identity(value: str, *, max_chars: int) -> str:
+    """Validate a selection/identity field without display redaction or rewrite.
+
+    Used for native session IDs and similar tokens that must remain byte-stable
+    for exact selection and adapter round-trips. Secret-shaped IDs are kept as-is
+    (they are selection keys, not free-text metadata). Overlong values fail closed
+    rather than truncating into a different identity.
+    """
+
+    from .diagnostics import DiagnosticError
+
+    if not isinstance(value, str) or not value:
+        raise DiagnosticError("E_INVARIANT")
+    if "\x00" in value or any(ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F for ch in value):
+        raise DiagnosticError("E_INVARIANT")
+    if any(ch in _BIDI_ZERO_WIDTH for ch in value):
+        raise DiagnosticError("E_INVARIANT")
+    if len(value) > max_chars:
+        raise DiagnosticError.limit_exceeded()
+    return value
+
+
+def validate_structural_summary(summary: "SessionSummary", *, bounds: Bounds = DEFAULT_BOUNDS) -> "SessionSummary":
+    """Fail closed when adapter structural identity cannot be used for selection."""
+
+    from .model import SessionSummary
+
+    if not isinstance(summary, SessionSummary):
+        from .diagnostics import DiagnosticError
+
+        raise DiagnosticError("E_INVARIANT")
+    session_id = validate_structural_identity(summary.session_id, max_chars=bounds.ref_chars)
+    for field_name in ("cwd", "source_path", "source_repo_root"):
+        field_value = getattr(summary, field_name)
+        if field_value is None:
+            continue
+        if not isinstance(field_value, str):
+            from .diagnostics import DiagnosticError
+
+            raise DiagnosticError("E_INVARIANT")
+        if "\x00" in field_value or any(
+            ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F for ch in field_value
+        ):
+            from .diagnostics import DiagnosticError
+
+            raise DiagnosticError("E_INVARIANT")
+        if len(field_value) > 4096:
+            from .diagnostics import DiagnosticError
+
+            raise DiagnosticError.limit_exceeded()
+    if session_id is summary.session_id:
+        return summary
+    # session_id was validated in place; rebuild only if a future validator rewrites.
+    return SessionSummary(
+        source=summary.source,
+        session_id=session_id,
+        source_path=summary.source_path,
+        title=summary.title,
+        cwd=summary.cwd,
+        branch=summary.branch,
+        created_at=summary.created_at,
+        updated_at=summary.updated_at,
+        source_repo_root=summary.source_repo_root,
+        provider=summary.provider,
+        warnings=summary.warnings,
+    )
+
+
 def sanitize_metadata(value: Mapping[str, Any], *, max_depth: int = 8) -> tuple[dict[str, Any], tuple[str, ...]]:
     """Allow printable scalar/list/map metadata while dropping privileged containers."""
 
@@ -211,7 +279,12 @@ def sanitize_turn_record(
 
 
 def sanitize_summary(summary: "SessionSummary", *, bounds: Bounds = DEFAULT_BOUNDS) -> tuple["SessionSummary", tuple[str, ...]]:
-    """Sanitize all displayable summary text while preserving structural paths/IDs."""
+    """Project a public/display summary. Selection must use the raw summary.
+
+    ``session_id`` is a selection token: validated without secret redaction so
+    exact follow-up stays possible. Free-text and path fields are redacted and
+    bounded for public envelopes.
+    """
 
     from .model import SessionSummary
 
@@ -226,8 +299,7 @@ def sanitize_summary(summary: "SessionSummary", *, bounds: Bounds = DEFAULT_BOUN
         cleaned = sanitize_inline(summary.branch, max_chars=512)
         branch = cleaned.text or None
         warnings.extend(cleaned.warnings)
-    session_id = sanitize_inline(summary.session_id, max_chars=bounds.ref_chars)
-    warnings.extend(session_id.warnings)
+    session_id = validate_structural_identity(summary.session_id, max_chars=bounds.ref_chars)
     cwd = sanitize_inline(summary.cwd, max_chars=4096) if summary.cwd is not None else None
     source_path = sanitize_inline(summary.source_path, max_chars=4096) if summary.source_path is not None else None
     source_repo_root = (
@@ -240,7 +312,7 @@ def sanitize_summary(summary: "SessionSummary", *, bounds: Bounds = DEFAULT_BOUN
             warnings.extend(cleaned_path.warnings)
     result = SessionSummary(
         source=summary.source,
-        session_id=session_id.text,
+        session_id=session_id,
         source_path=source_path.text if source_path is not None else None,
         title=title,
         cwd=cwd.text if cwd is not None else None,
@@ -262,7 +334,8 @@ def sanitize_session(session: "Session", *, bounds: Bounds = DEFAULT_BOUNDS) -> 
     warnings: list[str] = list(session.warnings)
     title = sanitize_inline(session.title or "", max_chars=bounds.title_chars)
     branch = sanitize_inline(session.branch or "", max_chars=512)
-    session_id = sanitize_inline(session.session_id, max_chars=bounds.ref_chars)
+    # Selection identity token: never secret-redact native session IDs.
+    session_id_text = validate_structural_identity(session.session_id, max_chars=bounds.ref_chars)
     cwd = sanitize_inline(session.cwd, max_chars=4096) if session.cwd is not None else None
     source_path = sanitize_inline(session.source_path, max_chars=4096) if session.source_path is not None else None
     source_repo_root = (
@@ -272,7 +345,7 @@ def sanitize_session(session: "Session", *, bounds: Bounds = DEFAULT_BOUNDS) -> 
     )
     last_user = sanitize_text(session.last_user_request or "", max_chars=bounds.normalized_content_bytes)
     last_assistant = sanitize_text(session.last_assistant_action or "", max_chars=bounds.normalized_content_bytes)
-    warnings.extend((*title.warnings, *branch.warnings, *session_id.warnings, *last_user.warnings, *last_assistant.warnings))
+    warnings.extend((*title.warnings, *branch.warnings, *last_user.warnings, *last_assistant.warnings))
     for cleaned_path in (cwd, source_path, source_repo_root):
         if cleaned_path is not None:
             warnings.extend(cleaned_path.warnings)
@@ -327,7 +400,7 @@ def sanitize_session(session: "Session", *, bounds: Bounds = DEFAULT_BOUNDS) -> 
         warnings.append("W_TRUNCATED")
     return Session(
         source=session.source,
-        session_id=session_id.text,
+        session_id=session_id_text,
         source_path=source_path.text if source_path is not None else None,
         title=title.text or None,
         cwd=cwd.text if cwd is not None else None,
