@@ -40,6 +40,18 @@ Cursor CLI chat and Desktop composer families. Synthetic fixtures: `tests/fixtur
 
 OpenCode SQLite, file-store, and export providers. Synthetic fixtures: `tests/fixtures/opencode/`.
 
+- **SQLite list:** exact `query.ref` session IDs use `WHERE id = ?` before any
+  newest-session `LIMIT` (issue #13).
+- **SQLite show:** joined message/part rows use `transcript_records` with a
+  `LIMIT n+1` overflow fail-closed path; discovery `scanned_records` is not the
+  transcript ceiling.
+- **File-store show:** supported layout is session-scoped
+  `storage/message/<sessionID>/` and message-scoped `storage/part/<messageID>/`;
+  show does not enumerate unrelated sessions.
+- **Export:** an explicit export JSON document is bounded by
+  `source_read_bytes` (one source document), not the single-record
+  `record_bytes` ceiling.
+
 ### antigravity-antigravity-transcript-jsonl-v1
 
 Antigravity transcript JSONL with optional index hints. Synthetic fixtures: `tests/fixtures/antigravity/`.

@@ -20,7 +20,7 @@ from portable_resume.adapters.opencode import (
     SQLITE_FORMAT,
     OpenCodeAdapter,
 )
-from portable_resume.bounds import DEFAULT_BOUNDS, ReadBudget
+from portable_resume.bounds import Bounds, DEFAULT_BOUNDS, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.model import Query
 from portable_resume.select import AmbiguousSelection, select_session
@@ -42,6 +42,62 @@ def query(source: str, root: Path, ref: str | None = None, **kwargs: object) -> 
 
 def resolve(items, session_id: str):
     return ResolvedRef.from_summary(next(item for item in items if item.session_id == session_id))
+
+
+def _opencode_schema(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE session (
+            id TEXT NOT NULL,
+            directory TEXT NOT NULL,
+            title TEXT,
+            time_created INTEGER,
+            time_updated INTEGER
+        );
+        CREATE TABLE message (
+            id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            time_created INTEGER,
+            data TEXT
+        );
+        CREATE TABLE part (
+            id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            time_created INTEGER,
+            data TEXT
+        );
+        """
+    )
+
+
+def _write_opencode_db(
+    path: Path,
+    *,
+    sessions: list[tuple[str, str, str | None, int, int]],
+    messages: list[tuple[str, str, int, str]] | None = None,
+    parts: list[tuple[str, str, str, int, str]] | None = None,
+) -> None:
+    connection = sqlite3.connect(path)
+    try:
+        _opencode_schema(connection)
+        connection.executemany(
+            "INSERT INTO session(id,directory,title,time_created,time_updated) VALUES (?,?,?,?,?)",
+            sessions,
+        )
+        if messages:
+            connection.executemany(
+                "INSERT INTO message(id,session_id,time_created,data) VALUES (?,?,?,?)",
+                messages,
+            )
+        if parts:
+            connection.executemany(
+                "INSERT INTO part(id,message_id,session_id,time_created,data) VALUES (?,?,?,?,?)",
+                parts,
+            )
+        connection.commit()
+    finally:
+        connection.close()
 
 
 class FixtureManifestTests(unittest.TestCase):
@@ -183,6 +239,326 @@ class OpenCodeAdapterTests(unittest.TestCase):
             self.assertEqual(session.turns[0].content, "0123")
             self.assertTrue(session.turns[0].truncated)
             self.assertIn("W_TRUNCATED", session.warnings)
+
+
+class OpenCodeIssue13Tests(unittest.TestCase):
+    """P0 regressions for exact-ID SQL, transcript show budget, scoped file store, export bound."""
+
+    def test_exact_id_older_than_newest_list_window_is_selectable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            db = root / "opencode.db"
+            # 55 sessions same cwd; exact target is oldest and outside listed_sessions=50.
+            sessions = [
+                (f"ses-{index:03d}", CWD, f"t{index}", index, index) for index in range(55)
+            ]
+            _write_opencode_db(db, sessions=sessions)
+            adapter = OpenCodeAdapter(root=str(root))
+            current = query("opencode", root, "ses-000", within_min=0)
+            before = tree_snapshot(root)
+            summaries = adapter.list(current, ReadBudget())
+            self.assertEqual([item.session_id for item in summaries], ["ses-000"])
+            selection = select_session(summaries, ref="ses-000", cwd=CWD, approved_roots=(str(root),))
+            self.assertIsNotNone(selection.selected)
+            assert selection.selected is not None
+            self.assertEqual(selection.selected.session_id, "ses-000")
+            self.assertEqual(tree_snapshot(root), before)
+
+            # Without exact ref, newest window must not claim the oldest id.
+            latest = adapter.list(query("opencode", root, within_min=0), ReadBudget())
+            self.assertNotIn("ses-000", {item.session_id for item in latest})
+            self.assertEqual(len(latest), DEFAULT_BOUNDS.listed_sessions)
+
+    def test_sqlite_show_uses_transcript_not_scanned_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            db = root / "opencode.db"
+            session_id = "ses-long"
+            messages = [
+                (
+                    "msg-u",
+                    session_id,
+                    1,
+                    json.dumps({"role": "user"}, separators=(",", ":")),
+                ),
+                (
+                    "msg-a",
+                    session_id,
+                    2,
+                    json.dumps({"role": "assistant"}, separators=(",", ":")),
+                ),
+            ]
+            # 30 joined part rows: exceeds scanned_records=20, under transcript_records=100.
+            parts: list[tuple[str, str, str, int, str]] = [
+                (
+                    "p-user",
+                    "msg-u",
+                    session_id,
+                    1,
+                    json.dumps(
+                        {"type": "text", "text": "long prompt"},
+                        separators=(",", ":"),
+                    ),
+                )
+            ]
+            for index in range(29):
+                parts.append(
+                    (
+                        f"p-a{index}",
+                        "msg-a",
+                        session_id,
+                        2 + index,
+                        json.dumps(
+                            {"type": "text", "text": f"chunk {index}"},
+                            separators=(",", ":"),
+                        ),
+                    )
+                )
+            _write_opencode_db(
+                db,
+                sessions=[(session_id, CWD, "long", 1, 100)],
+                messages=messages,
+                parts=parts,
+            )
+            adapter = OpenCodeAdapter(root=str(root))
+            current = query("opencode", root, session_id, within_min=0)
+            summaries = adapter.list(current, ReadBudget())
+            self.assertEqual([item.session_id for item in summaries], [session_id])
+            # Old bug: LIMIT scanned_records+1 would reject 21+ joined rows.
+            tight_scan = ReadBudget(Bounds(scanned_records=20, transcript_records=100))
+            shown = adapter.show(resolve(summaries, session_id), current, tight_scan)
+            self.assertEqual(shown.turns[0].content, "long prompt")
+            self.assertGreaterEqual(len(shown.turns), 2)
+            self.assertGreater(tight_scan.transcript_records_read, 20)
+            self.assertEqual(tight_scan.records, 0)
+
+            # Overflow probe: transcript_records+1 fails closed (no partial Session).
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.show(
+                    resolve(summaries, session_id),
+                    current,
+                    ReadBudget(Bounds(transcript_records=10, scanned_records=5_000)),
+                )
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_sqlite_show_preserves_tail_near_transcript_ceiling(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            db = root / "opencode.db"
+            session_id = "ses-tail"
+            messages = [
+                (
+                    "msg-u",
+                    session_id,
+                    1,
+                    json.dumps({"role": "user"}, separators=(",", ":")),
+                ),
+                (
+                    "msg-a",
+                    session_id,
+                    2,
+                    json.dumps({"role": "assistant"}, separators=(",", ":")),
+                ),
+            ]
+            # 8 joined rows; ceiling 8 admits all including last assistant text.
+            parts = [
+                (
+                    "p-u",
+                    "msg-u",
+                    session_id,
+                    1,
+                    json.dumps({"type": "text", "text": "tail prompt"}, separators=(",", ":")),
+                )
+            ]
+            for index in range(7):
+                text = "final assistant answer" if index == 6 else f"mid {index}"
+                parts.append(
+                    (
+                        f"p{index}",
+                        "msg-a",
+                        session_id,
+                        10 + index,
+                        json.dumps({"type": "text", "text": text}, separators=(",", ":")),
+                    )
+                )
+            _write_opencode_db(
+                db,
+                sessions=[(session_id, CWD, "tail", 1, 2)],
+                messages=messages,
+                parts=parts,
+            )
+            adapter = OpenCodeAdapter(root=str(root))
+            current = query("opencode", root, session_id, within_min=0)
+            summaries = adapter.list(current, ReadBudget())
+            shown = adapter.show(
+                resolve(summaries, session_id),
+                current,
+                ReadBudget(Bounds(transcript_records=8)),
+            )
+            self.assertEqual(shown.last_user_request, "tail prompt")
+            self.assertEqual(shown.last_assistant_action, "final assistant answer")
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.show(
+                    resolve(summaries, session_id),
+                    current,
+                    ReadBudget(Bounds(transcript_records=7)),
+                )
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_file_store_show_scopes_to_session_message_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            storage = root / "storage"
+            session_id = "ses-target"
+            (storage / "session" / "project").mkdir(parents=True)
+            (storage / "message" / session_id).mkdir(parents=True)
+            (storage / "part" / "msg-t-u").mkdir(parents=True)
+            (storage / "part" / "msg-t-a").mkdir(parents=True)
+            session_path = storage / "session" / "project" / f"{session_id}.json"
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "id": session_id,
+                        "directory": CWD,
+                        "title": "target",
+                        "time": {"created": 1, "updated": 2},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (storage / "message" / session_id / "msg-t-u.json").write_text(
+                json.dumps(
+                    {
+                        "id": "msg-t-u",
+                        "sessionID": session_id,
+                        "role": "user",
+                        "time": {"created": 1},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (storage / "message" / session_id / "msg-t-a.json").write_text(
+                json.dumps(
+                    {
+                        "id": "msg-t-a",
+                        "sessionID": session_id,
+                        "role": "assistant",
+                        "time": {"created": 2},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (storage / "part" / "msg-t-u" / "p1.json").write_text(
+                json.dumps(
+                    {
+                        "id": "p1",
+                        "sessionID": session_id,
+                        "messageID": "msg-t-u",
+                        "type": "text",
+                        "text": "scoped prompt",
+                        "time": {"created": 1},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (storage / "part" / "msg-t-a" / "p2.json").write_text(
+                json.dumps(
+                    {
+                        "id": "p2",
+                        "sessionID": session_id,
+                        "messageID": "msg-t-a",
+                        "type": "text",
+                        "text": "scoped answer",
+                        "time": {"created": 2},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            # Unrelated histories would exhaust scanned_records if message/ were fully walked.
+            noise = DEFAULT_BOUNDS.scanned_records + 200
+            for index in range(noise):
+                other = f"ses-noise-{index}"
+                other_dir = storage / "message" / other
+                other_dir.mkdir(parents=True, exist_ok=True)
+                (other_dir / "m.json").write_text(
+                    json.dumps({"id": "m", "sessionID": other, "role": "user", "time": {"created": 1}}),
+                    encoding="utf-8",
+                )
+            adapter = OpenCodeAdapter(root=str(root))
+            current = query("opencode", root, session_id, within_min=0)
+            before = tree_snapshot(root)
+            ref = ResolvedRef(
+                session_id=session_id,
+                source_path=str(session_path.resolve()),
+                provider=FILE_FORMAT,
+                cwd=CWD,
+            )
+            shown = adapter.show(ref, current, ReadBudget())
+            self.assertEqual([turn.content for turn in shown.turns], ["scoped prompt", "scoped answer"])
+            self.assertEqual(tree_snapshot(root), before)
+
+    def test_export_uses_source_read_bytes_not_record_bytes(self) -> None:
+        """Product decision: explicit export is one source document under source_read_bytes."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            export_dir = root / "exports"
+            export_dir.mkdir()
+            # Small structural export with a large text field so file size sits between
+            # a lowered record_bytes and source_read_bytes.
+            pad = "x" * 800
+            payload = {
+                "info": {
+                    "id": "ses-export-bound",
+                    "directory": CWD,
+                    "title": "bound",
+                    "time": {"created": 1, "updated": 2},
+                },
+                "messages": [
+                    {
+                        "info": {
+                            "id": "m1",
+                            "sessionID": "ses-export-bound",
+                            "role": "user",
+                            "time": {"created": 1},
+                        },
+                        "parts": [
+                            {
+                                "id": "p1",
+                                "type": "text",
+                                "text": f"export-prompt {pad}",
+                                "time": {"created": 1},
+                            }
+                        ],
+                    }
+                ],
+            }
+            export_path = export_dir / "large.json"
+            export_path.write_text(json.dumps(payload), encoding="utf-8")
+            size = export_path.stat().st_size
+            self.assertGreater(size, 200)
+            self.assertLess(size, 4_000)
+
+            adapter = OpenCodeAdapter(root=str(root))
+            current = query("opencode", root, "ses-export-bound", within_min=0)
+            # Would fail if export still inherited record_bytes=200.
+            list_budget = ReadBudget(Bounds(record_bytes=200, source_read_bytes=4_000))
+            summaries = adapter.list(current, list_budget)
+            self.assertEqual([item.session_id for item in summaries], ["ses-export-bound"])
+            # Fresh show budget matches reader CLI (list and show do not share counters).
+            shown = adapter.show(
+                resolve(summaries, "ses-export-bound"),
+                current,
+                ReadBudget(Bounds(record_bytes=200, source_read_bytes=4_000)),
+            )
+            self.assertTrue(shown.last_user_request and shown.last_user_request.startswith("export-prompt"))
+
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.list(
+                    current,
+                    ReadBudget(Bounds(record_bytes=16 * 1024 * 1024, source_read_bytes=100)),
+                )
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
 
 class AntigravityAdapterTests(unittest.TestCase):

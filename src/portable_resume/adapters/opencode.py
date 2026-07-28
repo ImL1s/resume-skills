@@ -6,9 +6,22 @@ The provider signatures in this module are deliberately structural and closed:
   relations and their documented join columns.
 * ``opencode-file-store-v1`` requires the legacy
   ``storage/{session,message,part}`` tree and explicit ID fields.
+  Supported on-disk keys for show are session-scoped
+  ``storage/message/<sessionID>/`` and message-scoped
+  ``storage/part/<messageID>/`` (see fixtures). Unrelated sessions are never
+  enumerated during show.
 * an explicit OpenCode export is accepted only when it has the closed
   ``info`` plus ``messages[].{info,parts}`` shape.  It is still reported as a
   file-store capability; the provider string distinguishes it.
+  Product bound: an export is one **source document** limited by
+  ``source_read_bytes`` (aggregate admitted payload), not the generic single
+  record ``record_bytes`` ceiling. Internal JSON depth/width still use the
+  shared structural limits.
+
+List selection applies ``WHERE id = ?`` before any newest-session ``LIMIT`` so
+older exact IDs remain reachable. SQLite show charges joined message/part rows
+against ``transcript_records`` (with a ``LIMIT n+1`` fail-closed overflow),
+never the discovery ``scanned_records`` ceiling.
 
 Unknown schemas are never guessed.  SQLite is queried only after the common
 snapshot primitive has copied a stable main/WAL family to private storage.
@@ -178,6 +191,54 @@ def _eligible(summary: SessionSummary, query: Query) -> bool:
             return True
     minutes = query.within_min if query.within_min is not None else DEFAULT_BOUNDS.listing_age_minutes
     return _within_window(summary.updated_at, minutes)
+
+
+def _exact_session_ref(query: Query | None) -> str | None:
+    """Return a non-path, non-latest ref that may be an exact session ID.
+
+    Absolute paths and ``latest`` are never treated as session IDs.  Callers
+    must still confirm a matching row exists before treating the ref as exact.
+    """
+
+    if query is None or query.ref is None:
+        return None
+    ref = query.ref.strip()
+    if not ref or ref == "latest" or os.path.isabs(ref):
+        return None
+    if len(ref) > DEFAULT_BOUNDS.ref_chars:
+        return None
+    return ref
+
+
+def _field_utf8_len(value: object) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        raise DiagnosticError("E_CORRUPT_RECORD", source="opencode", provider=SQLITE_FORMAT)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return len(bytes(value))
+    if isinstance(value, str):
+        return len(value.encode("utf-8"))
+    raise DiagnosticError("E_CORRUPT_RECORD", source="opencode", provider=SQLITE_FORMAT)
+
+
+def _charge_sql_text_field(value: object, budget: ReadBudget) -> None:
+    """Charge one message/part payload against record_bytes + source_read_bytes."""
+
+    size = _field_utf8_len(value)
+    max_record = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
+    if size > max_record:
+        raise DiagnosticError.limit_exceeded()
+    if size:
+        budget.consume_bytes(size)
+
+
+def _export_read_cap(budget: ReadBudget | None) -> int:
+    """Explicit export documents use source_read_bytes, not record_bytes."""
+
+    if budget is None:
+        return DEFAULT_BOUNDS.source_read_bytes
+    return min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes)
 
 
 def _regular_json_files(base: str, root: str) -> list[str]:
@@ -376,6 +437,19 @@ class OpenCodeAdapter:
     ) -> list[SessionSummary]:
         def _fetch(connection: sqlite3.Connection) -> list[tuple]:
             self._require_schema(connection)
+            # Exact ID before any newest-session LIMIT so older sessions remain
+            # selectable (issue #13). On miss, fall through for text / latest.
+            exact = _exact_session_ref(query)
+            if exact is not None:
+                exact_rows = connection.execute(
+                    'SELECT id,directory,title,time_created,time_updated FROM "session" '
+                    "WHERE id = ? LIMIT 2",
+                    (exact,),
+                ).fetchall()
+                if len(exact_rows) > 1:
+                    raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=SQLITE_FORMAT)
+                if exact_rows:
+                    return exact_rows
             # Prefer cwd-scoped list (Codex-style) so large live DBs stay bounded.
             limit = DEFAULT_BOUNDS.listed_sessions
             if query is not None and query.cwd:
@@ -384,13 +458,14 @@ class OpenCodeAdapter:
                     "WHERE directory = ? ORDER BY time_updated DESC,id ASC LIMIT ?",
                     (query.cwd, limit),
                 ).fetchall()
-                if not rows:
-                    rows = connection.execute(
-                        'SELECT id,directory,title,time_created,time_updated FROM "session" '
-                        "ORDER BY time_updated DESC,id ASC LIMIT ?",
-                        (DEFAULT_BOUNDS.scanned_records,),
-                    ).fetchall()
-                return rows
+                if rows:
+                    return rows
+                # Directory string miss: page newest sessions for same_cwd in Python.
+                return connection.execute(
+                    'SELECT id,directory,title,time_created,time_updated FROM "session" '
+                    "ORDER BY time_updated DESC,id ASC LIMIT ?",
+                    (DEFAULT_BOUNDS.scanned_records,),
+                ).fetchall()
             return connection.execute(
                 'SELECT id,directory,title,time_created,time_updated FROM "session" '
                 "ORDER BY time_updated DESC,id ASC LIMIT ?",
@@ -445,11 +520,19 @@ class OpenCodeAdapter:
             )
         return output
 
-    def _read_json_file(self, path: str, root: str, budget: ReadBudget | None) -> Mapping[str, Any]:
+    def _read_json_file(
+        self,
+        path: str,
+        root: str,
+        budget: ReadBudget | None,
+        *,
+        max_bytes: int | None = None,
+    ) -> Mapping[str, Any]:
+        ceiling = DEFAULT_BOUNDS.record_bytes if max_bytes is None else max_bytes
         read = stable_read_bytes(
             path,
             root=root,
-            max_bytes=DEFAULT_BOUNDS.record_bytes,
+            max_bytes=ceiling,
             budget=budget,
             hook=self._read_hook,
         )
@@ -500,7 +583,8 @@ class OpenCodeAdapter:
     def _read_export(
         self, path: str, root: str, *, budget: ReadBudget | None
     ) -> tuple[SessionSummary, tuple[Mapping[str, Any], list[Any]]]:
-        value = self._read_json_file(path, root, budget)
+        # Explicit product bound: one export document uses source_read_bytes.
+        value = self._read_json_file(path, root, budget, max_bytes=_export_read_cap(budget))
         info, messages = self._export_shape(value)
         session_id = _identifier(info.get("id"))
         directory = info.get("directory")
@@ -538,6 +622,7 @@ class OpenCodeAdapter:
             size = os.path.getsize(ref.source_path)
         except OSError as error:
             raise DiagnosticError("E_SOURCE_BUSY", source=self.key, provider=SQLITE_FORMAT) from error
+        row_cap = min(budget.limits.transcript_records, DEFAULT_BOUNDS.transcript_records)
         try:
             ctx = (
                 query_only_live_sqlite(ref.source_path, root=root, provider=SQLITE_FORMAT)
@@ -557,14 +642,33 @@ class OpenCodeAdapter:
                 ).fetchone()
                 if summary_row is None:
                     raise DiagnosticError("E_NO_MATCH", source=self.key)
-                rows = connection.execute(
+                # Transcript ceiling + 1: overflow fails closed (no silent prefix).
+                # Stream rows (no fetchall) so record_bytes / source_read_bytes
+                # can fail closed without materializing the full join first.
+                cursor = connection.execute(
                     'SELECT m.id,m.time_created,m.data,p.id,p.time_created,p.data '
                     'FROM "message" AS m LEFT JOIN "part" AS p '
                     "ON p.message_id=m.id AND p.session_id=m.session_id "
                     "WHERE m.session_id=? "
                     "ORDER BY m.time_created ASC,m.id ASC,p.time_created ASC,p.id ASC LIMIT ?",
-                    (ref.session_id, DEFAULT_BOUNDS.scanned_records + 1),
-                ).fetchall()
+                    (ref.session_id, row_cap + 1),
+                )
+                rows = []
+                charged_messages: set[str] = set()
+                for row in cursor:
+                    if len(rows) >= row_cap:
+                        raise DiagnosticError.limit_exceeded()
+                    # Charge once per admitted row field as it streams in.
+                    message_key = str(row[0])
+                    message_data = row[2]
+                    part_data = row[5]
+                    if message_key not in charged_messages:
+                        charged_messages.add(message_key)
+                        _charge_sql_text_field(message_data, budget)
+                    if part_data is not None:
+                        _charge_sql_text_field(part_data, budget)
+                    budget.consume_transcript_records()
+                    rows.append(row)
                 orphan_count = connection.execute(
                     'SELECT COUNT(*) FROM "part" AS p LEFT JOIN "message" AS m '
                     "ON m.id=p.message_id AND m.session_id=p.session_id "
@@ -573,9 +677,6 @@ class OpenCodeAdapter:
                 ).fetchone()
         except sqlite3.DatabaseError as error:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=SQLITE_FORMAT) from error
-        if len(rows) > DEFAULT_BOUNDS.scanned_records:
-            raise DiagnosticError.limit_exceeded()
-        budget.consume_records(len(rows))
         warnings: list[str] = []
         if orphan_count and int(orphan_count[0]) > 0:
             warnings.append("W_BROKEN_CHAIN")
@@ -640,34 +741,51 @@ class OpenCodeAdapter:
         summary = self._file_summary(ref.source_path, summary_value)
         if summary.session_id != ref.session_id:
             raise DiagnosticError("E_NO_MATCH", source=self.key)
+        # Scope to storage/message/<sessionID>/ — do not enumerate unrelated sessions.
+        message_dir = os.path.join(storage, "message", ref.session_id)
         messages: dict[str, tuple[Mapping[str, Any], str]] = {}
-        for path in _regular_json_files(os.path.join(storage, "message"), root):
-            value = self._read_json_file(path, root, budget)
-            if value.get("sessionID") != ref.session_id:
-                continue
-            message_id = _identifier(value.get("id"))
-            role = value.get("role")
-            if not isinstance(role, str):
-                raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FILE_FORMAT)
-            if message_id in messages:
-                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FILE_FORMAT)
-            messages[message_id] = (value, path)
+        if os.path.lexists(message_dir):
+            if os.path.islink(message_dir) or not os.path.isdir(message_dir):
+                raise DiagnosticError.unsafe_path()
+            if not is_within(message_dir, root):
+                raise DiagnosticError.unsafe_path()
+            for path in _regular_json_files(message_dir, root):
+                budget.consume_transcript_records()
+                value = self._read_json_file(path, root, budget)
+                if value.get("sessionID") != ref.session_id:
+                    raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FILE_FORMAT)
+                message_id = _identifier(value.get("id"))
+                role = value.get("role")
+                if not isinstance(role, str):
+                    raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FILE_FORMAT)
+                if message_id in messages:
+                    raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FILE_FORMAT)
+                messages[message_id] = (value, path)
         parts: dict[str, list[Mapping[str, Any]]] = {message_id: [] for message_id in messages}
         warnings: list[str] = []
         seen_parts: set[str] = set()
-        for path in _regular_json_files(os.path.join(storage, "part"), root):
-            value = self._read_json_file(path, root, budget)
-            if value.get("sessionID") != ref.session_id:
+        # Scope to storage/part/<messageID>/ for admitted messages only.
+        for message_id in messages:
+            part_dir = os.path.join(storage, "part", message_id)
+            if not os.path.lexists(part_dir):
                 continue
-            message_id = _identifier(value.get("messageID"))
-            part_id = _identifier(value.get("id"))
-            if part_id in seen_parts:
-                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FILE_FORMAT)
-            seen_parts.add(part_id)
-            if message_id not in parts:
-                warnings.append("W_BROKEN_CHAIN")
-                continue
-            parts[message_id].append(value)
+            if os.path.islink(part_dir) or not os.path.isdir(part_dir):
+                raise DiagnosticError.unsafe_path()
+            if not is_within(part_dir, root):
+                raise DiagnosticError.unsafe_path()
+            for path in _regular_json_files(part_dir, root):
+                budget.consume_transcript_records()
+                value = self._read_json_file(path, root, budget)
+                if value.get("sessionID") != ref.session_id:
+                    raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FILE_FORMAT)
+                part_message = _identifier(value.get("messageID"))
+                if part_message != message_id:
+                    raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FILE_FORMAT)
+                part_id = _identifier(value.get("id"))
+                if part_id in seen_parts:
+                    raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FILE_FORMAT)
+                seen_parts.add(part_id)
+                parts[message_id].append(value)
         turns: list[Turn] = []
         ordered_messages = sorted(
             messages.items(),
