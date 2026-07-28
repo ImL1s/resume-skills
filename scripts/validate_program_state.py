@@ -777,6 +777,12 @@ def validate_activation_block(activation: Any, *, label: str = "activation") -> 
                 ERROR_STATE_SCHEMA,
                 f"{label}.issue_order[{index}].wave_number must be {expected_wave}",
             )
+        if entry_obj.get("selection_wave_number") != expected_wave:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                f"{label}.issue_order[{index}].selection_wave_number must be "
+                f"{expected_wave} (frozen wave until replay promotion)",
+            )
         order_issue_numbers.append(issue_number)
     if sorted(order_issue_numbers) != sorted(numbers):
         raise ProgramStateError(
@@ -1249,26 +1255,43 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
                 "receipt chain tip sequence != pointer.last_receipt_sequence",
             )
         assert last_receipt is not None and last_receipt_path is not None
-        if claimed_receipt_hash and last_receipt["receipt_sha256"] != claimed_receipt_hash:
+        tip_hash = last_receipt["receipt_sha256"]
+        if not isinstance(claimed_receipt_hash, str) or not SHA256_HEX_RE.fullmatch(
+            claimed_receipt_hash
+        ):
+            raise ProgramStateError(
+                ERROR_STATE_HASH,
+                "pointer.last_receipt_sha256 must be nonempty sha256 when sequence is set",
+            )
+        if tip_hash != claimed_receipt_hash:
             raise ProgramStateError(
                 ERROR_STATE_HASH,
                 "receipt chain tip hash != pointer.last_receipt_sha256",
             )
-        if (
+        if not isinstance(manifest_receipt_hash, str) or not SHA256_HEX_RE.fullmatch(
             manifest_receipt_hash
-            and last_receipt["receipt_sha256"] != manifest_receipt_hash
         ):
+            raise ProgramStateError(
+                ERROR_STATE_HASH,
+                "manifest.last_receipt_sha256 must be nonempty sha256 when sequence is set",
+            )
+        if tip_hash != manifest_receipt_hash:
             raise ProgramStateError(
                 ERROR_STATE_HASH,
                 "receipt chain tip hash != manifest.last_receipt_sha256",
             )
-        if manifest_receipt_path:
-            expected_name = Path(str(manifest_receipt_path)).name
-            if last_receipt_path.name != expected_name:
-                raise ProgramStateError(
-                    ERROR_STATE_PATH,
-                    "receipt chain tip filename != manifest.last_receipt_path basename",
-                )
+        if not isinstance(manifest_receipt_path, str) or not manifest_receipt_path:
+            raise ProgramStateError(
+                ERROR_STATE_PATH,
+                "manifest.last_receipt_path must be set when receipt sequence is set",
+            )
+        expected_rel = f"state/receipts/{last_receipt_path.name}"
+        if manifest_receipt_path != expected_rel:
+            raise ProgramStateError(
+                ERROR_STATE_PATH,
+                "manifest.last_receipt_path must equal "
+                f"{expected_rel!r}, got {manifest_receipt_path!r}",
+            )
     elif receipts:
         raise ProgramStateError(
             ERROR_STATE_SEQUENCE,
@@ -1277,6 +1300,8 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
 
     dep_seqs: list[int] = []
     prev_dep: str | None = None
+    last_dep: dict[str, Any] | None = None
+    last_dep_path: Path | None = None
     for path, event in dep_events:
         seq, event_id = parse_sequenced_filename(path.name)
         dep_seqs.append(seq)
@@ -1306,7 +1331,51 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
                     f"dependency chain break at sequence {seq}",
                 )
         prev_dep = event["event_sha256"]
+        last_dep = event
+        last_dep_path = path
     validate_sequence_chain(dep_seqs, label="dependency")
+
+    claimed_dep_seq = manifest.get("dependency_sequence")
+    claimed_dep_path = manifest.get("last_dependency_event_path")
+    claimed_dep_hash = manifest.get("last_dependency_event_sha256")
+    if dep_events:
+        if not _is_int(claimed_dep_seq) or claimed_dep_seq != dep_seqs[-1]:
+            raise ProgramStateError(
+                ERROR_STATE_SEQUENCE,
+                "manifest.dependency_sequence must equal dependency event chain tip",
+            )
+        assert last_dep is not None and last_dep_path is not None
+        if not isinstance(claimed_dep_hash, str) or not SHA256_HEX_RE.fullmatch(
+            claimed_dep_hash
+        ):
+            raise ProgramStateError(
+                ERROR_STATE_HASH,
+                "manifest.last_dependency_event_sha256 must be nonempty sha256 "
+                "when dependency events exist",
+            )
+        if last_dep["event_sha256"] != claimed_dep_hash:
+            raise ProgramStateError(
+                ERROR_STATE_HASH,
+                "dependency chain tip hash != manifest.last_dependency_event_sha256",
+            )
+        expected_dep_rel = f"state/dependency-events/{last_dep_path.name}"
+        if claimed_dep_path != expected_dep_rel:
+            raise ProgramStateError(
+                ERROR_STATE_PATH,
+                "manifest.last_dependency_event_path must equal "
+                f"{expected_dep_rel!r}, got {claimed_dep_path!r}",
+            )
+    else:
+        if claimed_dep_seq not in (0, None):
+            raise ProgramStateError(
+                ERROR_STATE_SEQUENCE,
+                "manifest.dependency_sequence must be 0 when no dependency events",
+            )
+        if claimed_dep_path is not None or claimed_dep_hash is not None:
+            raise ProgramStateError(
+                ERROR_STATE_PATH,
+                "manifest dependency tip fields must be null without events",
+            )
 
     for path, record in evidence:
         require_uuid_v4(record.get("evidence_id"), label="evidence_id")
@@ -1318,20 +1387,66 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
         verify_self_hash(record, "record_sha256")
         verify_persisted_bytes(path, record)
 
-    # Projection from dependency events when present.
+    # Projection from dependency events must match the authoritative manifest.
     projection: list[dict[str, Any]] = []
     if dep_events:
         projection = projection_from_events([event for _, event in dep_events])
-        if len(projection) != manifest["dependency_pair_count"] and manifest[
-            "dependency_pair_count"
-        ] == PAIR_COUNT:
-            # Only enforce equality when manifest claims frozen pair count and we
-            # have a full event set (bootstrap). Partial roots may differ.
-            if len(dep_events) == PAIR_COUNT and len(projection) != PAIR_COUNT:
-                raise ProgramStateError(
-                    ERROR_STATE_PROJECTION,
-                    "projection row count must equal pair count after bootstrap",
-                )
+        manifest_projection = manifest.get("dependency_projection")
+        if not isinstance(manifest_projection, list):
+            raise ProgramStateError(
+                ERROR_STATE_PROJECTION,
+                "manifest.dependency_projection must be a list",
+            )
+        # Compare canonical rows (ignore ordering differences by sorting on
+        # subject/related issue numbers).
+        def _proj_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
+            return (
+                row.get("subject_issue_number"),
+                row.get("related_issue_number"),
+                row.get("status"),
+            )
+
+        got = sorted(
+            (
+                {
+                    "subject_issue_number": r.get("subject_issue_number"),
+                    "related_issue_number": r.get("related_issue_number"),
+                    "status": r.get("status"),
+                }
+                for r in projection
+            ),
+            key=_proj_key,
+        )
+        want = sorted(
+            (
+                {
+                    "subject_issue_number": r.get("subject_issue_number"),
+                    "related_issue_number": r.get("related_issue_number"),
+                    "status": r.get("status"),
+                }
+                for r in manifest_projection
+                if isinstance(r, Mapping)
+            ),
+            key=_proj_key,
+        )
+        if got != want:
+            raise ProgramStateError(
+                ERROR_STATE_PROJECTION,
+                "manifest.dependency_projection does not match replayed event chain",
+            )
+        if len(projection) != manifest.get("dependency_pair_count") and len(
+            dep_events
+        ) == manifest.get("dependency_pair_count"):
+            raise ProgramStateError(
+                ERROR_STATE_PROJECTION,
+                "projection row count must equal dependency_pair_count when full set present",
+            )
+    else:
+        if manifest.get("dependency_projection") not in ([], None):
+            raise ProgramStateError(
+                ERROR_STATE_PROJECTION,
+                "manifest.dependency_projection must be empty without events",
+            )
 
     return {
         "ok": True,
