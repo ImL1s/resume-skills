@@ -17,6 +17,17 @@ FORBIDDEN = [
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),
 ]
 
+# OpenAI-like shape only — must stay aligned with scripts/check_secrets.py.
+SK_SHAPE = re.compile(r"sk-[A-Za-z0-9_-]{20,}")
+
+# Frozen inert issue bodies may embed synthetic sk- examples (e.g. #61 identity
+# vs display). Home paths, PEM, ghp_, and mailboxes are NEVER allowlisted.
+SK_SHAPE_ALLOWLIST = frozenset(
+    {
+        "plans/all-open-issues-sequential-prs/activation-baseline-20260728.jsonl",
+    }
+)
+
 
 class PublicTreeHygieneTests(unittest.TestCase):
     def test_tracked_files_have_no_local_pii_or_secrets(self) -> None:
@@ -32,6 +43,8 @@ class PublicTreeHygieneTests(unittest.TestCase):
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             for pat in FORBIDDEN:
+                if pat.pattern == SK_SHAPE.pattern and rel in SK_SHAPE_ALLOWLIST:
+                    continue
                 if pat.search(text):
                     hits.append(f"{rel}: {pat.pattern}")
         self.assertEqual(hits, [], msg="public tree leaks local paths/secrets:\n" + "\n".join(hits[:50]))

@@ -25,3 +25,9 @@ host-packages/
 .opencode/skills/resume-*/
 .qwen/skills/resume-*/
 .kimi-code/skills/resume-*/
+
+# oh-my-grok local state (`.omg/` already ignored above)
+*.pid
+.env
+.env.*
+!.env.example
