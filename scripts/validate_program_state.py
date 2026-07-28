@@ -1307,6 +1307,71 @@ def validate_state_root(
                 ERROR_STATE_SCHEMA,
                 "owned pointer.active_issue_number must be in activation issue set",
             )
+        # One open program authorization when pr-open; none when only selected.
+        authorizations = manifest.get("open_program_authorizations") or []
+        if not isinstance(authorizations, list):
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "manifest.open_program_authorizations must be a list",
+            )
+        if pointer.get("phase") == "pr-open":
+            auth_id = pointer.get("active_authorization_id")
+            if not isinstance(auth_id, str) or not auth_id:
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    "owned/pr-open requires pointer.active_authorization_id",
+                )
+            if len(authorizations) != 1:
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    "owned/pr-open requires exactly one open_program_authorization",
+                )
+            auth = authorizations[0]
+            if not isinstance(auth, Mapping):
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    "open_program_authorization must be an object",
+                )
+            if auth.get("authorization_id") != auth_id:
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    "manifest authorization_id must match pointer.active_authorization_id",
+                )
+            if auth.get("issue_number") != active:
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    "manifest authorization issue_number must match active issue",
+                )
+            if (
+                pointer.get("active_pr_number") is not None
+                and auth.get("pr_number") != pointer.get("active_pr_number")
+            ):
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    "manifest authorization pr_number must match pointer",
+                )
+            if (
+                pointer.get("active_pr_node_id") is not None
+                and auth.get("pr_node_id") != pointer.get("active_pr_node_id")
+            ):
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    "manifest authorization pr_node_id must match pointer",
+                )
+            if (
+                pointer.get("active_pr_url") is not None
+                and auth.get("pr_url") != pointer.get("active_pr_url")
+            ):
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    "manifest authorization pr_url must match pointer",
+                )
+        elif pointer.get("phase") == "selected":
+            if authorizations:
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    "owned/selected forbids open_program_authorizations",
+                )
 
     receipts = _load_json_dir(state_root / "receipts")
     dep_events = _load_json_dir(state_root / "dependency-events")
@@ -1757,20 +1822,40 @@ def validate_state_root(
                     exc.code,
                     f"receipt transition rejected for {operation}: {exc}",
                 ) from exc
+            # Release / complete explicitly clear ownership even when request
+            # fields are null (null means cleared, not "retain previous").
+            if operation in {"issue-released", "program-completed"} or str(
+                to_status
+            ) in {"idle", "complete"}:
+                next_owner_token = None
+                next_owner_identity = None
+                next_issue = None
+                next_pr_ordinal = None
+            else:
+                next_owner_token = (
+                    request.owner_token
+                    if request.owner_token is not None
+                    else previous_view.owner_token
+                )
+                next_owner_identity = (
+                    request.owner_identity
+                    if request.owner_identity is not None
+                    else previous_view.owner_identity
+                )
+                next_issue = (
+                    request.issue_number
+                    if request.issue_number is not None
+                    else previous_view.active_issue_number
+                )
+                next_pr_ordinal = previous_view.active_pr_ordinal
             previous_view = PointerView(
                 status=str(to_status),
                 phase=str(to_phase or to_status),
                 epoch=request.epoch if request.epoch is not None else previous_view.epoch,
-                owner_token=request.owner_token
-                if request.owner_token is not None
-                else previous_view.owner_token,
-                owner_identity=request.owner_identity
-                if request.owner_identity is not None
-                else previous_view.owner_identity,
-                active_issue_number=request.issue_number
-                if request.issue_number is not None
-                else previous_view.active_issue_number,
-                active_pr_ordinal=previous_view.active_pr_ordinal,
+                owner_token=next_owner_token,
+                owner_identity=next_owner_identity,
+                active_issue_number=next_issue,
+                active_pr_ordinal=next_pr_ordinal,
                 acceptance_complete=bool(
                     request.acceptance_complete
                     if request.acceptance_complete is not None
@@ -1807,14 +1892,22 @@ def validate_state_root(
             )
 
     # Per-pair supersession: non-bootstrap events for a pair must keep dependency_id
-    # and must name the previous pair-tip hash.
+    # and must name the previous pair-tip hash. dependency_id is unique across pairs.
     latest_by_pair: dict[tuple[int, int], dict[str, Any]] = {}
+    dep_id_to_pair: dict[str, tuple[int, int]] = {}
     for _path, event in dep_events:
         key = (
             int(event["subject_issue_number"]),
             int(event["related_issue_number"]),
         )
         dep_id = str(event["dependency_id"])
+        owner = dep_id_to_pair.get(dep_id)
+        if owner is not None and owner != key:
+            raise ProgramStateError(
+                ERROR_STATE_ID,
+                "dependency_id must be unique across ordered pairs",
+            )
+        dep_id_to_pair[dep_id] = key
         prev = latest_by_pair.get(key)
         if prev is None:
             if event.get("supersedes_event_sha256") not in (None, ""):
