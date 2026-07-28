@@ -33,7 +33,13 @@ def _value(value: str | None) -> str:
 
 
 def _identity_value(value: str | None) -> str:
-    """Render a selection token without secret redaction (exact follow-up must work)."""
+    """Render a selection token without secret redaction or identity-changing rewrites.
+
+    Exact follow-up requires the displayed token to match the native ID. Only the
+    Markdown code-span terminator (backtick) is neutralized; brackets and other
+    ID characters are preserved so providers that allow them (e.g. ``session[1]``)
+    remain pasteable.
+    """
 
     if value is None or value == "":
         return "unknown"
@@ -41,7 +47,7 @@ def _identity_value(value: str | None) -> str:
         token = validate_structural_identity(value, max_chars=DEFAULT_BOUNDS.ref_chars)
     except DiagnosticError:
         return _value(value)
-    return token.replace("`", "'").replace("[", "(").replace("]", ")") or "unknown"
+    return token.replace("`", "'") or "unknown"
 
 
 def _quote(text: str | None) -> list[str]:
