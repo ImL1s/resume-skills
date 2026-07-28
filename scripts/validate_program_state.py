@@ -812,17 +812,17 @@ def validate_manifest_shape(
     validate_activation_block(obj["activation"])
     if not _is_int(obj["state_sequence"]) or obj["state_sequence"] < 1:
         raise ProgramStateError(ERROR_STATE_SEQUENCE, "manifest.state_sequence invalid")
-    if obj.get("dependency_pair_source_path") != PAIRS_SOURCE_PATH:
-        raise ProgramStateError(
-            ERROR_STATE_SCHEMA,
-            "dependency_pair_source_path mismatch",
-        )
-    if obj.get("dependency_pair_source_sha256") != PAIRS_SOURCE_SHA256:
-        raise ProgramStateError(
-            ERROR_STATE_SCHEMA,
-            "dependency_pair_source_sha256 mismatch",
-        )
     if require_pair_constants:
+        if obj.get("dependency_pair_source_path") != PAIRS_SOURCE_PATH:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "dependency_pair_source_path mismatch",
+            )
+        if obj.get("dependency_pair_source_sha256") != PAIRS_SOURCE_SHA256:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "dependency_pair_source_sha256 mismatch",
+            )
         if obj.get("dependency_pair_count") != PAIR_COUNT:
             raise ProgramStateError(
                 ERROR_STATE_PROJECTION,
@@ -1262,7 +1262,11 @@ def _load_json_dir(directory: Path) -> list[tuple[Path, dict[str, Any]]]:
     return items
 
 
-def validate_state_root(state_root: Path) -> dict[str, Any]:
+def validate_state_root(
+    state_root: Path,
+    *,
+    require_pair_constants: bool = True,
+) -> dict[str, Any]:
     if not state_root.is_dir():
         raise ProgramStateError(ERROR_STATE_PATH, f"state root missing: {state_root}")
 
@@ -1276,7 +1280,10 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
 
     pointer = validate_pointer(strict_load_path(pointer_path))
     verify_persisted_bytes(pointer_path, pointer)
-    manifest = validate_manifest_shape(strict_load_path(manifest_path))
+    manifest = validate_manifest_shape(
+        strict_load_path(manifest_path),
+        require_pair_constants=require_pair_constants,
+    )
     verify_persisted_bytes(manifest_path, manifest)
 
     if pointer["pointer_sha256"] != manifest["pointer_sha256"]:
@@ -1477,6 +1484,18 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
                 f"{expected_dep_rel!r}, got {claimed_dep_path!r}",
             )
     else:
+        # Manifest advertising the frozen pair source/count cannot be validated
+        # as bootstrap-idle with zero dependency events — every frozen pair must
+        # exist as an initial event (no sentinel, but also no empty set).
+        if (
+            manifest.get("dependency_pair_source_sha256") == PAIRS_SOURCE_SHA256
+            or manifest.get("dependency_pair_count") == PAIR_COUNT
+        ):
+            raise ProgramStateError(
+                ERROR_STATE_PROJECTION,
+                "frozen pair source/count requires dependency-events to be present "
+                f"(expected {PAIR_COUNT} initial events)",
+            )
         if claimed_dep_seq not in (0, None):
             raise ProgramStateError(
                 ERROR_STATE_SEQUENCE,
@@ -1610,12 +1629,176 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
                     ERROR_STATE_PROJECTION,
                     "replayed pair keys/related_is_baseline must equal frozen pair source",
                 )
+
+        # Recompute authoritative summary counts from replay.
+        unresolved_dep = sum(
+            1
+            for row in projection
+            if row.get("status") in {"unresolved", "blocking"}
+        )
+        if manifest.get("unresolved_dependency_count") != unresolved_dep:
+            raise ProgramStateError(
+                ERROR_STATE_PROJECTION,
+                "manifest.unresolved_dependency_count must equal "
+                f"replayed unresolved/blocking rows ({unresolved_dep})",
+            )
+        resolved_count = len(terminal_issues)
+        if manifest.get("resolved_issue_count") != resolved_count:
+            raise ProgramStateError(
+                ERROR_STATE_PROJECTION,
+                "manifest.resolved_issue_count must equal receipt-derived "
+                f"terminal set size ({resolved_count})",
+            )
+        unresolved_lineage = ISSUE_COUNT - resolved_count
+        if manifest.get("unresolved_lineage_count") != unresolved_lineage:
+            raise ProgramStateError(
+                ERROR_STATE_PROJECTION,
+                "manifest.unresolved_lineage_count must equal "
+                f"{ISSUE_COUNT}-resolved ({unresolved_lineage})",
+            )
     else:
         if manifest.get("dependency_projection") not in ([], None):
             raise ProgramStateError(
                 ERROR_STATE_PROJECTION,
                 "manifest.dependency_projection must be empty without events",
             )
+
+    # Permanent complete sink requires full eligibility, not structural nulls only.
+    if pointer["status"] == "complete":
+        terminal_now = _derive_terminal_issues_from_receipts(receipts)
+        if len(terminal_now) != ISSUE_COUNT:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                f"complete requires {ISSUE_COUNT} terminal issues from receipts, "
+                f"got {len(terminal_now)}",
+            )
+        if projection:
+            still_open = [
+                row
+                for row in projection
+                if row.get("status") in {"unresolved", "blocking"}
+            ]
+            if still_open:
+                raise ProgramStateError(
+                    ERROR_STATE_PROJECTION,
+                    "complete forbids unresolved/blocking dependency rows",
+                )
+        if manifest.get("open_program_authorizations") not in ([], None):
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "complete forbids open_program_authorizations",
+            )
+        if pointer.get("owner_token") is not None or pointer.get(
+            "active_issue_number"
+        ) is not None:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                "complete pointer must clear owner and active issue",
+            )
+
+    # Soft closed-schema transition replay when receipts expose transition fields.
+    previous_view: PointerView | None = None
+    for _path, receipt in receipts:
+        operation = str(receipt.get("operation") or receipt.get("event_type") or "")
+        if not operation:
+            continue
+        from_status = receipt.get("from_status") or receipt.get("previous_status")
+        to_status = receipt.get("to_status") or receipt.get("status")
+        from_phase = receipt.get("from_phase") or receipt.get("previous_phase")
+        to_phase = receipt.get("to_phase") or receipt.get("phase")
+        if previous_view is None and from_status in STATUS_ENUM:
+            previous_view = PointerView(
+                status=str(from_status),
+                phase=str(from_phase or "idle"),
+                epoch=int(receipt.get("epoch") or 0),
+                owner_token=receipt.get("owner_token"),
+                owner_identity=receipt.get("owner_identity"),
+                active_issue_number=receipt.get("active_issue_number")
+                if _is_int(receipt.get("active_issue_number"))
+                else None,
+                active_pr_ordinal=receipt.get("active_pr_ordinal")
+                if _is_int(receipt.get("active_pr_ordinal"))
+                else None,
+                acceptance_complete=bool(receipt.get("acceptance_complete", False)),
+            )
+        if previous_view is not None and to_status in STATUS_ENUM:
+            request = TransitionRequest(
+                event_type=operation,
+                to_status=str(to_status),
+                to_phase=str(to_phase or to_status),
+                issue_number=receipt.get("issue_number")
+                if _is_int(receipt.get("issue_number"))
+                else receipt.get("active_issue_number")
+                if _is_int(receipt.get("active_issue_number"))
+                else None,
+                owner_token=receipt.get("owner_token"),
+                owner_identity=receipt.get("owner_identity"),
+                epoch=int(receipt["epoch"]) if _is_int(receipt.get("epoch")) else None,
+                acceptance_complete=receipt.get("acceptance_complete")
+                if isinstance(receipt.get("acceptance_complete"), bool)
+                else None,
+            )
+            try:
+                check_forbidden_transition(previous_view, request)
+            except ProgramStateError as exc:
+                raise ProgramStateError(
+                    exc.code,
+                    f"receipt transition rejected for {operation}: {exc}",
+                ) from exc
+            previous_view = PointerView(
+                status=str(to_status),
+                phase=str(to_phase or to_status),
+                epoch=request.epoch if request.epoch is not None else previous_view.epoch,
+                owner_token=request.owner_token
+                if request.owner_token is not None
+                else previous_view.owner_token,
+                owner_identity=request.owner_identity
+                if request.owner_identity is not None
+                else previous_view.owner_identity,
+                active_issue_number=request.issue_number
+                if request.issue_number is not None
+                else previous_view.active_issue_number,
+                active_pr_ordinal=previous_view.active_pr_ordinal,
+                acceptance_complete=bool(
+                    request.acceptance_complete
+                    if request.acceptance_complete is not None
+                    else previous_view.acceptance_complete
+                ),
+            )
+
+    # Per-pair supersession: non-bootstrap events for a pair must keep dependency_id
+    # and supersede the previous tip for that ordered pair when declared.
+    latest_by_pair: dict[tuple[int, int], dict[str, Any]] = {}
+    for _path, event in dep_events:
+        key = (
+            int(event["subject_issue_number"]),
+            int(event["related_issue_number"]),
+        )
+        dep_id = str(event["dependency_id"])
+        prev = latest_by_pair.get(key)
+        if prev is None:
+            if event.get("supersedes_event_sha256") not in (None, ""):
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    "first event for a pair must not supersede another event",
+                )
+        else:
+            if dep_id != str(prev["dependency_id"]):
+                raise ProgramStateError(
+                    ERROR_STATE_SCHEMA,
+                    "dependency_id is immutable per ordered pair across updates",
+                )
+            supersedes = event.get("supersedes_event_sha256") or event.get(
+                "previous_pair_event_sha256"
+            )
+            if supersedes not in (None, "", prev.get("event_sha256")):
+                # If the event declares supersession, it must name the current tip.
+                if supersedes is not None and supersedes != prev.get("event_sha256"):
+                    raise ProgramStateError(
+                        ERROR_STATE_HASH,
+                        "dependency update must supersede the current pair-tip event",
+                    )
+        latest_by_pair[key] = dict(event)
 
     return {
         "ok": True,

@@ -364,9 +364,11 @@ class ValidateProgramStateTests(unittest.TestCase):
                 "state_sequence": 1,
                 "last_receipt_path": receipt_rel,
                 "last_receipt_sha256": receipt["receipt_sha256"],
-                "dependency_pair_source_path": self.mod.PAIRS_SOURCE_PATH,
-                "dependency_pair_source_sha256": self.mod.PAIRS_SOURCE_SHA256,
-                "dependency_pair_count": 212,
+                # Synthetic minimal root: do not advertise frozen 212-pair bootstrap
+                # (that requires full dependency-events). Count stays zero here.
+                "dependency_pair_source_path": "synthetic://empty",
+                "dependency_pair_source_sha256": "0" * 64,
+                "dependency_pair_count": 0,
                 "dependency_sequence": 0,
                 "last_dependency_event_path": None,
                 "last_dependency_event_sha256": None,
@@ -387,7 +389,10 @@ class ValidateProgramStateTests(unittest.TestCase):
             manifest["manifest_sha256"] = self.mod.self_hash(manifest, "manifest_sha256")
             (root / "pointer.json").write_bytes(self.mod.persisted_file_bytes(pointer))
             (root / "manifest.json").write_bytes(self.mod.persisted_file_bytes(manifest))
-            summary = self.mod.validate_state_root(root)
+            # Synthetic fixture intentionally omits frozen 212-pair bootstrap events.
+            summary = self.mod.validate_state_root(
+                root, require_pair_constants=False
+            )
             self.assertTrue(summary["ok"])
             self.assertEqual(summary["pointer_status"], "idle")
 
