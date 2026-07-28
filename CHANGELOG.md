@@ -12,6 +12,15 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Session selection identity vs display sanitization (#61): list/show selection
+  and `ResolvedRef` use validated raw structural fields (`session_id`,
+  `source_path`, `cwd`); public envelopes still redact free-text and path
+  content. Secret-shaped native session IDs remain exact-selectable and are not
+  collapsed to `[REDACTED]` before adapter `show()`.
+- Exact-path no-symlink validation (#68): `require_regular_no_symlinks` no longer
+  rewrites an outside symlink via realpath merely because the target sits inside
+  the approved root; only configured-root spellings (plus narrow macOS
+  `/var`↔`/private/var` reverse alias) are accepted walk roots.
 - OpenCode exact selection and large transcripts (#13): SQLite list applies
   `WHERE id = ?` before any newest-session `LIMIT` so older exact IDs stay
   selectable; show joins charge `transcript_records` with `LIMIT n+1`

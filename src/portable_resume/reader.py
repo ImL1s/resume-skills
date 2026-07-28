@@ -18,7 +18,7 @@ from .handoff import render_candidates, render_handoff, render_no_match
 from .model import Envelope, Query, SessionSummary
 from .paths import canonical_root, canonicalize_cwd, reject_controls
 from .request import load_request
-from .sanitize import sanitize_session, sanitize_summary
+from .sanitize import sanitize_session, sanitize_summary, validate_structural_summary
 from .select import AmbiguousSelection, bounded_candidates, select_session, summary_sort_key
 
 
@@ -249,54 +249,76 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
         raw_summaries = adapter.list(query, budget)
         if len(raw_summaries) > DEFAULT_BOUNDS.scanned_records:
             raise DiagnosticError.limit_exceeded()
-        sanitized: list[SessionSummary] = []
+        # Internal identity for selection / ResolvedRef; public projection later.
+        internal: list[SessionSummary] = []
         envelope_warnings: list[str] = list(capability.warnings)
         for raw in raw_summaries:
             if raw.source != source:
                 raise DiagnosticError("E_INVARIANT", source=source)
-            item, warnings = sanitize_summary(raw)
-            sanitized.append(item)
-            envelope_warnings.extend(warnings)
-        ordered_all = sorted(sanitized, key=summary_sort_key)
-        if len(ordered_all) > DEFAULT_BOUNDS.listed_sessions:
+            internal.append(validate_structural_summary(raw))
+        ordered_internal_all = sorted(internal, key=summary_sort_key)
+        if len(ordered_internal_all) > DEFAULT_BOUNDS.listed_sessions:
             envelope_warnings.append("W_TRUNCATED")
-        ordered = ordered_all[: DEFAULT_BOUNDS.listed_sessions]
+        ordered_internal = ordered_internal_all[: DEFAULT_BOUNDS.listed_sessions]
 
         if action == "list":
+            public_sessions: list[SessionSummary] = []
+            for raw in ordered_internal:
+                item, warnings = sanitize_summary(raw)
+                public_sessions.append(item)
+                envelope_warnings.extend(warnings)
             envelope = Envelope.create(
                 operation="list",
                 query=query,
-                sessions=(item.empty_session() for item in ordered),
+                sessions=(item.empty_session() for item in public_sessions),
                 warnings=tuple(dict.fromkeys(envelope_warnings)),
             )
             value = _validated_value(envelope)
             if output_format == "json":
                 stdout.write(_json(value))
             elif output_format == "handoff":
-                stdout.write(render_candidates(bounded_candidates(ordered), warnings=envelope.warnings))
+                stdout.write(render_candidates(bounded_candidates(public_sessions), warnings=envelope.warnings))
             else:
-                stdout.write(_table(ordered))
+                stdout.write(_table(public_sessions))
             return 0
 
         try:
             selection = select_session(
-                sanitized,
+                internal,
                 ref=ref,
                 cwd=cwd,
                 approved_roots=_approved_roots(adapter, query),
             )
         except AmbiguousSelection as error:
+            # Public candidates: preserve native session_id tokens; redact free text/paths.
+            public_candidates = []
+            for candidate in error.candidates:
+                # Rebuild from matching internal summary when possible for full sanitize.
+                match = next(
+                    (
+                        item
+                        for item in internal
+                        if item.source == candidate.source and item.session_id == candidate.session_id
+                    ),
+                    None,
+                )
+                if match is not None:
+                    item, warnings = sanitize_summary(match)
+                    envelope_warnings.extend(warnings)
+                    public_candidates.append(item.candidate())
+                else:
+                    public_candidates.append(candidate)
             envelope = Envelope.create(
                 operation="show",
                 query=query,
-                candidates=error.candidates,
+                candidates=tuple(public_candidates),
                 warnings=tuple(dict.fromkeys(envelope_warnings)),
             )
             value = _validated_value(envelope)
             stdout.write(
                 _json(value)
                 if output_format == "json"
-                else render_candidates(error.candidates, warnings=envelope.warnings)
+                else render_candidates(tuple(public_candidates), warnings=envelope.warnings)
             )
             return emit_diagnostic(error, stream=stderr)
         except DiagnosticError as error:
@@ -315,12 +337,18 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
             )
             return emit_diagnostic(error, stream=stderr)
         assert selection.selected is not None
+        selected_raw = selection.selected
         # Fresh budget for show: list already consumed scan/read counters on the
         # same large live transcripts (Grok-style real sessions often >1k records).
-        session = sanitize_session(
-            adapter.show(ResolvedRef.from_summary(selection.selected), query, ReadBudget())
-        )
-        if session.source != source or session.session_id != selection.selected.session_id:
+        raw_session = adapter.show(ResolvedRef.from_summary(selected_raw), query, ReadBudget())
+        if raw_session.source != source or raw_session.session_id != selected_raw.session_id:
+            raise DiagnosticError("E_INVARIANT", source=source)
+        if raw_session.source_path is not None and selected_raw.source_path is not None:
+            if raw_session.source_path != selected_raw.source_path:
+                raise DiagnosticError("E_INVARIANT", source=source)
+        session = sanitize_session(raw_session)
+        # Public session_id remains the validated native token; paths are redacted.
+        if session.session_id != selected_raw.session_id:
             raise DiagnosticError("E_INVARIANT", source=source)
         envelope = Envelope.create(
             operation="show",
