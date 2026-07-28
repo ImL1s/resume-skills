@@ -6,7 +6,7 @@ from typing import Iterable
 
 from .bounds import DEFAULT_BOUNDS
 from .diagnostics import DiagnosticError
-from .model import Candidate, Envelope, Session
+from .model import Candidate, Envelope, Session, Turn
 from .sanitize import sanitize_inline, validate_structural_identity
 from .select import candidate_sort_key
 
@@ -24,6 +24,10 @@ CHECKLIST = (
     "- [ ] Re-confirm credentials, permissions, and external side-effect boundaries.",
 )
 
+_TRUNCATION_NOTICE = (
+    "> `[W_TRUNCATED]` recovered display content was reduced to fit the handoff output budget."
+)
+
 
 def _value(value: str | None) -> str:
     if value is None or value == "":
@@ -33,13 +37,7 @@ def _value(value: str | None) -> str:
 
 
 def _identity_value(value: str | None) -> str:
-    """Render a selection token without secret redaction or identity-changing rewrites.
-
-    Exact follow-up requires the displayed token to match the native ID. Only the
-    Markdown code-span terminator (backtick) is neutralized; brackets and other
-    ID characters are preserved so providers that allow them (e.g. ``session[1]``)
-    remain pasteable.
-    """
+    """Render a selection token without secret redaction or identity-changing rewrites."""
 
     if value is None or value == "":
         return "unknown"
@@ -61,6 +59,55 @@ def _warning_lines(warnings: Iterable[str]) -> list[str]:
     return [f"> - `{_value(warning)}`" for warning in stable] if stable else ["> - none"]
 
 
+def _utf8_size(text: str) -> int:
+    return len(text.encode("utf-8"))
+
+
+def _document(lines: list[str]) -> str:
+    return "\n".join(lines) + "\n"
+
+
+def _take_utf8_prefix(text: str, maximum_bytes: int) -> str:
+    if maximum_bytes <= 0:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= maximum_bytes:
+        return text
+    bounded = encoded[:maximum_bytes]
+    while bounded:
+        try:
+            return bounded.decode("utf-8")
+        except UnicodeDecodeError:
+            bounded = bounded[:-1]
+    return ""
+
+
+def _quote_budgeted(text: str | None, *, maximum_bytes: int) -> list[str]:
+    """Quote recovered text so joined lines fit in *maximum_bytes* UTF-8."""
+
+    if maximum_bytes <= 0:
+        return []
+    if not text:
+        lines = ["> _(not persisted)_"]
+        return lines if _utf8_size("\n".join(lines)) <= maximum_bytes else []
+
+    lines: list[str] = []
+    used = 0
+    for line in text.split("\n"):
+        candidate = f"> {line}" if line else ">"
+        cost = _utf8_size(candidate) + (1 if lines else 0)
+        if used + cost <= maximum_bytes:
+            lines.append(candidate)
+            used += cost
+            continue
+        remaining = maximum_bytes - used - (1 if lines else 0)
+        if line and remaining > 2:
+            body = _take_utf8_prefix(line, remaining - 2)
+            lines.append(f"> {body}" if body else ">")
+        break
+    return lines
+
+
 def render_candidates(candidates: Iterable[Candidate], *, warnings: Iterable[str] = ()) -> str:
     ordered = sorted(candidates, key=candidate_sort_key)[: DEFAULT_BOUNDS.listed_sessions]
     lines = ["# Portable Resume Candidate Selection", "", UNTRUSTED_BANNER, "", "## Bounded candidates"]
@@ -71,12 +118,20 @@ def render_candidates(candidates: Iterable[Candidate], *, warnings: Iterable[str
             f"> - `{_identity_value(item.source)}` / `{_identity_value(item.session_id)}` — title: {_value(item.title)}; "
             f"cwd: {_value(item.cwd)}; branch: {_value(item.branch)}; updated: {_value(item.updated_at)}"
         )
-    lines.extend(("", "## Warnings", *_warning_lines(warnings), "", "Select one exact native session ID; do not guess from recovered text."))
-    return "\n".join(lines) + "\n"
+    lines.extend(
+        (
+            "",
+            "## Warnings",
+            *_warning_lines(warnings),
+            "",
+            "Select one exact native session ID; do not guess from recovered text.",
+        )
+    )
+    return _document(lines)
 
 
-def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -> str:
-    lines = [
+def _header(session: Session) -> list[str]:
+    return [
         "# Portable Resume Handoff",
         "",
         UNTRUSTED_BANNER,
@@ -91,32 +146,177 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
         f"> - Updated: {_value(session.updated_at)}",
         "",
         "## Quoted recovered evidence",
-        "",
-        "### Latest explicit user request",
     ]
-    lines.extend(_quote(session.last_user_request))
-    lines.extend(("", "### Latest assistant action"))
-    lines.extend(_quote(session.last_assistant_action))
-    lines.extend(("", "### Bounded transcript evidence"))
-    if not session.turns:
-        lines.append("> _(no safe persisted turns)_")
-    else:
-        for turn in session.turns:
-            label = f"[{turn.ordinal} {_value(turn.role)}{'/' + _value(turn.tool_name) if turn.tool_name else ''}]"
-            lines.append(f"> **{label}**")
-            lines.extend(_quote(turn.content))
-            if turn.truncated:
-                lines.append("> `[W_TRUNCATED]`")
-    warnings = tuple(session.warnings) + tuple(envelope_warnings)
-    lines.extend(("", "## Warnings", *_warning_lines(warnings), "", "## Required current checks (unchecked)", *CHECKLIST))
-    rendered = "\n".join(lines) + "\n"
-    maximum = DEFAULT_BOUNDS.normalized_content_bytes
-    if len(rendered.encode("utf-8")) > maximum:
-        # This should be prevented by model bounds; fail closed rather than silently slicing UTF-8.
-        from .diagnostics import DiagnosticError
 
-        raise DiagnosticError.limit_exceeded()
-    return rendered
+
+def _footer(warnings: Iterable[str], *, output_truncated: bool) -> list[str]:
+    values = list(dict.fromkeys(warnings))
+    if output_truncated and "W_TRUNCATED" not in values:
+        values.append("W_TRUNCATED")
+    lines = ["", "## Warnings", *_warning_lines(values)]
+    if output_truncated:
+        lines.append(_TRUNCATION_NOTICE)
+    lines.extend(("", "## Required current checks (unchecked)", *CHECKLIST))
+    return lines
+
+
+def _turn_block(turn: Turn) -> list[str]:
+    label = f"[{turn.ordinal} {_value(turn.role)}{'/' + _value(turn.tool_name) if turn.tool_name else ''}]"
+    lines = [f"> **{label}**", *_quote(turn.content)]
+    if turn.truncated:
+        lines.append("> `[W_TRUNCATED]`")
+    return lines
+
+
+def _assemble(
+    session: Session,
+    *,
+    envelope_warnings: Iterable[str],
+    user_text: str | None,
+    assistant_text: str | None,
+    turns: tuple[Turn, ...],
+    output_truncated: bool,
+    user_lines: list[str] | None = None,
+    assistant_lines: list[str] | None = None,
+) -> str:
+    lines = _header(session)
+    lines.append("")
+    lines.append("### Latest explicit user request")
+    lines.extend(user_lines if user_lines is not None else _quote(user_text))
+    lines.append("")
+    lines.append("### Latest assistant action")
+    lines.extend(assistant_lines if assistant_lines is not None else _quote(assistant_text))
+    lines.append("")
+    lines.append("### Bounded transcript evidence")
+    if not turns:
+        if session.turns:
+            lines.append("> `[W_TRUNCATED]`")
+            output_truncated = True
+        else:
+            lines.append("> _(no safe persisted turns)_")
+    else:
+        for turn in turns:
+            lines.append("")
+            lines.extend(_turn_block(turn))
+    warnings = tuple(session.warnings) + tuple(envelope_warnings)
+    lines.extend(_footer(warnings, output_truncated=output_truncated))
+    return _document(lines)
+
+
+def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -> str:
+    """Render one session within the serialized handoff output budget (#63).
+
+    Uses ``handoff_output_bytes`` (not ``normalized_content_bytes``). Trusted
+    framing is always reserved; recovered quoted content is reduced with
+    ``W_TRUNCATED`` instead of failing a schema-valid envelope because Markdown
+    wrapper overhead exceeded the recovered-content ceiling.
+    """
+
+    maximum = DEFAULT_BOUNDS.handoff_output_bytes
+    full = _assemble(
+        session,
+        envelope_warnings=envelope_warnings,
+        user_text=session.last_user_request,
+        assistant_text=session.last_assistant_action,
+        turns=session.turns,
+        output_truncated=False,
+    )
+    if _utf8_size(full) <= maximum:
+        return full
+
+    # Drop oldest turns first (keep newest), always mark output truncation.
+    turns = list(session.turns)
+    while turns:
+        turns = turns[1:]
+        candidate = _assemble(
+            session,
+            envelope_warnings=envelope_warnings,
+            user_text=session.last_user_request,
+            assistant_text=session.last_assistant_action,
+            turns=tuple(turns),
+            output_truncated=True,
+        )
+        if _utf8_size(candidate) <= maximum:
+            return candidate
+
+    empty_turns = _assemble(
+        session,
+        envelope_warnings=envelope_warnings,
+        user_text=session.last_user_request,
+        assistant_text=session.last_assistant_action,
+        turns=(),
+        output_truncated=True,
+    )
+    if _utf8_size(empty_turns) <= maximum:
+        return empty_turns
+
+    # Shrink user/assistant quoted bodies while keeping section structure.
+    header = _header(session)
+    footer = _footer(tuple(session.warnings) + tuple(envelope_warnings), output_truncated=True)
+    structure = _document(
+        header
+        + [
+            "",
+            "### Latest explicit user request",
+            "",
+            "### Latest assistant action",
+            "",
+            "### Bounded transcript evidence",
+            "> `[W_TRUNCATED]`",
+        ]
+        + footer
+    )
+    structure_size = _utf8_size(structure)
+    if structure_size > maximum:
+        # Even empty quotes may overflow only if metadata is pathological.
+        minimal = _assemble(
+            session,
+            envelope_warnings=envelope_warnings,
+            user_text=None,
+            assistant_text=None,
+            turns=(),
+            output_truncated=True,
+            user_lines=["> `[W_TRUNCATED]`"],
+            assistant_lines=["> `[W_TRUNCATED]`"],
+        )
+        if _utf8_size(minimal) > maximum:
+            raise DiagnosticError.limit_exceeded()
+        return minimal
+
+    remaining = maximum - structure_size
+    user_budget = max(0, remaining // 2)
+    user_lines = _quote_budgeted(session.last_user_request, maximum_bytes=user_budget)
+    if not user_lines:
+        user_lines = ["> `[W_TRUNCATED]`"]
+    assistant_budget = max(0, remaining - _utf8_size("\n".join(user_lines)))
+    assistant_lines = _quote_budgeted(session.last_assistant_action, maximum_bytes=assistant_budget)
+    if not assistant_lines:
+        assistant_lines = ["> `[W_TRUNCATED]`"]
+
+    document = _assemble(
+        session,
+        envelope_warnings=envelope_warnings,
+        user_text=session.last_user_request,
+        assistant_text=session.last_assistant_action,
+        turns=(),
+        output_truncated=True,
+        user_lines=user_lines,
+        assistant_lines=assistant_lines,
+    )
+    if _utf8_size(document) > maximum:
+        document = _assemble(
+            session,
+            envelope_warnings=envelope_warnings,
+            user_text=None,
+            assistant_text=None,
+            turns=(),
+            output_truncated=True,
+            user_lines=["> `[W_TRUNCATED]`"],
+            assistant_lines=["> `[W_TRUNCATED]`"],
+        )
+        if _utf8_size(document) > maximum:
+            raise DiagnosticError.limit_exceeded()
+    return document
 
 
 def render_handoff(envelope: Envelope) -> str:
@@ -125,8 +325,6 @@ def render_handoff(envelope: Envelope) -> str:
     if envelope.candidates and not envelope.sessions:
         return render_candidates(envelope.candidates, warnings=envelope.warnings)
     if len(envelope.sessions) != 1:
-        from .diagnostics import DiagnosticError
-
         raise DiagnosticError("E_INVARIANT")
     return render_session(envelope.sessions[0], envelope_warnings=envelope.warnings)
 
