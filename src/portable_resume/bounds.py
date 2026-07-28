@@ -17,6 +17,10 @@ _CEILINGS: dict[str, int] = {
     "source_read_bytes": 256 * 1024 * 1024,
     "normalized_turns": 2_000,
     "normalized_content_bytes": 8 * 1024 * 1024,
+    # Complete serialized handoff Markdown (trusted framing + recovered quotes).
+    # Separate from normalized_content_bytes so wrapper overhead cannot fail a
+    # schema-valid session that already fits the recovered-content ceiling (#63).
+    "handoff_output_bytes": 10 * 1024 * 1024,
     "title_chars": 200,
     "tool_output_chars": 8_000,
     "snapshot_attempts": 3,
@@ -74,6 +78,8 @@ class Bounds:
     normalized_turns: int = _CEILINGS["normalized_turns"]
     # Cap for non-tool turn content (character count in sanitize_text; UTF-8 re-checked later).
     normalized_content_bytes: int = _CEILINGS["normalized_content_bytes"]
+    # Serialized handoff document ceiling (not an alias of recovered-content budget).
+    handoff_output_bytes: int = _CEILINGS["handoff_output_bytes"]
     title_chars: int = _CEILINGS["title_chars"]
     tool_output_chars: int = _CEILINGS["tool_output_chars"]
     snapshot_attempts: int = _CEILINGS["snapshot_attempts"]

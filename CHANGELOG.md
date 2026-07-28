@@ -12,6 +12,10 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Handoff serialized output budget (#63): `handoff_output_bytes` is separate from
+  recovered `normalized_content_bytes`. Schema-valid sessions no longer fail
+  handoff solely because Markdown framing exceeds the content ceiling; recovered
+  quotes shrink with `W_TRUNCATED` while security banner and checklist remain.
 - ReadBudget / Bounds no-raise ceilings (#17): every `Bounds` field is validated
   at construction so callers may lower defaults but cannot raise them; invalid
   or negative ceilings fail with content-free `E_INVALID_INPUT` before source
