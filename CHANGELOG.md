@@ -12,6 +12,14 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- OpenCode exact selection and large transcripts (#13): SQLite list applies
+  `WHERE id = ?` before any newest-session `LIMIT` so older exact IDs stay
+  selectable; show joins charge `transcript_records` with `LIMIT n+1`
+  fail-closed overflow (no longer borrow `scanned_records`); legacy
+  file-store show scopes to `storage/message/<sessionID>/` and
+  `storage/part/<messageID>/` instead of decoding every message/part file;
+  explicit export JSON is bounded by `source_read_bytes` as one source
+  document (not silent inheritance of 16 MiB `record_bytes`).
 - Cursor large sessions (#11 / [PR #71](https://github.com/ImL1s/resume-skills/pull/71),
   [PR #72](https://github.com/ImL1s/resume-skills/pull/72)): CLI JSONL
   transcripts stream via `stable_scan_lines` under `source_read_bytes` /
