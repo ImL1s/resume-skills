@@ -20,7 +20,7 @@ from .base import CapabilityReport, ResolvedRef
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
-from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
+from ..paths import canonical_root, canonicalize_cwd, is_within, require_regular_no_symlinks, same_cwd
 from ..sanitize import sanitize_turn_record
 from ..snapshot import stable_read_windows, stable_scan_lines
 
@@ -448,18 +448,14 @@ class QwenAdapter:
         ref = query.ref.strip() if query.ref else None
         if not ref or not os.path.isabs(ref):
             return None
-        path = os.path.abspath(ref)
-        if os.path.islink(path):
-            raise DiagnosticError.unsafe_path()
-        if not is_within(path, root):
-            raise DiagnosticError.unsafe_path()
-        if not self._chat_layout_ok(path, root):
-            raise DiagnosticError.unsafe_path()
+        # Lexical no-symlink walk under approved root spellings before layout checks.
         try:
-            mode = os.lstat(path).st_mode
-        except OSError as error:
-            raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID) from error
-        if not stat.S_ISREG(mode):
+            path, _ = require_regular_no_symlinks(ref, root)
+        except DiagnosticError as error:
+            if error.code == "E_UNSAFE_PATH" and not os.path.lexists(os.path.abspath(ref)):
+                raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID) from error
+            raise
+        if not self._chat_layout_ok(path, root):
             raise DiagnosticError.unsafe_path()
         return path
 
