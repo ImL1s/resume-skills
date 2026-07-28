@@ -121,17 +121,25 @@ class RequestInodeBindTests(unittest.TestCase):
         # Same dump style and equal length — only inode binding distinguishes identity.
         payload = json.dumps(self.valid_payload(ref="bbbbbb")).encode("utf-8")
         self.assertEqual(len(payload), len(first_bytes), (payload, first_bytes))
+        held: list[int] = []
 
         def hook(stage: str, path: str) -> None:
             if stage == "after-precheck":
+                # Keep the original inode allocated so the replacement cannot
+                # recycle st_ino with matching size/mtime on aggressive FS reuse.
+                held.append(os.open(path, os.O_RDONLY))
                 Path(path).unlink()
                 Path(path).write_bytes(payload)
                 os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
 
         request_module._request_read_hook = hook
-        with self.assertRaises(DiagnosticError) as caught:
-            self.load()
-        self.assertEqual(caught.exception.code, "E_INVALID_INPUT")
+        try:
+            with self.assertRaises(DiagnosticError) as caught:
+                self.load()
+            self.assertEqual(caught.exception.code, "E_INVALID_INPUT")
+        finally:
+            for fd in held:
+                os.close(fd)
 
     def test_inplace_content_change_with_stable_inode_detected(self) -> None:
         self.write_request(self.valid_payload(ref="before"))

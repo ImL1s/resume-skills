@@ -99,7 +99,13 @@ def _open_request_descriptor(path: str) -> int:
     if not basename or basename in (".", ".."):
         raise DiagnosticError.invalid()
     dir_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
-    file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
+    # O_NONBLOCK: reject FIFO/device replacements without hanging on open.
+    file_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | os.O_NOFOLLOW
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     try:
         parent_fd = os.open(parent, dir_flags)
     except OSError as error:
