@@ -28,6 +28,92 @@ ORDER_SOURCE_PATH = "plans/all-open-issues-sequential-prs/activation-order-20260
 ORDER_SOURCE_SHA256 = (
     "c0d171be7406c7cae1475e40c51cbbc0ba4c913e4217507ce8decdecb806f36d"
 )
+# Frozen reviewed selection order (ledger_ordinal 1..44).
+FROZEN_ISSUE_ORDER: list[int] = [
+    12,
+    13,
+    62,
+    68,
+    61,
+    17,
+    63,
+    35,
+    28,
+    26,
+    29,
+    10,
+    16,
+    36,
+    38,
+    69,
+    67,
+    66,
+    65,
+    48,
+    47,
+    46,
+    45,
+    44,
+    43,
+    42,
+    41,
+    40,
+    39,
+    37,
+    34,
+    33,
+    32,
+    30,
+    27,
+    25,
+    24,
+    23,
+    22,
+    19,
+    18,
+    15,
+    8,
+    7,
+]
+FROZEN_WAVE_BY_ISSUE: dict[int, int] = {
+    **{n: 1 for n in (12, 13)},
+    **{n: 2 for n in (62, 68, 61, 17, 63, 35, 28, 26, 29)},
+    **{n: 3 for n in (10, 16, 36, 38)},
+    **{
+        n: 4
+        for n in (
+            69,
+            67,
+            66,
+            65,
+            48,
+            47,
+            46,
+            45,
+            44,
+            43,
+            42,
+            41,
+            40,
+            39,
+            37,
+            34,
+            33,
+            32,
+            30,
+            27,
+            25,
+            24,
+            23,
+            22,
+            19,
+            18,
+            15,
+            8,
+            7,
+        )
+    },
+}
 PAIRS_SOURCE_PATH = (
     "plans/all-open-issues-sequential-prs/activation-dependency-pairs-20260728.json"
 )
@@ -659,6 +745,7 @@ def validate_activation_block(activation: Any, *, label: str = "activation") -> 
             ERROR_STATE_SCHEMA,
             f"{label}.issue_order length must be {ISSUE_COUNT}",
         )
+    order_issue_numbers: list[int] = []
     for index, entry in enumerate(order):
         entry_obj = require_object(entry, label=f"{label}.issue_order[{index}]")
         require_keys_exact(
@@ -671,6 +758,36 @@ def validate_activation_block(activation: Any, *, label: str = "activation") -> 
                 ERROR_STATE_SCHEMA,
                 f"{label}.issue_order[{index}].ledger_ordinal must be {index + 1}",
             )
+        issue_number = entry_obj["issue_number"]
+        if not _is_int(issue_number):
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                f"{label}.issue_order[{index}].issue_number must be int",
+            )
+        expected_issue = FROZEN_ISSUE_ORDER[index]
+        if issue_number != expected_issue:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                f"{label}.issue_order[{index}].issue_number must be "
+                f"{expected_issue} (frozen order), got {issue_number}",
+            )
+        expected_wave = FROZEN_WAVE_BY_ISSUE[expected_issue]
+        if entry_obj.get("wave_number") != expected_wave:
+            raise ProgramStateError(
+                ERROR_STATE_SCHEMA,
+                f"{label}.issue_order[{index}].wave_number must be {expected_wave}",
+            )
+        order_issue_numbers.append(issue_number)
+    if sorted(order_issue_numbers) != sorted(numbers):
+        raise ProgramStateError(
+            ERROR_STATE_SCHEMA,
+            f"{label}.issue_order issue set must equal {label}.issue_numbers",
+        )
+    if order_issue_numbers != FROZEN_ISSUE_ORDER:
+        raise ProgramStateError(
+            ERROR_STATE_SCHEMA,
+            f"{label}.issue_order sequence must equal frozen selection order",
+        )
     return obj
 
 
@@ -1071,8 +1188,27 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
     dep_events = _load_json_dir(state_root / "dependency-events")
     evidence = _load_json_dir(state_root / "evidence")
 
+    claimed_receipt_seq = pointer.get("last_receipt_sequence")
+    claimed_receipt_hash = pointer.get("last_receipt_sha256")
+    manifest_receipt_path = manifest.get("last_receipt_path")
+    manifest_receipt_hash = manifest.get("last_receipt_sha256")
+    if claimed_receipt_seq is not None and (
+        not _is_int(claimed_receipt_seq) or claimed_receipt_seq < 1
+    ):
+        raise ProgramStateError(
+            ERROR_STATE_SEQUENCE,
+            "pointer.last_receipt_sequence must be a positive integer when set",
+        )
+    if claimed_receipt_seq and not receipts:
+        raise ProgramStateError(
+            ERROR_STATE_PATH,
+            "pointer claims last_receipt_sequence but receipts/ is empty or missing",
+        )
+
     receipt_seqs: list[int] = []
     prev_hash: str | None = None
+    last_receipt: dict[str, Any] | None = None
+    last_receipt_path: Path | None = None
     for path, receipt in receipts:
         seq, op_id = parse_sequenced_filename(path.name)
         receipt_seqs.append(seq)
@@ -1102,7 +1238,42 @@ def validate_state_root(state_root: Path) -> dict[str, Any]:
                     f"receipt chain break at sequence {seq}",
                 )
         prev_hash = receipt["receipt_sha256"]
+        last_receipt = receipt
+        last_receipt_path = path
     validate_sequence_chain(receipt_seqs, label="receipt")
+
+    if claimed_receipt_seq:
+        if not receipt_seqs or receipt_seqs[-1] != claimed_receipt_seq:
+            raise ProgramStateError(
+                ERROR_STATE_SEQUENCE,
+                "receipt chain tip sequence != pointer.last_receipt_sequence",
+            )
+        assert last_receipt is not None and last_receipt_path is not None
+        if claimed_receipt_hash and last_receipt["receipt_sha256"] != claimed_receipt_hash:
+            raise ProgramStateError(
+                ERROR_STATE_HASH,
+                "receipt chain tip hash != pointer.last_receipt_sha256",
+            )
+        if (
+            manifest_receipt_hash
+            and last_receipt["receipt_sha256"] != manifest_receipt_hash
+        ):
+            raise ProgramStateError(
+                ERROR_STATE_HASH,
+                "receipt chain tip hash != manifest.last_receipt_sha256",
+            )
+        if manifest_receipt_path:
+            expected_name = Path(str(manifest_receipt_path)).name
+            if last_receipt_path.name != expected_name:
+                raise ProgramStateError(
+                    ERROR_STATE_PATH,
+                    "receipt chain tip filename != manifest.last_receipt_path basename",
+                )
+    elif receipts:
+        raise ProgramStateError(
+            ERROR_STATE_SEQUENCE,
+            "receipts present but pointer.last_receipt_sequence is unset/zero",
+        )
 
     dep_seqs: list[int] = []
     prev_dep: str | None = None

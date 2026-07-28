@@ -275,6 +275,29 @@ class ValidateProgramStateTests(unittest.TestCase):
     def test_state_root_minimal_idle(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            receipt_id = str(uuid.uuid4())
+            operation_id = str(uuid.uuid4())
+            receipt = {
+                "schema_version": 2,
+                "program_id": self.mod.PROGRAM_ID,
+                "sequence": 1,
+                "operation_id": operation_id,
+                "receipt_id": receipt_id,
+                "operation": "bootstrap",
+                "previous_receipt_sha256": None,
+                "receipt_sha256": "",
+            }
+            receipt["receipt_sha256"] = self.mod.self_hash(receipt, "receipt_sha256")
+            receipt_rel = (
+                f"state/receipts/"
+                f"{self.mod.format_sequence_prefix(1)}-{operation_id}.json"
+            )
+            receipt_dir = root / "receipts"
+            receipt_dir.mkdir()
+            (receipt_dir / Path(receipt_rel).name).write_bytes(
+                self.mod.persisted_file_bytes(receipt)
+            )
+
             pointer = {
                 "schema_version": 2,
                 "program_id": self.mod.PROGRAM_ID,
@@ -297,69 +320,16 @@ class ValidateProgramStateTests(unittest.TestCase):
                 "blocked_from_status": None,
                 "blocked_from_phase": None,
                 "last_receipt_sequence": 1,
-                "last_receipt_sha256": "a" * 64,
+                "last_receipt_sha256": receipt["receipt_sha256"],
                 "state_parent_oid": "b" * 40,
                 "updated_at": "2026-07-28T00:00:00Z",
                 "pointer_sha256": "",
             }
             pointer["pointer_sha256"] = self.mod.self_hash(pointer, "pointer_sha256")
             order_entries = []
-            issues = [
-                12,
-                13,
-                62,
-                68,
-                61,
-                17,
-                63,
-                35,
-                28,
-                26,
-                29,
-                10,
-                16,
-                36,
-                38,
-                69,
-                67,
-                66,
-                65,
-                48,
-                47,
-                46,
-                45,
-                44,
-                43,
-                42,
-                41,
-                40,
-                39,
-                37,
-                34,
-                33,
-                32,
-                30,
-                27,
-                25,
-                24,
-                23,
-                22,
-                19,
-                18,
-                15,
-                8,
-                7,
-            ]
+            issues = list(self.mod.FROZEN_ISSUE_ORDER)
             for ordinal, issue in enumerate(issues, start=1):
-                wave = (
-                    1
-                    if ordinal <= 2
-                    else 2
-                    if ordinal <= 11
-                    else 3
-                    if ordinal <= 15
-                    else 4
-                )
+                wave = self.mod.FROZEN_WAVE_BY_ISSUE[issue]
                 order_entries.append(
                     {
                         "issue_number": issue,
@@ -392,9 +362,8 @@ class ValidateProgramStateTests(unittest.TestCase):
                     },
                 },
                 "state_sequence": 1,
-                "last_receipt_path": "state/receipts/"
-                + f"{self.mod.format_sequence_prefix(1)}-{uuid.uuid4()}.json",
-                "last_receipt_sha256": "a" * 64,
+                "last_receipt_path": receipt_rel,
+                "last_receipt_sha256": receipt["receipt_sha256"],
                 "dependency_pair_source_path": self.mod.PAIRS_SOURCE_PATH,
                 "dependency_pair_source_sha256": self.mod.PAIRS_SOURCE_SHA256,
                 "dependency_pair_count": 212,

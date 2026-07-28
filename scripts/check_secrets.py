@@ -40,16 +40,22 @@ SENSITIVE_SHAPES = [
     ),
 ]
 
-# Relative paths allowed to embed synthetic secret *shapes* for redaction unit
-# tests, or inert frozen issue-body examples (not live credentials).
-SENSITIVE_ALLOWLIST = frozenset(
+# Paths allowed to embed *any* synthetic SENSITIVE_SHAPES (redaction unit tests).
+SENSITIVE_ALLOWLIST_ALL = frozenset(
     {
         "tests/unit/test_sanitize_handoff.py",
-        # Wave 0 activation baseline: frozen issue bodies include synthetic
-        # sk-/api_key examples for identity-vs-display acceptance text (#61).
+    }
+)
+
+# Paths allowed only for the OpenAI-like sk- shape (not AKIA / assigned-secret).
+# Wave 0 activation baseline: frozen issue bodies include synthetic sk-
+# examples for identity-vs-display acceptance text (#61).
+SENSITIVE_ALLOWLIST_SK_ONLY = frozenset(
+    {
         "plans/all-open-issues-sequential-prs/activation-baseline-20260728.jsonl",
     }
 )
+SK_SHAPE_LABEL = "OpenAI-like secret shape"
 
 SKIP_SUFFIX = {".sqlite", ".vscdb", ".zst", ".pyc", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
@@ -76,10 +82,14 @@ def main() -> int:
         for pat, label in PRODUCT_FORBIDDEN:
             if pat.search(text):
                 hits.append(f"{rel}: {label}")
-        # Allowlisted paths may hold synthetic shapes only; product-forbidden still applies.
-        if rel in SENSITIVE_ALLOWLIST:
+        # PRODUCT_FORBIDDEN always applies. SENSITIVE_SHAPES allowlists are
+        # per-path and (for the baseline) per-pattern only — never a blanket
+        # skip of AWS keys / assigned-secret detectors.
+        if rel in SENSITIVE_ALLOWLIST_ALL:
             continue
         for pat, label in SENSITIVE_SHAPES:
+            if rel in SENSITIVE_ALLOWLIST_SK_ONLY and label == SK_SHAPE_LABEL:
+                continue
             if pat.search(text):
                 hits.append(f"{rel}: {label}")
     if hits:
