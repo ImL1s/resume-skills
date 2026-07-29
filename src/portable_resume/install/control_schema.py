@@ -11,7 +11,7 @@ import os
 import re
 from typing import Any, Mapping
 
-from .catalog import BUNDLE_VERSION, HOST_KEYS, MANIFEST_SCHEMA
+from .catalog import HOST_KEYS, MANIFEST_SCHEMA
 
 # Conservative control-document limits (bytes / structure).
 CONTROL_DOC_MAX_BYTES = 2 * 1024 * 1024
@@ -115,7 +115,13 @@ def strict_json_loads(text: str | bytes, *, max_bytes: int = CONTROL_DOC_MAX_BYT
         )
     except json.JSONDecodeError as error:
         raise ControlSchemaError("invalid JSON") from error
-    _check_structure(data, depth=0)
+    except RecursionError as error:
+        # Pathological nesting can blow the C recursion limit before our walk.
+        raise ControlSchemaError("document nesting too deep") from error
+    try:
+        _check_structure(data, depth=0)
+    except RecursionError as error:
+        raise ControlSchemaError("document nesting too deep") from error
     return data
 
 
@@ -233,6 +239,8 @@ def parse_manifest_document(text: str | bytes) -> dict[str, Any]:
         claim_bundle = _require_str(meta["bundle_version"], name="claim.bundle_version", max_chars=64)
         if not claim_bundle.strip():
             raise ControlSchemaError("empty claim.bundle_version")
+        if claim_bundle != bundle_version:
+            raise ControlSchemaError("claim.bundle_version must match top-level bundle_version")
         # Claim id must recompute from host|scope|root (realpath spelling as stored).
         expected = f"{host}|{scope}|{root}"
         if claim_id != expected:
