@@ -49,6 +49,18 @@ _PROTECTED_SUPPORT_NAMES = frozenset(
 )
 
 
+# Content identity for the previous ownership manifest (not generation alone).
+_MANIFEST_ABSENT = "absent"
+
+
+def manifest_content_digest(manifest: Manifest | None) -> str:
+    """Return a stable identity for the previous manifest, or ``absent`` if none."""
+
+    if manifest is None:
+        return _MANIFEST_ABSENT
+    return sha256_bytes(manifest.dumps().encode("utf-8"))
+
+
 @dataclass(slots=True)
 class ActionPlan:
     root: str
@@ -64,6 +76,10 @@ class ActionPlan:
     backups: list[str]
     retains: list[str]
     dry_run: bool
+    # Preflight token: exact previous ownership identity observed while planning.
+    # Execute recomputes under lock and never commits these fields as authority.
+    base_generation: int | None = None
+    base_manifest_digest: str = _MANIFEST_ABSENT
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +95,8 @@ class ActionPlan:
             "retains": self.retains,
             "dry_run": self.dry_run,
             "file_count": len(self.files),
+            "base_generation": self.base_generation,
+            "base_manifest_digest": self.base_manifest_digest,
         }
 
 
@@ -222,12 +240,21 @@ def plan_install(
     dry_run: bool = False,
     force_with_backup: bool = False,
 ) -> ActionPlan:
+    """Build an advisory install plan from the current root state.
+
+    The returned plan is **not** mutation authority. ``execute_install`` rebuilds
+    an equivalent plan under ``RootLock`` from the exact locked ownership
+    manifest so stale preflight claims cannot be committed (#35).
+    """
+
     if host not in HOST_PROFILES:
         raise DiagnosticError.invalid()
     files = materialize_plan(host)
     identity = package_identity(files)
     claim = claim_key(host=host, scope=scope, root=root)
     existing = load_manifest(root)
+    base_generation = None if existing is None else existing.generation
+    base_digest = manifest_content_digest(existing)
     if existing is not None and existing.bundle_version != BUNDLE_VERSION and existing.claims:
         # Single version per root: allow update only when all claims move together.
         if any(c != claim for c in existing.claims):
@@ -252,28 +279,25 @@ def plan_install(
     backups: list[str] = []
     retains: list[str] = []
     for rel, data in sorted(files.items()):
-        # Containment matches execute path (reject escapes before planning).
-        dest = _dest_under_root(root, rel)
-        if not os.path.lexists(dest):
+        kind = _classify_dest(
+            root=root,
+            rel=rel,
+            data=data,
+            existing=existing,
+            claim=claim,
+            force_with_backup=force_with_backup,
+        )
+        if kind == "create":
             creates.append(rel)
-            continue
-        if os.path.islink(dest) or not os.path.isfile(dest):
-            raise DiagnosticError("E_INSTALL_CONFLICT")
-        current = sha256_file(dest)
-        expected = sha256_bytes(data)
-        if current == expected:
+        elif kind == "retain":
             retains.append(rel)
-            continue
-        owned = existing is not None and rel in existing.files and claim in existing.files[rel].claims
-        owned_shared = existing is not None and rel in existing.files
-        if owned or owned_shared:
+        elif kind == "replace":
             replaces.append(rel)
-            continue
-        # non-owned conflict
-        if not force_with_backup:
-            raise DiagnosticError("E_INSTALL_CONFLICT")
-        replaces.append(rel)
-        backups.append(rel)
+        elif kind == "backup":
+            replaces.append(rel)
+            backups.append(rel)
+        else:
+            raise DiagnosticError("E_INVARIANT")
     return ActionPlan(
         root=root,
         claim=claim,
@@ -288,6 +312,8 @@ def plan_install(
         backups=backups,
         retains=retains,
         dry_run=dry_run,
+        base_generation=base_generation,
+        base_manifest_digest=base_digest,
     )
 
 
@@ -1159,7 +1185,13 @@ def _classify_dest(
     claim: str,
     force_with_backup: bool,
 ) -> str:
-    """Return create|retain|replace|backup under current disk state."""
+    """Return create|retain|replace|backup under current disk state.
+
+    Ownership is claim/manifest-aware: a path listed in the ownership manifest
+    (this claim or shared multi-claim payload) may be replaced. Foreign paths
+    require an explicit force-with-backup policy for the current classification.
+    """
+
     dest = _dest_under_root(root, rel)
     if not os.path.lexists(dest):
         return "create"
@@ -1169,9 +1201,12 @@ def _classify_dest(
     expected = sha256_bytes(data)
     if current == expected:
         return "retain"
-    owned = existing is not None and rel in existing.files
-    if owned:
-        return "replace"
+    if existing is not None and rel in existing.files:
+        entry = existing.files[rel]
+        # Claim owns the path, or the path is already in the shared owned set
+        # (multi-claim coordinated upgrade). Foreign unknowns are not here.
+        if claim in entry.claims or entry.claims:
+            return "replace"
     if force_with_backup:
         return "backup"
     raise DiagnosticError("E_INSTALL_CONFLICT")
@@ -1189,14 +1224,40 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
 
     with RootLock(root):
         require_no_pending_journal(root)
-        # re-read generation under lock
-        existing = load_manifest(root)
-        if existing is not None and existing.generation != plan.generation - 1 and existing.generation != 0:
-            # allow exact expected previous generation
-            if existing.generation + 1 != plan.generation:
-                raise DiagnosticError("E_INSTALL_BUSY")
-        # Re-evaluate ownership under the lock (close plan/execute TOCTOU window).
-        # force is per-path: only paths that were planned as backups (or global flag).
+        # Preflight token is advisory for payload bytes, but ownership identity
+        # must still match: if the locked manifest digest diverged, fail busy so
+        # multi-root compensation restores the captured checkpoint rather than
+        # committing a newer concurrent generation then rolling it back (#35).
+        existing_pre = load_manifest(root)
+        current_digest = manifest_content_digest(existing_pre)
+        if current_digest != plan.base_manifest_digest:
+            raise DiagnosticError("E_INSTALL_BUSY")
+        changed_since_preflight = False
+
+        # Honor preflight force classification when the Python API calls
+        # execute_install(plan) without repeating force_with_backup=True.
+        effective_force = force_with_backup or bool(plan.backups)
+        locked = plan_install(
+            host=plan.host,
+            scope=plan.scope,
+            root=plan.root,
+            dry_run=False,
+            force_with_backup=effective_force,
+        )
+        # Request identity must match; payload/manifest always come from locked rebuild.
+        if (
+            locked.host != plan.host
+            or locked.scope != plan.scope
+            or locked.claim != plan.claim
+            or os.path.realpath(locked.root) != os.path.realpath(plan.root)
+        ):
+            raise DiagnosticError("E_INSTALL_BUSY")
+        # Digest must still match after replan observation (same locked read path).
+        if locked.base_manifest_digest != plan.base_manifest_digest:
+            raise DiagnosticError("E_INSTALL_BUSY")
+        plan = locked
+        existing = existing_pre
+        # Re-evaluate ownership under the lock for the rebuilt plan only.
         planned_backups = set(plan.backups)
         backups: list[str] = []
         for rel, data in plan.files.items():
@@ -1206,7 +1267,7 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                 data=data,
                 existing=existing,
                 claim=plan.claim,
-                force_with_backup=force_with_backup or rel in planned_backups,
+                force_with_backup=effective_force or rel in planned_backups,
             )
             if kind == "backup":
                 backups.append(rel)
@@ -1390,9 +1451,9 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                         data=plan.files[rel],
                         existing=existing,
                         claim=plan.claim,
-                        force_with_backup=force_with_backup or safe in planned_backups or safe in backups,
+                        force_with_backup=effective_force or safe in planned_backups or safe in backups,
                     )
-                    if kind == "backup" and safe not in backups and not force_with_backup and safe not in planned_backups:
+                    if kind == "backup" and safe not in backups and not effective_force and safe not in planned_backups:
                         raise DiagnosticError("E_INSTALL_CONFLICT")
                     if kind == "retain":
                         journal["paths"][safe]["state"] = "retained"
@@ -1485,7 +1546,14 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                     _unlink_support_control_file(root, JOURNAL_NAME)
             except DiagnosticError:
                 pass
-            result = {"ok": True, "dry_run": False, "plan": plan.to_dict(), "generation": plan.generation}
+            result = {
+                "ok": True,
+                "dry_run": False,
+                "plan": plan.to_dict(),
+                "generation": plan.generation,
+                "changed_since_preflight": changed_since_preflight,
+                "previous_manifest_digest": plan.base_manifest_digest,
+            }
             if orphan_removed:
                 result["orphan_removed"] = orphan_removed
             if backups:

@@ -12,6 +12,11 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Install lock replan (#35): `execute_install` rebuilds the action plan under
+  `RootLock` from the exact current ownership manifest and trusted package
+  materialize; preflight `ActionPlan` is advisory. Base manifest digest is
+  recorded; caller-tampered `plan.files` cannot be committed; claim-aware
+  classification is shared by plan and execute.
 - Handoff serialized output budget (#63): `handoff_output_bytes` is separate from
   recovered `normalized_content_bytes`. Schema-valid sessions no longer fail
   handoff solely because Markdown framing exceeds the content ceiling; recovered
