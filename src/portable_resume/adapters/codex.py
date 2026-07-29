@@ -166,13 +166,15 @@ def _walk_rollouts(
         if stopped[0]:
             return
         names: list[str] = []
+        hit_cap = False
         try:
             with os.scandir(directory) as entries:
                 for entry in entries:
                     visited[0] += 1
                     if visited[0] > DEFAULT_BOUNDS.scanned_records:
                         if soft_limit:
-                            stopped[0] = True
+                            # Keep names already collected; stop further descent.
+                            hit_cap = True
                             break
                         # Do not return a traversal-order prefix: callers use
                         # this set to resolve the newest rollout.
@@ -183,9 +185,8 @@ def _walk_rollouts(
         except OSError as error:
             raise DiagnosticError.source_busy(provider=ROLLOUT_FORMAT) from error
         names.sort()
+        # Always process this directory's collected batch before soft-stopping.
         for name in names:
-            if stopped[0]:
-                return
             path = os.path.join(directory, name)
             try:
                 current = os.lstat(path)
@@ -193,10 +194,12 @@ def _walk_rollouts(
                 continue
             if stat.S_ISLNK(current.st_mode):
                 continue
-            if stat.S_ISDIR(current.st_mode) and depth < max_depth:
+            if stat.S_ISDIR(current.st_mode) and depth < max_depth and not hit_cap and not stopped[0]:
                 visit(path, depth + 1)
             elif stat.S_ISREG(current.st_mode) and _ROLLOUT.fullmatch(name):
                 output.append(path)
+        if hit_cap:
+            stopped[0] = True
 
     visit(container, 0)
     return output
@@ -566,6 +569,7 @@ def _read_rollout_head(
         attempts=min(budget.limits.snapshot_attempts, DEFAULT_BOUNDS.snapshot_attempts),
         membership_limit=min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records),
         budget=budget,
+        require_size_within_max=False,
     )
     data = windows.head
     full_in_head = windows.fingerprint.size <= len(data)
@@ -999,12 +1003,13 @@ class CodexAdapter:
                 values = verified
                 break
         # FS head fallback (#7): missing schema, unresolved/stale rows, or under-filled
-        # recognized DB (sparse index). Exact-ID hits already verified from DB skip the
-        # underfilled walk so a huge sessions/ tree cannot raise away a good match.
+        # recognized DB (sparse index). Skip only when an exact UUID was already verified
+        # from SQLite so a huge sessions/ tree cannot raise away a good match.
         exact_ref = _exact_uuid_ref(query.ref)
+        exact_hit = exact_ref is not None and any(item.session_id == exact_ref for item in values)
         underfilled = (
             database_supported
-            and exact_ref is None
+            and not exact_hit
             and len(values) < DEFAULT_BOUNDS.listed_sessions
         )
         need_fs = (
@@ -1014,11 +1019,20 @@ class CodexAdapter:
             or underfilled
         )
         if need_fs:
-            # soft_limit: partial FS recovery must not discard verified DB rows.
-            # Only admit FS sessions missing from the DB set (sparse fill, not replace).
+            # Soft-limit only when preserving already-verified DB rows. Pure FS
+            # discovery keeps the hard scanned_records raise (no silent prefix).
             known = {item.session_id for item in values}
-            for path in _rollout_paths(root, query, soft_limit=True):
-                item = _rollout_summary(path, root, query, budget)
+            soft = bool(values)
+            for path in _rollout_paths(root, query, soft_limit=soft):
+                if len(values) >= DEFAULT_BOUNDS.listed_sessions:
+                    break
+                try:
+                    item = _rollout_summary(path, root, query, budget)
+                except DiagnosticError as error:
+                    # Keep recovered sessions if discovery budget exhausts mid-fallback.
+                    if error.code == "E_LIMIT_EXCEEDED" and values:
+                        break
+                    raise
                 if item is not None and item.session_id not in known:
                     values.append(item)
                     known.add(item.session_id)

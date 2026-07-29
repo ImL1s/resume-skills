@@ -853,6 +853,15 @@ class CodexAdapterTests(unittest.TestCase):
             values = codex.ADAPTER.list(self.query(identifier), ReadBudget())
         self.assertEqual([item.session_id for item in values], [identifier])
 
+    def test_exact_id_absent_from_sqlite_still_fs_falls_back(self) -> None:
+        """Exact UUID missing from a recognized DB still recovers from sessions/ (#7)."""
+
+        identifier, _path = self.rollout()
+        other, other_path = self.rollout()
+        self.database(9, [self.db_row(other, other_path)])
+        values = codex.ADAPTER.list(self.query(identifier), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+
     def test_list_fs_soft_limit_keeps_db_rows(self) -> None:
         """Soft FS fallback cap must merge, not raise away, verified DB rows (#7)."""
 
