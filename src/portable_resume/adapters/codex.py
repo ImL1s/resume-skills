@@ -1031,20 +1031,22 @@ class CodexAdapter:
             or unresolved_paths > 0
             or underfilled
         )
+        fs_truncated = False
         if need_fs:
-            # Soft-limit only when preserving already-verified DB rows. Pure FS
-            # discovery keeps the hard scanned_records raise (no silent prefix).
+            # Soft FS recovery for list: large trees report W_TRUNCATED rather than
+            # raising away exact-ID / sparse recoveries (#7).
             known = {item.session_id for item in values}
-            soft = bool(values)
             truncated = [False]
-            listed_full = False
             budget_stopped = False
-            for path in _rollout_paths(root, query, soft_limit=soft, truncated=truncated):
-                if len(values) >= DEFAULT_BOUNDS.listed_sessions:
-                    listed_full = True
+            fs_added = 0
+            # Head-parse up to listed_sessions *new* FS rows so newer FS sessions
+            # can outrank older DB rows after merge (not stop at combined count).
+            fs_target = DEFAULT_BOUNDS.listed_sessions
+            for path in _rollout_paths(root, query, soft_limit=True, truncated=truncated):
+                if fs_added >= fs_target:
+                    fs_truncated = True
                     break
-                # Skip paths already verified from SQLite before any head/zstd I/O
-                # so a known compressed row cannot exhaust the budget mid-fallback.
+                # Skip paths already verified from SQLite before any head/zstd I/O.
                 path_id = _rollout_id(path)
                 if path_id is not None and path_id in known:
                     continue
@@ -1052,30 +1054,15 @@ class CodexAdapter:
                     item = _rollout_summary(path, root, query, budget)
                 except DiagnosticError as error:
                     # Keep recovered sessions if discovery budget exhausts mid-fallback.
-                    if error.code == "E_LIMIT_EXCEEDED" and values:
+                    if error.code == "E_LIMIT_EXCEEDED" and (values or fs_added):
                         budget_stopped = True
                         break
                     raise
                 if item is not None and item.session_id not in known:
                     values.append(item)
                     known.add(item.session_id)
-            if truncated[0] or listed_full or budget_stopped:
-                # Partial FS recovery must not look complete (plan 026 stop condition).
-                values = [
-                    SessionSummary(
-                        source=item.source,
-                        session_id=item.session_id,
-                        source_path=item.source_path,
-                        title=item.title,
-                        cwd=item.cwd,
-                        branch=item.branch,
-                        created_at=item.created_at,
-                        updated_at=item.updated_at,
-                        provider=item.provider,
-                        warnings=tuple(dict.fromkeys((*(item.warnings or ()), "W_TRUNCATED"))),
-                    )
-                    for item in values
-                ]
+                    fs_added += 1
+            fs_truncated = fs_truncated or truncated[0] or budget_stopped
         deduplicated: dict[str, SessionSummary] = {}
         for value in values:
             previous = deduplicated.get(value.session_id)
@@ -1084,11 +1071,31 @@ class CodexAdapter:
                 previous.provider or "",
             ):
                 deduplicated[value.session_id] = value
-        return sorted(
+        ranked = sorted(
             deduplicated.values(),
             key=lambda item: (item.updated_at is None, item.updated_at or "", item.session_id),
             reverse=True,
         )
+        if len(ranked) > DEFAULT_BOUNDS.listed_sessions:
+            ranked = ranked[: DEFAULT_BOUNDS.listed_sessions]
+            fs_truncated = True
+        if fs_truncated:
+            ranked = [
+                SessionSummary(
+                    source=item.source,
+                    session_id=item.session_id,
+                    source_path=item.source_path,
+                    title=item.title,
+                    cwd=item.cwd,
+                    branch=item.branch,
+                    created_at=item.created_at,
+                    updated_at=item.updated_at,
+                    provider=item.provider,
+                    warnings=tuple(dict.fromkeys((*(item.warnings or ()), "W_TRUNCATED"))),
+                )
+                for item in ranked
+            ]
+        return ranked
 
     def show(self, ref: ResolvedRef, query: Query, budget: ReadBudget) -> Session:
         root = _existing_root(query)
