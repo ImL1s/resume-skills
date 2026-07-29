@@ -60,6 +60,11 @@ class MatrixTests(unittest.TestCase):
             self.assertIn(f'"{source}"', runner)
             self.assertIn(".portable-resume", runner)
             self.assertIn("portable_resume.reader", runner)
+            self.assertIn("os.path.realpath(__file__)", runner)
+            self.assertIn("_force_expected_source", runner)
+            self.assertIn("owned skill package root", text)
+            self.assertNotIn("<this-skill>", text)
+            self.assertNotIn("$OWNED_SKILL_DIR", text)
 
     def test_shared_runtime_present_for_every_host(self) -> None:
         for host in sorted(HOST_KEYS):

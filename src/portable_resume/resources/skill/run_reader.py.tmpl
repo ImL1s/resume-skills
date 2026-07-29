@@ -6,30 +6,37 @@ from __future__ import annotations
 import os
 import sys
 
-# <skill>/scripts/run_reader.py -> <skill-root>/.portable-resume/runtime
-_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-_ROOT = os.path.dirname(_SKILL_DIR)
+# This file lives at: <skill-package>/scripts/run_reader.py
+# Skill package root is the parent of scripts/; the installer places the
+# stdlib runtime next to the skill tree under <skill-root>/.portable-resume/runtime.
+_SKILL_PACKAGE = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+_ROOT = os.path.dirname(_SKILL_PACKAGE)
 _RUNTIME = os.path.join(_ROOT, ".portable-resume", "runtime")
 if _RUNTIME not in sys.path:
     sys.path.insert(0, _RUNTIME)
 
 from portable_resume.reader import main  # noqa: E402
+from portable_resume.model import SOURCE_KEYS  # noqa: E402
+
+_BOUND_SOURCE = "${source_key}"
+_KNOWN_SOURCES = frozenset(SOURCE_KEYS)
 
 
-def _force_expected_source(argv: list[str]) -> list[str]:
-    """Hard-bind the skill source; accept Grok-style `show|list [ref]` argv.
+def _strip_expected_source(argv: list[str]) -> list[str]:
+    """Remove every spelling of host-supplied --expected-source (never trust it).
 
-    Strip host-supplied ``--expected-source`` overrides, then ensure the first
-    positional is the bound source. If the skill is invoked as
-    ``run_reader.py show latest`` (Grok resume-session style), inject the
-    bound source so the shared reader sees ``<source> show latest``.
+    Only drop a following token when it is a plausible value (not another option).
+    ``--expected-source --request-file …`` must not swallow ``--request-file``.
     """
-    forced = "${source_key}"
+
     cleaned: list[str] = []
     skip_next = False
     for item in argv:
         if skip_next:
             skip_next = False
+            # Missing/malformed value: keep the token so later parsing fail-closes.
+            if item.startswith("-"):
+                cleaned.append(item)
             continue
         if item == "--expected-source":
             skip_next = True
@@ -37,26 +44,52 @@ def _force_expected_source(argv: list[str]) -> list[str]:
         if item.startswith("--expected-source="):
             continue
         cleaned.append(item)
-    if cleaned and cleaned[0] in {"list", "show"}:
-        cleaned = [forced, *cleaned]
-    elif cleaned and cleaned[0] != forced and cleaned[0] not in {
-        "-h",
-        "--help",
-        "--request-file",
-    } and not cleaned[0].startswith("--"):
-        # Reject attempts to run a different source through this bound skill.
-        cleaned = [forced, *cleaned[1:]] if cleaned[0] in {
-            "claude",
-            "codex",
-            "cursor",
-            "opencode",
-            "antigravity",
-            "grok",
-            "kimi",
-            "qwen",
-        } else [forced, *cleaned]
-    cleaned.extend(["--expected-source", forced])
     return cleaned
+
+
+def _force_expected_source(argv: list[str]) -> list[str]:
+    """Rebuild a canonical argv that hard-binds this Skill's source.
+
+    The installed wrapper always loads *this* package's runtime (via realpath of
+    this file). Hostile argv may not retarget the source or smuggle a different
+    ``--expected-source``. Prefer ``--request-file`` for free-text / multi-field
+    selection so shell quoting is not required for arbitrary text.
+    """
+
+    cleaned = _strip_expected_source(list(argv))
+
+    # Help: do not inject source; still force expected-source for consistency.
+    if cleaned and cleaned[0] in {"-h", "--help"}:
+        return [*cleaned, "--expected-source", _BOUND_SOURCE]
+
+    # Request-file lane: options-only or mixed; drop leading wrong source keys.
+    has_request = any(
+        item == "--request-file" or item.startswith("--request-file=") for item in cleaned
+    )
+    if has_request:
+        if cleaned and cleaned[0] in _KNOWN_SOURCES:
+            cleaned = cleaned[1:]
+        # Do not reinterpret option values as source/action.
+        return [*cleaned, "--expected-source", _BOUND_SOURCE]
+
+    # Drop a leading source token (bound or hostile) so we re-bind exactly once.
+    if cleaned and cleaned[0] in _KNOWN_SOURCES:
+        cleaned = cleaned[1:]
+
+    if not cleaned:
+        # No action: default to show latest (same as bare Grok-style invocation).
+        return [_BOUND_SOURCE, "show", "latest", "--expected-source", _BOUND_SOURCE]
+
+    if cleaned[0] in {"list", "show"}:
+        return [_BOUND_SOURCE, *cleaned, "--expected-source", _BOUND_SOURCE]
+
+    if cleaned[0].startswith("-"):
+        # Options without action — leave to the reader (invalid unless request-file).
+        return [_BOUND_SOURCE, *cleaned, "--expected-source", _BOUND_SOURCE]
+
+    # Bare ref without action → show <ref> (Grok resume-session style).
+    # Leading "-" refs are options, not refs (handled above).
+    return [_BOUND_SOURCE, "show", *cleaned, "--expected-source", _BOUND_SOURCE]
 
 
 if __name__ == "__main__":

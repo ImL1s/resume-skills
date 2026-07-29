@@ -122,9 +122,11 @@ class SkillBoundArgvTests(unittest.TestCase):
             import importlib.util
             import sys
 
-            # Ensure the bound runner injects source and allows expected-source.
+            # Ensure the bound runner injects source and forces expected-source.
             text = runner.read_text(encoding="utf-8")
-            self.assertIn('if cleaned and cleaned[0] in {"list", "show"}', text)
+            self.assertIn('if cleaned[0] in {"list", "show"}', text)
+            self.assertIn("_strip_expected_source", text)
+            self.assertIn("realpath", text)
             # Direct reader path equivalent after injection
             stdout = io.StringIO()
             stderr = io.StringIO()
@@ -154,7 +156,9 @@ class SkillBoundArgvTests(unittest.TestCase):
         from portable_resume.install.render import render_skill_markdown
 
         text = render_skill_markdown(host="claude", source="codex")
-        self.assertIn("run_reader.py show", text)
+        # Direct argv lane remains primary for simple refs (not request-file-only).
+        self.assertIn("run_reader.py\" show", text)
+        self.assertIn("Simple direct ref", text)
         self.assertNotIn(
             "Still write a request-v1 file before invoking the runner.",
             text,
@@ -162,6 +166,8 @@ class SkillBoundArgvTests(unittest.TestCase):
         # optional advanced path must still be mentioned somewhere
         lower = text.lower()
         self.assertTrue("request-v1" in lower or "request-file" in lower)
+        self.assertIn("owned skill package root", text)
+        self.assertNotIn("$OWNED_SKILL_DIR", text)
 
 
 if __name__ == "__main__":
