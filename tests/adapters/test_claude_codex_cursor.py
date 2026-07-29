@@ -873,30 +873,40 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertEqual([item.session_id for item in values], [identifier])
 
     def test_probe_sample_processes_names_at_visit_cap(self) -> None:
-        """Visit-budget exhaustion mid-listing still processes collected names (#7 P2)."""
+        """Visit-budget exhaustion mid-listing still processes collected names (#7)."""
 
         day = self.root / "sessions" / "2026" / "07" / "20"
         day.mkdir(parents=True)
-        # One real rollout after many noise files so visits hit the cap mid-dir.
-        noise = [f"noise-{index:04d}" for index in range(codex._PROBE_VISIT_CAP)]
-        for name in noise:
-            (day / name).write_text("x")
-        identifier = str(uuid.uuid4())
-        path = day / f"rollout-2026-07-20T00-00-00-{identifier}.jsonl"
-        write_jsonl(
-            path,
-            [
-                {
-                    "type": "session_meta",
-                    "timestamp": stamp(-1),
-                    "payload": {"id": identifier, "cwd": str(self.cwd), "source": "cli"},
-                }
-            ],
+        # 129 rollouts in one day directory: more than default visit cap.
+        identifiers: list[str] = []
+        for index in range(codex._PROBE_VISIT_CAP + 1):
+            identifier = str(uuid.uuid4())
+            identifiers.append(identifier)
+            path = day / f"rollout-2026-07-20T12-00-00-{identifier}.jsonl"
+            write_jsonl(
+                path,
+                [
+                    {
+                        "type": "session_meta",
+                        "timestamp": stamp(-1),
+                        "payload": {
+                            "id": identifier,
+                            "cwd": str(self.cwd),
+                            "source": "cli",
+                        },
+                    }
+                ],
+            )
+        sample = codex._sample_rollout_paths(
+            str(self.root),
+            max_visits=codex._PROBE_VISIT_CAP,
+            max_files=8,
         )
-        # Cap visits to noise count so the real file is still among collected names
-        # when listing stops at the budget (names are sorted reverse; rollout sorts high).
-        sample = codex._sample_rollout_paths(str(self.root), max_visits=len(noise) + 3, max_files=8)
-        self.assertTrue(any(_id == identifier for _id in (codex._rollout_id(p) for p in sample)))
+        self.assertGreaterEqual(len(sample), 1)
+        self.assertTrue(
+            any(codex._rollout_id(path) in identifiers for path in sample),
+            "capped day-dir listing must still yield rollouts from collected names",
+        )
         capability = codex.ADAPTER.probe(self.query())
         self.assertEqual(capability.state, "supported")
 

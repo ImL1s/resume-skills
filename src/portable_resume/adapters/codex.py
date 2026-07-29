@@ -261,19 +261,21 @@ def _sample_rollout_paths(
         nonlocal visits
         if len(found) >= max_files:
             return
+        # Collect a bounded name batch first, then always process that batch.
+        # Never return between collection and processing (Codex review #7).
+        remaining = max(0, max_visits - visits)
         names: list[str] = []
-        try:
-            with os.scandir(directory) as entries:
-                for entry in entries:
-                    if visits >= max_visits:
-                        break
-                    visits += 1
-                    names.append(entry.name)
-        except OSError:
-            return
+        if remaining:
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        if len(names) >= remaining:
+                            break
+                        names.append(entry.name)
+            except OSError:
+                return
+            visits += len(names)
         # Prefer lexicographically newer date/hour path components first.
-        # Always process names collected in this directory even if the visit
-        # budget is exhausted mid-listing (#7 P2).
         names.sort(reverse=True)
         for name in names:
             if len(found) >= max_files:
@@ -285,8 +287,10 @@ def _sample_rollout_paths(
                 continue
             if stat.S_ISLNK(current.st_mode):
                 continue
-            if stat.S_ISDIR(current.st_mode) and depth < max_depth and visits < max_visits:
-                visit(path, depth + 1)
+            if stat.S_ISDIR(current.st_mode) and depth < max_depth:
+                # Recurse only while visit budget remains for child listings.
+                if visits < max_visits:
+                    visit(path, depth + 1)
             elif stat.S_ISREG(current.st_mode) and _ROLLOUT.fullmatch(name):
                 found.append(path)
 
