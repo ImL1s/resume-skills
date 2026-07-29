@@ -299,21 +299,8 @@ class GrokAdapter:
         for cwd_dir, updates in paths:
             session_id = _identifier(os.path.basename(os.path.dirname(updates)))
             cwd = self._decode_cwd(cwd_dir, root, budget)
-            try:
-                event_meta, _, event_warnings = self._parse_updates(
-                    updates,
-                    root,
-                    query,
-                    budget,
-                    include_turns=False,
-                    expected_id=session_id,
-                )
-            except DiagnosticError as error:
-                # Oversized live updates.jsonl: still list via path + summary.json.
-                # Corrupt/unsupported content stays fail-closed (fixture contract).
-                if error.code != "E_LIMIT_EXCEEDED":
-                    raise
-                event_meta, event_warnings = {}, ("W_TRUNCATED",)
+            # Metadata-first list (#15): prefer summary.json + path/mtime. Do not
+            # parse every update line merely to list a session.
             summary, summary_warnings = self._summary(
                 os.path.dirname(updates),
                 root,
@@ -324,13 +311,45 @@ class GrokAdapter:
             title = summary.get("title") if isinstance(summary.get("title"), str) else None
             summary_cwd = summary.get("cwd") if isinstance(summary.get("cwd"), str) else cwd
             branch = summary.get("branch") if isinstance(summary.get("branch"), str) else None
-            warnings = tuple(dict.fromkeys((*event_warnings, *summary_warnings)))
             created = summary.get("created_at") if isinstance(summary.get("created_at"), str) else None
-            updated = summary.get("updated_at") if isinstance(summary.get("updated_at"), str) else None
-            if created is None and isinstance(event_meta, tuple) and len(event_meta) > 0:
-                created = event_meta[0]
-            if updated is None and isinstance(event_meta, tuple) and len(event_meta) > 1:
-                updated = event_meta[1]
+            # List freshness always prefers updates.jsonl mtime so a stale
+            # summary.json last_active_at cannot hide active sessions (#15).
+            event_warnings: list[str] = []
+            updated: str | None = None
+            try:
+                st = os.lstat(updates)
+                stamp = datetime.fromtimestamp(
+                    st.st_mtime, timezone.utc
+                ).isoformat(timespec="microseconds").replace("+00:00", "Z")
+            except OSError:
+                stamp = None
+            if stamp is not None:
+                updated = stamp
+                if created is None:
+                    created = stamp
+            elif "W_MISSING_BLOB" in summary_warnings:
+                # No mtime: fall back to a bounded updates stream only when
+                # metadata is otherwise unusable.
+                try:
+                    event_meta, _, event_warnings = self._parse_updates(
+                        updates,
+                        root,
+                        query,
+                        budget,
+                        include_turns=False,
+                        expected_id=session_id,
+                    )
+                    if created is None and isinstance(event_meta, tuple) and len(event_meta) > 0:
+                        created = event_meta[0]
+                    if isinstance(event_meta, tuple) and len(event_meta) > 1:
+                        updated = event_meta[1]
+                except DiagnosticError as error:
+                    if error.code != "E_LIMIT_EXCEEDED":
+                        raise
+                    event_warnings = ["W_TRUNCATED"]
+            if updated is None and isinstance(summary.get("updated_at"), str):
+                updated = summary["updated_at"]
+            warnings = tuple(dict.fromkeys((*event_warnings, *summary_warnings)))
             item = SessionSummary(
                 source=self.key,
                 session_id=session_id,
