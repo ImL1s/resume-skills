@@ -12,6 +12,9 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- CI de-duplication (#67): `scripts/self_verify.py` exposes named stages and
+  profiles; GitHub Actions matrix uses `ci-compat` (suite once per cell) while
+  docs/secrets run once in `quality`; package job depends on both.
 - Reader CLI option honesty (#65): `self-check` uses a closed parser (no silent
   ignore of unknown args); `--request-file` rejects `--within-min`; `--format`
   includes explicit `table` and show rejects table.
