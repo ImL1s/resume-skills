@@ -12,6 +12,9 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Reader CLI option honesty (#65): `self-check` uses a closed parser (no silent
+  ignore of unknown args); `--request-file` rejects `--within-min`; `--format`
+  includes explicit `table` and show rejects table.
 - Capability registries package axis (#36): `PACKAGE_SURFACES` registers native
   package builders; `build_host_packages` is driven by enabled destinations +
   package surfaces; public schema source enum matches enabled sources (adds `pi`);

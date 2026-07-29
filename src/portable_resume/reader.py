@@ -43,12 +43,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("ref", nargs="?", help="latest, exact ID, approved exact path, or bounded text")
     parser.add_argument("--cwd")
     parser.add_argument("--within-min", type=int)
-    parser.add_argument("--format", choices=("json", "handoff"))
+    parser.add_argument("--format", choices=("json", "handoff", "table"))
     parser.add_argument("--json", action="store_true", dest="json_alias")
     parser.add_argument("--max-tool-chars", type=int, default=DEFAULT_BOUNDS.tool_output_chars)
     parser.add_argument("--source-root")
     parser.add_argument("--request-file")
     parser.add_argument("--expected-source", choices=tuple(sorted(SOURCE_KEYS)))
+    return parser
+
+
+def build_self_check_parser() -> argparse.ArgumentParser:
+    """Closed option set for ``self-check`` (JSON-only; no silent ignore)."""
+
+    parser = DiagnosticArgumentParser(
+        prog="portable-resume self-check",
+        description="Deterministic packaging/runtime health report (always JSON).",
+    )
+    # Accepted for CI scripts that pass --json; output is always JSON.
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="accepted for compatibility; self-check always writes JSON",
+    )
     return parser
 
 
@@ -80,6 +96,9 @@ def _resolve_invocation(namespace: argparse.Namespace) -> tuple[str, str, str | 
             raise DiagnosticError.invalid()
         if namespace.expected_source is None:
             raise DiagnosticError.invalid()
+        # request-v1 does not carry within_min; accepting it would silently drop it.
+        if namespace.within_min is not None:
+            raise DiagnosticError.invalid()
         request = load_request(namespace.request_file, expected_source=namespace.expected_source)
         return request.source, request.action, request.resume_ref, request.cwd, None
     # Grok-build style: skill-bound runners may pass --expected-source with
@@ -102,10 +121,19 @@ def _format(namespace: argparse.Namespace, action: str) -> str:
     if namespace.json_alias and namespace.format not in (None, "json"):
         raise DiagnosticError.invalid()
     if namespace.json_alias:
-        return "json"
-    if namespace.format:
-        return namespace.format
-    return "handoff" if action == "show" else "table"
+        chosen = "json"
+    elif namespace.format:
+        chosen = namespace.format
+    else:
+        chosen = "handoff" if action == "show" else "table"
+    # Explicit closed sets: list supports all three; show rejects table.
+    if action == "show" and chosen == "table":
+        raise DiagnosticError.invalid()
+    if action == "list" and chosen not in {"table", "json", "handoff"}:
+        raise DiagnosticError.invalid()
+    if action == "show" and chosen not in {"json", "handoff"}:
+        raise DiagnosticError.invalid()
+    return chosen
 
 
 def _approved_roots(adapter: SourceAdapter, query: Query) -> tuple[str, ...]:
@@ -211,9 +239,12 @@ def self_check(*, stdout: Any = sys.stdout) -> int:
 def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: Any = sys.stderr) -> int:
     argv_list = list(sys.argv[1:] if argv is None else argv)
     if argv_list and argv_list[0] == "self-check":
-        if any(arg in {"-h", "--help"} for arg in argv_list[1:]):
-            stdout.write("usage: portable-resume self-check [--json]\n")
-            return 0
+        # Real closed parser: unknown options / positionals fail (no silent ignore).
+        self_parser = build_self_check_parser()
+        try:
+            self_parser.parse_args(argv_list[1:])
+        except DiagnosticError as error:
+            return emit_diagnostic(error, stream=stderr)
         return self_check(stdout=stdout)
 
     parser = build_parser()
