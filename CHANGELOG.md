@@ -12,6 +12,11 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Grok/Antigravity large histories (#15): Grok list is metadata-first
+  (`summary.json` + mtime; no full updates parse for list); Antigravity exact
+  show no longer depends on optional `brain/index.json` rediscovery (soft stale
+  on corrupt/oversized index); list/show stream-reduce without retaining every
+  outer record.
 - Codex streaming show (#8): plain rollout `show` streams via
   `stable_scan_lines` + attempt-local history reduce (no whole-file
   `stable_read_bytes` / full outer-record list); `updated_at` pinned to the

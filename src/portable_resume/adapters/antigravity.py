@@ -182,7 +182,13 @@ class AntigravityAdapter:
                 return None, True
             return entries, False
         except DiagnosticError as error:
-            if error.code in {"E_UNSUPPORTED_FORMAT", "E_CORRUPT_RECORD", "E_SOURCE_BUSY"}:
+            # Oversized/corrupt optional index must not block exact-path recovery (#15).
+            if error.code in {
+                "E_UNSUPPORTED_FORMAT",
+                "E_CORRUPT_RECORD",
+                "E_SOURCE_BUSY",
+                "E_LIMIT_EXCEEDED",
+            }:
                 return None, True
             raise
 
@@ -384,21 +390,37 @@ class AntigravityAdapter:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=ref.provider)
         if ref.source_path is None or not is_within(ref.source_path, root):
             raise DiagnosticError.unsafe_path()
+        # Exact safe transcript path is authoritative (#15). Optional index is
+        # best-effort hint enrichment only — never required for show.
         brain = self._brain(root)
-        entries, stale = self._read_index(brain, root)
         hint: Mapping[str, Any] | None = None
-        if entries is not None:
-            for entry in entries:
-                if entry.get("id") != ref.session_id:
-                    continue
-                if hint is not None:
-                    stale = True
-                    continue
-                expected = self._conversation_path(brain, ref.session_id)
-                if canonicalize_cwd(expected) == canonicalize_cwd(ref.source_path):
-                    hint = entry
-                else:
-                    stale = True
+        stale = False
+        try:
+            entries, index_stale = self._read_index(brain, root)
+            stale = index_stale
+            if entries is not None:
+                for entry in entries:
+                    if entry.get("id") != ref.session_id:
+                        continue
+                    if hint is not None:
+                        stale = True
+                        continue
+                    expected = self._conversation_path(brain, ref.session_id)
+                    if canonicalize_cwd(expected) == canonicalize_cwd(ref.source_path):
+                        hint = entry
+                    else:
+                        stale = True
+        except DiagnosticError as error:
+            if error.code in {
+                "E_UNSUPPORTED_FORMAT",
+                "E_CORRUPT_RECORD",
+                "E_SOURCE_BUSY",
+                "E_LIMIT_EXCEEDED",
+                "E_UNSAFE_PATH",
+            }:
+                stale = True
+            else:
+                raise
         summary, turns, warnings = self._read_transcript(
             ref.source_path,
             root,
@@ -423,10 +445,18 @@ class AntigravityAdapter:
         include_turns: bool,
         hint: Mapping[str, Any] | None,
     ) -> tuple[SessionSummary, list[Turn], list[str]]:
-        # Stream via stable_scan_lines under source_read_bytes + transcript_records
-        # so large transcript.jsonl is not whole-file buffered (#10).
+        # Stream-reduce via stable_scan_lines; do not retain every outer record (#15).
+        # List path (include_turns=False) stops after session header and uses mtime.
         warnings: list[str] = []
-        records: list[Mapping[str, Any]] = []
+        # transcript.jsonl -> logs -> .system_generated -> <conversation-id>
+        path_id = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path))))
+        path_id = _session_id(path_id)
+        header: Mapping[str, Any] | None = None
+        turns: list[Turn] = []
+        created_values: list[str] = []
+        updated_values: list[str] = []
+        live_stream = False
+        saw_record = False
         for line in stable_scan_lines(
             path,
             root=root,
@@ -451,19 +481,8 @@ class AntigravityAdapter:
                 raise
             if not isinstance(value, Mapping):
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
-            records.append(value)
-        if not records:
-            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
-
-        # transcript.jsonl -> logs -> .system_generated -> <conversation-id>
-        path_id = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path))))
-        path_id = _session_id(path_id)
-        header: Mapping[str, Any] | None = None
-        turns: list[Turn] = []
-        created_values: list[str] = []
-        updated_values: list[str] = []
-        live_stream = False
-        for record in records:
+            saw_record = True
+            record = value
             kind = record.get("type")
             if not isinstance(kind, str):
                 raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
@@ -479,6 +498,9 @@ class AntigravityAdapter:
                 if _session_id(record.get("conversation_id")) != path_id:
                     raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
                 header = record
+                if not include_turns:
+                    # List metadata: header + file mtime is enough (#15).
+                    break
                 continue
             # Live AGY step stream (uppercase USER_INPUT / PLANNER_RESPONSE / tools).
             if kind == "user_input":
@@ -601,11 +623,27 @@ class AntigravityAdapter:
                 raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
             warnings.append("W_BROKEN_CHAIN")
 
+        if not saw_record:
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+
         header_id = path_id
         cwd: str | None = None
         title: str | None = None
         created_at: str | None = min(created_values) if created_values else None
         updated_at: str | None = max(updated_values) if updated_values else None
+        if not include_turns or updated_at is None:
+            try:
+                mtime = os.lstat(path).st_mtime
+                stamp = datetime.fromtimestamp(mtime, timezone.utc).isoformat(
+                    timespec="microseconds"
+                ).replace("+00:00", "Z")
+            except OSError:
+                stamp = None
+            if stamp is not None:
+                if updated_at is None:
+                    updated_at = stamp
+                if created_at is None and not include_turns:
+                    created_at = stamp
         if header is not None:
             raw_cwd = header.get("cwd")
             if isinstance(raw_cwd, str):
