@@ -840,6 +840,66 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertEqual(capability.format_id, codex.ROLLOUT_FORMAT)
         self.assertEqual([item.session_id for item in values], [identifier])
 
+    def test_exact_id_db_hit_survives_large_sessions_tree(self) -> None:
+        """Verified exact-ID DB rows must not be lost if FS soft-cap stops (#7)."""
+
+        identifier, path = self.rollout()
+        self.database(9, [self.db_row(identifier, path)])
+        with mock.patch.object(
+            codex,
+            "_rollout_paths",
+            side_effect=AssertionError("exact-ID verified DB hit must skip underfilled FS"),
+        ):
+            values = codex.ADAPTER.list(self.query(identifier), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+
+    def test_list_fs_soft_limit_keeps_db_rows(self) -> None:
+        """Soft FS fallback cap must merge, not raise away, verified DB rows (#7)."""
+
+        identifier, path = self.rollout()
+        self.database(9, [self.db_row(identifier, path)])
+        # Force sparse FS path with soft_limit; hard walk would raise.
+        with mock.patch.object(
+            codex,
+            "_walk_rollouts",
+            side_effect=lambda *args, **kwargs: (_ for _ in ()).throw(
+                DiagnosticError.limit_exceeded()
+            )
+            if not kwargs.get("soft_limit")
+            else [],
+        ):
+            # underfilled with no exact ref → FS soft path returns [] and keeps DB.
+            values = codex.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+
+    def test_probe_sample_processes_names_at_visit_cap(self) -> None:
+        """Visit-budget exhaustion mid-listing still processes collected names (#7 P2)."""
+
+        day = self.root / "sessions" / "2026" / "07" / "20"
+        day.mkdir(parents=True)
+        # One real rollout after many noise files so visits hit the cap mid-dir.
+        noise = [f"noise-{index:04d}" for index in range(codex._PROBE_VISIT_CAP)]
+        for name in noise:
+            (day / name).write_text("x")
+        identifier = str(uuid.uuid4())
+        path = day / f"rollout-2026-07-20T00-00-00-{identifier}.jsonl"
+        write_jsonl(
+            path,
+            [
+                {
+                    "type": "session_meta",
+                    "timestamp": stamp(-1),
+                    "payload": {"id": identifier, "cwd": str(self.cwd), "source": "cli"},
+                }
+            ],
+        )
+        # Cap visits to noise count so the real file is still among collected names
+        # when listing stops at the budget (names are sorted reverse; rollout sorts high).
+        sample = codex._sample_rollout_paths(str(self.root), max_visits=len(noise) + 3, max_files=8)
+        self.assertTrue(any(_id == identifier for _id in (codex._rollout_id(p) for p in sample)))
+        capability = codex.ADAPTER.probe(self.query())
+        self.assertEqual(capability.state, "supported")
+
     def test_unknown_database_schema_falls_back_and_retains_rollout_warning(self) -> None:
         identifier = str(uuid.uuid4())
         records = [

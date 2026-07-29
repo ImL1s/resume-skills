@@ -146,19 +146,34 @@ def _walk_rollouts(
     *,
     max_depth: int = 4,
     scan_state: list[int] | None = None,
+    soft_limit: bool = False,
 ) -> list[str]:
+    """Walk rollouts under ``container``.
+
+    When ``soft_limit`` is false (default), exceeding ``scanned_records`` raises
+    ``E_LIMIT_EXCEEDED`` so callers do not rank a traversal-order prefix as
+    complete. When true (list FS fallback merge), stop and keep what was found
+    so already-verified DB rows are not discarded (#7).
+    """
+
     if not _regular_directory(container, root):
         return []
     output: list[str] = []
     visited = scan_state if scan_state is not None else [0]
+    stopped = [False]
 
     def visit(directory: str, depth: int) -> None:
+        if stopped[0]:
+            return
         names: list[str] = []
         try:
             with os.scandir(directory) as entries:
                 for entry in entries:
                     visited[0] += 1
                     if visited[0] > DEFAULT_BOUNDS.scanned_records:
+                        if soft_limit:
+                            stopped[0] = True
+                            break
                         # Do not return a traversal-order prefix: callers use
                         # this set to resolve the newest rollout.
                         raise DiagnosticError.limit_exceeded()
@@ -169,6 +184,8 @@ def _walk_rollouts(
             raise DiagnosticError.source_busy(provider=ROLLOUT_FORMAT) from error
         names.sort()
         for name in names:
+            if stopped[0]:
+                return
             path = os.path.join(directory, name)
             try:
                 current = os.lstat(path)
@@ -185,9 +202,14 @@ def _walk_rollouts(
     return output
 
 
-def _rollout_paths(root: str, query: Query) -> list[str]:
+def _rollout_paths(root: str, query: Query, *, soft_limit: bool = False) -> list[str]:
     scan_state = [0]
-    values = _walk_rollouts(os.path.join(root, "sessions"), root, scan_state=scan_state)
+    values = _walk_rollouts(
+        os.path.join(root, "sessions"),
+        root,
+        scan_state=scan_state,
+        soft_limit=soft_limit,
+    )
     # Archived rows are intentionally invisible unless the user supplied an
     # exact native UUID.  Text and path searches cannot enumerate archives.
     if query.ref:
@@ -201,6 +223,7 @@ def _rollout_paths(root: str, query: Query) -> list[str]:
                     os.path.join(root, "archived_sessions"),
                     root,
                     scan_state=scan_state,
+                    soft_limit=soft_limit,
                 )
             )
     exact = _exact_uuid_ref(query.ref)
@@ -236,22 +259,24 @@ def _sample_rollout_paths(
 
     def visit(directory: str, depth: int) -> None:
         nonlocal visits
-        if visits >= max_visits or len(found) >= max_files:
+        if len(found) >= max_files:
             return
         names: list[str] = []
         try:
             with os.scandir(directory) as entries:
                 for entry in entries:
-                    visits += 1
-                    if visits > max_visits:
+                    if visits >= max_visits:
                         break
+                    visits += 1
                     names.append(entry.name)
         except OSError:
             return
         # Prefer lexicographically newer date/hour path components first.
+        # Always process names collected in this directory even if the visit
+        # budget is exhausted mid-listing (#7 P2).
         names.sort(reverse=True)
         for name in names:
-            if len(found) >= max_files or visits > max_visits:
+            if len(found) >= max_files:
                 return
             path = os.path.join(directory, name)
             try:
@@ -260,7 +285,7 @@ def _sample_rollout_paths(
                 continue
             if stat.S_ISLNK(current.st_mode):
                 continue
-            if stat.S_ISDIR(current.st_mode) and depth < max_depth:
+            if stat.S_ISDIR(current.st_mode) and depth < max_depth and visits < max_visits:
                 visit(path, depth + 1)
             elif stat.S_ISREG(current.st_mode) and _ROLLOUT.fullmatch(name):
                 found.append(path)
@@ -970,18 +995,29 @@ class CodexAdapter:
                 values = verified
                 break
         # FS head fallback (#7): missing schema, unresolved/stale rows, or under-filled
-        # recognized DB (sparse index). Merge/dedupe below; never mutate source store.
-        underfilled = database_supported and len(values) < DEFAULT_BOUNDS.listed_sessions
-        if (
+        # recognized DB (sparse index). Exact-ID hits already verified from DB skip the
+        # underfilled walk so a huge sessions/ tree cannot raise away a good match.
+        exact_ref = _exact_uuid_ref(query.ref)
+        underfilled = (
+            database_supported
+            and exact_ref is None
+            and len(values) < DEFAULT_BOUNDS.listed_sessions
+        )
+        need_fs = (
             not database_supported
             or stale_dropped
             or unresolved_paths > 0
             or underfilled
-        ):
-            for path in _rollout_paths(root, query):
+        )
+        if need_fs:
+            # soft_limit: partial FS recovery must not discard verified DB rows.
+            # Only admit FS sessions missing from the DB set (sparse fill, not replace).
+            known = {item.session_id for item in values}
+            for path in _rollout_paths(root, query, soft_limit=True):
                 item = _rollout_summary(path, root, query, budget)
-                if item is not None:
+                if item is not None and item.session_id not in known:
                     values.append(item)
+                    known.add(item.session_id)
         deduplicated: dict[str, SessionSummary] = {}
         for value in values:
             previous = deduplicated.get(value.session_id)
