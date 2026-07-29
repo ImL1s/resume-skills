@@ -202,10 +202,11 @@ def parse_manifest_document(text: str | bytes) -> dict[str, Any]:
     schema_version = _require_str(data["schema_version"], name="schema_version", max_chars=128)
     if schema_version != MANIFEST_SCHEMA:
         raise ControlSchemaError("unsupported manifest schema_version")
+    # Older product bundle versions must still load so plan_install / uninstall can
+    # coordinate upgrades (verify_root enforces the *current* bundle separately).
     bundle_version = _require_str(data["bundle_version"], name="bundle_version", max_chars=64)
-    # Accept only the current product bundle version for mutation/verify claims.
-    if bundle_version != BUNDLE_VERSION:
-        raise ControlSchemaError("unsupported bundle_version")
+    if not bundle_version.strip():
+        raise ControlSchemaError("empty bundle_version")
     generation = _require_int(data["generation"], name="generation", minimum=0, maximum=2**31 - 1)
     package_identity = _require_hex64(data["package_identity"], name="package_identity")
 
@@ -230,8 +231,8 @@ def parse_manifest_document(text: str | bytes) -> dict[str, Any]:
         if not os.path.isabs(root):
             raise ControlSchemaError("claim.root must be absolute")
         claim_bundle = _require_str(meta["bundle_version"], name="claim.bundle_version", max_chars=64)
-        if claim_bundle != BUNDLE_VERSION:
-            raise ControlSchemaError("claim bundle_version mismatch")
+        if not claim_bundle.strip():
+            raise ControlSchemaError("empty claim.bundle_version")
         # Claim id must recompute from host|scope|root (realpath spelling as stored).
         expected = f"{host}|{scope}|{root}"
         if claim_id != expected:

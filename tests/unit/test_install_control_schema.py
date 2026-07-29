@@ -71,6 +71,14 @@ class InstallControlSchemaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Manifest.loads(json.dumps(data))
 
+    def test_older_bundle_version_still_loads(self) -> None:
+        data = json.loads(self._valid_manifest_text())
+        data["bundle_version"] = "0.3.3"
+        for claim in data["claims"].values():
+            claim["bundle_version"] = "0.3.3"
+        loaded = Manifest.loads(json.dumps(data))
+        self.assertEqual(loaded.bundle_version, "0.3.3")
+
     def test_unknown_host_rejected(self) -> None:
         data = json.loads(self._valid_manifest_text())
         claim_id = next(iter(data["claims"]))
