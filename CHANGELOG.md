@@ -12,6 +12,9 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Destination root resolution (#24): global install honors documented host
+  env homes (Kimi `$KIMI_CODE_HOME/skills`); isolation `--home` ignores host
+  env overrides; `hosts --json` reports `global_root_source` / `project_root_source`.
 - Grok/Antigravity large histories (#15): Grok list is metadata-first
   (`summary.json` + mtime; no full updates parse for list); Antigravity exact
   show no longer depends on optional `brain/index.json` rediscovery (soft stale

@@ -39,6 +39,19 @@ class HostProfile:
     activation_examples: tuple[str, ...] = ()
     caveats: tuple[str, ...] = ()
     evidence_notes: str = ""
+    # When set, global scope prefers $ENV/<global_env_rel> over $HOME/<global_rel>
+    # unless isolation --home is used (#24). Only destination-documented homes.
+    global_home_env: str | None = None
+    global_env_rel: str = "skills"
+
+
+@dataclass(frozen=True, slots=True)
+class SkillRootResolution:
+    """Resolved install root plus provenance for plans/hosts report (#24)."""
+
+    path: str
+    root_source: str
+    profile_id: str
 
 
 HOST_PROFILES: dict[str, HostProfile] = {
@@ -392,7 +405,7 @@ HOST_PROFILES: dict[str, HostProfile] = {
     ),
     "kimi": HostProfile(
         key="kimi",
-        profile_id="kimi-code-v1",
+        profile_id="kimi-code-v2",
         project_rel=".kimi-code/skills",
         global_rel=".kimi-code/skills",
         display_name="Kimi Code CLI",
@@ -433,12 +446,16 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "Current and legacy plugin manifests are incompatible.",
             "Plugins can execute tools; direct SKILL.md installation is the lower-trust default.",
             "Visual picker interaction and public marketplace publication are separate evidence claims.",
+            "Global install honors $KIMI_CODE_HOME/skills when set; isolation --home ignores host env overrides.",
         ),
         evidence_notes=(
             "Official Kimi Code docs: .kimi-code/skills, cross-tool .agents roots, "
             "/skill:<name>, kimi.plugin.json, ZIP/GitHub plugin installs, and custom "
-            "marketplace catalogs (checked 2026-07-24)."
+            "marketplace catalogs (checked 2026-07-24). Destination root policy: "
+            "KIMI_CODE_HOME (#24, profile kimi-code-v2)."
         ),
+        global_home_env="KIMI_CODE_HOME",
+        global_env_rel="skills",
     ),
     "pi": HostProfile(
         key="pi",
@@ -517,23 +534,106 @@ def matrix_cells(hosts: Iterable[str] | None = None) -> list[tuple[str, str]]:
     return rectangular_cells(sources=enabled_source_keys(), destinations=destinations)
 
 
+def _is_isolation_home(home_dir: str) -> bool:
+    """True when --home is not the process real user home (tests/isolation)."""
+
+    import os
+
+    try:
+        return os.path.realpath(home_dir) != os.path.realpath(os.path.expanduser("~"))
+    except OSError:
+        return True
+
+
+def _validate_env_home(raw: str, *, env_name: str) -> str:
+    """Reject empty/relative/NUL host config homes (#24)."""
+
+    import os
+
+    if "\x00" in raw:
+        raise ValueError(f"invalid {env_name}: contains NUL")
+    stripped = raw.strip()
+    if not stripped:
+        raise ValueError(f"invalid {env_name}: empty")
+    expanded = os.path.expanduser(stripped)
+    if not os.path.isabs(expanded):
+        raise ValueError(f"invalid {env_name}: must be an absolute path")
+    return os.path.realpath(expanded)
+
+
+def resolve_skill_root_info(
+    *,
+    host: str,
+    scope: str,
+    project_dir: str | None,
+    home_dir: str,
+    environ: dict[str, str] | None = None,
+    isolation: bool | None = None,
+) -> SkillRootResolution:
+    """Resolve Skill root and provenance for install/verify/uninstall/hosts (#24).
+
+    Precedence for global scope:
+    1. Host env home (e.g. ``KIMI_CODE_HOME``) + ``global_env_rel`` when the env
+       is set and isolation is false (default: isolation when ``home_dir`` is not
+       the real user home / explicit test ``--home``)
+    2. ``home_dir`` + ``global_rel``
+
+    Explicit CLI ``--root`` is applied by callers before this resolver.
+    """
+
+    import os
+
+    profile = HOST_PROFILES[host]
+    env = environ if environ is not None else os.environ
+    if isolation is None:
+        isolation = _is_isolation_home(home_dir)
+    if scope == "project":
+        if not project_dir:
+            raise ValueError("project scope requires --project")
+        path = os.path.join(os.path.realpath(project_dir), profile.project_rel)
+        return SkillRootResolution(
+            path=path,
+            root_source="project",
+            profile_id=profile.profile_id,
+        )
+    if scope == "global":
+        if profile.global_home_env and not isolation and profile.global_home_env in env:
+            base = _validate_env_home(
+                env[profile.global_home_env],
+                env_name=profile.global_home_env,
+            )
+            path = os.path.join(base, profile.global_env_rel)
+            return SkillRootResolution(
+                path=path,
+                root_source=f"env:{profile.global_home_env}",
+                profile_id=profile.profile_id,
+            )
+        path = os.path.join(os.path.realpath(home_dir), profile.global_rel)
+        return SkillRootResolution(
+            path=path,
+            root_source="home",
+            profile_id=profile.profile_id,
+        )
+    raise ValueError(f"unknown scope: {scope}")
+
+
 def resolve_skill_root(
     *,
     host: str,
     scope: str,
     project_dir: str | None,
     home_dir: str,
+    environ: dict[str, str] | None = None,
+    isolation: bool | None = None,
 ) -> str:
-    import os
-
-    profile = HOST_PROFILES[host]
-    if scope == "project":
-        if not project_dir:
-            raise ValueError("project scope requires --project")
-        return os.path.join(os.path.realpath(project_dir), profile.project_rel)
-    if scope == "global":
-        return os.path.join(os.path.realpath(home_dir), profile.global_rel)
-    raise ValueError(f"unknown scope: {scope}")
+    return resolve_skill_root_info(
+        host=host,
+        scope=scope,
+        project_dir=project_dir,
+        home_dir=home_dir,
+        environ=environ,
+        isolation=isolation,
+    ).path
 
 
 def _installer_command_pair(
@@ -571,10 +671,10 @@ def host_install_record(
     profile = HOST_PROFILES[host]
     home = home_dir if home_dir is not None else os.path.expanduser("~")
     project = project_dir if project_dir is not None else os.getcwd()
-    project_root = resolve_skill_root(
+    project_res = resolve_skill_root_info(
         host=host, scope="project", project_dir=project, home_dir=home
     )
-    global_root = resolve_skill_root(
+    global_res = resolve_skill_root_info(
         host=host, scope="global", project_dir=None, home_dir=home
     )
     return {
@@ -584,8 +684,11 @@ def host_install_record(
         "installer_defaults": {
             "project_rel": profile.project_rel,
             "global_rel": profile.global_rel,
-            "project_root_resolved": project_root,
-            "global_root_resolved": global_root,
+            "project_root_resolved": project_res.path,
+            "global_root_resolved": global_res.path,
+            "project_root_source": project_res.root_source,
+            "global_root_source": global_res.root_source,
+            "global_home_env": profile.global_home_env,
             "skill_layout": SKILL_DIR_LAYOUT,
         },
         "official_layouts": {
