@@ -14,6 +14,26 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Version-independent gates once per workflow (issue #67).
+  quality:
+    name: quality (docs + secrets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Quality gates (docs + secrets)
+        run: python scripts/self_verify.py --profile ci-quality
+
+  # OS × Python compatibility: interpreter-sensitive stages exactly once per cell.
   test:
     name: test (${{ matrix.os }} / py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
@@ -34,19 +54,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Self verify
-        run: python scripts/self_verify.py
-
-      - name: Multilingual documentation consistency
-        run: python scripts/check_docs.py
-
-      - name: Secret and path gate
-        run: python scripts/check_secrets.py
-
-      - name: Unit and integration tests
-        env:
-          PYTHONPATH: src
-        run: python -m unittest discover -s tests -q
+      - name: Compat self-verify (no docs/secrets duplicate)
+        run: python scripts/self_verify.py --profile ci-compat
 
       - name: Installed runner matrix
         env:
@@ -55,7 +64,7 @@ jobs:
 
   package:
     name: build and smoke distributions
-    needs: test
+    needs: [test, quality]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
