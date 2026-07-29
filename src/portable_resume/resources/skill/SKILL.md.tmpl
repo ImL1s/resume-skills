@@ -63,9 +63,10 @@ When the ref is free text, multi-field, or hard to quote safely:
 
    - `schema_version`: `"portable-resume/request-v1"`
    - `source`: must equal this Skill's bound source (`${source_key}`)
-   - `action`: `"show"` or `"list"`
+   - `action`: must be `"show"` only (request-v1 has no list payload; use
+     lane A argv `list` for discovery)
    - `resume_ref`: selection string (`"latest"`, native id, approved path, or free text)
-   - `cwd`: absolute working directory for selection scope
+   - `cwd`: canonical absolute working directory for selection scope
 
    Never put transcript bodies in the request file. Pass supported CLI options
    (`--format`, `--source-root`, `--max-tool-chars`, …) as runner argv flags —

@@ -137,9 +137,11 @@ class OwnedSkillMarkdownTests(unittest.TestCase):
         self.assertIn("--request-file", text)
         self.assertIn("resume_ref", text)
         self.assertIn("schema_version", text)
+        self.assertIn('must be `"show"` only', text)
         # Must not document wrong request keys that load_request rejects.
         self.assertNotIn("ref, cwd, options", text)
         self.assertNotIn("containing selection fields only (source, action, ref", text)
+        self.assertNotIn('"show" or "list"', text)
         # Conceptual placeholder must not remain
         self.assertNotIn("<this-skill>", text)
         # Free-text shell splice forbidden
