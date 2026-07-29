@@ -593,9 +593,13 @@ def _read_rollout_head(
     records: list[dict[str, Any]] = []
     warnings: list[str] = []
     updated_hint: str | None = None
+    # Cap physical head lines (not only retained records) so skipped outer types
+    # cannot burn the discovery budget before session_meta is seen (#7 P2).
+    lines_seen = 0
     for raw in raw_lines:
-        if len(records) >= limit:
+        if len(records) >= limit or lines_seen >= limit:
             break
+        lines_seen += 1
         budget.consume_records()
         terminated = raw.endswith((b"\n", b"\r"))
         body = raw[:-1] if terminated and raw.endswith(b"\n") else raw
