@@ -654,7 +654,9 @@ class AntigravityAdapter:
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
             title = header.get("title") if isinstance(header.get("title"), str) else None
             created_at = _rfc3339(header.get("created_at")) or created_at
-            updated_at = _rfc3339(header.get("updated_at")) or updated_at
+            # List mode: transcript mtime stays authoritative for freshness (#15).
+            if include_turns:
+                updated_at = _rfc3339(header.get("updated_at")) or updated_at
         elif live_stream:
             # Live streams lack a session header; path id is authoritative.
             header = {"conversation_id": path_id}
@@ -674,7 +676,8 @@ class AntigravityAdapter:
             if title is None and isinstance(hint.get("title"), str):
                 title = hint["title"]
             created_at = created_at or _rfc3339(hint.get("created_at"))
-            updated_at = updated_at or _rfc3339(hint.get("updated_at"))
+            if include_turns:
+                updated_at = updated_at or _rfc3339(hint.get("updated_at"))
         if cwd is None:
             warnings.append("W_STALE_INDEX")
         summary = SessionSummary(
