@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from portable_resume import __version__
 from portable_resume.diagnostics import SOURCE_KEYS
 from portable_resume.install.catalog import HOST_KEYS
+from portable_resume.registry import enabled_package_keys
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -42,7 +43,11 @@ class HostPackageBuilderTests(unittest.TestCase):
             repeated = self.build(second)
             self.assertEqual(report["host_count"], len(HOST_KEYS))
             self.assertEqual(report["direct_package_count"], len(HOST_KEYS))
-            self.assertEqual(report["plugin_package_count"], 7)
+            self.assertEqual(report["plugin_package_count"], len(enabled_package_keys()))
+            self.assertEqual(
+                set(report["package_surfaces"]),
+                set(enabled_package_keys()),
+            )
             self.assertEqual(report["live_host_installation"], "not-run")
             self.assertEqual(
                 {item["file"]: item["sha256"] for item in report["artifacts"]},

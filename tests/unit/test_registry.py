@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import unittest
 
+import json
+from pathlib import Path
+
 from portable_resume.registry import (
     DESTINATION_PROFILES,
+    PACKAGE_SURFACES,
     SOURCE_PROFILES,
     DestinationProfile,
     PackageSurface,
@@ -11,6 +15,7 @@ from portable_resume.registry import (
     _validate_maps,
     destination_keys,
     enabled_destination_keys,
+    enabled_package_keys,
     enabled_source_keys,
     matrix_dimensions,
     validate_registries,
@@ -144,6 +149,34 @@ class RegistryInvariantTests(unittest.TestCase):
                 DESTINATION_PROFILES,
                 {"orphan-pkg": surface},
             )
+
+    def test_package_surfaces_registered_and_linked(self) -> None:
+        self.assertGreaterEqual(len(enabled_package_keys()), 7)
+        self.assertIn("claude-marketplace", enabled_package_keys())
+        self.assertNotIn("pi", {PACKAGE_SURFACES[k].destination for k in PACKAGE_SURFACES})
+        # Direct Skills for pi/opencode without inventing a package surface.
+        self.assertIsNone(DESTINATION_PROFILES["pi"].native_package_profile)
+        self.assertIsNone(DESTINATION_PROFILES["opencode"].native_package_profile)
+        for key, dest in DESTINATION_PROFILES.items():
+            if dest.native_package_profile is None:
+                continue
+            surface = PACKAGE_SURFACES[dest.native_package_profile]
+            self.assertEqual(surface.destination, key)
+            self.assertEqual(surface.key, dest.native_package_profile)
+
+    def test_schema_source_enum_matches_enabled_sources(self) -> None:
+        for path in (
+            Path("schemas/portable-resume-v1.schema.json"),
+            Path("src/portable_resume/resources/portable-resume-v1.schema.json"),
+        ):
+            schema = json.loads(path.read_text(encoding="utf-8"))
+            enum_values = set(schema["$defs"]["source"]["enum"])
+            self.assertEqual(
+                enum_values,
+                set(enabled_source_keys()),
+                msg=str(path),
+            )
+            self.assertIn("pi", enum_values)
 
     def test_planned_profiles_excluded_from_enabled_sets(self) -> None:
         for profile in SOURCE_PROFILES.values():

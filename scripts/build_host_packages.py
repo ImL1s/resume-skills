@@ -18,8 +18,12 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from portable_resume import __version__  # noqa: E402
-from portable_resume.install.catalog import HOST_KEYS  # noqa: E402
 from portable_resume.install.render import materialize_plan  # noqa: E402
+from portable_resume.registry import (  # noqa: E402
+    PACKAGE_SURFACES,
+    enabled_destination_keys,
+    enabled_package_keys,
+)
 
 DESCRIPTION = "Offline, inert context migration across supported coding agents"
 AUTHOR = {"name": "portable-resume-skills contributors"}
@@ -237,11 +241,20 @@ def _write_zip(path: Path, files: dict[str, bytes]) -> str:
 
 
 def build(output: Path) -> dict[str, Any]:
+    """Build direct-skill zips for every enabled destination + registry package surfaces.
+
+    Direct Skills and native packages are independent axes (#36): destinations
+    without a package surface still get a direct zip; package surfaces without
+    ``buildable`` are skipped.
+    """
+
     output.mkdir(parents=True, exist_ok=True)
     if any(output.iterdir()):
         raise ValueError("output directory must be empty")
+    hosts = tuple(sorted(enabled_destination_keys()))
+    package_keys = tuple(sorted(enabled_package_keys()))
     artifacts: list[dict[str, Any]] = []
-    for host in sorted(HOST_KEYS):
+    for host in hosts:
         direct_name = f"portable-resume-{__version__}-{host}-skills.zip"
         direct_path = output / direct_name
         direct_files = materialize_plan(host)
@@ -255,29 +268,36 @@ def build(output: Path) -> dict[str, Any]:
                 "install": "extract into the host skill root documented in docs/install-hosts.md",
             }
         )
-        plugin = _plugin_files(host)
-        if plugin is not None:
-            kind, files, install = plugin
-            name = f"portable-resume-{__version__}-{kind}.zip"
-            path = output / name
-            artifacts.append(
-                {
-                    "host": host,
-                    "type": kind,
-                    "file": name,
-                    "sha256": _write_zip(path, files),
-                    "members": len(files),
-                    "install": install,
-                }
+    for surface_key in package_keys:
+        surface = PACKAGE_SURFACES[surface_key]
+        plugin = _plugin_files(surface.destination)
+        if plugin is None:
+            raise ValueError(f"package surface not buildable: {surface_key}")
+        kind, files, install = plugin
+        if kind != surface.key:
+            raise ValueError(
+                f"package surface kind mismatch: registry={surface.key} builder={kind}"
             )
+        name = f"portable-resume-{__version__}-{kind}.zip"
+        path = output / name
+        artifacts.append(
+            {
+                "host": surface.destination,
+                "type": kind,
+                "package_surface": surface.key,
+                "file": name,
+                "sha256": _write_zip(path, files),
+                "members": len(files),
+                "install": install,
+            }
+        )
     report = {
         "schema_version": "portable-resume/host-packages-v1",
         "version": __version__,
-        "host_count": len(HOST_KEYS),
-        "direct_package_count": len(HOST_KEYS),
-        "plugin_package_count": sum(
-            1 for item in artifacts if item["type"] != "direct-skills"
-        ),
+        "host_count": len(hosts),
+        "direct_package_count": len(hosts),
+        "plugin_package_count": len(package_keys),
+        "package_surfaces": list(package_keys),
         "artifacts": artifacts,
         "live_host_installation": "not-run",
     }

@@ -151,6 +151,7 @@ def self_check(*, stdout: Any = sys.stdout) -> int:
     from .install.transaction import matrix_report
     from .registry import (
         enabled_destination_keys,
+        enabled_package_keys,
         enabled_source_keys,
         matrix_dimensions,
         validate_registries,
@@ -161,6 +162,7 @@ def self_check(*, stdout: Any = sys.stdout) -> int:
         "ok": True,
         "sources": sorted(enabled_source_keys()),
         "destinations": sorted(enabled_destination_keys()),
+        "package_surfaces": sorted(enabled_package_keys()),
         "matrix_dimensions": matrix_dimensions(),
         "actions": ["list", "show"],
         "adapters": {},

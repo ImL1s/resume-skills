@@ -12,6 +12,10 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Capability registries package axis (#36): `PACKAGE_SURFACES` registers native
+  package builders; `build_host_packages` is driven by enabled destinations +
+  package surfaces; public schema source enum matches enabled sources (adds `pi`);
+  self-check reports `package_surfaces`.
 - Exact snapshot parent siblings (#16): exact stable reads and file snapshots
   re-pin only the target basename through the parent dir_fd; a parent with more
   than `scanned_records` unrelated siblings no longer fails with
