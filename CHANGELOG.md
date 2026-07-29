@@ -12,6 +12,11 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Codex streaming show (#8): plain rollout `show` streams via
+  `stable_scan_lines` + attempt-local history reduce (no whole-file
+  `stable_read_bytes` / full outer-record list). Compressed rollouts still use
+  trusted-zstd decompress + line parse. Large synthetic (~20 MiB) regression
+  included.
 - Codex probe/list discovery (#7): capability from SQLite signature without
   walking `sessions/`; probe uses a soft-capped sample (not full tree walk);
   plain rollout discovery uses byte-bounded `stable_read_windows` heads;
