@@ -1024,16 +1024,14 @@ class CodexAdapter:
         # from SQLite so a huge sessions/ tree cannot raise away a good match.
         exact_ref = _exact_uuid_ref(query.ref)
         exact_hit = exact_ref is not None and any(item.session_id == exact_ref for item in values)
-        underfilled = (
-            database_supported
-            and not exact_hit
-            and len(values) < DEFAULT_BOUNDS.listed_sessions
-        )
+        # Always soft-FS when the recognized DB did not fully settle the query:
+        # under-filled *or* a full listed_sessions page (may still omit newer FS
+        # sessions). Skip only after an exact UUID was verified from SQLite.
         need_fs = (
             not database_supported
             or stale_dropped
             or unresolved_paths > 0
-            or underfilled
+            or (database_supported and not exact_hit)
         )
         fs_truncated = False
         if need_fs:
