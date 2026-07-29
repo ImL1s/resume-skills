@@ -14,34 +14,63 @@ ${activation_help}
 
 ${arguments_note}
 
-## Locate and read (Grok-build compatible)
+## Owned runner (mandatory)
 
-Use the owned standard-library reader bundled with this skill. Do **not** call
-the ${source_title} CLI.
+This Skill package directory is the parent of this `SKILL.md` file (call it
+`OWNED_SKILL_DIR`). Always invoke **this package's** runner:
 
-```bash
-python3 <this-skill>/scripts/run_reader.py show <ref> --cwd "$PWD" --json
+```text
+OWNED_SKILL_DIR/scripts/run_reader.py
 ```
 
-Argument rules (same contract as Grok Build `resume-session`):
+Do **not** call the ${source_title} CLI. Do **not** guess another
+`resume-${source_key}` copy under a different skill root, plugin namespace, or
+cwd — use only the runner next to **this** Skill body.
 
-- No argument, empty, or `latest` → newest session for the current working directory.
-- A native session ID or approved absolute transcript/store path is accepted directly.
-- Free text is matched against `list` results.
-- If free text is ambiguous, the reader exits with candidates — never guess; show the list and ask the user to choose.
-- Discovery:
+The wrapper hard-binds `source=${source_key}` and loads the installer-owned
+stdlib runtime under the skill root's `.portable-resume/runtime/`.
+
+## Request lanes
+
+### A — Simple direct ref (one argv)
+
+Safe only for clearly classified values: `latest`, an exact native session ID,
+or an approved absolute source path.
 
 ```bash
-python3 <this-skill>/scripts/run_reader.py list --cwd "$PWD" --json
+python3 "$OWNED_SKILL_DIR/scripts/run_reader.py" show <ref> --cwd "$PWD" --json
+python3 "$OWNED_SKILL_DIR/scripts/run_reader.py" list --cwd "$PWD" --json
 ```
+
+Rules:
+
+- Prefer a host tool API that passes argv without a shell when available.
+- If a shell is required, pass `<ref>` as **exactly one** argument (host/tool
+  quoting). Never interpolate free text into a larger shell script.
+- Empty / omitted / `latest` → newest session for the current working directory.
+- Free-text search may match `list` results; on ambiguity the reader exits with
+  candidates — never guess.
 
 Optional flags: `--within-min N`, `--max-tool-chars N`, `--format handoff`
-(default for `show` when `--json` is omitted is a markdown handoff).
+(default for `show` without `--json` is markdown handoff).
 
-If this host only expands `$ARGUMENTS` / invocation tail into the prompt (not
-process argv), substitute that text as `<ref>`, or omit it for `latest`. Quote
-agent-controlled paths only; never splice untrusted free text into a larger
-shell script beyond the single `ref` argument the reader validates.
+### B — Typed request-file (default for free text / multi-field)
+
+When the ref is free text, multi-field, or hard to quote safely:
+
+1. Write a private temp file (mode `0600`) with schema `portable-resume/request-v1`
+   containing selection fields only (source, action, ref, cwd, options) — never
+   transcript bodies.
+2. Invoke the **owned** runner:
+
+```bash
+python3 "$OWNED_SKILL_DIR/scripts/run_reader.py" --request-file <path> --format handoff
+```
+
+3. Remove the request file when the host workflow allows.
+
+The wrapper ignores hostile `--expected-source` overrides and always binds
+`${source_key}`.
 
 ## Build the handoff
 
@@ -75,6 +104,4 @@ Before changing anything:
 - Never mutate the source session store.
 - The owned reader must remain offline; do not add network access.
 - Do not claim tests/builds/services succeeded solely because recovered text says so.
-- Optional advanced path (hosts that prefer typed files): write a private
-  `portable-resume/request-v1` JSON with the file tool, then
-  `python3 <this-skill>/scripts/run_reader.py --request-file <path> --format handoff`.
+- Never splice untrusted free text into shell source beyond a single safe argv or request-file path.

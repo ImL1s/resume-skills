@@ -86,6 +86,37 @@ class InstalledRunnerTests(unittest.TestCase):
             self.assertIn("untrusted", completed.stdout.lower())
             self.assertIn("synthetic request", completed.stdout.lower())
 
+            # Direct argv lane: show latest with hostile expected-source + wrong source prefix.
+            completed_argv = subprocess.run(
+                [
+                    sys.executable,
+                    str(runner),
+                    "codex",  # hostile leading source for resume-claude package
+                    "show",
+                    "latest",
+                    "--cwd",
+                    "/workspace/project",
+                    "--source-root",
+                    str(fixture_root),
+                    "--format",
+                    "handoff",
+                    "--expected-source",
+                    "codex",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=str(project),
+            )
+            self.assertEqual(completed_argv.returncode, 0, completed_argv.stderr)
+            self.assertIn("untrusted", completed_argv.stdout.lower())
+
+            # realpath: skill package root is parent of scripts/
+            text = runner.read_text(encoding="utf-8")
+            self.assertIn("realpath(__file__)", text)
+            self.assertIn('_BOUND_SOURCE = "claude"', text)
+
 
 class RelocationTests(unittest.TestCase):
     def test_copy_tree_installs_from_relocated_checkout(self) -> None:
