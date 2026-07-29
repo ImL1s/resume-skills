@@ -477,7 +477,40 @@ def _decompress_zstd(
     return bytes(output)
 
 
+def _decode_outer_record(
+    text: str,
+    *,
+    provider: str,
+    partial: bool,
+    warnings: list[str],
+) -> dict[str, Any] | None:
+    """Decode one outer JSONL record; None means skip (blank/unknown)."""
+
+    stripped = text.strip()
+    if not stripped:
+        return None
+    try:
+        value = json.loads(stripped, object_pairs_hook=_object)
+    except (json.JSONDecodeError, _DuplicateKey, RecursionError) as error:
+        if partial:
+            warnings.append("W_PARTIAL_TAIL")
+            return None
+        raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider) from error
+    if not isinstance(value, dict):
+        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
+    outer = value.get("type")
+    payload = value.get("payload")
+    if outer in _SKIP_OUTER_TYPES or (isinstance(outer, str) and outer not in _OUTER_TYPES):
+        warnings.append("W_UNKNOWN_RECORD_SKIPPED")
+        return None
+    if outer not in _OUTER_TYPES or not isinstance(payload, dict):
+        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
+    return value
+
+
 def _parse_lines(data: bytes, budget: ReadBudget, provider: str) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
+    """Parse a buffered JSONL body (zstd decompressed path / tests)."""
+
     output: list[dict[str, Any]] = []
     warnings: list[str] = []
     maximum_record = min(
@@ -490,41 +523,209 @@ def _parse_lines(data: bytes, budget: ReadBudget, provider: str) -> tuple[list[d
         if len(raw) > maximum_record:
             raise DiagnosticError.limit_exceeded()
         partial = not raw.endswith((b"\n", b"\r"))
-        stripped = raw.strip()
-        if not stripped:
-            continue
         try:
-            value = json.loads(stripped.decode("utf-8"), object_pairs_hook=_object)
-        except (UnicodeDecodeError, json.JSONDecodeError, _DuplicateKey, RecursionError) as error:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as error:
             if partial:
                 warnings.append("W_PARTIAL_TAIL")
                 break
             raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider) from error
-        if not isinstance(value, dict):
-            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
-        outer = value.get("type")
-        payload = value.get("payload")
-        if outer in _SKIP_OUTER_TYPES or (
-            isinstance(outer, str)
-            and outer not in _OUTER_TYPES
-        ):
-            # Skip unknown / non-rendered outer families; do not abort the file.
-            warnings.append("W_UNKNOWN_RECORD_SKIPPED")
+        record = _decode_outer_record(text, provider=provider, partial=partial, warnings=warnings)
+        if record is None:
+            if warnings and warnings[-1] == "W_PARTIAL_TAIL" and partial:
+                break
             continue
-        if outer not in _OUTER_TYPES or not isinstance(payload, dict):
-            # Malformed known family → fail closed for this file.
-            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
-        output.append(value)
+        output.append(record)
     if not output:
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
     return output, tuple(dict.fromkeys(warnings))
 
 
+def _feed_history(
+    turns: list[dict[str, Any]],
+    record: Mapping[str, Any],
+    warnings: list[str],
+) -> None:
+    """Apply one outer record to the attempt-local turn reducer (#8)."""
+
+    outer = record.get("type")
+    payload = record.get("payload")
+    if outer == "compacted" and isinstance(payload, Mapping):
+        history = payload.get("replacement_history")
+        if isinstance(history, list):
+            rebuilt: list[dict[str, Any]] = []
+            for item in history:
+                if not isinstance(item, Mapping):
+                    continue
+                if item.get("type") in {"message", "function_call", "function_call_output"}:
+                    synthetic = {
+                        "type": "response_item",
+                        "payload": item,
+                        "timestamp": record.get("timestamp"),
+                    }
+                elif "payload" in item:
+                    synthetic = item  # type: ignore[assignment]
+                else:
+                    continue
+                turn = _raw_turn(synthetic) if isinstance(synthetic, Mapping) else None
+                if turn is not None:
+                    rebuilt.append(turn)
+            turns[:] = rebuilt
+            warnings.append("W_TRUNCATED")
+        return
+    if outer == "event_msg" and isinstance(payload, Mapping):
+        if payload.get("type") == "thread_rolled_back":
+            raw_n = payload.get("num_turns")
+            if raw_n is None:
+                raw_n = payload.get("turns")
+            try:
+                n = int(raw_n) if raw_n is not None else 0
+            except (TypeError, ValueError):
+                n = 0
+            if n > 0:
+                turns[:] = _drop_last_user_turns(turns, n)
+            return
+    turn = _raw_turn(record)
+    if turn is not None:
+        turns.append(turn)
+
+
+def _read_rollout_plain_stream(
+    path: str,
+    root: str,
+    budget: ReadBudget,
+    expected_id: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]], tuple[str, ...], str, str | None]:
+    """Stream plain JSONL show path without retaining the raw file body (#8).
+
+    Uses ``stable_scan_lines`` under ``source_read_bytes`` + ``transcript_records``
+    and reduces turns attempt-locally. Does not build a full outer-record list.
+    """
+
+    provider = ROLLOUT_FORMAT
+    warnings: list[str] = []
+    turns: list[dict[str, Any]] = []
+    meta_payload: dict[str, Any] | None = None
+    created_at: str | None = None
+    saw_record = False
+    for line in stable_scan_lines(
+        path,
+        root=root,
+        budget=budget,
+        charge_transcript=True,
+        max_line_bytes=min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes),
+    ):
+        if not line.utf8_valid:
+            if not line.terminated:
+                warnings.append("W_PARTIAL_TAIL")
+                break
+            raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider)
+        record = _decode_outer_record(
+            line.text,
+            provider=provider,
+            partial=not line.terminated,
+            warnings=warnings,
+        )
+        if record is None:
+            if warnings and warnings[-1] == "W_PARTIAL_TAIL" and not line.terminated:
+                break
+            continue
+        saw_record = True
+        if record.get("type") == "session_meta" and meta_payload is None:
+            payload = record.get("payload")
+            if isinstance(payload, Mapping):
+                identifier = payload.get("id")
+                try:
+                    normalized = str(uuid.UUID(identifier)) if isinstance(identifier, str) else None
+                except ValueError:
+                    normalized = None
+                if normalized == expected_id and isinstance(payload.get("cwd"), str):
+                    meta_payload = dict(payload)
+                    created_at = _rfc3339(record.get("timestamp"))
+        _feed_history(turns, record, warnings)
+    if not saw_record:
+        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
+    if meta_payload is None:
+        raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider)
+    source = meta_payload.get("source")
+    if source not in {"cli", "vscode"}:
+        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
+    try:
+        mtime = os.lstat(path).st_mtime
+        updated_at = datetime.fromtimestamp(mtime, timezone.utc).isoformat(
+            timespec="microseconds"
+        ).replace("+00:00", "Z")
+    except OSError:
+        updated_at = created_at or ""
+    return meta_payload, turns, tuple(dict.fromkeys(warnings)), provider, created_at if created_at else None
+
+
 def _read_rollout(path: str, root: str, budget: ReadBudget) -> tuple[StableRead, list[dict[str, Any]], tuple[str, ...], str]:
+    """Load a rollout for callers that still need a full record list (zstd list).
+
+    Plain show uses ``_read_rollout_plain_stream`` instead (#8).
+    """
+
     maximum_source = min(
         budget.limits.source_read_bytes,
         DEFAULT_BOUNDS.source_read_bytes,
     )
+    if not path.endswith(".zst"):
+        # Plain: stream lines (no whole-file bytes buffer). Materialize records
+        # only for compatibility callers (compressed list still uses zstd path).
+        provider = ROLLOUT_FORMAT
+        records: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        for line in stable_scan_lines(
+            path,
+            root=root,
+            budget=budget,
+            charge_transcript=True,
+            max_line_bytes=min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes),
+        ):
+            if not line.utf8_valid:
+                if not line.terminated:
+                    warnings.append("W_PARTIAL_TAIL")
+                    break
+                raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider)
+            record = _decode_outer_record(
+                line.text,
+                provider=provider,
+                partial=not line.terminated,
+                warnings=warnings,
+            )
+            if record is None:
+                if warnings and warnings[-1] == "W_PARTIAL_TAIL" and not line.terminated:
+                    break
+                continue
+            records.append(record)
+        if not records:
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
+        try:
+            st = os.lstat(path)
+            fingerprint_mtime = int(st.st_mtime_ns)
+            size = int(st.st_size)
+            mode = int(st.st_mode)
+            device = int(st.st_dev)
+            inode = int(st.st_ino)
+        except OSError as error:
+            raise DiagnosticError.source_busy(provider=provider) from error
+        from ..snapshot import FileFingerprint
+
+        observation = StableRead(
+            data=b"",
+            fingerprint=FileFingerprint(
+                device=device,
+                inode=inode,
+                mode=mode,
+                size=size,
+                mtime_ns=fingerprint_mtime,
+                content_sha256=None,
+            ),
+            attempts=1,
+        )
+        return observation, records, tuple(dict.fromkeys(warnings)), provider
+
     observation = stable_read_bytes(
         path,
         root=root,
@@ -539,17 +740,12 @@ def _read_rollout(path: str, root: str, budget: ReadBudget) -> tuple[StableRead,
         ),
         budget=budget,
     )
-    provider = ZSTD_FORMAT if path.endswith(".zst") else ROLLOUT_FORMAT
-    data = (
-        _decompress_zstd(
-            observation.data,
-            max_bytes=max(0, maximum_source - budget.bytes_read),
-        )
-        if provider == ZSTD_FORMAT
-        else observation.data
+    provider = ZSTD_FORMAT
+    data = _decompress_zstd(
+        observation.data,
+        max_bytes=max(0, maximum_source - budget.bytes_read),
     )
-    if provider == ZSTD_FORMAT:
-        budget.consume_bytes(len(data))
+    budget.consume_bytes(len(data))
     records, warnings = _parse_lines(data, budget, provider)
     return observation, records, warnings, provider
 
@@ -1115,10 +1311,37 @@ class CodexAdapter:
             if len(matches) != 1:
                 raise DiagnosticError("E_NO_MATCH", source=self.key)
             path = matches[0]
-        observation, records, warnings, provider = _read_rollout(path, root, budget)
         if _rollout_id(path) != ref.session_id:
-            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=provider)
-        metadata = _session_meta(records, ref.session_id, provider)
+            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key)
+        # Plain JSONL: stream reduce without whole-file bytes + full record list (#8).
+        # Compressed rollouts still decompress under trusted zstd + line parse.
+        if path.endswith(".zst"):
+            observation, records, warnings, provider = _read_rollout(path, root, budget)
+            metadata = _session_meta(records, ref.session_id, provider)
+            raw_turns, norm_warnings = _normalized_turns(records)
+            all_warnings = list((*warnings, *norm_warnings))
+            created = _rfc3339(
+                next(
+                    (record.get("timestamp") for record in records if record.get("type") == "session_meta"),
+                    None,
+                )
+            )
+            updated_at = _mtime(observation)
+        else:
+            metadata, raw_turns, stream_warnings, provider, created = _read_rollout_plain_stream(
+                path,
+                root,
+                budget,
+                ref.session_id,
+            )
+            all_warnings = list(stream_warnings)
+            try:
+                mtime = os.lstat(path).st_mtime
+                updated_at = datetime.fromtimestamp(mtime, timezone.utc).isoformat(
+                    timespec="microseconds"
+                ).replace("+00:00", "Z")
+            except OSError:
+                updated_at = created or ""
         try:
             cwd = canonicalize_cwd(metadata["cwd"])
         except DiagnosticError as error:
@@ -1129,8 +1352,6 @@ class CodexAdapter:
         elif isinstance(metadata.get("git_branch"), str):
             branch = metadata["git_branch"]
         turns: list[Turn] = []
-        raw_turns, norm_warnings = _normalized_turns(records)
-        all_warnings = list((*warnings, *norm_warnings))
         last_fingerprint: tuple[str, str] | None = None
         turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
         for raw in raw_turns:
@@ -1145,7 +1366,6 @@ class CodexAdapter:
                 last_fingerprint = fingerprint
         last_user = next((turn.content for turn in reversed(turns) if turn.role == "user"), None)
         last_assistant = next((turn.content for turn in reversed(turns) if turn.role == "assistant"), None)
-        created = _rfc3339(next((record.get("timestamp") for record in records if record.get("type") == "session_meta"), None))
         return Session(
             source=self.key,
             session_id=ref.session_id,
@@ -1154,7 +1374,7 @@ class CodexAdapter:
             cwd=cwd,
             branch=branch,
             created_at=created,
-            updated_at=_mtime(observation),
+            updated_at=updated_at,
             last_user_request=last_user,
             last_assistant_action=last_assistant,
             turns=tuple(turns),

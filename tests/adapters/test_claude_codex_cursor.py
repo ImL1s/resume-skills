@@ -656,7 +656,9 @@ class CodexAdapterTests(unittest.TestCase):
                 )
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
-    def test_rollout_stable_read_uses_remaining_source_budget(self) -> None:
+    def test_rollout_stream_honors_remaining_source_budget(self) -> None:
+        """Plain show streams via stable_scan_lines; second file still respects remaining budget (#8)."""
+
         _, first = self.rollout()
         _, second = self.rollout()
         remaining = second.stat().st_size - 1
@@ -669,13 +671,109 @@ class CodexAdapterTests(unittest.TestCase):
 
         with mock.patch.object(
             codex,
-            "stable_read_bytes",
-            wraps=codex.stable_read_bytes,
-        ) as stable_read:
+            "stable_scan_lines",
+            wraps=codex.stable_scan_lines,
+        ) as scan:
             with self.assertRaises(DiagnosticError) as caught:
                 codex._read_rollout(str(second), str(self.root), budget)
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
-        self.assertEqual(stable_read.call_args.kwargs["max_bytes"], remaining)
+        self.assertTrue(scan.called)
+
+    def test_plain_show_does_not_whole_file_stable_read(self) -> None:
+        identifier, path = self.rollout()
+        with mock.patch.object(
+            codex,
+            "stable_read_bytes",
+            side_effect=AssertionError("plain show must not whole-file stable_read_bytes"),
+        ):
+            session = codex.ADAPTER.show(
+                ResolvedRef(identifier, str(path)),
+                self.query(),
+                ReadBudget(),
+            )
+        self.assertEqual(session.session_id, identifier)
+        self.assertEqual(session.last_user_request, "Build feature")
+
+    def test_large_plain_rollout_show_under_default_bounds(self) -> None:
+        """~20 MiB synthetic rollout show succeeds without whole-file buffer (#8)."""
+
+        identifier = str(uuid.uuid4())
+        path = (
+            self.root
+            / "sessions"
+            / "2026"
+            / "07"
+            / "20"
+            / f"rollout-2026-07-20T00-00-00-{identifier}.jsonl"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # ~18 MiB with ~3 KiB lines keeps line count under transcript_records (50k).
+        target = 18 * 1024 * 1024
+        written = 0
+        with path.open("wb") as handle:
+            meta = {
+                "type": "session_meta",
+                "timestamp": stamp(-3),
+                "payload": {
+                    "id": identifier,
+                    "cwd": str(self.cwd),
+                    "source": "cli",
+                    "git": {"branch": "main"},
+                },
+            }
+            line = (json.dumps(meta, separators=(",", ":")) + "\n").encode("utf-8")
+            handle.write(line)
+            written += len(line)
+            # One real user turn, then bulk skipped world_state lines (no normalized turns).
+            seed = {
+                "type": "response_item",
+                "timestamp": stamp(-2),
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "seed request"}],
+                },
+            }
+            line = (json.dumps(seed, separators=(",", ":")) + "\n").encode("utf-8")
+            handle.write(line)
+            written += len(line)
+            pad = "x" * 2800
+            index = 0
+            while written < target:
+                record = {
+                    "type": "world_state",
+                    "payload": {"padding": pad, "index": index},
+                }
+                line = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
+                handle.write(line)
+                written += len(line)
+                index += 1
+            # Final distinctive user turn for assertions.
+            final = {
+                "type": "response_item",
+                "timestamp": stamp(-1),
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "large rollout complete"}],
+                },
+            }
+            handle.write((json.dumps(final, separators=(",", ":")) + "\n").encode("utf-8"))
+        self.assertGreaterEqual(path.stat().st_size, 17 * 1024 * 1024)
+        self.assertLess(index + 3, DEFAULT_BOUNDS.transcript_records)
+        with mock.patch.object(
+            codex,
+            "stable_read_bytes",
+            side_effect=AssertionError("large plain show must stream"),
+        ):
+            session = codex.ADAPTER.show(
+                ResolvedRef(identifier, str(path)),
+                self.query(),
+                ReadBudget(),
+            )
+        self.assertEqual(session.session_id, identifier)
+        self.assertEqual(session.last_user_request, "large rollout complete")
+        self.assertEqual([turn.content for turn in session.turns], ["seed request", "large rollout complete"])
 
     def test_s_cod_03_archive_hidden_by_default_exact_id_selectable(self) -> None:
         active, active_path = self.rollout()
