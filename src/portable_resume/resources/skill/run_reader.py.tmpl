@@ -23,13 +23,20 @@ _KNOWN_SOURCES = frozenset(SOURCE_KEYS)
 
 
 def _strip_expected_source(argv: list[str]) -> list[str]:
-    """Remove every spelling of host-supplied --expected-source (never trust it)."""
+    """Remove every spelling of host-supplied --expected-source (never trust it).
+
+    Only drop a following token when it is a plausible value (not another option).
+    ``--expected-source --request-file …`` must not swallow ``--request-file``.
+    """
 
     cleaned: list[str] = []
     skip_next = False
     for item in argv:
         if skip_next:
             skip_next = False
+            # Missing/malformed value: keep the token so later parsing fail-closes.
+            if item.startswith("-"):
+                cleaned.append(item)
             continue
         if item == "--expected-source":
             skip_next = True

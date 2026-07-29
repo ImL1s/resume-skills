@@ -166,7 +166,8 @@ class SkillBoundArgvTests(unittest.TestCase):
         # optional advanced path must still be mentioned somewhere
         lower = text.lower()
         self.assertTrue("request-v1" in lower or "request-file" in lower)
-        self.assertIn("OWNED_SKILL_DIR", text)
+        self.assertIn("owned skill package root", text)
+        self.assertNotIn("$OWNED_SKILL_DIR", text)
 
 
 if __name__ == "__main__":

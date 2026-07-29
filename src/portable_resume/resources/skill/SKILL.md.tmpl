@@ -16,16 +16,24 @@ ${arguments_note}
 
 ## Owned runner (mandatory)
 
-This Skill package directory is the parent of this `SKILL.md` file (call it
-`OWNED_SKILL_DIR`). Always invoke **this package's** runner:
+The **owned skill package root** is the directory that contains **this** loaded
+`SKILL.md` (not another copy of `resume-${source_key}` found by name under cwd
+or a different skill/plugin root). Always invoke only:
 
 ```text
-OWNED_SKILL_DIR/scripts/run_reader.py
+<owned-skill-package-root>/scripts/run_reader.py
 ```
 
-Do **not** call the ${source_title} CLI. Do **not** guess another
-`resume-${source_key}` copy under a different skill root, plugin namespace, or
-cwd — use only the runner next to **this** Skill body.
+How to resolve that absolute path (in order):
+
+1. Host skill metadata / skill-path for the Skill currently loaded.
+2. Parent directory of **this** `SKILL.md` when the host already opened it.
+3. Never search bare `resume-${source_key}` under `$PWD` or foreign roots.
+
+Do **not** call the ${source_title} CLI. Prefer a host tool API that passes
+argv without a shell. If a shell is required, quote the **resolved absolute**
+path of `scripts/run_reader.py` as one token — do not invent shell variables
+unless the host already exports the loaded skill directory.
 
 The wrapper hard-binds `source=${source_key}` and loads the installer-owned
 stdlib runtime under the skill root's `.portable-resume/runtime/`.
@@ -38,12 +46,13 @@ Safe only for clearly classified values: `latest`, an exact native session ID,
 or an approved absolute source path.
 
 ```bash
-python3 "$OWNED_SKILL_DIR/scripts/run_reader.py" show <ref> --cwd "$PWD" --json
-python3 "$OWNED_SKILL_DIR/scripts/run_reader.py" list --cwd "$PWD" --json
+python3 "/abs/path/to/owned-skill-package/scripts/run_reader.py" show <ref> --cwd "$PWD" --json
+python3 "/abs/path/to/owned-skill-package/scripts/run_reader.py" list --cwd "$PWD" --json
 ```
 
 Rules:
 
+- Replace `/abs/path/to/owned-skill-package` with the resolved package root above.
 - Prefer a host tool API that passes argv without a shell when available.
 - If a shell is required, pass `<ref>` as **exactly one** argument (host/tool
   quoting). Never interpolate free text into a larger shell script.
@@ -71,10 +80,10 @@ When the ref is free text, multi-field, or hard to quote safely:
    Never put transcript bodies in the request file. Pass supported CLI options
    (`--format`, `--source-root`, `--max-tool-chars`, …) as runner argv flags —
    they are not request-v1 keys.
-2. Invoke the **owned** runner:
+2. Invoke the **owned** runner (absolute path of this package's `scripts/run_reader.py`):
 
 ```bash
-python3 "$OWNED_SKILL_DIR/scripts/run_reader.py" --request-file <path> --format handoff
+python3 "/abs/path/to/owned-skill-package/scripts/run_reader.py" --request-file <path> --format handoff
 ```
 
 3. Remove the request file when the host workflow allows.

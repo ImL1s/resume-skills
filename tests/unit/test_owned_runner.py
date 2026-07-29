@@ -24,8 +24,6 @@ def _load_force(source: str = "codex") -> types.ModuleType:
         spec = importlib.util.spec_from_file_location(f"owned_runner_{source}", path)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
-        # Runtime import needs portable_resume on path; use checkout via PYTHONPATH in tests.
-        # Stub reader.main so import succeeds without executing CLI.
         import portable_resume.reader as reader_mod
 
         original_main = reader_mod.main
@@ -55,6 +53,16 @@ class OwnedRunnerArgvTests(unittest.TestCase):
         self.assertEqual(out[-2:], ["--expected-source", "codex"])
         self.assertNotIn("claude", out)
         self.assertNotIn("qwen", out)
+
+    def test_expected_source_does_not_swallow_next_option(self) -> None:
+        out = self.force(
+            ["--expected-source", "--request-file", "/tmp/r.json", "--format", "handoff"]
+        )
+        self.assertIn("--request-file", out)
+        self.assertIn("/tmp/r.json", out)
+        self.assertEqual(out[-2:], ["--expected-source", "codex"])
+        # Still request-file lane, not bare show of the path.
+        self.assertNotEqual(out[0], "codex")
 
     def test_show_and_list_inject_bound_source(self) -> None:
         self.assertEqual(
@@ -93,7 +101,6 @@ class OwnedRunnerArgvTests(unittest.TestCase):
                 "codex",
             ],
         )
-        # Equals form
         out2 = self.force(["--request-file=/tmp/r.json"])
         self.assertEqual(out2[0], "--request-file=/tmp/r.json")
         self.assertEqual(out2[-2:], ["--expected-source", "codex"])
@@ -121,15 +128,15 @@ class OwnedRunnerArgvTests(unittest.TestCase):
         self.assertIn("_force_expected_source", runner)
         self.assertIn("_strip_expected_source", runner)
         self.assertIn("SOURCE_KEYS", runner)
-        # Bound source literal after render
         self.assertIn('_BOUND_SOURCE = "claude"', runner)
 
 
 class OwnedSkillMarkdownTests(unittest.TestCase):
     def test_owned_path_and_two_lanes(self) -> None:
         text = render_skill_markdown(host="claude", source="codex")
-        self.assertIn("OWNED_SKILL_DIR", text)
-        self.assertIn("$OWNED_SKILL_DIR/scripts/run_reader.py", text)
+        self.assertIn("owned skill package root", text)
+        self.assertIn("scripts/run_reader.py", text)
+        self.assertIn("/abs/path/to/owned-skill-package/scripts/run_reader.py", text)
         self.assertIn("Request lanes", text)
         self.assertIn("Simple direct ref", text)
         self.assertIn("Typed request-file", text)
@@ -138,22 +145,21 @@ class OwnedSkillMarkdownTests(unittest.TestCase):
         self.assertIn("resume_ref", text)
         self.assertIn("schema_version", text)
         self.assertIn('must be `"show"` only', text)
-        # Must not document wrong request keys that load_request rejects.
-        self.assertNotIn("ref, cwd, options", text)
-        self.assertNotIn("containing selection fields only (source, action, ref", text)
-        self.assertNotIn('"show" or "list"', text)
-        # Conceptual placeholder must not remain
+        # No conceptual placeholders that expand empty or invite path guessing.
         self.assertNotIn("<this-skill>", text)
-        # Free-text shell splice forbidden
+        self.assertNotIn("$OWNED_SKILL_DIR", text)
+        self.assertNotIn("OWNED_SKILL_DIR", text)
+        self.assertNotIn("ref, cwd, options", text)
+        self.assertNotIn('"show" or "list"', text)
         self.assertIn("Never splice untrusted free text into shell source", text)
-        self.assertIn("Do **not** guess another", text)
         self.assertIn("hard-binds `source=codex`", text)
+        self.assertIn("Host skill metadata", text)
 
     def test_every_source_binds_own_key(self) -> None:
         for source in sorted(SOURCE_KEYS):
             text = render_skill_markdown(host="cursor", source=source)
             self.assertIn(f"source={source}", text)
-            self.assertIn("OWNED_SKILL_DIR", text)
+            self.assertIn("owned skill package root", text)
             runner = materialize_plan("cursor")[f"resume-{source}/scripts/run_reader.py"].decode(
                 "utf-8"
             )
