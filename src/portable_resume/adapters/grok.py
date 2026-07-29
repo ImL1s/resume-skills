@@ -23,7 +23,7 @@ from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
 from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
 from ..sanitize import sanitize_turn_record
-from ..snapshot import stable_read_bytes
+from ..snapshot import stable_read_bytes, stable_scan_lines
 
 FORMAT_ID = "grok-updates-jsonl-v1"
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,1023}$")
@@ -473,26 +473,36 @@ class GrokAdapter:
         include_turns: bool,
         expected_id: str,
     ) -> tuple[tuple[str | None, str | None], list[Turn], list[str]]:
-        read = stable_read_bytes(path, root=root, budget=budget, hook=self._read_hook)
-        lines = read.data.split(b"\n")
-        trailing_fragment = bool(lines and lines[-1])
-        nonempty = [(index, raw.strip()) for index, raw in enumerate(lines) if raw.strip()]
+        # Stream via stable_scan_lines under source_read_bytes + transcript_records
+        # so large updates.jsonl is not whole-file buffered (#10).
         warnings: list[str] = []
         turns: list[Turn] = []
         timestamps: list[str] = []
         recognized = 0
-        for position, (line_index, raw) in enumerate(nonempty):
+        for line in stable_scan_lines(
+            path,
+            root=root,
+            budget=budget,
+            charge_transcript=True,
+            hook=self._read_hook,
+        ):
+            if not line.utf8_valid:
+                if not line.terminated:
+                    warnings.append("W_PARTIAL_TAIL")
+                    break
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+            raw = line.text.strip()
+            if not raw:
+                continue
             try:
-                value = _loads(raw)
+                value = _loads(raw.encode("utf-8"))
             except DiagnosticError:
-                is_tail = position == len(nonempty) - 1 and trailing_fragment and line_index == len(lines) - 1
-                if is_tail:
+                if not line.terminated:
                     warnings.append("W_PARTIAL_TAIL")
                     continue
                 raise
             if not isinstance(value, Mapping):
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
-            budget.consume_records()
             timestamp = _timestamp(value.get("timestamp"))
             if timestamp is not None:
                 timestamps.append(timestamp)
