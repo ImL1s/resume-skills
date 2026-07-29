@@ -150,8 +150,15 @@ def _print_hosts_human(report: dict[str, Any], stream=None) -> None:
         for method in rec.get("install_methods") or []:
             stream.write(f"    - {method}\n")
         cmds = rec.get("installer_commands") or {}
-        if cmds.get("project"):
-            stream.write(f"  cmd: {cmds['project']}\n")
+        project_cmd = cmds.get("project")
+        if isinstance(project_cmd, dict):
+            # Prefer console entrypoint that works after pipx/wheel install (#66).
+            if project_cmd.get("installed"):
+                stream.write(f"  cmd: {project_cmd['installed']}\n")
+            if project_cmd.get("source_checkout"):
+                stream.write(f"  source_checkout: {project_cmd['source_checkout']}\n")
+        elif project_cmd:
+            stream.write(f"  cmd: {project_cmd}\n")
         stream.write(f"  activate: {rec.get('activation_help', '')}\n")
         for ex in rec.get("activation_examples") or []:
             stream.write(f"    e.g. {ex}\n")
