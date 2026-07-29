@@ -12,6 +12,10 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Exact snapshot parent siblings (#16): exact stable reads and file snapshots
+  re-pin only the target basename through the parent dir_fd; a parent with more
+  than `scanned_records` unrelated siblings no longer fails with
+  `E_LIMIT_EXCEEDED`. SQLite family state tracks only main/WAL/SHM/journal.
 - Shared JSONL scan migrations (#10): Grok `updates.jsonl` and Antigravity
   `transcript.jsonl` show paths stream via `stable_scan_lines` under
   `source_read_bytes` / `transcript_records` (with Pi, Kimi, Cursor CLI, Qwen).

@@ -153,6 +153,13 @@ def _open_directory_beneath(directory: str, root: str) -> int:
 def _directory_fingerprint(
     directory: str, *, limit: int, root: str | None = None
 ) -> tuple[tuple[str, FileFingerprint], ...]:
+    """Fingerprint parent directory membership (discovery / SQLite family only).
+
+    Exact file reads must not use this for stability: a large sibling count must
+    not make a single safe target unreadable (#16). Prefer
+    ``_target_entry_fingerprint`` for descriptor-relative exact reads.
+    """
+
     descriptor: int | None = None
     try:
         if root is not None:
@@ -179,6 +186,46 @@ def _directory_fingerprint(
     finally:
         if descriptor is not None:
             os.close(descriptor)
+
+
+def _target_entry_fingerprint(
+    parent: str,
+    basename: str,
+    *,
+    root: str,
+) -> FileFingerprint:
+    """Identity of one basename under ``parent`` via dir_fd, ignoring siblings.
+
+    Detects target rename/replace (device/inode/type/size/mtime drift) without
+    enumerating unrelated parent directory entries (#16).
+    """
+
+    if not basename or basename in {".", ".."} or "/" in basename or "\x00" in basename:
+        raise DiagnosticError.unsafe_path()
+    parent_fd = _open_directory_beneath(parent, root)
+    try:
+        try:
+            current = os.stat(basename, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError as error:
+            raise DiagnosticError.source_busy() from error
+        if not stat.S_ISREG(current.st_mode):
+            raise DiagnosticError.unsafe_path()
+        return _fingerprint(current)
+    finally:
+        os.close(parent_fd)
+
+
+def _entry_identity_matches(entry: FileFingerprint, open_stat: os.stat_result) -> bool:
+    """True when basename entry identity matches an open descriptor's fstat."""
+
+    opened = _fingerprint(open_stat)
+    return (
+        entry.device == opened.device
+        and entry.inode == opened.inode
+        and entry.mode == opened.mode
+        and entry.size == opened.size
+        and entry.mtime_ns == opened.mtime_ns
+    )
 
 
 def _open_no_follow(path: str, root: str) -> int:
@@ -219,11 +266,17 @@ def stable_read_bytes(
         raise DiagnosticError.invalid()
     safe, base = require_regular_no_symlinks(path, root)
     parent = os.path.dirname(safe)
+    basename = os.path.basename(safe)
+    # membership_limit retained for API compatibility; exact reads no longer
+    # enumerate parent siblings (issue #16). Discovery still uses scanned_records.
+    _ = membership_limit
     for attempt in range(1, attempts + 1):
-        before_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+        before_entry = _target_entry_fingerprint(parent, basename, root=base)
         descriptor = _open_no_follow(safe, base)
         try:
             before_stat = os.fstat(descriptor)
+            if not _entry_identity_matches(before_entry, before_stat):
+                continue
             before = _fingerprint(before_stat)
             if before.size > max_bytes:
                 raise DiagnosticError.limit_exceeded()
@@ -243,21 +296,23 @@ def stable_read_bytes(
             verified = _fingerprint(os.fstat(descriptor), verified_hash)
             if hook:
                 hook("after-verify-read", attempt, safe)
-            # Observe parent membership before the terminal content hash.  A
-            # same-stat mutation performed during that observation is then
-            # detected by the terminal descriptor read below.
-            middle_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+            # Re-pin basename through parent between verify hashes so rename/
+            # replace races fail closed without scanning sibling entries.
+            middle_entry = _target_entry_fingerprint(parent, basename, root=base)
             final_hash, final_size = _hash_descriptor(
                 descriptor,
                 maximum=max_bytes,
             )
-            final = _fingerprint(os.fstat(descriptor), final_hash)
+            final_stat = os.fstat(descriptor)
+            final = _fingerprint(final_stat, final_hash)
         finally:
             os.close(descriptor)
-        after_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+        after_entry = _target_entry_fingerprint(parent, basename, root=base)
         if (
             observed == verified == final
-            and before_membership == middle_membership == after_membership
+            and before_entry == middle_entry == after_entry
+            and _entry_identity_matches(before_entry, before_stat)
+            and _entry_identity_matches(after_entry, final_stat)
             and len(data) == verified_size == final_size == before.size
         ):
             if budget is not None:
@@ -425,21 +480,20 @@ def stable_scan_lines(
     )
     safe, base = require_regular_no_symlinks(path, root)
     parent = os.path.dirname(safe)
+    basename = os.path.basename(safe)
     attempts = min(
         effective_budget.limits.snapshot_attempts,
         DEFAULT_BOUNDS.snapshot_attempts,
     )
     if attempts < 1:
         raise DiagnosticError.invalid()
-    membership_limit = min(
-        effective_budget.limits.scanned_records,
-        DEFAULT_BOUNDS.scanned_records,
-    )
     for attempt in range(1, attempts + 1):
-        before_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+        before_entry = _target_entry_fingerprint(parent, basename, root=base)
         descriptor = _open_no_follow(safe, base)
         try:
             before_stat = os.fstat(descriptor)
+            if not _entry_identity_matches(before_entry, before_stat):
+                continue
             if before_stat.st_size > max_file_bytes:
                 raise DiagnosticError.limit_exceeded()
             if hook:
@@ -460,18 +514,21 @@ def stable_scan_lines(
             verified = _fingerprint(os.fstat(descriptor), verified_hash)
             if hook:
                 hook("after-verify-read", attempt, safe)
-            middle_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+            middle_entry = _target_entry_fingerprint(parent, basename, root=base)
             final_hash, final_size = _hash_descriptor(
                 descriptor,
                 maximum=max_file_bytes,
             )
-            final = _fingerprint(os.fstat(descriptor), final_hash)
+            final_stat = os.fstat(descriptor)
+            final = _fingerprint(final_stat, final_hash)
         finally:
             os.close(descriptor)
-        after_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+        after_entry = _target_entry_fingerprint(parent, basename, root=base)
         if (
             observed == verified == final
-            and before_membership == middle_membership == after_membership
+            and before_entry == middle_entry == after_entry
+            and _entry_identity_matches(before_entry, before_stat)
+            and _entry_identity_matches(after_entry, final_stat)
             and pending_bytes == verified_size == final_size == before_stat.st_size
         ):
             effective_budget.consume_bytes(pending_bytes)
@@ -512,12 +569,16 @@ def stable_read_windows(
         raise DiagnosticError.invalid()
     safe, base = require_regular_no_symlinks(path, root)
     parent = os.path.dirname(safe)
+    basename = os.path.basename(safe)
+    _ = membership_limit  # API compat; exact windows no longer enumerate siblings (#16)
     for attempt in range(1, attempts + 1):
         try:
-            before_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+            before_entry = _target_entry_fingerprint(parent, basename, root=base)
             descriptor = _open_no_follow(safe, base)
             try:
                 before_stat = os.fstat(descriptor)
+                if not _entry_identity_matches(before_entry, before_stat):
+                    continue
                 if before_stat.st_size > max_bytes:
                     raise DiagnosticError.limit_exceeded()
                 if hook:
@@ -539,7 +600,7 @@ def stable_read_windows(
                 second_stat = os.fstat(descriptor)
                 if hook:
                     hook("after-verify-read", attempt, safe)
-                middle_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+                middle_entry = _target_entry_fingerprint(parent, basename, root=base)
                 third = _read_descriptor_windows(
                     descriptor,
                     size=before_stat.st_size,
@@ -549,7 +610,7 @@ def stable_read_windows(
                 final_stat = os.fstat(descriptor)
             finally:
                 os.close(descriptor)
-            after_membership = _directory_fingerprint(parent, limit=membership_limit, root=base)
+            after_entry = _target_entry_fingerprint(parent, basename, root=base)
         except DiagnosticError as error:
             if error.code == "E_SOURCE_BUSY":
                 continue
@@ -561,7 +622,9 @@ def stable_read_windows(
         if (
             observed == verified == final
             and first == second == third
-            and before_membership == middle_membership == after_membership
+            and before_entry == middle_entry == after_entry
+            and _entry_identity_matches(before_entry, before_stat)
+            and _entry_identity_matches(after_entry, final_stat)
         ):
             head, tail, tail_offset, unique_bytes = first
             if budget is not None:
@@ -605,17 +668,25 @@ def snapshot_regular_file(
         raise DiagnosticError.invalid()
     safe, base = require_regular_no_symlinks(path, root)
     parent = os.path.dirname(safe)
-    family = (os.path.basename(safe),)
+    basename = os.path.basename(safe)
+    family = (basename,)
+    _ = member_limit  # API compat; exact snapshot no longer enumerates siblings (#16)
     for attempt in range(1, maximum_attempts + 1):
         descriptor: int | None = None
         temporary: tempfile.TemporaryDirectory[str] | None = None
         try:
-            before_membership = _directory_fingerprint(parent, limit=member_limit, root=base)
+            before_entry = _target_entry_fingerprint(parent, basename, root=base)
             descriptor = _open_no_follow(safe, base)
             temporary = tempfile.TemporaryDirectory(prefix="portable-resume-file-")
             os.chmod(temporary.name, 0o700)
-            destination = os.path.join(temporary.name, os.path.basename(safe))
+            destination = os.path.join(temporary.name, basename)
             before_stat = os.fstat(descriptor)
+            if not _entry_identity_matches(before_entry, before_stat):
+                raise DiagnosticError.source_busy(
+                    attempts=attempt,
+                    family=family,
+                    provider=provider,
+                )
             if before_stat.st_size > bounds.source_read_bytes:
                 raise DiagnosticError.limit_exceeded()
             if hook:
@@ -656,7 +727,7 @@ def snapshot_regular_file(
             verified_fingerprint = _fingerprint(os.fstat(descriptor), verified[0])
             if hook:
                 hook("after-verify-read", attempt, safe)
-            middle_membership = _directory_fingerprint(parent, limit=member_limit, root=base)
+            middle_entry = _target_entry_fingerprint(parent, basename, root=base)
             try:
                 final = _hash_descriptor(descriptor, maximum=bounds.source_read_bytes)
             except DiagnosticError as error:
@@ -667,12 +738,15 @@ def snapshot_regular_file(
                         provider=provider,
                     ) from error
                 raise
-            final_fingerprint = _fingerprint(os.fstat(descriptor), final[0])
-            after_membership = _directory_fingerprint(parent, limit=member_limit, root=base)
+            final_stat = os.fstat(descriptor)
+            final_fingerprint = _fingerprint(final_stat, final[0])
+            after_entry = _target_entry_fingerprint(parent, basename, root=base)
             if (
                 observed == verified_fingerprint == final_fingerprint
                 and copied_size == verified[1] == final[1] == before_stat.st_size
-                and before_membership == middle_membership == after_membership
+                and before_entry == middle_entry == after_entry
+                and _entry_identity_matches(before_entry, before_stat)
+                and _entry_identity_matches(after_entry, final_stat)
             ):
                 if budget is not None:
                     budget.consume_bytes(copied_size)
@@ -799,20 +873,28 @@ def _family_paths(database: str) -> dict[str, str]:
 def _family_state(database: str, root: str, *, bounds: Bounds) -> tuple[
     tuple[tuple[str, FileFingerprint], ...], tuple[tuple[str, FileFingerprint | None], ...]
 ]:
+    """Capture SQLite family entry identities without enumerating all siblings.
+
+    Tracks only main/wal/shm/journal basenames under the DB parent (#16).
+    """
+
     parent = os.path.dirname(database)
-    membership = _directory_fingerprint(parent, limit=bounds.scanned_records, root=root)
+    membership_rows: list[tuple[str, FileFingerprint]] = []
     values: list[tuple[str, FileFingerprint | None]] = []
     for label, path in _family_paths(database).items():
+        basename = os.path.basename(path)
         try:
             mode = os.lstat(path).st_mode
         except FileNotFoundError:
             values.append((label, None))
             continue
         except OSError as error:
-            raise DiagnosticError.source_busy(family=(os.path.basename(path),)) from error
+            raise DiagnosticError.source_busy(family=(basename,)) from error
         if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
             raise DiagnosticError.unsafe_path()
         require_regular_no_symlinks(path, root)
+        entry = _target_entry_fingerprint(parent, basename, root=root)
+        membership_rows.append((basename, entry))
         observation = stable_read_bytes(
             path,
             root=root,
@@ -821,7 +903,8 @@ def _family_state(database: str, root: str, *, bounds: Bounds) -> tuple[
             membership_limit=bounds.scanned_records,
         )
         values.append((label, observation.fingerprint))
-    return membership, tuple(values)
+    membership_rows.sort(key=lambda item: item[0])
+    return tuple(membership_rows), tuple(values)
 
 
 def _family_names(database: str) -> tuple[str, ...]:
