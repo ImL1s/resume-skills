@@ -536,6 +536,29 @@ def resolve_skill_root(
     raise ValueError(f"unknown scope: {scope}")
 
 
+def _installer_command_pair(
+    *argv_tail: str,
+) -> dict[str, Any]:
+    """Primary installed console entrypoint + optional source-checkout form (#66).
+
+    JSON prefers argv arrays for automation; human text uses display strings.
+    Placeholders such as ``<PROJECT>`` stay unquoted tokens.
+    """
+
+    installed_argv = ["install-resume-skills", *argv_tail]
+    source_argv = [
+        "python3",
+        "scripts/install-resume-skills",
+        *argv_tail,
+    ]
+    return {
+        "installed_argv": installed_argv,
+        "installed": " ".join(installed_argv),
+        "source_checkout_argv": ["env", "PYTHONPATH=src", *source_argv],
+        "source_checkout": "PYTHONPATH=src " + " ".join(source_argv),
+    }
+
+
 def host_install_record(
     host: str,
     *,
@@ -573,29 +596,66 @@ def host_install_record(
         "alternate_global_roots": list(profile.alternate_global_roots),
         "install_methods": list(profile.install_methods),
         "installer_commands": {
-            "project_dry_run": (
-                f"PYTHONPATH=src python3 scripts/install-resume-skills install "
-                f"--host {host} --scope project --project <PROJECT> --dry-run --json"
+            "project_dry_run": _installer_command_pair(
+                "install",
+                "--host",
+                host,
+                "--scope",
+                "project",
+                "--project",
+                "<PROJECT>",
+                "--dry-run",
+                "--json",
             ),
-            "project": (
-                f"PYTHONPATH=src python3 scripts/install-resume-skills install "
-                f"--host {host} --scope project --project <PROJECT> --json"
+            "project": _installer_command_pair(
+                "install",
+                "--host",
+                host,
+                "--scope",
+                "project",
+                "--project",
+                "<PROJECT>",
+                "--json",
             ),
-            "global": (
-                f"PYTHONPATH=src python3 scripts/install-resume-skills install "
-                f"--host {host} --scope global --json"
+            "global": _installer_command_pair(
+                "install",
+                "--host",
+                host,
+                "--scope",
+                "global",
+                "--json",
             ),
-            "custom_root": (
-                f"PYTHONPATH=src python3 scripts/install-resume-skills install "
-                f"--host {host} --scope project --project <PROJECT> --root <DISTINCT_ROOT> --json"
+            "custom_root": _installer_command_pair(
+                "install",
+                "--host",
+                host,
+                "--scope",
+                "project",
+                "--project",
+                "<PROJECT>",
+                "--root",
+                "<DISTINCT_ROOT>",
+                "--json",
             ),
-            "verify": (
-                f"PYTHONPATH=src python3 scripts/install-resume-skills verify "
-                f"--host {host} --scope project --project <PROJECT> --json"
+            "verify": _installer_command_pair(
+                "verify",
+                "--host",
+                host,
+                "--scope",
+                "project",
+                "--project",
+                "<PROJECT>",
+                "--json",
             ),
-            "uninstall": (
-                f"PYTHONPATH=src python3 scripts/install-resume-skills uninstall "
-                f"--host {host} --scope project --project <PROJECT> --json"
+            "uninstall": _installer_command_pair(
+                "uninstall",
+                "--host",
+                host,
+                "--scope",
+                "project",
+                "--project",
+                "<PROJECT>",
+                "--json",
             ),
         },
         "activation_help": profile.activation_help,
@@ -621,16 +681,22 @@ def hosts_report(
         host_install_record(host, project_dir=project_dir, home_dir=home_dir)
         for host in selected
     ]
-    return {
-        "ok": True,
-        "host_count": len(records),
-        "shared_root_pairs": [
+    shared_root_pairs: list[dict[str, Any]] = []
+    # Only emit when the selected set includes both conflicting hosts (#66).
+    if "codex" in selected and "antigravity" in selected:
+        shared_root_pairs.append(
             {
                 "hosts": ["codex", "antigravity"],
                 "path": ".agents/skills",
-                "note": "Divergent skill bodies → E_INSTALL_CONFLICT unless --root is distinct.",
+                "note": (
+                    "Divergent skill bodies → E_INSTALL_CONFLICT unless --root is distinct."
+                ),
             }
-        ],
+        )
+    return {
+        "ok": True,
+        "host_count": len(records),
+        "shared_root_pairs": shared_root_pairs,
         "hosts": records,
         "docs": "docs/install-hosts.md",
     }

@@ -71,7 +71,12 @@ class HostsCatalogTests(unittest.TestCase):
             ))
             self.assertIn("resume-codex", rec["skills_installed"])
             self.assertEqual(rec["live_ui"], "not-run")
-            self.assertIn("project", rec["installer_commands"])
+            project_cmd = rec["installer_commands"]["project"]
+            self.assertIsInstance(project_cmd, dict)
+            self.assertTrue(project_cmd["installed"].startswith("install-resume-skills "))
+            self.assertNotIn("PYTHONPATH=src", project_cmd["installed"])
+            self.assertIn("PYTHONPATH=src", project_cmd["source_checkout"])
+            self.assertEqual(project_cmd["installed_argv"][0], "install-resume-skills")
 
     def test_hosts_report_all_and_shared_pair(self) -> None:
         report = hosts_report(project_dir="/tmp/proj", home_dir="/tmp/home")
@@ -84,6 +89,26 @@ class HostsCatalogTests(unittest.TestCase):
         names = {h["host"] for h in report["hosts"]}
         self.assertEqual(names, set(HOST_KEYS))
 
+    def test_shared_root_warning_only_when_both_hosts_selected(self) -> None:
+        only_pi = hosts_report(
+            project_dir="/tmp/proj",
+            home_dir="/tmp/home",
+            hosts=["pi"],
+        )
+        self.assertEqual(only_pi["shared_root_pairs"], [])
+        only_codex = hosts_report(
+            project_dir="/tmp/proj",
+            home_dir="/tmp/home",
+            hosts=["codex"],
+        )
+        self.assertEqual(only_codex["shared_root_pairs"], [])
+        both = hosts_report(
+            project_dir="/tmp/proj",
+            home_dir="/tmp/home",
+            hosts=["codex", "antigravity"],
+        )
+        self.assertEqual(len(both["shared_root_pairs"]), 1)
+
     def test_hosts_cli_json_and_human(self) -> None:
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -91,6 +116,8 @@ class HostsCatalogTests(unittest.TestCase):
         self.assertEqual(code, 0)
         data = json.loads(buf.getvalue())
         self.assertEqual(data["host_count"], len(HOST_KEYS))
+        project = data["hosts"][0]["installer_commands"]["project"]
+        self.assertTrue(project["installed"].startswith("install-resume-skills"))
 
         buf2 = io.StringIO()
         with redirect_stdout(buf2):
@@ -100,6 +127,8 @@ class HostsCatalogTests(unittest.TestCase):
         self.assertIn("## grok", text)
         self.assertIn(".grok/skills", text)
         self.assertIn("/resume-", text)
+        self.assertIn("cmd: install-resume-skills", text)
+        self.assertNotIn("Shared-root warning", text)
 
     def test_install_hosts_doc_exists(self) -> None:
         doc = Path("docs/install-hosts.md")

@@ -12,6 +12,9 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Hosts report commands (#66): recommend installed `install-resume-skills` entrypoint
+  with argv arrays; label source-checkout forms separately; scope shared-root
+  warnings to selected host sets.
 - CI de-duplication (#67): `scripts/self_verify.py` exposes named stages and
   profiles; GitHub Actions matrix uses `ci-compat` (suite once per cell) while
   docs/secrets run once in `quality`; package job depends on both.
