@@ -9,8 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .catalog import BUNDLE_VERSION, MANIFEST_SCHEMA
-
-OWNER_MARKER = "portable-resume-owned"
+from .control_schema import OWNER_MARKER, ControlSchemaError, parse_manifest_document
 
 
 def validate_rel_path(rel: str) -> str:
@@ -62,26 +61,33 @@ class Manifest:
         }
 
     def dumps(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        text = json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        # Self-check: serializers only emit documents the strict parser accepts.
+        parse_manifest_document(text)
+        return text
 
     @classmethod
     def loads(cls, text: str) -> "Manifest":
-        data = json.loads(text)
+        """Strict bounded parse of install-manifest-v1 (#28)."""
+
+        try:
+            data = parse_manifest_document(text)
+        except ControlSchemaError as error:
+            raise ValueError(str(error)) from error
         files: dict[str, FileEntry] = {}
-        for path, entry in data.get("files", {}).items():
-            safe = validate_rel_path(str(path))
-            files[safe] = FileEntry(
-                path=safe,
+        for path, entry in data["files"].items():
+            files[path] = FileEntry(
+                path=entry["path"],
                 sha256=entry["sha256"],
-                claims=list(entry.get("claims", [])),
-                mode=int(entry.get("mode", 0o644)),
+                claims=list(entry["claims"]),
+                mode=int(entry["mode"]),
             )
         return cls(
             schema_version=data["schema_version"],
             bundle_version=data["bundle_version"],
             generation=int(data["generation"]),
             package_identity=data["package_identity"],
-            claims={k: dict(v) for k, v in data.get("claims", {}).items()},
+            claims={k: dict(v) for k, v in data["claims"].items()},
             files=files,
         )
 

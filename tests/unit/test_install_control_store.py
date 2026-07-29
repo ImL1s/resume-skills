@@ -70,7 +70,17 @@ class InstallControlStoreTests(unittest.TestCase):
         support.parent.mkdir(parents=True, exist_ok=True)
         support.symlink_to(self.outside, target_is_directory=True)
         with self.assertRaises(DiagnosticError) as ctx:
-            _write_journal(self.root, {"schema_version": "portable-resume/install-journal-v1", "state": "staging"})
+            _write_journal(
+                self.root,
+                {
+                    "schema_version": "portable-resume/install-journal-v1",
+                    "state": "staging",
+                    "generation": 1,
+                    "claim": "claude|project|/tmp/x",
+                    "stage_dir": "/tmp/stage",
+                    "paths": {},
+                },
+            )
         self.assertEqual(ctx.exception.code, "E_INSTALL_CONFLICT")
         self.assertEqual(list(self.outside.iterdir()), [])
 
@@ -119,6 +129,8 @@ class InstallControlStoreTests(unittest.TestCase):
                 "schema_version": "portable-resume/install-journal-v1",
                 "state": "staging",
                 "generation": 1,
+                "claim": "claude|project|/tmp/x",
+                "stage_dir": "/tmp/stage",
                 "paths": {},
             },
         )

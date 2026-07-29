@@ -105,31 +105,34 @@ class InstallerTransactionTests(unittest.TestCase):
         self.assertFalse(os.path.isfile(journal_path(self.root)))
         verify_root(self.root)
 
-    def test_journal_path_escape_is_ignored_on_recover(self) -> None:
+    def test_journal_path_escape_is_rejected_on_recover(self) -> None:
+        # Hostile on-disk journal (bypasses write-time schema self-check): recover
+        # must fail closed with E_RECOVERY_REQUIRED rather than act on escapes (#28).
         plan = plan_install(host="claude", scope="project", root=self.root)
         execute_install(plan)
         os.makedirs(os.path.join(self.root, ".portable-resume"), exist_ok=True)
         outside = Path(self._tmpdir.name) / "outside.txt"
-        _write_journal(
-            self.root,
-            {
-                "schema_version": "portable-resume/install-journal-v1",
-                "state": "committing",
-                "generation": 2,
-                "claim": "x",
-                "stage_dir": None,
-                "backup_root": None,
-                "paths": {
-                    "../outside.txt": {
-                        "state": "committed",
-                        "sha256": "00",
-                        "backup": str(outside),
-                    }
-                },
+        journal = {
+            "schema_version": "portable-resume/install-journal-v1",
+            "state": "committing",
+            "generation": 2,
+            "claim": "x",
+            "stage_dir": None,
+            "backup_root": None,
+            "paths": {
+                "../outside.txt": {
+                    "state": "committed",
+                    "sha256": "00" * 32,
+                    "backup": str(outside),
+                }
             },
+        }
+        Path(journal_path(self.root)).write_text(
+            json.dumps(journal, indent=2) + "\n", encoding="utf-8"
         )
-        recovered = recover_root(self.root)
-        self.assertTrue(recovered["ok"])
+        with self.assertRaises(DiagnosticError) as caught:
+            recover_root(self.root)
+        self.assertEqual(caught.exception.code, "E_RECOVERY_REQUIRED")
         self.assertFalse(outside.exists())
 
     def test_uninstall_preserves_unrelated_claim_on_shared_explicit_root(self) -> None:

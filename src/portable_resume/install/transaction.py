@@ -17,6 +17,7 @@ from typing import Any, Callable
 
 from ..diagnostics import DiagnosticError
 from .catalog import BUNDLE_VERSION, HOST_PROFILES, MANIFEST_SCHEMA
+from .control_schema import ControlSchemaError, parse_journal_document
 from .manifest import (
     OWNER_MARKER,
     Manifest,
@@ -1574,6 +1575,11 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
 
 def _write_journal(root: str, journal: dict[str, Any]) -> None:
     payload = json.dumps(journal, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    # Self-check closed journal schema before durable write (#28).
+    try:
+        parse_journal_document(payload)
+    except ControlSchemaError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
     _atomic_write_support_file(root, JOURNAL_NAME, payload.encode("utf-8"))
 
 
@@ -2141,11 +2147,9 @@ def recover_root(root: str) -> dict[str, Any]:
     with RootLock(root):
         try:
             raw = _read_support_control_file(root, JOURNAL_NAME)
-            journal = json.loads(raw.decode("utf-8"))
-        except (DiagnosticError, OSError, json.JSONDecodeError, TypeError, ValueError, UnicodeDecodeError) as error:
+            journal = parse_journal_document(raw)
+        except (DiagnosticError, OSError, ControlSchemaError, TypeError, ValueError, UnicodeDecodeError) as error:
             raise DiagnosticError("E_RECOVERY_REQUIRED") from error
-        if not isinstance(journal, dict):
-            raise DiagnosticError("E_RECOVERY_REQUIRED")
         if _install_generation_is_published(root, journal):
             return _clear_published_install_journal(root, journal)
         # incomplete and not yet published: restore only transaction snapshots.

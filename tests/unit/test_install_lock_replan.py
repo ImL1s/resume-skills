@@ -47,7 +47,8 @@ class InstallLockReplanTests(unittest.TestCase):
         path = Path(manifest_path(self.root))
         data = json.loads(path.read_text(encoding="utf-8"))
         original_gen = data["generation"]
-        data["package_identity"] = "swapped-identity-" + ("a" * 40)
+        # Keep hex-shaped identity so the document may load but digests differ.
+        data["package_identity"] = "ab" * 32
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         swapped = load_manifest(self.root)
         self.assertIsNotNone(swapped)

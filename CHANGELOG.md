@@ -12,6 +12,9 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Installer control-document schemas (#28): closed bounded JSON loader rejects
+  duplicate keys/non-finite values; strict `Manifest.loads` / journal parse before
+  recovery or durable write; schema errors map to content-free diagnostics.
 - Install lock replan (#35): `execute_install` rebuilds the action plan under
   `RootLock` from the exact current ownership manifest and trusted package
   materialize; preflight `ActionPlan` is advisory. Base manifest digest is
