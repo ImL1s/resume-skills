@@ -142,25 +142,31 @@ class VerifierRegressionTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
             self.assertEqual(caught.exception.attempts, 3)
 
-    def test_plain_mutation_during_final_directory_observation_fails_closed(self) -> None:
+    def test_plain_mutation_during_final_target_entry_observation_fails_closed(self) -> None:
+        """Same-stat content flip during target-entry re-pin fails closed (#16)."""
+
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             path = root / "record"
             path.write_bytes(b"AAAA")
             original_mtime = path.stat().st_mtime_ns
-            original_observer = snapshot_module._directory_fingerprint
+            original_observer = snapshot_module._target_entry_fingerprint
             calls = 0
 
             def observer(*args, **kwargs):
                 nonlocal calls
                 calls += 1
                 result = original_observer(*args, **kwargs)
+                # After middle entry re-pin (2nd call per attempt), mutate content.
                 if calls % 3 == 2:
                     path.write_bytes(b"BBBB" if (calls // 3) % 2 == 0 else b"AAAA")
                     os.utime(path, ns=(original_mtime, original_mtime))
                 return result
 
-            with mock.patch("portable_resume.snapshot._directory_fingerprint", side_effect=observer):
+            with mock.patch(
+                "portable_resume.snapshot._target_entry_fingerprint",
+                side_effect=observer,
+            ):
                 with self.assertRaises(DiagnosticError) as caught:
                     stable_read_bytes(path, root=root)
             self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")

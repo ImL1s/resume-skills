@@ -203,14 +203,24 @@ class OpenCodeAdapterTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "E_SQLITE_HOT_JOURNAL")
         self.assertEqual(tree_snapshot(hot_root), before)
 
-    def test_membership_race_exhausts_snapshot_without_source_connection(self) -> None:
+    def test_family_entry_race_exhausts_snapshot_without_source_connection(self) -> None:
+        """Unrelated siblings no longer invalidate SQLite snapshots (#16); mutate the DB."""
+
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            shutil.copy2(fixture_root("opencode", "s-ope-01") / "opencode.db", root / "opencode.db")
+            db = root / "opencode.db"
+            shutil.copy2(fixture_root("opencode", "s-ope-01") / "opencode.db", db)
+            original = db.read_bytes()
+            original_mtime = db.stat().st_mtime_ns
 
             def race(phase: str, attempt: int, _path: str) -> None:
                 if phase == "after-copy":
-                    (root / f"race-{attempt}").write_text("membership changed")
+                    # Same-size flip so coarse stats can match while content drifts.
+                    flipped = bytes((b ^ 0xFF) for b in original[: min(64, len(original))]) + original[min(64, len(original)) :]
+                    if len(flipped) != len(original):
+                        flipped = original[::-1] if original else b"x"
+                    db.write_bytes(flipped if attempt % 2 else original)
+                    os.utime(db, ns=(original_mtime, original_mtime))
 
             adapter = OpenCodeAdapter(root=str(root), sqlite_hook=race)
             with self.assertRaises(DiagnosticError) as caught:

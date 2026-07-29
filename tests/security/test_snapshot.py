@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from portable_resume import snapshot as snapshot_module
-from portable_resume.bounds import Bounds, ReadBudget
+from portable_resume.bounds import DEFAULT_BOUNDS, Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.snapshot import (
     private_sqlite_connection,
@@ -87,7 +87,9 @@ class StableSnapshotTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
         self.assertEqual(caught.exception.attempts, 3)
 
-    def test_detects_parent_membership_change(self) -> None:
+    def test_unrelated_sibling_churn_does_not_invalidate_exact_read(self) -> None:
+        """Issue #16: parent sibling adds must not force retry/fail of a stable target."""
+
         path = self.store / "record"
         path.write_bytes(b"same")
 
@@ -96,7 +98,8 @@ class StableSnapshotTests(unittest.TestCase):
                 (self.store / "new-member").write_text("x")
 
         result = stable_read_bytes(path, root=self.store, hook=hook)
-        self.assertEqual(result.attempts, 2)
+        self.assertEqual(result.data, b"same")
+        self.assertEqual(result.attempts, 1)
 
     def test_every_attempt_mutates_fails_busy_without_partial_data(self) -> None:
         path = self.store / "record"
@@ -158,17 +161,24 @@ class StableSnapshotTests(unittest.TestCase):
         self.assertIsNone(result.fingerprint.content_sha256)
         self.assertEqual(len(result.window_sha256), 64)
 
-    def test_membership_enumeration_stops_at_limit_without_listdir_materialization(self) -> None:
+    def test_exact_read_succeeds_with_many_unrelated_siblings(self) -> None:
+        """More than scanned_records siblings must not E_LIMIT_EXCEEDED an exact file (#16)."""
+
         path = self.store / "session.jsonl"
         path.write_bytes(b"{}\n")
-        (self.store / "second").write_bytes(b"x")
+        for index in range(DEFAULT_BOUNDS.scanned_records + 50):
+            (self.store / f"sibling-{index:05d}").write_bytes(b"x")
         with mock.patch(
             "portable_resume.snapshot.os.listdir",
-            side_effect=AssertionError("bounded enumeration must not use listdir"),
+            side_effect=AssertionError("exact reads must not listdir the parent"),
         ):
-            with self.assertRaises(DiagnosticError) as caught:
-                stable_read_windows(path, root=self.store, membership_limit=1)
-        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+            result = stable_read_windows(path, root=self.store, membership_limit=1)
+            body = stable_read_bytes(path, root=self.store, membership_limit=1)
+            snap = snapshot_regular_file(path, root=self.store, membership_limit=1)
+        self.assertEqual(result.head, b"{}\n")
+        self.assertEqual(body.data, b"{}\n")
+        with snap:
+            self.assertTrue(Path(snap.path).is_file())
 
     def test_regular_file_snapshot_is_private_stable_and_cleans_up(self) -> None:
         path = self.store / "session.jsonl"
