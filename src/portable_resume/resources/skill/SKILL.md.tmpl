@@ -58,9 +58,18 @@ Optional flags: `--within-min N`, `--max-tool-chars N`, `--format handoff`
 
 When the ref is free text, multi-field, or hard to quote safely:
 
-1. Write a private temp file (mode `0600`) with schema `portable-resume/request-v1`
-   containing selection fields only (source, action, ref, cwd, options) — never
-   transcript bodies.
+1. Write a private temp file (mode `0600`) whose JSON object uses **exactly**
+   these keys (no extras; wrong names fail closed):
+
+   - `schema_version`: `"portable-resume/request-v1"`
+   - `source`: must equal this Skill's bound source (`${source_key}`)
+   - `action`: `"show"` or `"list"`
+   - `resume_ref`: selection string (`"latest"`, native id, approved path, or free text)
+   - `cwd`: absolute working directory for selection scope
+
+   Never put transcript bodies in the request file. Pass supported CLI options
+   (`--format`, `--source-root`, `--max-tool-chars`, …) as runner argv flags —
+   they are not request-v1 keys.
 2. Invoke the **owned** runner:
 
 ```bash
