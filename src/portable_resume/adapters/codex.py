@@ -147,6 +147,7 @@ def _walk_rollouts(
     max_depth: int = 4,
     scan_state: list[int] | None = None,
     soft_limit: bool = False,
+    truncated: list[bool] | None = None,
 ) -> list[str]:
     """Walk rollouts under ``container``.
 
@@ -200,18 +201,27 @@ def _walk_rollouts(
                 output.append(path)
         if hit_cap:
             stopped[0] = True
+            if truncated is not None:
+                truncated[0] = True
 
     visit(container, 0)
     return output
 
 
-def _rollout_paths(root: str, query: Query, *, soft_limit: bool = False) -> list[str]:
+def _rollout_paths(
+    root: str,
+    query: Query,
+    *,
+    soft_limit: bool = False,
+    truncated: list[bool] | None = None,
+) -> list[str]:
     scan_state = [0]
     values = _walk_rollouts(
         os.path.join(root, "sessions"),
         root,
         scan_state=scan_state,
         soft_limit=soft_limit,
+        truncated=truncated,
     )
     # Archived rows are intentionally invisible unless the user supplied an
     # exact native UUID.  Text and path searches cannot enumerate archives.
@@ -227,6 +237,7 @@ def _rollout_paths(root: str, query: Query, *, soft_limit: bool = False) -> list
                     root,
                     scan_state=scan_state,
                     soft_limit=soft_limit,
+                    truncated=truncated,
                 )
             )
     exact = _exact_uuid_ref(query.ref)
@@ -1025,19 +1036,41 @@ class CodexAdapter:
             # discovery keeps the hard scanned_records raise (no silent prefix).
             known = {item.session_id for item in values}
             soft = bool(values)
-            for path in _rollout_paths(root, query, soft_limit=soft):
+            truncated = [False]
+            listed_full = False
+            budget_stopped = False
+            for path in _rollout_paths(root, query, soft_limit=soft, truncated=truncated):
                 if len(values) >= DEFAULT_BOUNDS.listed_sessions:
+                    listed_full = True
                     break
                 try:
                     item = _rollout_summary(path, root, query, budget)
                 except DiagnosticError as error:
                     # Keep recovered sessions if discovery budget exhausts mid-fallback.
                     if error.code == "E_LIMIT_EXCEEDED" and values:
+                        budget_stopped = True
                         break
                     raise
                 if item is not None and item.session_id not in known:
                     values.append(item)
                     known.add(item.session_id)
+            if truncated[0] or listed_full or budget_stopped:
+                # Partial FS recovery must not look complete (plan 026 stop condition).
+                values = [
+                    SessionSummary(
+                        source=item.source,
+                        session_id=item.session_id,
+                        source_path=item.source_path,
+                        title=item.title,
+                        cwd=item.cwd,
+                        branch=item.branch,
+                        created_at=item.created_at,
+                        updated_at=item.updated_at,
+                        provider=item.provider,
+                        warnings=tuple(dict.fromkeys((*(item.warnings or ()), "W_TRUNCATED"))),
+                    )
+                    for item in values
+                ]
         deduplicated: dict[str, SessionSummary] = {}
         for value in values:
             previous = deduplicated.get(value.session_id)
