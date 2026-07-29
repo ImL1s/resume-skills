@@ -12,6 +12,10 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Shared JSONL scan migrations (#10): Grok `updates.jsonl` and Antigravity
+  `transcript.jsonl` show paths stream via `stable_scan_lines` under
+  `source_read_bytes` / `transcript_records` (with Pi, Kimi, Cursor CLI, Qwen).
+  Codex streaming show remains #8; true collect-free yield remains residual.
 - Installer control-document schemas (#28): closed bounded JSON loader rejects
   duplicate keys/non-finite values; strict `Manifest.loads` / journal parse before
   recovery or durable write; schema errors map to content-free diagnostics.
