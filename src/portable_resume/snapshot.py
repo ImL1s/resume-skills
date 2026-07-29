@@ -579,8 +579,10 @@ def stable_read_windows(
                 before_stat = os.fstat(descriptor)
                 if not _entry_identity_matches(before_entry, before_stat):
                     continue
-                if before_stat.st_size > max_bytes:
-                    raise DiagnosticError.limit_exceeded()
+                # Windows only admit head/tail; do not reject large whole-file size
+                # (discovery/list metadata). Full-body APIs still enforce
+                # source_read_bytes. max_bytes remains the API parameter ceiling.
+                _ = max_bytes
                 if hook:
                     hook("before-read", attempt, safe)
                 first = _read_descriptor_windows(

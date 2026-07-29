@@ -23,7 +23,7 @@ from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
 from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
 from ..sanitize import sanitize_turn_record
-from ..snapshot import StableRead, stable_read_bytes, stable_scan_lines
+from ..snapshot import StableRead, stable_read_bytes, stable_read_windows, stable_scan_lines
 from .base import CapabilityReport, ResolvedRef
 
 ROLLOUT_FORMAT = "codex-rollout-jsonl-v1"
@@ -32,6 +32,11 @@ ZSTD_FORMAT = "codex-rollout-zstd-v1"
 # Probe/list metadata heads only (#7): never full-transcript parse for discovery.
 _PROBE_HEAD_RECORDS = 10
 _META_HEAD_CAP = 200
+# Byte window for head-only discovery (session_meta + first turns fit well under this).
+_PROBE_HEAD_BYTES = 256 * 1024
+# Probe sessions sample: soft-stop caps — never raise E_LIMIT_EXCEEDED from tree size.
+_PROBE_VISIT_CAP = 128
+_PROBE_FILE_CAP = 8
 
 _STATE_DB = re.compile(r"^state_(\d{1,3})\.sqlite$")
 _ROLLOUT = re.compile(
@@ -208,6 +213,67 @@ def _rollout_paths(root: str, query: Query) -> list[str]:
             return (0.0, path)
 
     return sorted(filtered, key=newest)
+
+
+def _sample_rollout_paths(
+    root: str,
+    *,
+    max_visits: int = _PROBE_VISIT_CAP,
+    max_files: int = _PROBE_FILE_CAP,
+    max_depth: int = 4,
+) -> list[str]:
+    """Bounded ``sessions/`` sample for probe only (#7).
+
+    Soft-stops after ``max_visits`` directory entries or ``max_files`` rollouts.
+    Never raises ``E_LIMIT_EXCEEDED`` from tree size (unlike ``_rollout_paths``).
+    """
+
+    container = os.path.join(root, "sessions")
+    if not _regular_directory(container, root):
+        return []
+    found: list[str] = []
+    visits = 0
+
+    def visit(directory: str, depth: int) -> None:
+        nonlocal visits
+        if visits >= max_visits or len(found) >= max_files:
+            return
+        names: list[str] = []
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    visits += 1
+                    if visits > max_visits:
+                        break
+                    names.append(entry.name)
+        except OSError:
+            return
+        # Prefer lexicographically newer date/hour path components first.
+        names.sort(reverse=True)
+        for name in names:
+            if len(found) >= max_files or visits > max_visits:
+                return
+            path = os.path.join(directory, name)
+            try:
+                current = os.lstat(path)
+            except OSError:
+                continue
+            if stat.S_ISLNK(current.st_mode):
+                continue
+            if stat.S_ISDIR(current.st_mode) and depth < max_depth:
+                visit(path, depth + 1)
+            elif stat.S_ISREG(current.st_mode) and _ROLLOUT.fullmatch(name):
+                found.append(path)
+
+    visit(container, 0)
+
+    def newest(path: str) -> tuple[float, str]:
+        try:
+            return (-os.lstat(path).st_mtime, path)
+        except OSError:
+            return (0.0, path)
+
+    return sorted(found, key=newest)
 
 
 def _exact_uuid_ref(value: str | None) -> str | None:
@@ -452,8 +518,9 @@ def _read_rollout_head(
 ) -> tuple[list[dict[str, Any]], tuple[str, ...], str, str]:
     """Bounded plain-JSONL metadata head for probe/list (issue #7).
 
-    Uses ``stable_scan_lines`` with discovery accounting (not transcript_records).
-    Compressed rollouts are out of scope for head-only discovery.
+    Reads only a fixed head window via ``stable_read_windows`` (not whole-file
+    ``stable_scan_lines``). Discovery charges ``scanned_records`` per line, not
+    ``transcript_records``. Compressed rollouts are out of scope.
     """
 
     if path.endswith(".zst"):
@@ -461,30 +528,55 @@ def _read_rollout_head(
     limit = max(1, min(max_records, _META_HEAD_CAP))
     maximum_record = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
     provider = ROLLOUT_FORMAT
+    windows = stable_read_windows(
+        path,
+        root=root,
+        head_bytes=min(_PROBE_HEAD_BYTES, 4 * 1024 * 1024),
+        tail_bytes=0,
+        max_bytes=min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes),
+        attempts=min(budget.limits.snapshot_attempts, DEFAULT_BOUNDS.snapshot_attempts),
+        membership_limit=min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records),
+        budget=budget,
+    )
+    data = windows.head
+    full_in_head = windows.fingerprint.size <= len(data)
+    # Drop a trailing incomplete line when the window cuts mid-record.
+    raw_lines = data.splitlines(keepends=True)
+    if raw_lines and not full_in_head:
+        last = raw_lines[-1]
+        if not last.endswith((b"\n", b"\r")):
+            raw_lines = raw_lines[:-1]
     records: list[dict[str, Any]] = []
     warnings: list[str] = []
     updated_hint: str | None = None
-    for line in stable_scan_lines(
-        path,
-        root=root,
-        budget=budget,
-        charge_transcript=False,
-        max_line_bytes=maximum_record,
-    ):
+    for raw in raw_lines:
         if len(records) >= limit:
             break
-        if not line.utf8_valid:
-            if not line.terminated:
+        budget.consume_records()
+        terminated = raw.endswith((b"\n", b"\r"))
+        body = raw[:-1] if terminated and raw.endswith(b"\n") else raw
+        if body.endswith(b"\r"):
+            body = body[:-1]
+        if len(body) > maximum_record:
+            raise DiagnosticError.limit_exceeded()
+        try:
+            text = body.decode("utf-8")
+            utf8_valid = True
+        except UnicodeDecodeError:
+            utf8_valid = False
+            text = ""
+        if not utf8_valid:
+            if not terminated and full_in_head:
                 warnings.append("W_PARTIAL_TAIL")
                 break
             raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider)
-        stripped = line.text.strip()
+        stripped = text.strip()
         if not stripped:
             continue
         try:
             value = json.loads(stripped, object_pairs_hook=_object)
         except (json.JSONDecodeError, _DuplicateKey, RecursionError) as error:
-            if not line.terminated:
+            if not terminated and full_in_head:
                 warnings.append("W_PARTIAL_TAIL")
                 break
             raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider) from error
@@ -503,13 +595,10 @@ def _read_rollout_head(
             updated_hint = stamp
     if not records:
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
-    # Prefer file mtime when available for ranking; keep last head timestamp as fallback.
-    try:
-        mtime = os.lstat(path).st_mtime
-        updated_at = datetime.fromtimestamp(mtime, timezone.utc).isoformat(
-            timespec="microseconds"
-        ).replace("+00:00", "Z")
-    except OSError:
+    updated_at = datetime.fromtimestamp(
+        windows.fingerprint.mtime_ns / 1_000_000_000, timezone.utc
+    ).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    if not updated_at and updated_hint:
         updated_at = _rfc3339(updated_hint) or ""
     return records, tuple(dict.fromkeys(warnings)), provider, updated_at
 
@@ -778,8 +867,8 @@ class CodexAdapter:
                     if error.code in {"E_SQLITE_HOT_JOURNAL", "E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
                         return CapabilityReport(self.key, SQLITE_FORMAT, "unsafe", root=root)
                     raise
-            # 2) Bounded plain rollout head (never full transcript parse).
-            paths = _rollout_paths(root, query)
+            # 2) Bounded plain rollout head — sample only, never full sessions walk (#7).
+            paths = _sample_rollout_paths(root)
             plain = [path for path in paths if not path.endswith(".zst")]
             if plain:
                 try:
@@ -806,7 +895,7 @@ class CodexAdapter:
                         return CapabilityReport(self.key, ROLLOUT_FORMAT, "unsafe", root=root)
                     if error.code not in {"E_UNSUPPORTED_FORMAT", "E_CORRUPT_RECORD", "E_LIMIT_EXCEEDED"}:
                         raise
-            # 3) Compressed presence: decoder policy, no process launch / full walk.
+            # 3) Compressed presence from same bounded sample; decoder policy only.
             zstd = [path for path in paths if path.endswith(".zst")]
             if zstd and _trusted_zstd() is None:
                 return CapabilityReport(
@@ -830,10 +919,12 @@ class CodexAdapter:
         values: list[SessionSummary] = []
         database_supported = False
         stale_dropped = False
+        unresolved_paths = 0
         for database in _state_databases(root):
-            supported, rows = _database_summaries(database, root, query, budget)
+            supported, rows, unresolved = _database_summaries(database, root, query, budget)
             if supported:
                 database_supported = True
+                unresolved_paths = unresolved
                 # Verify SQLite path hints against bounded rollout heads when plain.
                 verified: list[SessionSummary] = []
                 for row in rows:
@@ -878,9 +969,15 @@ class CodexAdapter:
                     )
                 values = verified
                 break
-        # FS head scan when no DB schema, or DB rows existed but all failed verify (#7).
-        # Empty SQL (no rows matched) stays authoritative without rollout scan.
-        if not database_supported or (stale_dropped and not values):
+        # FS head fallback (#7): missing schema, unresolved/stale rows, or under-filled
+        # recognized DB (sparse index). Merge/dedupe below; never mutate source store.
+        underfilled = database_supported and len(values) < DEFAULT_BOUNDS.listed_sessions
+        if (
+            not database_supported
+            or stale_dropped
+            or unresolved_paths > 0
+            or underfilled
+        ):
             for path in _rollout_paths(root, query):
                 item = _rollout_summary(path, root, query, budget)
                 if item is not None:

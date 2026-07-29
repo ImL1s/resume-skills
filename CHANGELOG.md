@@ -13,8 +13,10 @@
 
 ### Fixed
 - Codex probe/list discovery (#7): capability from SQLite signature without
-  walking `sessions/`; plain rollout discovery uses bounded metadata heads;
-  filesystem head fallback only when schema missing or DB rows fail verify.
+  walking `sessions/`; probe uses a soft-capped sample (not full tree walk);
+  plain rollout discovery uses byte-bounded `stable_read_windows` heads;
+  filesystem head fallback when schema missing, paths unresolved/stale, or the
+  recognized DB is under-filled (sparse index).
 - Hosts report commands (#66): recommend installed `install-resume-skills` entrypoint
   with argv arrays; label source-checkout forms separately; scope shared-root
   warnings to selected host sets.

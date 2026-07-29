@@ -789,15 +789,56 @@ class CodexAdapterTests(unittest.TestCase):
         decoder.assert_called_once_with(encoded, max_bytes=len(encoded))
         self.assertEqual(session.session_id, identifier)
 
-    def test_supported_database_empty_result_does_not_scan_rollouts(self) -> None:
-        self.rollout()
+    def test_sparse_database_recovers_sessions_via_fs_head_fallback(self) -> None:
+        """Recognized but under-filled SQLite activates read-only FS head scan (#7)."""
+
+        identifier, _path = self.rollout()
         self.database(9, [])
+        values = codex.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+        self.assertEqual(values[0].provider, codex.ROLLOUT_FORMAT)
+
+    def test_stale_database_path_recovers_via_fs_head_fallback(self) -> None:
+        """SQL rows whose rollout path cannot resolve still recover from sessions/ (#7)."""
+
+        identifier, path = self.rollout()
+        missing = path.parent / f"rollout-2026-07-20T00-00-00-{identifier}-missing.jsonl"
+        self.database(9, [self.db_row(identifier, missing)])
+        values = codex.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+        self.assertEqual(values[0].source_path, str(path))
+
+    def test_probe_does_not_full_walk_sessions_tree(self) -> None:
+        """Probe samples sessions/ with a soft cap; never calls full _rollout_paths (#7)."""
+
+        self.rollout()
         with mock.patch.object(
             codex,
             "_rollout_paths",
-            side_effect=AssertionError("supported database is authoritative"),
+            side_effect=AssertionError("probe must not full-walk sessions/"),
         ):
-            self.assertEqual(codex.ADAPTER.list(self.query(), ReadBudget()), [])
+            capability = codex.ADAPTER.probe(self.query())
+        self.assertEqual(capability.state, "supported")
+        self.assertEqual(capability.format_id, codex.ROLLOUT_FORMAT)
+
+    def test_probe_head_uses_byte_window_not_whole_file_scan(self) -> None:
+        """Large plain rollouts are discovered from a head window only (#7)."""
+
+        identifier, path = self.rollout()
+        # Append a large body after the metadata head so whole-file scanners would
+        # pay multi-MB I/O; head window must still recognize the session.
+        with path.open("ab") as handle:
+            handle.write(b'{"type":"response_item","payload":{"type":"message","role":"assistant","content":"' + (b"x" * 400_000) + b'"}}\n')
+        with mock.patch.object(
+            codex,
+            "stable_scan_lines",
+            side_effect=AssertionError("head discovery must not whole-file scan"),
+        ):
+            capability = codex.ADAPTER.probe(self.query())
+            values = codex.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual(capability.state, "supported")
+        self.assertEqual(capability.format_id, codex.ROLLOUT_FORMAT)
+        self.assertEqual([item.session_id for item in values], [identifier])
 
     def test_unknown_database_schema_falls_back_and_retains_rollout_warning(self) -> None:
         identifier = str(uuid.uuid4())
@@ -887,6 +928,8 @@ class CodexAdapterTests(unittest.TestCase):
             codex, "stable_read_bytes", side_effect=DiagnosticError.source_busy()
         ), mock.patch.object(
             codex, "stable_scan_lines", side_effect=DiagnosticError.source_busy()
+        ), mock.patch.object(
+            codex, "stable_read_windows", side_effect=DiagnosticError.source_busy()
         ):
             with self.assertRaises(DiagnosticError) as busy:
                 codex.ADAPTER.list(self.query(identifier), ReadBudget())
