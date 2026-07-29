@@ -12,6 +12,9 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Codex probe/list discovery (#7): capability from SQLite signature without
+  walking `sessions/`; plain rollout discovery uses bounded metadata heads;
+  filesystem head fallback only when schema missing or DB rows fail verify.
 - Hosts report commands (#66): recommend installed `install-resume-skills` entrypoint
   with argv arrays; label source-checkout forms separately; scope shared-root
   warnings to selected host sets.

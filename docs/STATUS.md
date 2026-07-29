@@ -56,7 +56,7 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 | Item | Track | Notes |
 |---|---|---|
 | Issue #3 parent list + large rollout reject | **Closed** via PR #4 → `48746c4` | P0 on main. |
-| Discovery false unsupported / stale SQLite | [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + plan 026 | P1a: head-only probe; no full `sessions/` walk; read-only FS head fallback. Do not mutate `~/.codex`. |
+| Discovery false unsupported / stale SQLite | [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + plan 026 | **Done (P1a):** probe uses DB signature without sessions walk; plain rollout probe/list use bounded head (`stable_scan_lines`); FS head fallback only when no DB schema or all DB rows fail head verify. Show streaming remains #8. |
 | Peak memory on large show | [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + plan 027 | P1b: true chunked stable streaming + reducer + synthetic 17–30 MiB test. |
 | Capability registries + dynamic matrix | [Issue #36](https://github.com/ImL1s/resume-skills/issues/36) | **Done (product axes):** independent source/destination/package registries; rectangular matrix derived from enabled sets (9×9=81); package surfaces drive native zip builds; schema source enum matches enabled sources (incl. `pi`). Residual: auto-generated docs tables / planned-profile release gates still manual. |
 | Reader CLI option honesty (#65) | [Issue #65](https://github.com/ImL1s/resume-skills/issues/65) | **Done:** `self-check` closed parser (rejects unknown args); request-file rejects `--within-min`; explicit `--format table|json|handoff` with show rejecting table. |

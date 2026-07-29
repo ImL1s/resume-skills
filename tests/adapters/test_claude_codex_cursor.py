@@ -871,8 +871,9 @@ class CodexAdapterTests(unittest.TestCase):
         with self.assertRaises(DiagnosticError) as corrupt:
             codex.ADAPTER.list(self.query(), ReadBudget())
         self.assertEqual(corrupt.exception.code, "E_CORRUPT_RECORD")
+        # Discovery heads charge scanned_records (#7), not full transcript_records.
         with self.assertRaises(DiagnosticError) as bounded:
-            codex.ADAPTER.list(self.query(), ReadBudget(Bounds(transcript_records=1)))
+            codex.ADAPTER.list(self.query(), ReadBudget(Bounds(scanned_records=1)))
         self.assertEqual(bounded.exception.code, "E_LIMIT_EXCEEDED")
         marker = self.root / "owned"
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -882,7 +883,11 @@ class CodexAdapterTests(unittest.TestCase):
             stderr=stderr,
         )
         self.assertFalse(marker.exists())
-        with mock.patch.object(codex, "stable_read_bytes", side_effect=DiagnosticError.source_busy()):
+        with mock.patch.object(
+            codex, "stable_read_bytes", side_effect=DiagnosticError.source_busy()
+        ), mock.patch.object(
+            codex, "stable_scan_lines", side_effect=DiagnosticError.source_busy()
+        ):
             with self.assertRaises(DiagnosticError) as busy:
                 codex.ADAPTER.list(self.query(identifier), ReadBudget())
         self.assertEqual(busy.exception.code, "E_SOURCE_BUSY")
