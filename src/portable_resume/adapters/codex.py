@@ -1043,6 +1043,11 @@ class CodexAdapter:
                 if len(values) >= DEFAULT_BOUNDS.listed_sessions:
                     listed_full = True
                     break
+                # Skip paths already verified from SQLite before any head/zstd I/O
+                # so a known compressed row cannot exhaust the budget mid-fallback.
+                path_id = _rollout_id(path)
+                if path_id is not None and path_id in known:
+                    continue
                 try:
                     item = _rollout_summary(path, root, query, budget)
                 except DiagnosticError as error:
