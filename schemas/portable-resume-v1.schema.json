@@ -26,8 +26,8 @@
   "$defs": {
     "source": {
       "enum": [
-        "claude", "codex", "cursor", "opencode", "antigravity", "grok",
-        "kimi", "qwen"
+        "antigravity", "claude", "codex", "cursor", "grok",
+        "kimi", "opencode", "pi", "qwen"
       ]
     },
     "nullableString": {"type": ["string", "null"]},

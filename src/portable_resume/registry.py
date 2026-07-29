@@ -118,6 +118,18 @@ SOURCE_PROFILES["pi"] = SourceProfile(
     fixture_profile="pi-session-jsonl-v3",
 )
 
+# Native package surface key per destination (independent of direct Skills).
+# Hosts with only direct-skill install leave this unset (opencode, pi, …).
+_NATIVE_PACKAGE_BY_DESTINATION: dict[str, str] = {
+    "antigravity": "antigravity-plugin",
+    "claude": "claude-marketplace",
+    "codex": "codex-marketplace",
+    "cursor": "cursor-marketplace",
+    "grok": "grok-plugin",
+    "kimi": "kimi-plugin",
+    "qwen": "qwen-extension",
+}
+
 DESTINATION_PROFILES: dict[str, DestinationProfile] = {
     key: DestinationProfile(
         key=key,
@@ -126,6 +138,7 @@ DESTINATION_PROFILES: dict[str, DestinationProfile] = {
         direct_skill=True,
         project_rel=_DESTINATION_ROOTS[key][0],
         global_rel=_DESTINATION_ROOTS[key][1],
+        native_package_profile=_NATIVE_PACKAGE_BY_DESTINATION.get(key),
     )
     for key in _EIGHT_KEYS
 }
@@ -137,9 +150,19 @@ DESTINATION_PROFILES["pi"] = DestinationProfile(
     direct_skill=True,
     project_rel=".pi/skills",
     global_rel=".pi/agent/skills",
+    native_package_profile=None,
 )
 
-PACKAGE_SURFACES: dict[str, PackageSurface] = {}
+PACKAGE_SURFACES: dict[str, PackageSurface] = {
+    surface_key: PackageSurface(
+        key=surface_key,
+        destination=destination,
+        profile=f"{surface_key}-v1",
+        buildable=True,
+        status="supported",
+    )
+    for destination, surface_key in sorted(_NATIVE_PACKAGE_BY_DESTINATION.items())
+}
 
 
 def source_keys() -> frozenset[str]:
@@ -148,6 +171,10 @@ def source_keys() -> frozenset[str]:
 
 def destination_keys() -> frozenset[str]:
     return frozenset(DESTINATION_PROFILES)
+
+
+def package_keys() -> frozenset[str]:
+    return frozenset(PACKAGE_SURFACES)
 
 
 def enabled_source_keys() -> frozenset[str]:
@@ -159,6 +186,16 @@ def enabled_destination_keys() -> frozenset[str]:
         k
         for k, p in DESTINATION_PROFILES.items()
         if p.status == "supported" and p.direct_skill
+    )
+
+
+def enabled_package_keys() -> frozenset[str]:
+    """Buildable native package surfaces (not the direct-runner matrix)."""
+
+    return frozenset(
+        k
+        for k, p in PACKAGE_SURFACES.items()
+        if p.status == "supported" and p.buildable
     )
 
 
@@ -194,7 +231,11 @@ def _validate_maps(
         raise ValueError("duplicate source keys")
     if len(destinations) != len({p.key for p in destinations.values()}):
         raise ValueError("duplicate destination keys")
-    for surface in packages.values():
+    if len(packages) != len({p.key for p in packages.values()}):
+        raise ValueError("duplicate package keys")
+    for key, surface in packages.items():
+        if key != surface.key:
+            raise ValueError(f"package map key mismatch: {key}")
         if surface.destination not in destinations:
             raise ValueError(
                 f"package surface owner missing: {surface.destination}"
@@ -211,6 +252,16 @@ def _validate_maps(
     for key, profile in destinations.items():
         if key != profile.key:
             raise ValueError(f"destination map key mismatch: {key}")
+        if profile.native_package_profile is not None:
+            surface = packages.get(profile.native_package_profile)
+            if surface is None:
+                raise ValueError(
+                    f"destination native_package_profile missing: {key}"
+                )
+            if surface.destination != key:
+                raise ValueError(
+                    f"native_package_profile owner mismatch: {key}"
+                )
 
 
 def validate_registries() -> None:
