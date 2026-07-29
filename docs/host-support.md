@@ -47,12 +47,12 @@ Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi, and **Pi** have 
 | CI definition | Ubuntu/macOS × Python 3.11–3.14 |
 | Latest archived remote CI/release | `v0.3.4` pass: release-commit CI and 14-job release run archived |
 | Historical release proof | Earlier releases are archived separately in `evidence-summary.md` |
-| Windows | fixture/docs only; not a stated V1 release gate |
+| Windows | **mutating installer unsupported** (`E_INSTALL_UNSUPPORTED_PLATFORM`); reader/matrix/dry-run/verify may remain where individually safe; not a V1 release gate |
 
-### Installer containment notes (Phase 0 / PR #49)
+### Installer containment notes (Phase 0 / PR #49 + #29)
 
 - **POSIX descriptor-relative commits (#31):** payload files are committed with `dir_fd` / `O_NOFOLLOW` under the skill root. The skill-root path itself may be a symlink (common dotfiles layouts); it is resolved once with `realpath`, then the final directory is opened no-follow. Intermediate payload parents never follow symlinks.
-- **Windows residual:** without portable `openat`/`dir_fd` replace, mutating installs **fail closed** with `E_INSTALL_CONFLICT` rather than a pathname TOCTOU path. Windows is not a V1 release gate above.
+- **Windows platform gate (#29 Policy B):** `install` (non-dry-run), `uninstall` (non-dry-run), and `recover` (when a journal exists) fail closed with `E_INSTALL_UNSUPPORTED_PLATFORM` **before** creating support directories or claiming a root lock. Silent unlocked mutation is not permitted. Exclusive Windows locking (Policy A) is not claimed.
 - **Recover (#20):** complete journals must not `rmtree` a `stage_dir` outside `.portable-resume/`.
 
 Official host references and alternate roots are linked from the machine-readable `hosts --json` output and [`install-hosts.md`](install-hosts.md).
