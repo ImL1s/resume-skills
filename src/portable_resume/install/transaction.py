@@ -108,6 +108,20 @@ class InstallCheckpoint:
     paths: dict[str, dict[str, Any]]
 
 
+def require_mutating_install_platform() -> None:
+    """Fail closed before Windows (or other non-POSIX) mutating installer ops.
+
+    Policy B for issue #29: exclusive root locking and reparse-safe control-store
+    semantics are verified on POSIX only. Mutating install/uninstall/recover must
+    not pretend to lock on ``os.name == "nt"``. Dry-run planning, matrix/hosts,
+    verify (read-only), package builds, and the reader remain available where
+    individually safe.
+    """
+
+    if os.name == "nt":
+        raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+
+
 class RootLock:
     def __init__(self, root: str, *, wait_seconds: float = 5.0) -> None:
         self.root = root
@@ -117,6 +131,8 @@ class RootLock:
         self.wait_seconds = wait_seconds
 
     def __enter__(self) -> "RootLock":
+        # Never open/create support paths on platforms without exclusive locking.
+        require_mutating_install_platform()
         _ensure_support_directory(self.root)
         deadline = time.monotonic() + self.wait_seconds
         while True:
@@ -128,9 +144,6 @@ class RootLock:
                     flags=os.O_RDWR | os.O_CREAT,
                     mode=0o644,
                 )
-                if os.name == "nt":
-                    self._fd = fd
-                    return self
                 import fcntl
 
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -171,10 +184,9 @@ class RootLock:
     def __exit__(self, exc_type, exc, tb) -> None:
         if self._fd is not None:
             try:
-                if os.name != "nt":
-                    import fcntl
+                import fcntl
 
-                    fcntl.flock(self._fd, fcntl.LOCK_UN)
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
             finally:
                 os.close(self._fd)
                 self._fd = None
@@ -1223,6 +1235,7 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
             raise DiagnosticError("E_INVARIANT")
         return {"ok": True, "dry_run": True, "plan": plan.to_dict()}
 
+    require_mutating_install_platform()
     with RootLock(root):
         require_no_pending_journal(root)
         # Preflight token is advisory for payload bytes, but ownership identity
@@ -2144,6 +2157,7 @@ def recover_root(root: str) -> dict[str, Any]:
         return {"ok": True, "recovered": False}
     if os.path.islink(path) or not os.path.isfile(path):
         raise DiagnosticError("E_RECOVERY_REQUIRED")
+    require_mutating_install_platform()
     with RootLock(root):
         try:
             raw = _read_support_control_file(root, JOURNAL_NAME)
@@ -2238,6 +2252,7 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
         removable = [p for p, e in manifest.files.items() if e.claims == [claim]]
         return {"ok": True, "dry_run": True, "removed_files": removable, "claim": claim}
 
+    require_mutating_install_platform()
     with RootLock(root):
         require_no_pending_journal(root)
         manifest = load_manifest(root)
