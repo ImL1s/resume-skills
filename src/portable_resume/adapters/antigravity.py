@@ -631,6 +631,8 @@ class AntigravityAdapter:
         title: str | None = None
         created_at: str | None = min(created_values) if created_values else None
         updated_at: str | None = max(updated_values) if updated_values else None
+        # List metadata stops at the session header: never treat header created_at
+        # as freshness. Prefer transcript mtime so age filters / latest stay honest (#15).
         if not include_turns or updated_at is None:
             try:
                 mtime = os.lstat(path).st_mtime
@@ -640,9 +642,9 @@ class AntigravityAdapter:
             except OSError:
                 stamp = None
             if stamp is not None:
-                if updated_at is None:
+                if not include_turns or updated_at is None:
                     updated_at = stamp
-                if created_at is None and not include_turns:
+                if created_at is None:
                     created_at = stamp
         if header is not None:
             raw_cwd = header.get("cwd")
