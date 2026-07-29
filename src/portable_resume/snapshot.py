@@ -553,8 +553,14 @@ def stable_read_windows(
     membership_limit: int = DEFAULT_BOUNDS.scanned_records,
     budget: ReadBudget | None = None,
     hook: AttemptHook | None = None,
+    require_size_within_max: bool = True,
 ) -> StableWindows:
-    """Read bounded head/tail metadata without copying or loading a transcript."""
+    """Read bounded head/tail metadata without copying or loading a transcript.
+
+    When ``require_size_within_max`` is true (default), files larger than
+    ``max_bytes`` fail closed. Codex discovery may set it false to admit only
+    the head/tail of multi-GB rollouts without changing other adapters' contracts.
+    """
 
     if (
         head_bytes < 0
@@ -579,7 +585,7 @@ def stable_read_windows(
                 before_stat = os.fstat(descriptor)
                 if not _entry_identity_matches(before_entry, before_stat):
                     continue
-                if before_stat.st_size > max_bytes:
+                if require_size_within_max and before_stat.st_size > max_bytes:
                     raise DiagnosticError.limit_exceeded()
                 if hook:
                     hook("before-read", attempt, safe)

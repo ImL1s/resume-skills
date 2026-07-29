@@ -716,8 +716,12 @@ class CodexAdapterTests(unittest.TestCase):
             capability = codex.ADAPTER.probe(self.query())
             values = codex.ADAPTER.list(self.query(), ReadBudget())
 
-        self.assertEqual(capability.state, "supported")
         self.assertEqual(capability.format_id, codex.SQLITE_FORMAT)
+        if codex._trusted_zstd() is None:
+            self.assertEqual(capability.state, "partial")
+            self.assertIn("W_OPTIONAL_ZSTD_UNAVAILABLE", capability.warnings)
+        else:
+            self.assertEqual(capability.state, "supported")
         self.assertEqual([item.session_id for item in values], [identifier])
         self.assertEqual(before, tree_snapshot(self.root))
 
@@ -789,15 +793,135 @@ class CodexAdapterTests(unittest.TestCase):
         decoder.assert_called_once_with(encoded, max_bytes=len(encoded))
         self.assertEqual(session.session_id, identifier)
 
-    def test_supported_database_empty_result_does_not_scan_rollouts(self) -> None:
-        self.rollout()
+    def test_sparse_database_recovers_sessions_via_fs_head_fallback(self) -> None:
+        """Recognized but under-filled SQLite activates read-only FS head scan (#7)."""
+
+        identifier, _path = self.rollout()
         self.database(9, [])
+        values = codex.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+        self.assertEqual(values[0].provider, codex.ROLLOUT_FORMAT)
+
+    def test_stale_database_path_recovers_via_fs_head_fallback(self) -> None:
+        """SQL rows whose rollout path cannot resolve still recover from sessions/ (#7)."""
+
+        identifier, path = self.rollout()
+        missing = path.parent / f"rollout-2026-07-20T00-00-00-{identifier}-missing.jsonl"
+        self.database(9, [self.db_row(identifier, missing)])
+        values = codex.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+        self.assertEqual(values[0].source_path, str(path))
+
+    def test_probe_does_not_full_walk_sessions_tree(self) -> None:
+        """Probe samples sessions/ with a soft cap; never calls full _rollout_paths (#7)."""
+
+        self.rollout()
         with mock.patch.object(
             codex,
             "_rollout_paths",
-            side_effect=AssertionError("supported database is authoritative"),
+            side_effect=AssertionError("probe must not full-walk sessions/"),
         ):
-            self.assertEqual(codex.ADAPTER.list(self.query(), ReadBudget()), [])
+            capability = codex.ADAPTER.probe(self.query())
+        self.assertEqual(capability.state, "supported")
+        self.assertEqual(capability.format_id, codex.ROLLOUT_FORMAT)
+
+    def test_probe_head_uses_byte_window_not_whole_file_scan(self) -> None:
+        """Large plain rollouts are discovered from a head window only (#7)."""
+
+        identifier, path = self.rollout()
+        # Append a large body after the metadata head so whole-file scanners would
+        # pay multi-MB I/O; head window must still recognize the session.
+        with path.open("ab") as handle:
+            handle.write(b'{"type":"response_item","payload":{"type":"message","role":"assistant","content":"' + (b"x" * 400_000) + b'"}}\n')
+        with mock.patch.object(
+            codex,
+            "stable_scan_lines",
+            side_effect=AssertionError("head discovery must not whole-file scan"),
+        ):
+            capability = codex.ADAPTER.probe(self.query())
+            values = codex.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual(capability.state, "supported")
+        self.assertEqual(capability.format_id, codex.ROLLOUT_FORMAT)
+        self.assertEqual([item.session_id for item in values], [identifier])
+
+    def test_exact_id_db_hit_survives_large_sessions_tree(self) -> None:
+        """Verified exact-ID DB rows must not be lost if FS soft-cap stops (#7)."""
+
+        identifier, path = self.rollout()
+        self.database(9, [self.db_row(identifier, path)])
+        with mock.patch.object(
+            codex,
+            "_rollout_paths",
+            side_effect=AssertionError("exact-ID verified DB hit must skip underfilled FS"),
+        ):
+            values = codex.ADAPTER.list(self.query(identifier), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+
+    def test_exact_id_absent_from_sqlite_still_fs_falls_back(self) -> None:
+        """Exact UUID missing from a recognized DB still recovers from sessions/ (#7)."""
+
+        identifier, _path = self.rollout()
+        other, other_path = self.rollout()
+        self.database(9, [self.db_row(other, other_path)])
+        values = codex.ADAPTER.list(self.query(identifier), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+
+    def test_list_fs_soft_limit_keeps_db_rows(self) -> None:
+        """Soft FS fallback cap must merge, not raise away, verified DB rows (#7)."""
+
+        identifier, path = self.rollout()
+        self.database(9, [self.db_row(identifier, path)])
+        # Force sparse FS path with soft_limit; hard walk would raise.
+        with mock.patch.object(
+            codex,
+            "_walk_rollouts",
+            side_effect=lambda *args, **kwargs: (_ for _ in ()).throw(
+                DiagnosticError.limit_exceeded()
+            )
+            if not kwargs.get("soft_limit")
+            else [],
+        ):
+            # underfilled with no exact ref → FS soft path returns [] and keeps DB.
+            values = codex.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+
+    def test_probe_sample_processes_names_at_visit_cap(self) -> None:
+        """Visit-budget exhaustion mid-listing still processes collected names (#7)."""
+
+        day = self.root / "sessions" / "2026" / "07" / "20"
+        day.mkdir(parents=True)
+        # 129 rollouts in one day directory: more than default visit cap.
+        identifiers: list[str] = []
+        for index in range(codex._PROBE_VISIT_CAP + 1):
+            identifier = str(uuid.uuid4())
+            identifiers.append(identifier)
+            path = day / f"rollout-2026-07-20T12-00-00-{identifier}.jsonl"
+            write_jsonl(
+                path,
+                [
+                    {
+                        "type": "session_meta",
+                        "timestamp": stamp(-1),
+                        "payload": {
+                            "id": identifier,
+                            "cwd": str(self.cwd),
+                            "source": "cli",
+                        },
+                    }
+                ],
+            )
+        sample = codex._sample_rollout_paths(
+            str(self.root),
+            max_visits=codex._PROBE_VISIT_CAP,
+            max_files=8,
+        )
+        self.assertGreaterEqual(len(sample), 1)
+        self.assertTrue(
+            any(codex._rollout_id(path) in identifiers for path in sample),
+            "capped day-dir listing must still yield rollouts from collected names",
+        )
+        capability = codex.ADAPTER.probe(self.query())
+        self.assertEqual(capability.state, "supported")
 
     def test_unknown_database_schema_falls_back_and_retains_rollout_warning(self) -> None:
         identifier = str(uuid.uuid4())
@@ -871,8 +995,9 @@ class CodexAdapterTests(unittest.TestCase):
         with self.assertRaises(DiagnosticError) as corrupt:
             codex.ADAPTER.list(self.query(), ReadBudget())
         self.assertEqual(corrupt.exception.code, "E_CORRUPT_RECORD")
+        # Discovery heads charge scanned_records (#7), not full transcript_records.
         with self.assertRaises(DiagnosticError) as bounded:
-            codex.ADAPTER.list(self.query(), ReadBudget(Bounds(transcript_records=1)))
+            codex.ADAPTER.list(self.query(), ReadBudget(Bounds(scanned_records=1)))
         self.assertEqual(bounded.exception.code, "E_LIMIT_EXCEEDED")
         marker = self.root / "owned"
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -882,7 +1007,13 @@ class CodexAdapterTests(unittest.TestCase):
             stderr=stderr,
         )
         self.assertFalse(marker.exists())
-        with mock.patch.object(codex, "stable_read_bytes", side_effect=DiagnosticError.source_busy()):
+        with mock.patch.object(
+            codex, "stable_read_bytes", side_effect=DiagnosticError.source_busy()
+        ), mock.patch.object(
+            codex, "stable_scan_lines", side_effect=DiagnosticError.source_busy()
+        ), mock.patch.object(
+            codex, "stable_read_windows", side_effect=DiagnosticError.source_busy()
+        ):
             with self.assertRaises(DiagnosticError) as busy:
                 codex.ADAPTER.list(self.query(identifier), ReadBudget())
         self.assertEqual(busy.exception.code, "E_SOURCE_BUSY")

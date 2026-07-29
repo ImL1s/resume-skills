@@ -23,12 +23,20 @@ from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
 from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
 from ..sanitize import sanitize_turn_record
-from ..snapshot import StableRead, stable_read_bytes
+from ..snapshot import StableRead, stable_read_bytes, stable_read_windows, stable_scan_lines
 from .base import CapabilityReport, ResolvedRef
 
 ROLLOUT_FORMAT = "codex-rollout-jsonl-v1"
 SQLITE_FORMAT = "codex-state-sqlite-v1"
 ZSTD_FORMAT = "codex-rollout-zstd-v1"
+# Probe/list metadata heads only (#7): never full-transcript parse for discovery.
+_PROBE_HEAD_RECORDS = 10
+_META_HEAD_CAP = 200
+# Byte window for head-only discovery (session_meta + first turns fit well under this).
+_PROBE_HEAD_BYTES = 256 * 1024
+# Probe sessions sample: soft-stop caps — never raise E_LIMIT_EXCEEDED from tree size.
+_PROBE_VISIT_CAP = 128
+_PROBE_FILE_CAP = 8
 
 _STATE_DB = re.compile(r"^state_(\d{1,3})\.sqlite$")
 _ROLLOUT = re.compile(
@@ -138,19 +146,37 @@ def _walk_rollouts(
     *,
     max_depth: int = 4,
     scan_state: list[int] | None = None,
+    soft_limit: bool = False,
+    truncated: list[bool] | None = None,
 ) -> list[str]:
+    """Walk rollouts under ``container``.
+
+    When ``soft_limit`` is false (default), exceeding ``scanned_records`` raises
+    ``E_LIMIT_EXCEEDED`` so callers do not rank a traversal-order prefix as
+    complete. When true (list FS fallback merge), stop and keep what was found
+    so already-verified DB rows are not discarded (#7).
+    """
+
     if not _regular_directory(container, root):
         return []
     output: list[str] = []
     visited = scan_state if scan_state is not None else [0]
+    stopped = [False]
 
     def visit(directory: str, depth: int) -> None:
+        if stopped[0]:
+            return
         names: list[str] = []
+        hit_cap = False
         try:
             with os.scandir(directory) as entries:
                 for entry in entries:
                     visited[0] += 1
                     if visited[0] > DEFAULT_BOUNDS.scanned_records:
+                        if soft_limit:
+                            # Keep names already collected; stop further descent.
+                            hit_cap = True
+                            break
                         # Do not return a traversal-order prefix: callers use
                         # this set to resolve the newest rollout.
                         raise DiagnosticError.limit_exceeded()
@@ -159,7 +185,10 @@ def _walk_rollouts(
             raise
         except OSError as error:
             raise DiagnosticError.source_busy(provider=ROLLOUT_FORMAT) from error
-        names.sort()
+        # Soft discovery prefers lexicographically newer path components first
+        # so recent date dirs are examined before the visit budget is spent.
+        names.sort(reverse=soft_limit)
+        # Always process this directory's collected batch before soft-stopping.
         for name in names:
             path = os.path.join(directory, name)
             try:
@@ -168,18 +197,34 @@ def _walk_rollouts(
                 continue
             if stat.S_ISLNK(current.st_mode):
                 continue
-            if stat.S_ISDIR(current.st_mode) and depth < max_depth:
+            if stat.S_ISDIR(current.st_mode) and depth < max_depth and not hit_cap and not stopped[0]:
                 visit(path, depth + 1)
             elif stat.S_ISREG(current.st_mode) and _ROLLOUT.fullmatch(name):
                 output.append(path)
+        if hit_cap:
+            stopped[0] = True
+            if truncated is not None:
+                truncated[0] = True
 
     visit(container, 0)
     return output
 
 
-def _rollout_paths(root: str, query: Query) -> list[str]:
+def _rollout_paths(
+    root: str,
+    query: Query,
+    *,
+    soft_limit: bool = False,
+    truncated: list[bool] | None = None,
+) -> list[str]:
     scan_state = [0]
-    values = _walk_rollouts(os.path.join(root, "sessions"), root, scan_state=scan_state)
+    values = _walk_rollouts(
+        os.path.join(root, "sessions"),
+        root,
+        scan_state=scan_state,
+        soft_limit=soft_limit,
+        truncated=truncated,
+    )
     # Archived rows are intentionally invisible unless the user supplied an
     # exact native UUID.  Text and path searches cannot enumerate archives.
     if query.ref:
@@ -193,6 +238,8 @@ def _rollout_paths(root: str, query: Query) -> list[str]:
                     os.path.join(root, "archived_sessions"),
                     root,
                     scan_state=scan_state,
+                    soft_limit=soft_limit,
+                    truncated=truncated,
                 )
             )
     exact = _exact_uuid_ref(query.ref)
@@ -205,6 +252,73 @@ def _rollout_paths(root: str, query: Query) -> list[str]:
             return (0.0, path)
 
     return sorted(filtered, key=newest)
+
+
+def _sample_rollout_paths(
+    root: str,
+    *,
+    max_visits: int = _PROBE_VISIT_CAP,
+    max_files: int = _PROBE_FILE_CAP,
+    max_depth: int = 4,
+) -> list[str]:
+    """Bounded ``sessions/`` sample for probe only (#7).
+
+    Soft-stops after ``max_visits`` directory entries or ``max_files`` rollouts.
+    Never raises ``E_LIMIT_EXCEEDED`` from tree size (unlike ``_rollout_paths``).
+    """
+
+    container = os.path.join(root, "sessions")
+    if not _regular_directory(container, root):
+        return []
+    found: list[str] = []
+    visits = 0
+
+    def visit(directory: str, depth: int) -> None:
+        nonlocal visits
+        if len(found) >= max_files:
+            return
+        # Collect a bounded name batch first, then always process that batch.
+        # Never return between collection and processing (Codex review #7).
+        remaining = max(0, max_visits - visits)
+        names: list[str] = []
+        if remaining:
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        if len(names) >= remaining:
+                            break
+                        names.append(entry.name)
+            except OSError:
+                return
+            visits += len(names)
+        # Prefer lexicographically newer date/hour path components first.
+        names.sort(reverse=True)
+        for name in names:
+            if len(found) >= max_files:
+                return
+            path = os.path.join(directory, name)
+            try:
+                current = os.lstat(path)
+            except OSError:
+                continue
+            if stat.S_ISLNK(current.st_mode):
+                continue
+            if stat.S_ISDIR(current.st_mode) and depth < max_depth:
+                # Recurse only while visit budget remains for child listings.
+                if visits < max_visits:
+                    visit(path, depth + 1)
+            elif stat.S_ISREG(current.st_mode) and _ROLLOUT.fullmatch(name):
+                found.append(path)
+
+    visit(container, 0)
+
+    def newest(path: str) -> tuple[float, str]:
+        try:
+            return (-os.lstat(path).st_mtime, path)
+        except OSError:
+            return (0.0, path)
+
+    return sorted(found, key=newest)
 
 
 def _exact_uuid_ref(value: str | None) -> str | None:
@@ -440,6 +554,105 @@ def _read_rollout(path: str, root: str, budget: ReadBudget) -> tuple[StableRead,
     return observation, records, warnings, provider
 
 
+def _read_rollout_head(
+    path: str,
+    root: str,
+    budget: ReadBudget,
+    *,
+    max_records: int = _PROBE_HEAD_RECORDS,
+) -> tuple[list[dict[str, Any]], tuple[str, ...], str, str]:
+    """Bounded plain-JSONL metadata head for probe/list (issue #7).
+
+    Reads only a fixed head window via ``stable_read_windows`` (not whole-file
+    ``stable_scan_lines``). Discovery charges ``scanned_records`` per line, not
+    ``transcript_records``. Compressed rollouts are out of scope.
+    """
+
+    if path.endswith(".zst"):
+        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=ZSTD_FORMAT)
+    limit = max(1, min(max_records, _META_HEAD_CAP))
+    maximum_record = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
+    provider = ROLLOUT_FORMAT
+    windows = stable_read_windows(
+        path,
+        root=root,
+        head_bytes=min(_PROBE_HEAD_BYTES, 4 * 1024 * 1024),
+        tail_bytes=0,
+        max_bytes=min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes),
+        attempts=min(budget.limits.snapshot_attempts, DEFAULT_BOUNDS.snapshot_attempts),
+        membership_limit=min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records),
+        budget=budget,
+        require_size_within_max=False,
+    )
+    data = windows.head
+    full_in_head = windows.fingerprint.size <= len(data)
+    # Drop a trailing incomplete line when the window cuts mid-record.
+    raw_lines = data.splitlines(keepends=True)
+    if raw_lines and not full_in_head:
+        last = raw_lines[-1]
+        if not last.endswith((b"\n", b"\r")):
+            raw_lines = raw_lines[:-1]
+    records: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    updated_hint: str | None = None
+    # Cap physical head lines (not only retained records) so skipped outer types
+    # cannot burn the discovery budget before session_meta is seen (#7 P2).
+    lines_seen = 0
+    for raw in raw_lines:
+        if len(records) >= limit or lines_seen >= limit:
+            break
+        lines_seen += 1
+        budget.consume_records()
+        terminated = raw.endswith((b"\n", b"\r"))
+        body = raw[:-1] if terminated and raw.endswith(b"\n") else raw
+        if body.endswith(b"\r"):
+            body = body[:-1]
+        if len(body) > maximum_record:
+            raise DiagnosticError.limit_exceeded()
+        try:
+            text = body.decode("utf-8")
+            utf8_valid = True
+        except UnicodeDecodeError:
+            utf8_valid = False
+            text = ""
+        if not utf8_valid:
+            if not terminated and full_in_head:
+                warnings.append("W_PARTIAL_TAIL")
+                break
+            raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider)
+        stripped = text.strip()
+        if not stripped:
+            continue
+        try:
+            value = json.loads(stripped, object_pairs_hook=_object)
+        except (json.JSONDecodeError, _DuplicateKey, RecursionError) as error:
+            if not terminated and full_in_head:
+                warnings.append("W_PARTIAL_TAIL")
+                break
+            raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider) from error
+        if not isinstance(value, dict):
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
+        outer = value.get("type")
+        payload = value.get("payload")
+        if outer in _SKIP_OUTER_TYPES or (isinstance(outer, str) and outer not in _OUTER_TYPES):
+            warnings.append("W_UNKNOWN_RECORD_SKIPPED")
+            continue
+        if outer not in _OUTER_TYPES or not isinstance(payload, dict):
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
+        records.append(value)
+        stamp = value.get("timestamp")
+        if isinstance(stamp, str):
+            updated_hint = stamp
+    if not records:
+        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
+    updated_at = datetime.fromtimestamp(
+        windows.fingerprint.mtime_ns / 1_000_000_000, timezone.utc
+    ).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    if not updated_at and updated_hint:
+        updated_at = _rfc3339(updated_hint) or ""
+    return records, tuple(dict.fromkeys(warnings)), provider, updated_at
+
+
 def _session_meta(records: list[dict[str, Any]], expected_id: str, provider: str) -> dict[str, Any]:
     values = [record for record in records if record.get("type") == "session_meta"]
     if not values:
@@ -603,14 +816,34 @@ def _rollout_summary(path: str, root: str, query: Query, budget: ReadBudget) -> 
     identifier = _rollout_id(path)
     if identifier is None:
         return None
-    if path.endswith(".zst") and _trusted_zstd() is None:
+    if path.endswith(".zst"):
+        # Compressed list discovery still needs a trusted decoder; without it skip.
+        if _trusted_zstd() is None:
+            return None
+        observation, records, warnings, provider = _read_rollout(path, root, budget)
+        updated = _mtime(observation)
+    else:
+        try:
+            records, warnings, provider, updated = _read_rollout_head(
+                path,
+                root,
+                budget,
+                max_records=_PROBE_HEAD_RECORDS,
+            )
+        except DiagnosticError as error:
+            # Fail closed on corruption/limits/busy; soft-skip unsupported shapes.
+            if error.code in {"E_CORRUPT_RECORD", "E_LIMIT_EXCEEDED", "E_SOURCE_BUSY"}:
+                raise
+            return None
+    try:
+        metadata = _session_meta(records, identifier, provider)
+        cwd = canonicalize_cwd(metadata["cwd"])
+    except DiagnosticError as error:
+        if error.code in {"E_CORRUPT_RECORD", "E_LIMIT_EXCEEDED", "E_SOURCE_BUSY"}:
+            raise
         return None
-    observation, records, warnings, provider = _read_rollout(path, root, budget)
-    metadata = _session_meta(records, identifier, provider)
-    cwd = canonicalize_cwd(metadata["cwd"])
     if query.cwd is not None and not same_cwd(cwd, query.cwd):
         return None
-    updated = _mtime(observation)
     if not _within(updated, query, identifier):
         return None
     # List path: title from first user-ish record without full turn normalization.
@@ -661,11 +894,19 @@ class CodexAdapter:
             root = _existing_root(query)
             if root is None:
                 return CapabilityReport(self.key, None, "unavailable")
+            # 1) Recognized SQLite signature is enough — never walk sessions/ (#7).
             for database in _state_databases(root):
                 try:
                     with _database_connection(database, root) as connection:
                         if _table_signature(connection)[0]:
-                            warnings = self._zstd_warnings(root, query)
+                            # Decoder policy only (no full-tree zstd sample).
+                            # Without trusted zstd, compressed rows are unreadable
+                            # in list/show — surface partial + warning (#7 P2).
+                            warnings = (
+                                ()
+                                if _trusted_zstd() is not None
+                                else ("W_OPTIONAL_ZSTD_UNAVAILABLE",)
+                            )
                             return CapabilityReport(
                                 self.key,
                                 SQLITE_FORMAT,
@@ -678,36 +919,35 @@ class CodexAdapter:
                     if error.code in {"E_SQLITE_HOT_JOURNAL", "E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
                         return CapabilityReport(self.key, SQLITE_FORMAT, "unsafe", root=root)
                     raise
-            paths = _rollout_paths(root, query)
+            # 2) Bounded plain rollout head — sample only, never full sessions walk (#7).
+            paths = _sample_rollout_paths(root)
             plain = [path for path in paths if not path.endswith(".zst")]
             if plain:
                 try:
                     identifier = _rollout_id(plain[0])
-                    assert identifier is not None
-                    _, records, record_warnings, provider = _read_rollout(
+                    if identifier is None:
+                        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key)
+                    records, record_warnings, provider, _updated = _read_rollout_head(
                         plain[0],
                         root,
                         ReadBudget(),
+                        max_records=_PROBE_HEAD_RECORDS,
                     )
                     _session_meta(records, identifier, provider)
-                    warnings = tuple(
-                        dict.fromkeys(
-                            (*record_warnings, *self._zstd_warnings(root, query))
-                        )
-                    )
                     return CapabilityReport(
                         self.key,
                         ROLLOUT_FORMAT,
-                        "partial" if warnings else "supported",
+                        "partial" if record_warnings else "supported",
                         root=root,
                         evidence=(ROLLOUT_FORMAT,),
-                        warnings=warnings,
+                        warnings=record_warnings,
                     )
                 except DiagnosticError as error:
                     if error.code in {"E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
                         return CapabilityReport(self.key, ROLLOUT_FORMAT, "unsafe", root=root)
-                    if error.code != "E_UNSUPPORTED_FORMAT":
+                    if error.code not in {"E_UNSUPPORTED_FORMAT", "E_CORRUPT_RECORD", "E_LIMIT_EXCEEDED"}:
                         raise
+            # 3) Compressed presence from same bounded sample; decoder policy only.
             zstd = [path for path in paths if path.endswith(".zst")]
             if zstd and _trusted_zstd() is None:
                 return CapabilityReport(
@@ -724,32 +964,109 @@ class CodexAdapter:
             state = "unsafe" if error.code in {"E_SOURCE_BUSY", "E_UNSAFE_PATH", "E_SQLITE_HOT_JOURNAL"} else "unsupported"
             return CapabilityReport(self.key, None, state)
 
-    @staticmethod
-    def _zstd_warnings(root: str, query: Query) -> tuple[str, ...]:
-        if _trusted_zstd() is not None:
-            return ()
-        return ("W_OPTIONAL_ZSTD_UNAVAILABLE",) if any(path.endswith(".zst") for path in _rollout_paths(root, query)) else ()
-
     def list(self, query: Query, budget: ReadBudget) -> list[SessionSummary]:
         root = _existing_root(query)
         if root is None:
             raise DiagnosticError("E_CAPABILITY_UNAVAILABLE", source=self.key)
         values: list[SessionSummary] = []
         database_supported = False
+        stale_dropped = False
+        unresolved_paths = 0
         for database in _state_databases(root):
-            supported, rows = _database_summaries(database, root, query, budget)
+            supported, rows, unresolved = _database_summaries(database, root, query, budget)
             if supported:
                 database_supported = True
-                values = rows
+                unresolved_paths = unresolved
+                # Verify SQLite path hints against bounded rollout heads when plain.
+                verified: list[SessionSummary] = []
+                for row in rows:
+                    path = row.source_path
+                    if path is None:
+                        stale_dropped = True
+                        continue
+                    if path.endswith(".zst"):
+                        verified.append(row)
+                        continue
+                    try:
+                        records, head_warnings, _provider, updated = _read_rollout_head(
+                            path,
+                            root,
+                            budget,
+                            max_records=_PROBE_HEAD_RECORDS,
+                        )
+                        metadata = _session_meta(records, row.session_id, ROLLOUT_FORMAT)
+                        cwd = canonicalize_cwd(metadata["cwd"])
+                    except DiagnosticError:
+                        stale_dropped = True
+                        continue
+                    if query.cwd is not None and not same_cwd(cwd, query.cwd):
+                        stale_dropped = True
+                        continue
+                    # Keep SQLITE_FORMAT provenance from the DB list path.
+                    verified.append(
+                        SessionSummary(
+                            source=row.source,
+                            session_id=row.session_id,
+                            source_path=path,
+                            title=row.title,
+                            cwd=cwd,
+                            branch=row.branch,
+                            created_at=row.created_at,
+                            updated_at=row.updated_at or updated,
+                            provider=row.provider or SQLITE_FORMAT,
+                            warnings=tuple(
+                                dict.fromkeys((*(row.warnings or ()), *head_warnings))
+                            ),
+                        )
+                    )
+                values = verified
                 break
-        # A recognized DB is authoritative even when the query has no matches.
-        # Rollout scanning is a compatibility fallback only when no DB schema is
-        # recognized, never a way to hide corruption, bounds, or busy diagnostics.
-        if not database_supported:
-            for path in _rollout_paths(root, query):
-                item = _rollout_summary(path, root, query, budget)
-                if item is not None:
+        # FS head fallback (#7): missing schema, unresolved/stale rows, or under-filled
+        # recognized DB (sparse index). Skip only when an exact UUID was already verified
+        # from SQLite so a huge sessions/ tree cannot raise away a good match.
+        exact_ref = _exact_uuid_ref(query.ref)
+        exact_hit = exact_ref is not None and any(item.session_id == exact_ref for item in values)
+        # Always soft-FS when the recognized DB did not fully settle the query:
+        # under-filled *or* a full listed_sessions page (may still omit newer FS
+        # sessions). Skip only after an exact UUID was verified from SQLite.
+        need_fs = (
+            not database_supported
+            or stale_dropped
+            or unresolved_paths > 0
+            or (database_supported and not exact_hit)
+        )
+        fs_truncated = False
+        if need_fs:
+            # Soft FS recovery for list: large trees report W_TRUNCATED rather than
+            # raising away exact-ID / sparse recoveries (#7).
+            known = {item.session_id for item in values}
+            truncated = [False]
+            budget_stopped = False
+            fs_added = 0
+            # Head-parse up to listed_sessions *new* FS rows so newer FS sessions
+            # can outrank older DB rows after merge (not stop at combined count).
+            fs_target = DEFAULT_BOUNDS.listed_sessions
+            for path in _rollout_paths(root, query, soft_limit=True, truncated=truncated):
+                if fs_added >= fs_target:
+                    fs_truncated = True
+                    break
+                # Skip paths already verified from SQLite before any head/zstd I/O.
+                path_id = _rollout_id(path)
+                if path_id is not None and path_id in known:
+                    continue
+                try:
+                    item = _rollout_summary(path, root, query, budget)
+                except DiagnosticError as error:
+                    # Soft-stop on discovery budget even before the first match.
+                    if error.code == "E_LIMIT_EXCEEDED":
+                        budget_stopped = True
+                        break
+                    raise
+                if item is not None and item.session_id not in known:
                     values.append(item)
+                    known.add(item.session_id)
+                    fs_added += 1
+            fs_truncated = fs_truncated or truncated[0] or budget_stopped
         deduplicated: dict[str, SessionSummary] = {}
         for value in values:
             previous = deduplicated.get(value.session_id)
@@ -758,11 +1075,35 @@ class CodexAdapter:
                 previous.provider or "",
             ):
                 deduplicated[value.session_id] = value
-        return sorted(
+        ranked = sorted(
             deduplicated.values(),
             key=lambda item: (item.updated_at is None, item.updated_at or "", item.session_id),
             reverse=True,
         )
+        if len(ranked) > DEFAULT_BOUNDS.listed_sessions:
+            ranked = ranked[: DEFAULT_BOUNDS.listed_sessions]
+            fs_truncated = True
+        if fs_truncated and not ranked:
+            # Empty + truncated: exact/cwd filters may exclude the soft prefix.
+            # Fail closed so callers do not treat an incomplete scan as no-match.
+            raise DiagnosticError.limit_exceeded()
+        if fs_truncated:
+            ranked = [
+                SessionSummary(
+                    source=item.source,
+                    session_id=item.session_id,
+                    source_path=item.source_path,
+                    title=item.title,
+                    cwd=item.cwd,
+                    branch=item.branch,
+                    created_at=item.created_at,
+                    updated_at=item.updated_at,
+                    provider=item.provider,
+                    warnings=tuple(dict.fromkeys((*(item.warnings or ()), "W_TRUNCATED"))),
+                )
+                for item in ranked
+            ]
+        return ranked
 
     def show(self, ref: ResolvedRef, query: Query, budget: ReadBudget) -> Session:
         root = _existing_root(query)
