@@ -1224,18 +1224,25 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
 
     with RootLock(root):
         require_no_pending_journal(root)
-        # Preflight token is advisory. Rebuild mutation authority under the lock
-        # from the exact current ownership manifest + trusted package materialize.
+        # Preflight token is advisory for payload bytes, but ownership identity
+        # must still match: if the locked manifest digest diverged, fail busy so
+        # multi-root compensation restores the captured checkpoint rather than
+        # committing a newer concurrent generation then rolling it back (#35).
         existing_pre = load_manifest(root)
         current_digest = manifest_content_digest(existing_pre)
-        changed_since_preflight = current_digest != plan.base_manifest_digest
+        if current_digest != plan.base_manifest_digest:
+            raise DiagnosticError("E_INSTALL_BUSY")
+        changed_since_preflight = False
 
+        # Honor preflight force classification when the Python API calls
+        # execute_install(plan) without repeating force_with_backup=True.
+        effective_force = force_with_backup or bool(plan.backups)
         locked = plan_install(
             host=plan.host,
             scope=plan.scope,
             root=plan.root,
             dry_run=False,
-            force_with_backup=force_with_backup,
+            force_with_backup=effective_force,
         )
         # Request identity must match; payload/manifest always come from locked rebuild.
         if (
@@ -1245,17 +1252,11 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
             or os.path.realpath(locked.root) != os.path.realpath(plan.root)
         ):
             raise DiagnosticError("E_INSTALL_BUSY")
+        # Digest must still match after replan observation (same locked read path).
+        if locked.base_manifest_digest != plan.base_manifest_digest:
+            raise DiagnosticError("E_INSTALL_BUSY")
         plan = locked
-        existing = load_manifest(root)
-        # Generation must match the locked replan (previous + 1, or 1 if absent).
-        expected_prev = plan.base_generation
-        if existing is None:
-            if expected_prev is not None and plan.base_manifest_digest != _MANIFEST_ABSENT:
-                # Locked replan already observed absence; continue with rebuilt plan.
-                pass
-        elif expected_prev is not None and existing.generation != expected_prev:
-            # Transparent replan already incorporated the newer generation.
-            pass
+        existing = existing_pre
         # Re-evaluate ownership under the lock for the rebuilt plan only.
         planned_backups = set(plan.backups)
         backups: list[str] = []
@@ -1266,7 +1267,7 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                 data=data,
                 existing=existing,
                 claim=plan.claim,
-                force_with_backup=force_with_backup or rel in planned_backups,
+                force_with_backup=effective_force or rel in planned_backups,
             )
             if kind == "backup":
                 backups.append(rel)
@@ -1450,9 +1451,9 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                         data=plan.files[rel],
                         existing=existing,
                         claim=plan.claim,
-                        force_with_backup=force_with_backup or safe in planned_backups or safe in backups,
+                        force_with_backup=effective_force or safe in planned_backups or safe in backups,
                     )
-                    if kind == "backup" and safe not in backups and not force_with_backup and safe not in planned_backups:
+                    if kind == "backup" and safe not in backups and not effective_force and safe not in planned_backups:
                         raise DiagnosticError("E_INSTALL_CONFLICT")
                     if kind == "retain":
                         journal["paths"][safe]["state"] = "retained"
