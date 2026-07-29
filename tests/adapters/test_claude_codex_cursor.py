@@ -716,8 +716,12 @@ class CodexAdapterTests(unittest.TestCase):
             capability = codex.ADAPTER.probe(self.query())
             values = codex.ADAPTER.list(self.query(), ReadBudget())
 
-        self.assertEqual(capability.state, "supported")
         self.assertEqual(capability.format_id, codex.SQLITE_FORMAT)
+        if codex._trusted_zstd() is None:
+            self.assertEqual(capability.state, "partial")
+            self.assertIn("W_OPTIONAL_ZSTD_UNAVAILABLE", capability.warnings)
+        else:
+            self.assertEqual(capability.state, "supported")
         self.assertEqual([item.session_id for item in values], [identifier])
         self.assertEqual(before, tree_snapshot(self.root))
 

@@ -883,10 +883,12 @@ class CodexAdapter:
                     with _database_connection(database, root) as connection:
                         if _table_signature(connection)[0]:
                             # Decoder policy only (no full-tree zstd sample).
+                            # Without trusted zstd, compressed rows are unreadable
+                            # in list/show — surface partial + warning (#7 P2).
                             warnings = (
                                 ()
                                 if _trusted_zstd() is not None
-                                else ()
+                                else ("W_OPTIONAL_ZSTD_UNAVAILABLE",)
                             )
                             return CapabilityReport(
                                 self.key,
