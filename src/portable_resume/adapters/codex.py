@@ -1053,8 +1053,8 @@ class CodexAdapter:
                 try:
                     item = _rollout_summary(path, root, query, budget)
                 except DiagnosticError as error:
-                    # Keep recovered sessions if discovery budget exhausts mid-fallback.
-                    if error.code == "E_LIMIT_EXCEEDED" and (values or fs_added):
+                    # Soft-stop on discovery budget even before the first match.
+                    if error.code == "E_LIMIT_EXCEEDED":
                         budget_stopped = True
                         break
                     raise
@@ -1079,6 +1079,10 @@ class CodexAdapter:
         if len(ranked) > DEFAULT_BOUNDS.listed_sessions:
             ranked = ranked[: DEFAULT_BOUNDS.listed_sessions]
             fs_truncated = True
+        if fs_truncated and not ranked:
+            # Empty + truncated: exact/cwd filters may exclude the soft prefix.
+            # Fail closed so callers do not treat an incomplete scan as no-match.
+            raise DiagnosticError.limit_exceeded()
         if fs_truncated:
             ranked = [
                 SessionSummary(
