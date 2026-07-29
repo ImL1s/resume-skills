@@ -46,7 +46,7 @@ _DESTINATION_PAYLOAD_PROFILES: dict[str, str] = {
     "codex": "codex-v1",
     "cursor": "cursor-v1",
     "grok": "grok-v1",
-    "kimi": "kimi-code-v1",
+    "kimi": "kimi-code-v2",
     "opencode": "opencode-v1",
     "qwen": "qwen-v1",
     "pi": "pi-v1",

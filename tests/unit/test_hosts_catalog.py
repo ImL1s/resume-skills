@@ -16,6 +16,7 @@ from portable_resume.install.catalog import (
     host_install_record,
     hosts_report,
     resolve_skill_root,
+    resolve_skill_root_info,
 )
 from portable_resume.install.cli import run as install_cli_run
 from portable_resume.registry import enabled_destination_keys
@@ -161,6 +162,76 @@ class HostsCatalogTests(unittest.TestCase):
             resolve_skill_root(
                 host="claude", scope="project", project_dir=None, home_dir="/tmp"
             )
+
+    def test_kimi_global_honors_kimi_code_home(self) -> None:
+        """$KIMI_CODE_HOME/skills is the global Skill root when not isolating (#24)."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            kimi_home = Path(tmp) / "kimi-custom"
+            home.mkdir()
+            kimi_home.mkdir()
+            env = {"KIMI_CODE_HOME": str(kimi_home)}
+            resolved = resolve_skill_root_info(
+                host="kimi",
+                scope="global",
+                project_dir=None,
+                home_dir=str(home),
+                environ=env,
+                isolation=False,
+            )
+            self.assertEqual(
+                resolved.path,
+                os.path.realpath(os.path.join(str(kimi_home), "skills")),
+            )
+            self.assertEqual(resolved.root_source, "env:KIMI_CODE_HOME")
+            self.assertEqual(resolved.profile_id, "kimi-code-v2")
+
+    def test_isolation_home_ignores_kimi_code_home(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            kimi_home = Path(tmp) / "kimi-custom"
+            home.mkdir()
+            kimi_home.mkdir()
+            # Temporary home_dir is isolation by default → env ignored.
+            resolved = resolve_skill_root_info(
+                host="kimi",
+                scope="global",
+                project_dir=None,
+                home_dir=str(home),
+                environ={"KIMI_CODE_HOME": str(kimi_home)},
+            )
+            self.assertTrue(
+                resolved.path.endswith(os.path.join("home", ".kimi-code", "skills"))
+            )
+            self.assertEqual(resolved.root_source, "home")
+
+    def test_kimi_env_home_rejects_relative_and_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            for bad in ("", "  ", "relative/path", "has\x00nul"):
+                with self.subTest(bad=repr(bad)):
+                    with self.assertRaises(ValueError):
+                        resolve_skill_root(
+                            host="kimi",
+                            scope="global",
+                            project_dir=None,
+                            home_dir=str(home),
+                            environ={"KIMI_CODE_HOME": bad},
+                            isolation=False,
+                        )
+
+    def test_hosts_report_includes_root_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            report = hosts_report(project_dir=str(Path(tmp) / "p"), home_dir=str(home))
+            kimi = next(h for h in report["hosts"] if h["host"] == "kimi")
+            defaults = kimi["installer_defaults"]
+            self.assertEqual(defaults["global_root_source"], "home")
+            self.assertEqual(defaults["global_home_env"], "KIMI_CODE_HOME")
+            self.assertEqual(defaults["project_root_source"], "project")
 
 
 if __name__ == "__main__":
