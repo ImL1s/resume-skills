@@ -595,11 +595,13 @@ def _read_rollout_plain_stream(
     root: str,
     budget: ReadBudget,
     expected_id: str,
-) -> tuple[dict[str, Any], list[dict[str, Any]], tuple[str, ...], str, str | None]:
+) -> tuple[dict[str, Any], list[dict[str, Any]], tuple[str, ...], str, str | None, str]:
     """Stream plain JSONL show path without retaining the raw file body (#8).
 
     Uses ``stable_scan_lines`` under ``source_read_bytes`` + ``transcript_records``
     and reduces turns attempt-locally. Does not build a full outer-record list.
+    ``updated_at`` is pinned to the pre/post identity of the scanned inode so a
+    replace after the stable scan cannot mix old turns with a new mtime.
     """
 
     provider = ROLLOUT_FORMAT
@@ -608,6 +610,10 @@ def _read_rollout_plain_stream(
     meta_payload: dict[str, Any] | None = None
     created_at: str | None = None
     saw_record = False
+    try:
+        before = os.lstat(path)
+    except OSError as error:
+        raise DiagnosticError.source_busy(provider=provider) from error
     for line in stable_scan_lines(
         path,
         root=root,
@@ -643,6 +649,17 @@ def _read_rollout_plain_stream(
                     meta_payload = dict(payload)
                     created_at = _rfc3339(record.get("timestamp"))
         _feed_history(turns, record, warnings)
+    try:
+        after = os.lstat(path)
+    except OSError as error:
+        raise DiagnosticError.source_busy(provider=provider) from error
+    if (
+        before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before.st_size != after.st_size
+    ):
+        raise DiagnosticError.source_busy(provider=provider)
     if not saw_record:
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
     if meta_payload is None:
@@ -650,14 +667,17 @@ def _read_rollout_plain_stream(
     source = meta_payload.get("source")
     if source not in {"cli", "vscode"}:
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
-    try:
-        mtime = os.lstat(path).st_mtime
-        updated_at = datetime.fromtimestamp(mtime, timezone.utc).isoformat(
-            timespec="microseconds"
-        ).replace("+00:00", "Z")
-    except OSError:
-        updated_at = created_at or ""
-    return meta_payload, turns, tuple(dict.fromkeys(warnings)), provider, created_at if created_at else None
+    updated_at = datetime.fromtimestamp(before.st_mtime_ns / 1_000_000_000, timezone.utc).isoformat(
+        timespec="microseconds"
+    ).replace("+00:00", "Z")
+    return (
+        meta_payload,
+        turns,
+        tuple(dict.fromkeys(warnings)),
+        provider,
+        created_at,
+        updated_at,
+    )
 
 
 def _read_rollout(path: str, root: str, budget: ReadBudget) -> tuple[StableRead, list[dict[str, Any]], tuple[str, ...], str]:
@@ -1328,20 +1348,15 @@ class CodexAdapter:
             )
             updated_at = _mtime(observation)
         else:
-            metadata, raw_turns, stream_warnings, provider, created = _read_rollout_plain_stream(
-                path,
-                root,
-                budget,
-                ref.session_id,
+            metadata, raw_turns, stream_warnings, provider, created, updated_at = (
+                _read_rollout_plain_stream(
+                    path,
+                    root,
+                    budget,
+                    ref.session_id,
+                )
             )
             all_warnings = list(stream_warnings)
-            try:
-                mtime = os.lstat(path).st_mtime
-                updated_at = datetime.fromtimestamp(mtime, timezone.utc).isoformat(
-                    timespec="microseconds"
-                ).replace("+00:00", "Z")
-            except OSError:
-                updated_at = created or ""
         try:
             cwd = canonicalize_cwd(metadata["cwd"])
         except DiagnosticError as error:
