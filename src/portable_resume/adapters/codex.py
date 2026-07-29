@@ -185,7 +185,9 @@ def _walk_rollouts(
             raise
         except OSError as error:
             raise DiagnosticError.source_busy(provider=ROLLOUT_FORMAT) from error
-        names.sort()
+        # Soft discovery prefers lexicographically newer path components first
+        # so recent date dirs are examined before the visit budget is spent.
+        names.sort(reverse=soft_limit)
         # Always process this directory's collected batch before soft-stopping.
         for name in names:
             path = os.path.join(directory, name)
