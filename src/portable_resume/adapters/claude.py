@@ -1104,7 +1104,42 @@ class ClaudeAdapter:
             root = _existing_root(query)
             if root is None:
                 return CapabilityReport(self.key, FORMAT_ID, "unavailable")
+
+            def _probe_path(path: str) -> CapabilityReport | None:
+                try:
+                    _observation, metadata, _warnings = _metadata_windows(
+                        path, root, ReadBudget()
+                    )
+                    _metadata_session_id(path, metadata)
+                    return CapabilityReport(
+                        self.key, FORMAT_ID, "supported", root=root, evidence=(FORMAT_ID,)
+                    )
+                except DiagnosticError as error:
+                    if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"}:
+                        return CapabilityReport(self.key, FORMAT_ID, "unsafe", root=root)
+                    return None
+
+            # Exact absolute path / UUID must not depend on project-dir enumeration
+            # (issue #19: 2k+ siblings or project buckets would fail probe first).
+            try:
+                exact_path = _exact_path_candidate(root, query)
+            except DiagnosticError as error:
+                if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"}:
+                    return CapabilityReport(self.key, FORMAT_ID, "unsafe", root=root)
+                exact_path = None
+            if exact_path is not None:
+                report = _probe_path(exact_path)
+                if report is not None:
+                    return report
+
+            exact = _exact_uuid_ref(query.ref)
             prefer = _prefer_slugs_for(query)
+            if exact is not None and prefer:
+                for path in _direct_uuid_under_slugs(root, exact, prefer):
+                    report = _probe_path(path)
+                    if report is not None:
+                        return report
+
             paths = _session_paths(root, prefer_slugs=prefer, cwd_scoped=bool(prefer))
             if not paths:
                 # Empty cwd-scoped dir is still a supported store layout if projects exists.
@@ -1113,16 +1148,9 @@ class ClaudeAdapter:
                     return CapabilityReport(self.key, FORMAT_ID, "supported", root=root, evidence=(FORMAT_ID,))
                 return CapabilityReport(self.key, FORMAT_ID, "unavailable", root=root)
             for path in paths:
-                try:
-                    _observation, metadata, _warnings = _metadata_windows(
-                        path, root, ReadBudget()
-                    )
-                    _metadata_session_id(path, metadata)
-                    return CapabilityReport(self.key, FORMAT_ID, "supported", root=root, evidence=(FORMAT_ID,))
-                except DiagnosticError as error:
-                    if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"}:
-                        return CapabilityReport(self.key, FORMAT_ID, "unsafe", root=root)
-                    continue
+                report = _probe_path(path)
+                if report is not None:
+                    return report
             return CapabilityReport(self.key, FORMAT_ID, "supported", root=root, evidence=(FORMAT_ID,))
         except DiagnosticError as error:
             state = "unsafe" if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"} else "unsupported"
@@ -1201,13 +1229,12 @@ class ClaudeAdapter:
                     cwd_scoped=False,
                 )
             else:
-                # Validate direct candidates; fall back to broad on total miss.
+                # Validate direct candidates; fall back to broad only on cwd miss
+                # (summary is None). Limit/busy/corrupt diagnostics must propagate
+                # (Codex P2 on #19) — do not swallow as soft no-match.
                 chosen: str | None = None
                 for candidate in ordered:
-                    try:
-                        summary = _summary(candidate, root, query, budget)
-                    except DiagnosticError:
-                        continue
+                    summary = _summary(candidate, root, query, budget)
                     if summary is not None and summary.session_id == ref.session_id:
                         chosen = candidate
                         break
@@ -1230,10 +1257,7 @@ class ClaudeAdapter:
                     path = ordered[0]
                 else:
                     for candidate in ordered:
-                        try:
-                            summary = _summary(candidate, root, query, budget)
-                        except DiagnosticError:
-                            continue
+                        summary = _summary(candidate, root, query, budget)
                         if summary is not None and summary.session_id == ref.session_id:
                             path = candidate
                             break

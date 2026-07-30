@@ -685,6 +685,10 @@ class ClaudeAdapterTests(unittest.TestCase):
         )
         values = claude.ADAPTER.list(self.query(ref=str(path.resolve())), ReadBudget())
         self.assertEqual([item.session_id for item in values], [session_id])
+        # reader.probe runs before list/show — exact path must keep capability supported
+        # even when the project dir has > scanned_records siblings.
+        report = claude.ADAPTER.probe(self.query(ref=str(path.resolve())))
+        self.assertEqual(report.state, "supported")
 
 
 class CodexAdapterTests(unittest.TestCase):
