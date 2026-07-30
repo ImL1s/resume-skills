@@ -309,8 +309,11 @@ def _list_sessions(
         ).fetchall()
 
     def _fetch_normal() -> list[tuple]:
-        limit = scan_limit + 1
-        rows = connection.execute(
+        # Cap candidates at scanned_records; do not fail when more exist — list
+        # stops once list_limit eligible summaries are collected (Codex P2).
+        if scan_limit <= 0:
+            return []
+        return connection.execute(
             """
             SELECT id, name, session_type, working_dir, created_at, updated_at, archived_at
             FROM sessions
@@ -324,11 +327,8 @@ def _list_sessions(
             ORDER BY updated_at DESC, id ASC
             LIMIT ?
             """,
-            (limit,),
+            (scan_limit,),
         ).fetchall()
-        if len(rows) > scan_limit:
-            raise DiagnosticError.limit_exceeded()
-        return rows
 
     if exact_id is not None:
         rows = _fetch_exact(exact_id)
@@ -443,7 +443,6 @@ def _show_session(
     )
     turns: list[Turn] = []
     warnings: list[str] = []
-    total_bytes = 0
     seen_message_ids: set[str] = set()
     turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
     count = 0
@@ -460,9 +459,9 @@ def _show_session(
         encoded = content_json.encode("utf-8")
         if len(encoded) > budget.limits.record_bytes:
             raise DiagnosticError.limit_exceeded()
-        total_bytes += len(encoded)
-        if total_bytes > budget.limits.source_read_bytes:
-            raise DiagnosticError.limit_exceeded()
+        # Charge the shared ReadBudget so reused/partial budgets fail closed (Codex P2).
+        budget.consume_transcript_records()
+        budget.consume_bytes(len(encoded))
         mapped_role = role
         if role in {"toolResult", "tool_result", "function"}:
             mapped_role = "tool"

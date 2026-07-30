@@ -212,6 +212,21 @@ class GooseAdapterTests(unittest.TestCase):
         summaries = ADAPTER.list(query(root), ReadBudget(Bounds(listed_sessions=0)))
         self.assertEqual(summaries, [])
 
+    def test_show_charges_shared_budget(self) -> None:
+        from portable_resume.bounds import Bounds
+
+        root = fixture_root("s-go-01-user-basic")
+        db_path = root / "sessions" / "sessions.db"
+        budget = ReadBudget(Bounds(transcript_records=1, source_read_bytes=8 * 1024 * 1024))
+        budget.consume_transcript_records()  # already at ceiling
+        with self.assertRaises(DiagnosticError) as caught:
+            ADAPTER.show(
+                ResolvedRef(session_id=BASIC_ID, source_path=str(db_path)),
+                query(root, ref=BASIC_ID),
+                budget,
+            )
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
 
 if __name__ == "__main__":
     unittest.main()
