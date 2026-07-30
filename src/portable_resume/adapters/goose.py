@@ -380,7 +380,7 @@ def _show_session(
     limit = budget.limits.transcript_records + 1
     cursor = connection.execute(
         """
-        SELECT role, content_json, created_timestamp
+        SELECT message_id, role, content_json, created_timestamp
         FROM messages
         WHERE session_id = ?
         ORDER BY id ASC
@@ -391,14 +391,19 @@ def _show_session(
     turns: list[Turn] = []
     warnings: list[str] = []
     total_bytes = 0
+    seen_message_ids: set[str] = set()
     turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
     count = 0
-    for role, content_json, _created in cursor:
+    for message_id, role, content_json, _created in cursor:
         count += 1
         if count > budget.limits.transcript_records:
             raise DiagnosticError.limit_exceeded()
         if not isinstance(role, str) or not isinstance(content_json, str):
             raise DiagnosticError("E_CORRUPT_RECORD", source="goose", provider=FORMAT_ID)
+        if isinstance(message_id, str) and message_id:
+            if message_id in seen_message_ids:
+                raise DiagnosticError("E_CORRUPT_RECORD", source="goose", provider=FORMAT_ID)
+            seen_message_ids.add(message_id)
         encoded = content_json.encode("utf-8")
         if len(encoded) > budget.limits.record_bytes:
             raise DiagnosticError.limit_exceeded()
