@@ -988,6 +988,47 @@ def _materialize_bytes_under_fd(
             os.close(parent_fd)
 
 
+def _fsync_path_ancestors(root_fd: int, rel: str) -> None:
+    """Fsync ``root_fd`` and every directory component of ``rel`` under it.
+
+    Required after recovery may have recreated intermediate payload parents so
+    directory entries are durable before stage/journal evidence is discarded.
+    """
+    safe = _safe_rel_path(rel)
+    parts = [part for part in safe.split(os.sep) if part and part != "."]
+    # Leaf basename is a file; only directory components need fsync here.
+    dir_parts = parts[:-1] if parts else []
+    try:
+        os.fsync(root_fd)
+    except OSError as error:
+        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+    if not dir_parts:
+        return
+    flags = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    current = root_fd
+    opened: list[int] = []
+    try:
+        for part in dir_parts:
+            try:
+                next_fd = os.open(part, flags, dir_fd=current)
+            except OSError as error:
+                raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+            opened.append(next_fd)
+            try:
+                os.fsync(next_fd)
+            except OSError as error:
+                raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+            current = next_fd
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
+
+
 def _fsync_tree_dirfd(dir_fd: int) -> None:
     """Durable-flush every regular file and directory under ``dir_fd`` (depth-first).
 
@@ -1235,12 +1276,13 @@ def _replace_under_root_from_support_path(
                 except OSError:
                     pass
                 # Prior attempt may have linked but crashed before parent fsync.
-                # Persist the existing destination dirent before callers discard
-                # stage evidence on "already present".
+                # Persist the existing destination dirent (and recreated parents)
+                # before callers discard stage evidence on "already present".
                 try:
                     os.fsync(dst_parent_fd)
                 except OSError as error:
                     raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+                _fsync_path_ancestors(root_fd, rel)
                 return False
             except OSError as error:
                 try:
@@ -1252,18 +1294,20 @@ def _replace_under_root_from_support_path(
                         os.fsync(dst_parent_fd)
                     except OSError as fsync_error:
                         raise DiagnosticError("E_RECOVERY_REQUIRED") from fsync_error
+                    _fsync_path_ancestors(root_fd, rel)
                     return False
                 raise DiagnosticError("E_RECOVERY_REQUIRED") from error
             try:
                 os.unlink(tmp_name, dir_fd=dst_parent_fd)
             except OSError:
                 pass
-            # Persist the destination directory entry before callers may discard
-            # the stage snapshot that sourced this restore.
+            # Persist the destination directory entry and any recreated parents
+            # before callers may discard the stage snapshot.
             try:
                 os.fsync(dst_parent_fd)
             except OSError as error:
                 raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+            _fsync_path_ancestors(root_fd, rel)
             return True
 
         try:
@@ -1278,6 +1322,10 @@ def _replace_under_root_from_support_path(
         try:
             os.fsync(dst_parent_fd)
         except OSError:
+            pass
+        try:
+            _fsync_path_ancestors(root_fd, rel)
+        except DiagnosticError:
             pass
         return True
     finally:
