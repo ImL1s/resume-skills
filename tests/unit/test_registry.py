@@ -23,7 +23,7 @@ from portable_resume.registry import (
 
 
 class RegistryInvariantTests(unittest.TestCase):
-    def test_current_nine_sources_and_nine_destinations(self) -> None:
+    def test_current_ten_sources_and_ten_destinations(self) -> None:
         self.assertEqual(
             enabled_source_keys(),
             frozenset(
@@ -35,6 +35,7 @@ class RegistryInvariantTests(unittest.TestCase):
                     "grok",
                     "kimi",
                     "opencode",
+                    "openclaw",
                     "pi",
                     "qwen",
                 }
@@ -51,15 +52,16 @@ class RegistryInvariantTests(unittest.TestCase):
                     "grok",
                     "kimi",
                     "opencode",
+                    "openclaw",
                     "pi",
                     "qwen",
                 }
             ),
         )
         dims = matrix_dimensions()
-        self.assertEqual(dims["sources"], 9)
-        self.assertEqual(dims["destinations"], 9)
-        self.assertEqual(dims["cells"], 81)
+        self.assertEqual(dims["sources"], 10)
+        self.assertEqual(dims["destinations"], 10)
+        self.assertEqual(dims["cells"], 100)
 
     def test_source_and_destination_sets_are_independent_types(self) -> None:
         # Adding a destination-only key must not invent a source.
@@ -154,9 +156,11 @@ class RegistryInvariantTests(unittest.TestCase):
         self.assertGreaterEqual(len(enabled_package_keys()), 7)
         self.assertIn("claude-marketplace", enabled_package_keys())
         self.assertNotIn("pi", {PACKAGE_SURFACES[k].destination for k in PACKAGE_SURFACES})
-        # Direct Skills for pi/opencode without inventing a package surface.
+        self.assertNotIn("openclaw", {PACKAGE_SURFACES[k].destination for k in PACKAGE_SURFACES})
+        # Direct Skills for pi/opencode/openclaw without inventing a package surface.
         self.assertIsNone(DESTINATION_PROFILES["pi"].native_package_profile)
         self.assertIsNone(DESTINATION_PROFILES["opencode"].native_package_profile)
+        self.assertIsNone(DESTINATION_PROFILES["openclaw"].native_package_profile)
         for key, dest in DESTINATION_PROFILES.items():
             if dest.native_package_profile is None:
                 continue
@@ -177,6 +181,7 @@ class RegistryInvariantTests(unittest.TestCase):
                 msg=str(path),
             )
             self.assertIn("pi", enum_values)
+            self.assertIn("openclaw", enum_values)
 
     def test_planned_profiles_excluded_from_enabled_sets(self) -> None:
         for profile in SOURCE_PROFILES.values():
@@ -226,7 +231,7 @@ class DynamicMatrixTests(unittest.TestCase):
         cells = matrix_cells()
         dims = matrix_dimensions()
         self.assertEqual(len(cells), dims["cells"])
-        self.assertEqual(len(cells), 81)
+        self.assertEqual(len(cells), 100)
 
     def test_destination_only_expands_rectangle(self) -> None:
         from portable_resume.registry import rectangular_cells

@@ -99,6 +99,15 @@ FIXTURES: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
             "synthetic assistant reply on the active branch",
         ),
     ),
+    "openclaw": (
+        "tests/fixtures/openclaw/s-oc-01-basic",
+        "/tmp/project",
+        "main:sess-basic-0001",
+        (
+            "Resume context from /tmp/project",
+            "Synthetic assistant reply",
+        ),
+    ),
 }
 
 

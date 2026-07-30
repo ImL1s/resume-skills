@@ -1,6 +1,6 @@
 # Destination installation guide
 
-This repository ships nine `resume-<source>` Skills to nine destination hosts (derived from registries). The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
+This repository ships ten `resume-<source>` Skills to ten destination hosts (derived from registries). The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
 
 ## Build or inspect packages
 
@@ -10,14 +10,13 @@ PYTHONPATH=src python3 scripts/install-resume-skills matrix
 python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
-The package builder creates nine `*-<host>-skills.zip` archives (one per
-enabled destination, including Pi), seven supported plugin/marketplace
-archives, and `host-packages.json` (`host-packages-v2`) with SHA-256 digests,
-per-artifact offline `contract_id` validation (#27), and honest
+The package builder creates ten `*-<host>-skills.zip` archives (one per
+enabled destination, including Pi and OpenClaw), seven supported
+plugin/marketplace archives, and `host-packages.json` (`host-packages-v2`) with
+SHA-256 digests, per-artifact offline `contract_id` validation (#27), and honest
 `native_evidence_status=not-run` until host CLI revalidation is recorded.
-Published `0.3.4`
-release assets include those nine direct archives. Replace `<version>` below
-with the release version.
+Published `0.3.4` release assets remain historical nine-destination archives;
+current `main` builds ten. Replace `<version>` below with the release version.
 
 Download and verify an exact release before installing a plugin:
 
@@ -45,7 +44,7 @@ From PyPI:
 ```bash
 pipx install portable-resume
 install-resume-skills quick-install qwen        # user-global Qwen profile
-install-resume-skills quick-install all         # all nine user-global profiles
+install-resume-skills quick-install all         # all ten user-global profiles
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
@@ -146,8 +145,9 @@ Use `--scope global` for the user root or `--root <path>` for an explicit root. 
 | Qwen Code (`qwen`) | `.qwen/skills` / `~/.qwen/skills` | Public extension source commands above. Offline fallback: `qwen extensions install /path/portable-resume-<version>-qwen-extension.zip`. | `/resume-codex`; `/skills` lists |
 | Kimi Code CLI (`kimi`) | `.kimi-code/skills` / `$KIMI_CODE_HOME/skills` (default `~/.kimi-code/skills`) | Add the public catalog in `/plugins`, or install the exact release ZIP URL/path. Run `/plugins reload`, `/reload`, or start a new session. | `/skill:resume-codex` |
 | Pi agent (`pi`) | `.pi/skills` / `~/.pi/agent/skills` | Direct Skill only for this PR. Alternate `.agents/skills` roots are compatibility-only (not multi-installed). | `/skill:resume-codex` |
+| OpenClaw (`openclaw`) | `skills/` / `~/.openclaw/skills` | Direct Skill only. Alternate `.agents/skills` roots are compatibility-only. Native `openclaw skills install` route is not-run. | Load `resume-openclaw` / `resume-<source>` from the skills tree |
 
-For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, `resume-pi`, and `resume-qwen`.
+For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, `resume-openclaw`, `resume-pi`, and `resume-qwen`.
 
 ## Host-specific notes
 
@@ -203,15 +203,13 @@ harmful duplicates.
 
 ## Evidence boundary
 
-Published `0.3.4` claims registry-derived **9×9=81** packaging and installed-runner
-cells (including Pi filesystem destination). Historical `0.3.2` / `0.3.3` evidence
-covered **64/64** cells. Exact `0.3.2` local package installation passed on all seven
+Current `main` claims registry-derived **10×10=100** packaging and installed-runner
+cells (including Pi and OpenClaw filesystem destinations). Published `0.3.4`
+remains historical **9×9=81**. Historical `0.3.2` / `0.3.3` evidence covered
+**64/64** cells. Exact `0.3.2` local package installation passed on all seven
 supported native plugin/extension surfaces, including Cursor. Host-native
-headless Skill invocation passed on all eight destination CLIs available at that
-time (nine destinations on `0.3.4`, with Pi native UI still not-run). Public
-marketplace installation passed on all six compatible hosts on `v0.3.2`; Cursor
-and Kimi also passed their `v0.3.2` visual marketplace picker flows. Fresh
-`v0.3.4` host-by-host reinstall and picker evidence remains **not-run**.
-Versions, commands, and archive digests are recorded in
-[`host-ui-smoke.md`](host-ui-smoke.md). Other visual Skill pickers and
-vendor-curated directory listings remain separate unclaimed gates.
+headless Skill invocation and public marketplace picker flows for fresh
+OpenClaw/Pi native UI remain **not-run**. Versions, commands, and archive
+digests are recorded in [`host-ui-smoke.md`](host-ui-smoke.md). Other visual
+Skill pickers and vendor-curated directory listings remain separate unclaimed
+gates.

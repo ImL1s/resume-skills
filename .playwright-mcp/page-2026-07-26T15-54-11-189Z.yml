@@ -1,0 +1,42 @@
+- generic [active] [ref=f9e1]:
+  - main [ref=f9e8]:
+    - generic [ref=f9e10]:
+      - link "Go to Codex" [ref=f9e12] [cursor=pointer]:
+        - /url: /codex/cloud
+        - img "ChatGPT blossom logo" [ref=f9e13]
+      - generic [ref=f9e24]:
+        - generic [ref=f9e25]:
+          - generic [ref=f9e26]:
+            - link "Link to Code" [ref=f9e27] [cursor=pointer]:
+              - /url: /codex/cloud
+              - text: Code
+            - link "Link to Security" [ref=f9e28] [cursor=pointer]:
+              - /url: /codex/cloud/security
+              - text: Security
+            - button "Download the Codex app" [disabled] [ref=f9e29]: App
+            - link "Link to the Codex docs page" [ref=f9e30] [cursor=pointer]:
+              - /url: https://platform.openai.com/docs/codex/overview
+              - text: Docs
+          - generic [ref=f9e31]:
+            - link "Link to the Codex settings page" [ref=f9e32] [cursor=pointer]:
+              - /url: /codex/cloud/settings/general
+            - button "Open notifications" [ref=f9e35] [cursor=pointer]
+        - button "Open Profile Menu" [ref=f9e39] [cursor=pointer]
+    - generic [ref=f9e42]:
+      - generic [ref=f9e44]:
+        - paragraph [ref=f9e45]: Settings
+        - generic [ref=f9e46]:
+          - button "General" [ref=f9e47] [cursor=pointer]
+          - button "Environments" [ref=f9e49] [cursor=pointer]
+          - button "Code review" [ref=f9e51] [cursor=pointer]
+          - button "Connectors" [ref=f9e53] [cursor=pointer]
+          - button "Analytics" [ref=f9e55] [cursor=pointer]
+          - button "Data controls" [ref=f9e57] [cursor=pointer]
+      - generic [ref=f9e61]:
+        - generic [ref=f9e62]: Environments
+        - generic [ref=f9e65]:
+          - textbox "Search environments" [disabled] [ref=f9e69]
+          - button "Link to create a new environment" [disabled] [ref=f9e70]:
+            - generic [ref=f9e71]: Create environment
+  - alert [ref=f9e78]
+  - status [ref=f9e79]

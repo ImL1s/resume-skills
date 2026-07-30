@@ -1,0 +1,86 @@
+- generic [active] [ref=f1e1]:
+  - main [ref=f1e615]:
+    - generic [ref=f1e617]:
+      - link "Go to Codex" [ref=f1e619] [cursor=pointer]:
+        - /url: /codex/cloud
+        - img "ChatGPT blossom logo" [ref=f1e620]
+      - generic [ref=f1e631]:
+        - generic [ref=f1e632]:
+          - generic [ref=f1e633]:
+            - link "Link to Code" [ref=f1e634] [cursor=pointer]:
+              - /url: /codex/cloud
+              - text: Code
+            - link "Link to Security" [ref=f1e635] [cursor=pointer]:
+              - /url: /codex/cloud/security
+              - text: Security
+            - button "Download the Codex app" [ref=f1e636] [cursor=pointer]: App
+            - link "Link to the Codex docs page" [ref=f1e637] [cursor=pointer]:
+              - /url: https://platform.openai.com/docs/codex/overview
+              - text: Docs
+          - generic [ref=f1e638]:
+            - link "Link to the Codex settings page" [ref=f1e639] [cursor=pointer]:
+              - /url: /codex/cloud/settings/general
+            - button "Open notifications" [ref=f1e642] [cursor=pointer]
+        - button "Open Profile Menu" [ref=f1e646] [cursor=pointer]:
+          - generic [ref=f1e648]:
+            - img "Profile image" [ref=f1e650]
+            - generic [ref=f1e651]: PRO
+    - generic [ref=f1e655]:
+      - generic [ref=f1e657]:
+        - generic [ref=f1e658]:
+          - link "Environments" [ref=f1e660] [cursor=pointer]:
+            - /url: /codex/cloud/settings/environments
+          - link "ImL1s/resume-skills" [ref=f1e664] [cursor=pointer]:
+            - /url: /codex/cloud/settings/environment/6a662d8db57c81919e81811377c6b28f
+        - generic [ref=f1e665]:
+          - button "Button to delete ImL1s/resume-skills" [ref=f1e667] [cursor=pointer]:
+            - generic [ref=f1e668]: Delete
+          - button "Button to edit ImL1s/resume-skills" [ref=f1e670] [cursor=pointer]:
+            - generic [ref=f1e671]: Edit
+          - button "Button to use environment ImL1s/resume-skills in a codex task" [ref=f1e674] [cursor=pointer]:
+            - generic [ref=f1e675]: Use this
+      - generic [ref=f1e679]: ImL1s/resume-skills
+      - generic [ref=f1e680]:
+        - generic [ref=f1e681]:
+          - term [ref=f1e682]: Creator
+          - definition [ref=f1e683]: aa22396584@gmail.com
+        - generic [ref=f1e684]:
+          - term [ref=f1e685]: Image
+          - definition [ref=f1e686]: universal
+        - generic [ref=f1e687]:
+          - term [ref=f1e688]: Description
+          - definition [ref=f1e689]: Offline portable-resume-skills (stdlib Python). Used for GitHub PR Codex reviews on ImL1s/resume-skills.
+        - generic [ref=f1e690]:
+          - term [ref=f1e691]: Agent internet access
+          - definition [ref=f1e692]: "Off"
+        - generic [ref=f1e693]:
+          - term [ref=f1e694]: Post setup caching
+          - definition [ref=f1e695]:
+            - generic [ref=f1e696]:
+              - text: "On"
+              - button "Button to invalidate cache for ImL1s/resume-skills" [ref=f1e698] [cursor=pointer]:
+                - generic [ref=f1e699]: Reset cache
+        - generic [ref=f1e700]:
+          - term [ref=f1e701]: Maintenance setup script
+          - definition
+        - generic [ref=f1e702]:
+          - term [ref=f1e703]: Environment variables
+          - definition
+        - generic [ref=f1e704]:
+          - term [ref=f1e705]: Secrets
+          - definition
+        - generic [ref=f1e706]:
+          - term [ref=f1e707]: Created at
+          - definition [ref=f1e708]: July 26, 2026
+        - generic [ref=f1e709]:
+          - term [ref=f1e710]: Setup script
+          - definition [ref=f1e711]: Automatic
+        - generic [ref=f1e712]:
+          - term [ref=f1e713]: Repository
+          - definition [ref=f1e714]: ImL1s/resume-skills
+        - generic [ref=f1e715]:
+          - term [ref=f1e716]: No. of tasks
+          - definition [ref=f1e717]: "0"
+  - alert [ref=f1e78]
+  - status [ref=f1e79]
+  - status [ref=f1e602]: 1Password 選單可用。按向下箭頭進行選擇。

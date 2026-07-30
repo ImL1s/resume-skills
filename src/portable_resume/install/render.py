@@ -50,6 +50,7 @@ _RUNTIME_MODULES = (
     "adapters/grok.py",
     "adapters/kimi.py",
     "adapters/opencode.py",
+    "adapters/openclaw.py",
     "adapters/pi.py",
     "adapters/qwen.py",
 )
