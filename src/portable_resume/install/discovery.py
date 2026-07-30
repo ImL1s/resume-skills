@@ -447,10 +447,35 @@ def _read_regular_capped(path: str, *, max_bytes: int) -> bytes | None:
         os.close(fd)
 
 
+def _on_disk_package_matches(skill_root: str, host: str) -> bool:
+    """True only when every expected package path is a regular file with matching bytes.
+
+    Manifest package_identity alone is not enough: the host loads SKILL.md,
+    run_reader.py, and ``.portable-resume/runtime/**`` from the discovery root.
+    """
+
+    expected = materialize_plan(host)
+    for rel, data in expected.items():
+        path = os.path.join(skill_root, *rel.split("/"))
+        try:
+            st = os.lstat(path)
+        except OSError:
+            return False
+        if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISREG(st.st_mode):
+            return False
+        if st.st_size != len(data):
+            return False
+        body = _read_regular_capped(path, max_bytes=max(len(data), 1))
+        if body is None or body != data:
+            return False
+    return True
+
+
 def inspect_skill_copy(
     skill_root: str,
     skill_name: str,
     *,
+    host: str,
     expected_payload_digest: str | None = None,
 ) -> dict[str, Any]:
     """Bounded read-only inspection of ``<skill_root>/<skill_name>``."""
@@ -469,6 +494,7 @@ def inspect_skill_copy(
         "bundle_version": None,
         "package_identity": None,
         "matches_expected": None,
+        "payload_verified": False,
     }
     try:
         st_dir = os.lstat(skill_dir)
@@ -501,14 +527,21 @@ def inspect_skill_copy(
     runner_body = _read_regular_capped(runner, max_bytes=_MAX_RUNNER_BYTES)
     if runner_body is not None:
         result["runner_sha256"] = hashlib.sha256(runner_body).hexdigest()
-    # Fingerprint = skill.md (+ runner when present); not full package identity.
+    # Pair fingerprint is diagnostic only — identity requires full package verify.
     fp = hashlib.sha256()
     fp.update(result["skill_md_sha256"].encode("ascii"))
     if result["runner_sha256"]:
         fp.update(result["runner_sha256"].encode("ascii"))
     result["payload_fingerprint"] = fp.hexdigest()
 
-    # Ownership / package identity from sibling support tree when present.
+    # Full package byte verification (SKILL + runner + runtime + resources).
+    result["payload_verified"] = _on_disk_package_matches(skill_root, host)
+    if result["payload_verified"] and expected_payload_digest is not None:
+        result["matches_expected"] = True
+    elif expected_payload_digest is not None:
+        result["matches_expected"] = False
+
+    # Ownership metadata from sibling support tree (informational; not identity).
     # Lazy import: load_manifest lives in transaction (avoids import cycle).
     from .transaction import load_manifest
 
@@ -517,27 +550,11 @@ def inspect_skill_copy(
         result["owned"] = True
         result["bundle_version"] = manifest.bundle_version
         result["package_identity"] = manifest.package_identity
-        if expected_payload_digest is not None:
-            result["matches_expected"] = manifest.package_identity == expected_payload_digest
-    elif expected_payload_digest is not None and result["payload_fingerprint"]:
-        # Foreign/unowned copy cannot claim full package identity match.
-        result["matches_expected"] = False
     return result
 
 
-def _expected_skill_fingerprint(host: str, skill_name: str) -> tuple[str, str]:
-    """Return (package_identity, skill_pair_fingerprint) for current bundle."""
-
-    files = materialize_plan(host)
-    identity = package_identity(files)
-    skill_md = files.get(f"{skill_name}/SKILL.md", b"")
-    runner = files.get(f"{skill_name}/scripts/run_reader.py", b"")
-    fp = hashlib.sha256()
-    fp.update(hashlib.sha256(skill_md).hexdigest().encode("ascii"))
-    if runner:
-        fp.update(hashlib.sha256(runner).hexdigest().encode("ascii"))
-    return identity, fp.hexdigest()
-
+def _expected_package_identity(host: str) -> str:
+    return package_identity(materialize_plan(host))
 
 def scan_skill_duplicates(
     *,
@@ -562,10 +579,7 @@ def scan_skill_duplicates(
             raise DiagnosticError.invalid()
 
     selected_real = os.path.realpath(selected_root)
-    expected_identity, _ = _expected_skill_fingerprint(
-        host, names[0] if names else skill_name_for(sorted(SOURCE_KEYS)[0])
-    )
-    skill_fps = {name: _expected_skill_fingerprint(host, name)[1] for name in names}
+    expected_identity = _expected_package_identity(host)
 
     roots = discovery_roots_for_host(host)
     findings: list[dict[str, Any]] = []
@@ -600,7 +614,6 @@ def scan_skill_duplicates(
             selected_scope=selected_scope,
             names=names,
             expected_identity=expected_identity,
-            skill_fps=skill_fps,
             roots=roots,
             findings=findings,
             root_rows=root_rows,
@@ -620,7 +633,6 @@ def _scan_skill_duplicates_body(
     selected_scope: str | None,
     names: tuple[str, ...],
     expected_identity: str,
-    skill_fps: dict[str, str],
     roots: tuple[DiscoveryRoot, ...],
     findings: list[dict[str, Any]],
     root_rows: list[dict[str, Any]],
@@ -666,16 +678,30 @@ def _scan_skill_duplicates_body(
         root_rows.append(row)
 
         if not row["exists"] or row.get("symlink_root"):
-            if row.get("symlink_root"):
+            if row.get("symlink_root") and not row["is_selected"]:
+                selected_prec = _SELECTED_PRECEDENCE.get(selected_real)
+                other_prec = entry.precedence
+                if (
+                    other_prec is not None
+                    and selected_prec is not None
+                    and other_prec < selected_prec
+                ):
+                    policy = POLICY_BLOCK
+                    status = STATUS_HIGHER_SHADOW
+                    detail = "higher_precedence_symlink_root"
+                else:
+                    policy = POLICY_WARN
+                    status = STATUS_UNSAFE
+                    detail = "symlink_skill_root"
                 for skill in names:
                     findings.append(
                         {
                             "skill": skill,
                             "root_id": entry.root_id,
                             "path_display": display,
-                            "status": STATUS_UNSAFE,
-                            "policy": POLICY_WARN,
-                            "detail": "symlink_skill_root",
+                            "status": status,
+                            "policy": policy,
+                            "detail": detail,
                             "is_selected": row["is_selected"],
                         }
                     )
@@ -685,6 +711,7 @@ def _scan_skill_duplicates_body(
             inspection = inspect_skill_copy(
                 path,
                 skill,
+                host=host,
                 expected_payload_digest=expected_identity,
             )
             if not inspection["present"]:
@@ -695,7 +722,6 @@ def _scan_skill_duplicates_body(
                 is_selected=row["is_selected"],
                 selected_real=selected_real,
                 root_real=real,
-                expected_fp=skill_fps[skill],
                 same_physical_prior=row.get("same_physical_as"),
             )
             if status is None:
@@ -714,6 +740,7 @@ def _scan_skill_duplicates_body(
                     "is_selected": row["is_selected"],
                     "owned": inspection["owned"],
                     "unsafe": inspection["unsafe"],
+                    "payload_verified": inspection["payload_verified"],
                     "payload_fingerprint": inspection["payload_fingerprint"],
                     "package_identity": inspection["package_identity"],
                     "bundle_version": inspection["bundle_version"],
@@ -780,22 +807,28 @@ def _classify_copy(
     is_selected: bool,
     selected_real: str,
     root_real: str,
-    expected_fp: str,
     same_physical_prior: str | None,
 ) -> tuple[str | None, str, str]:
     """Return (status, policy, detail). None status = skip (selected-only bookkeeping)."""
 
+    selected_prec = _selected_precedence_hint(selected_real, entry, root_real)
+    other_prec = entry.precedence
+    higher = (
+        other_prec is not None
+        and selected_prec is not None
+        and other_prec < selected_prec
+    )
+
     if inspection.get("unsafe"):
+        # Unverifiable higher-precedence copies can still be loaded by the host.
+        if higher and not is_selected:
+            return STATUS_HIGHER_SHADOW, POLICY_BLOCK, "higher_precedence_unsafe"
         return STATUS_UNSAFE, POLICY_WARN, "symlink_or_non_regular"
 
     fp = inspection.get("payload_fingerprint")
     owned = bool(inspection.get("owned"))
-    matches_pkg = inspection.get("matches_expected")
-    identical = False
-    if owned and matches_pkg is True:
-        identical = True
-    elif fp is not None and fp == expected_fp:
-        identical = True
+    # Identical only when every expected package byte matches on disk (#34 P1).
+    identical = bool(inspection.get("payload_verified"))
 
     if is_selected:
         # Selected root presence is informational for audit; not a duplicate of itself.
@@ -815,20 +848,13 @@ def _classify_copy(
     if entry.role == "plugin" or entry.scope == "plugin":
         return STATUS_PLUGIN_COEXIST, POLICY_WARN, "plugin_divergent_or_foreign"
 
-    # Selected root tier: project primary/alt = 5, user primary/alt = 10.
-    # Callers attach selected_scope via scan; fall back using path equality.
-    selected_prec = _selected_precedence_hint(selected_real, entry, root_real)
-    other_prec = entry.precedence
-
-    if other_prec is not None and selected_prec is not None and other_prec < selected_prec:
-        # Strictly higher precedence (lower number) with divergent content → block.
-        if not identical:
-            return STATUS_HIGHER_SHADOW, POLICY_BLOCK, "higher_precedence_divergent"
+    if higher:
+        return STATUS_HIGHER_SHADOW, POLICY_BLOCK, "higher_precedence_divergent"
     if other_prec is None or selected_prec is None:
         if owned or fp:
             return STATUS_PRECEDENCE_UNKNOWN, POLICY_WARN, "unknown_precedence_divergent"
         return STATUS_DUP_FOREIGN, POLICY_WARN, "foreign_unverifiable"
-    if other_prec == selected_prec and not identical:
+    if other_prec == selected_prec:
         # Equal first-class roots (e.g. Cursor .cursor vs .agents) — warn, do not block.
         if owned:
             return STATUS_DUP_DIFFERENT, POLICY_WARN, "equal_precedence_divergent"

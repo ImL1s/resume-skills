@@ -132,7 +132,33 @@ class DuplicateScanTests(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.code, "E_INSTALL_SHADOW")
 
-    def test_identical_payload_fingerprint_allows(self) -> None:
+    def test_identical_full_package_allows(self) -> None:
+        from portable_resume.install.render import materialize_plan
+
+        selected = self.project / ".cursor" / "skills"
+        agents = self.project / ".agents" / "skills"
+        selected.mkdir(parents=True)
+        files = materialize_plan("cursor")
+        for rel, data in files.items():
+            dest = agents / Path(rel)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+        skill = "resume-codex"
+        report = scan_skill_duplicates(
+            host="cursor",
+            selected_root=str(selected),
+            project_dir=str(self.project),
+            home_dir=str(self.home),
+            selected_scope="project",
+            skill_names=(skill,),
+        )
+        non_selected = [f for f in report["findings"] if not f.get("is_selected")]
+        self.assertTrue(non_selected)
+        self.assertTrue(all(f["status"] == STATUS_DUP_IDENTICAL for f in non_selected))
+        self.assertEqual(report["aggregate_policy"], POLICY_ALLOW)
+
+    def test_skill_pair_only_not_identical(self) -> None:
+        """SKILL.md + runner match without runtime must not count as identical."""
         from portable_resume.install.render import materialize_plan
 
         selected = self.project / ".cursor" / "skills"
@@ -157,8 +183,30 @@ class DuplicateScanTests(unittest.TestCase):
         )
         non_selected = [f for f in report["findings"] if not f.get("is_selected")]
         self.assertTrue(non_selected)
-        self.assertTrue(all(f["status"] == STATUS_DUP_IDENTICAL for f in non_selected))
-        self.assertEqual(report["aggregate_policy"], POLICY_ALLOW)
+        self.assertFalse(any(f["status"] == STATUS_DUP_IDENTICAL for f in non_selected))
+        # Equal-tier divergent → warn (not allow-identical).
+        self.assertEqual(report["aggregate_policy"], POLICY_WARN)
+
+    def test_unsafe_higher_precedence_blocks(self) -> None:
+        """Symlinked skill at project root blocks global install."""
+        project_root = self.project / ".cursor" / "skills"
+        global_root = self.home / ".cursor" / "skills"
+        global_root.mkdir(parents=True)
+        project_root.mkdir(parents=True)
+        real = self.project / "elsewhere" / "resume-codex"
+        real.mkdir(parents=True)
+        (real / "SKILL.md").write_bytes(b"x")
+        os.symlink(real, project_root / "resume-codex")
+        report = scan_skill_duplicates(
+            host="cursor",
+            selected_root=str(global_root),
+            project_dir=str(self.project),
+            home_dir=str(self.home),
+            selected_scope="global",
+            skill_names=("resume-codex",),
+        )
+        self.assertEqual(report["aggregate_policy"], POLICY_BLOCK)
+        self.assertEqual(report["aggregate_status"], STATUS_HIGHER_SHADOW)
 
     def test_same_physical_shared_root_not_duplicate(self) -> None:
         # Codex + Antigravity share project .agents/skills — same path is not shadow.
