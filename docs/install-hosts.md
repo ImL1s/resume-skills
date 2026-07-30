@@ -12,7 +12,10 @@ python3 scripts/build_host_packages.py --output-dir host-packages
 
 The package builder creates nine `*-<host>-skills.zip` archives (one per
 enabled destination, including Pi), seven supported plugin/marketplace
-archives, and `host-packages.json` with SHA-256 digests. Published `0.3.4`
+archives, and `host-packages.json` (`host-packages-v2`) with SHA-256 digests,
+per-artifact offline `contract_id` validation (#27), and honest
+`native_evidence_status=not-run` until host CLI revalidation is recorded.
+Published `0.3.4`
 release assets include those nine direct archives. Replace `<version>` below
 with the release version.
 
