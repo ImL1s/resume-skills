@@ -316,7 +316,6 @@ class CodexFollowupTests(unittest.TestCase):
                     "global",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
         finally:
@@ -395,16 +394,19 @@ class CliAuditAndInstallGateTests(unittest.TestCase):
                     str(self.project),
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
         finally:
             sys.stdout = old
         self.assertEqual(code, 0)
         data = json.loads(buf.getvalue())
-        self.assertEqual(data["schema_version"], "portable-resume/discovery-scan-v1")
-        self.assertEqual(data["host"], "cursor")
-        self.assertIn("discovery_policy", data)
+        self.assertEqual(data["schema_version"], "portable-resume/install-result-v1")
+        self.assertEqual(data["command"], "audit-host")
+        self.assertTrue(data["ok"])
+        result = data["results"][0]
+        self.assertEqual(result["schema_version"], "portable-resume/discovery-scan-v1")
+        self.assertEqual(result["host"], "cursor")
+        self.assertIn("discovery_policy", result)
 
     def test_install_blocked_by_shadow(self) -> None:
         project_root = self.project / ".cursor" / "skills"
@@ -427,7 +429,6 @@ class CliAuditAndInstallGateTests(unittest.TestCase):
                     str(self.project),
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
         finally:
@@ -461,16 +462,19 @@ class CliAuditAndInstallGateTests(unittest.TestCase):
                     str(self.project),
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
         finally:
             sys.stdout = old
         self.assertEqual(code, 0)
         data = json.loads(out.getvalue())
+        self.assertEqual(data["schema_version"], "portable-resume/install-result-v1")
+        self.assertEqual(data["command"], "install")
         self.assertTrue(data.get("ok"))
-        self.assertIn("discovery", data)
-        self.assertEqual(data["discovery"]["aggregate_policy"], POLICY_ALLOW)
+        self.assertEqual(len(data["results"]), 1)
+        result = data["results"][0]
+        self.assertIn("discovery", result)
+        self.assertEqual(result["discovery"]["aggregate_policy"], POLICY_ALLOW)
         verify_root(str(self.project / ".cursor" / "skills"))
 
 

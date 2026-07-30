@@ -53,7 +53,7 @@ class PlatformReleaseGateTests(unittest.TestCase):
         self.assertEqual(report["matrix"]["cell_count"], expected_cells)
 
         matrix = subprocess.run(
-            [sys.executable, str(REPO / "scripts" / "install-resume-skills"), "matrix", "--json"],
+            [sys.executable, str(REPO / "scripts" / "install-resume-skills"), "matrix"],
             cwd=str(REPO),
             capture_output=True,
             text=True,
@@ -62,8 +62,9 @@ class PlatformReleaseGateTests(unittest.TestCase):
         )
         self.assertEqual(matrix.returncode, 0, matrix.stderr)
         body = json.loads(matrix.stdout)
+        self.assertEqual(body["schema_version"], "portable-resume/install-result-v1")
         self.assertTrue(body["ok"])
-        self.assertEqual(body["cell_count"], expected_cells)
+        self.assertEqual(body["results"][0]["cell_count"], expected_cells)
 
     def test_peer_os_not_silently_claimed(self) -> None:
         # Dual-OS AC-18: without a second runner, docs must not claim both OS green.

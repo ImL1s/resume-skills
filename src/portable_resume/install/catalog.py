@@ -715,6 +715,7 @@ def host_install_record(
         # Executable discovery policy (#34); supersedes prose-only alternate lists.
         "discovery_roots": _discovery_roots_payload(host),
         "install_methods": list(profile.install_methods),
+        # #32: install/verify/uninstall always emit install-result-v1 JSON (no --json flag).
         "installer_commands": {
             "project_dry_run": _installer_command_pair(
                 "install",
@@ -725,7 +726,6 @@ def host_install_record(
                 "--project",
                 "<PROJECT>",
                 "--dry-run",
-                "--json",
             ),
             "project": _installer_command_pair(
                 "install",
@@ -735,7 +735,6 @@ def host_install_record(
                 "project",
                 "--project",
                 "<PROJECT>",
-                "--json",
             ),
             "global": _installer_command_pair(
                 "install",
@@ -743,7 +742,6 @@ def host_install_record(
                 host,
                 "--scope",
                 "global",
-                "--json",
             ),
             "custom_root": _installer_command_pair(
                 "install",
@@ -755,7 +753,6 @@ def host_install_record(
                 "<PROJECT>",
                 "--root",
                 "<DISTINCT_ROOT>",
-                "--json",
             ),
             "verify": _installer_command_pair(
                 "verify",
@@ -765,7 +762,6 @@ def host_install_record(
                 "project",
                 "--project",
                 "<PROJECT>",
-                "--json",
             ),
             "uninstall": _installer_command_pair(
                 "uninstall",
@@ -775,7 +771,6 @@ def host_install_record(
                 "project",
                 "--project",
                 "<PROJECT>",
-                "--json",
             ),
         },
         "activation_help": profile.activation_help,

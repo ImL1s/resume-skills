@@ -87,11 +87,15 @@ def _stage_reader_self_check() -> tuple[int, str]:
 
 def _stage_installer_matrix() -> tuple[int, str]:
     completed = run(
-        [sys.executable, str(REPO / "scripts" / "install-resume-skills"), "matrix", "--json"]
+        [sys.executable, str(REPO / "scripts" / "install-resume-skills"), "matrix"]
     )
     if completed.returncode != 0:
         return completed.returncode, (completed.stderr or completed.stdout or "")[-400:]
     matrix = json.loads(completed.stdout)
+    # #32: install-result-v1 wraps matrix in results[]
+    if isinstance(matrix, dict) and matrix.get("schema_version") == "portable-resume/install-result-v1":
+        results = matrix.get("results") or []
+        matrix = results[0] if results else {}
     summary = {
         "ok": matrix.get("ok"),
         "cell_count": matrix.get("cell_count"),

@@ -85,8 +85,8 @@ roots, verification, and uninstall:
 PYTHONPATH=src python3 scripts/portable-resume --version
 PYTHONPATH=src python3 scripts/install-resume-skills --version
 PYTHONPATH=src python3 scripts/portable-resume self-check --json
-PYTHONPATH=src python3 scripts/install-resume-skills matrix --json
-PYTHONPATH=src python3 scripts/install-resume-skills hosts
+PYTHONPATH=src python3 scripts/install-resume-skills matrix
+PYTHONPATH=src python3 scripts/install-resume-skills hosts --json
 
 # Read a synthetic Claude fixture
 PYTHONPATH=src python3 scripts/portable-resume claude show latest \
@@ -96,11 +96,11 @@ PYTHONPATH=src python3 scripts/portable-resume claude show latest \
 
 # Preview, install, verify, and uninstall one destination
 PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host qwen --scope project --project "$PWD" --dry-run --json
+  --host qwen --scope project --project "$PWD" --dry-run
 PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host qwen --scope project --project "$PWD" --json
+  --host qwen --scope project --project "$PWD"
 PYTHONPATH=src python3 scripts/install-resume-skills verify \
-  --host qwen --scope project --project "$PWD" --json
+  --host qwen --scope project --project "$PWD"
 ```
 
 Full roots, activation grammar, direct archives, and marketplace/plugin routes are in [`docs/install-hosts.md`](docs/install-hosts.md). Release assets are generated with:

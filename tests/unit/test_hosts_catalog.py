@@ -116,8 +116,11 @@ class HostsCatalogTests(unittest.TestCase):
             code = install_cli_run(["hosts", "--json", "--project", "/tmp/p", "--home", "/tmp/h"])
         self.assertEqual(code, 0)
         data = json.loads(buf.getvalue())
-        self.assertEqual(data["host_count"], len(HOST_KEYS))
-        project = data["hosts"][0]["installer_commands"]["project"]
+        self.assertEqual(data["schema_version"], "portable-resume/install-result-v1")
+        self.assertEqual(data["command"], "hosts")
+        report = data["results"][0]
+        self.assertEqual(report["host_count"], len(HOST_KEYS))
+        project = report["hosts"][0]["installer_commands"]["project"]
         self.assertTrue(project["installed"].startswith("install-resume-skills"))
 
         buf2 = io.StringIO()
