@@ -665,6 +665,14 @@ def _installer_command_pair(
     }
 
 
+def _discovery_roots_payload(host: str) -> list[dict[str, Any]]:
+    """Lazy import avoids catalog↔discovery import cycle at module load."""
+
+    from .discovery import discovery_roots_for_host
+
+    return [entry.to_dict() for entry in discovery_roots_for_host(host)]
+
+
 def host_install_record(
     host: str,
     *,
@@ -704,6 +712,8 @@ def host_install_record(
         },
         "alternate_project_roots": list(profile.alternate_project_roots),
         "alternate_global_roots": list(profile.alternate_global_roots),
+        # Executable discovery policy (#34); supersedes prose-only alternate lists.
+        "discovery_roots": _discovery_roots_payload(host),
         "install_methods": list(profile.install_methods),
         "installer_commands": {
             "project_dry_run": _installer_command_pair(

@@ -155,6 +155,38 @@ For direct archives, extract the archive contents into the selected Skill root. 
 - **Kimi:** the destination bundle targets current Kimi Code CLI. Legacy Python Kimi CLI session data is readable as a source, but its plugin format and `~/.kimi` data root are different.
 - **All plugin routes:** plugins can have broader execution authority than Skills. Inspect the archive and verify its published SHA-256 first.
 
+## Duplicate / shadow Skill audit (#34)
+
+Several hosts load Skills from more than one discovery root. The installer only
+mutates the selected root; a higher-precedence stale copy can still win at
+runtime.
+
+```bash
+# Read-only scan (bounded known roots + resume-* names only)
+PYTHONPATH=src python3 scripts/install-resume-skills audit-host \
+  --host cursor --scope project --project "$PWD" --json
+
+# Install preflight: known higher-precedence divergent copy → E_INSTALL_SHADOW
+PYTHONPATH=src python3 scripts/install-resume-skills install \
+  --host cursor --scope global --project "$PWD" --home "$HOME" --dry-run --json
+```
+
+Safe consolidation workflow:
+
+1. Run `audit-host` for the host/scope you care about.
+2. Prefer one authoritative root (usually the installer's primary project or
+   user root for that host).
+3. Manually remove or rename **foreign** older copies after you confirm the
+   installer-owned tree verifies. The tool never deletes alternate roots.
+4. Re-run `audit-host` / `verify` until aggregate status is `unique` or
+   `duplicate_identical_payload` / `same_physical_root_multi_claim`.
+
+`hosts --json` includes machine-readable `discovery_roots` (precedence may be
+`null` when host docs do not prove order). Equal first-class roots (for example
+Cursor `.cursor/skills` vs `.agents/skills`) warn on divergent payloads but do
+not block. Shared physical roots with multi-claim ownership are not treated as
+harmful duplicates.
+
 ## Evidence boundary
 
 Published `0.3.4` claims registry-derived **9×9=81** packaging and installed-runner
