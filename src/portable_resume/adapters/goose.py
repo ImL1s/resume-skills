@@ -157,7 +157,9 @@ def _open_connection(database: str, root: str, budget: ReadBudget | None = None)
         raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
     if size > limits.sqlite_snapshot_bytes:
         return query_only_live_sqlite(database, root=root, provider=FORMAT_ID)
-    return private_sqlite_connection(database, root=root, provider=FORMAT_ID)
+    return private_sqlite_connection(
+        database, root=root, bounds=limits, provider=FORMAT_ID
+    )
 
 
 def _require_schema(connection: sqlite3.Connection) -> None:
@@ -241,9 +243,21 @@ def _row_summary(
     )
 
 
-def _session_has_extractable_turn(connection: sqlite3.Connection, session_id: str) -> bool:
-    """True when at least one public message yields non-empty text after decode."""
+def _session_has_extractable_turn(
+    connection: sqlite3.Connection,
+    session_id: str,
+    budget: ReadBudget,
+) -> bool:
+    """True when at least one public message yields non-empty text after decode.
 
+    Corrupt ``content_json`` (malformed JSON / duplicate keys / bad types) raises
+    ``E_CORRUPT_RECORD`` so latest selection cannot silently skip a newer broken
+    session and hand back an older transcript (Codex P1).
+    """
+
+    row_limit = min(budget.limits.transcript_records, DEFAULT_BOUNDS.transcript_records)
+    if row_limit <= 0:
+        return False
     rows = connection.execute(
         """
         SELECT role, content_json
@@ -251,17 +265,20 @@ def _session_has_extractable_turn(connection: sqlite3.Connection, session_id: st
         WHERE session_id = ?
           AND role IN ('user', 'assistant', 'tool', 'toolResult', 'tool_result', 'function')
         ORDER BY id ASC
-        LIMIT 64
+        LIMIT ?
         """,
-        (session_id,),
+        (session_id, row_limit),
     )
     for role, content_json in rows:
         if not isinstance(role, str) or not isinstance(content_json, str):
-            continue
-        try:
-            text = _content_text(content_json)
-        except DiagnosticError:
-            continue
+            raise DiagnosticError("E_CORRUPT_RECORD", source="goose", provider=FORMAT_ID)
+        encoded = content_json.encode("utf-8")
+        if len(encoded) > budget.limits.record_bytes:
+            raise DiagnosticError.limit_exceeded()
+        # Eligibility decoding counts toward the caller's scanned-record + source-byte budgets.
+        budget.consume_bytes(len(encoded))
+        budget.consume_records()
+        text = _content_text(content_json)
         if text is not None and text.strip():
             return True
     return False
@@ -277,6 +294,8 @@ def _list_sessions(
 ) -> list[SessionSummary]:
     scan_limit = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
     list_limit = min(budget.limits.listed_sessions, DEFAULT_BOUNDS.listed_sessions)
+    if exact_id is None and list_limit <= 0:
+        return []
 
     def _fetch_exact(session_key: str) -> list[tuple]:
         return connection.execute(
@@ -319,6 +338,8 @@ def _list_sessions(
             rows = _fetch_normal()
             require_age = True
             exact_id = None
+            if list_limit <= 0:
+                return []
     else:
         rows = _fetch_normal()
         require_age = True
@@ -331,7 +352,7 @@ def _list_sessions(
                 continue
             if isinstance(session_type, str) and session_type in _DEFAULT_EXCLUDE_TYPES:
                 continue
-            if not _session_has_extractable_turn(connection, session_id):
+            if not _session_has_extractable_turn(connection, session_id, budget):
                 continue
         item = _row_summary(
             database=database,
@@ -344,6 +365,9 @@ def _list_sessions(
             require_age=require_age,
         )
         if item is not None:
+            # Guard zero listed_sessions before append (Codex P2).
+            if exact_id is None and len(values) >= list_limit:
+                break
             values.append(item)
             budget.consume_records()
             if exact_id is None and len(values) >= list_limit:
@@ -542,7 +566,8 @@ class GooseAdapter:
         values.sort(key=lambda item: item.updated_at is None)
         if exact is not None:
             return values
-        return values[: DEFAULT_BOUNDS.listed_sessions]
+        list_limit = min(budget.limits.listed_sessions, DEFAULT_BOUNDS.listed_sessions)
+        return values[:list_limit]
 
     def show(self, ref: ResolvedRef, query: Query, budget: ReadBudget) -> Session:
         root = _existing_root(query)

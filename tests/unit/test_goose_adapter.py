@@ -162,6 +162,56 @@ class GooseAdapterTests(unittest.TestCase):
                 ADAPTER.show(ResolvedRef(session_id=session_id, source_path=str(db_path)), current, ReadBudget())
             self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
 
+    def test_corrupt_newer_session_fails_list_not_silent_fallback(self) -> None:
+        """Latest eligibility must not skip a newer corrupt session for an older good one."""
+        import tempfile
+        from tests.fixtures.goose import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            db_path = root / "sessions" / "sessions.db"
+            conn = bf._connect(db_path)
+            bf._create_core_schema(conn)
+            bf._insert_schema_versions(conn, range(1, 16))
+            old_id = "gocorrlat-0101-4101-8101-010101010101"
+            new_id = "gocorrlat-0202-4202-8202-020202020202"
+            bf._insert_session(conn, session_id=old_id, name="old good", session_type="user")
+            bf._insert_message(
+                conn,
+                session_id=old_id,
+                message_id="old-msg",
+                role="user",
+                text="recoverable history",
+            )
+            conn.execute(
+                """
+                INSERT INTO sessions (
+                    id, name, description, user_set_name, session_type, working_dir,
+                    created_at, updated_at, extension_data, goose_mode
+                ) VALUES (?, 'corrupt newer', 'corrupt newer', 0, 'user', ?, ?, ?, '{}', 'auto')
+                """,
+                (new_id, CWD, "2024-01-02 12:00:00", "2024-01-02 12:00:00"),
+            )
+            conn.execute(
+                """
+                INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp, timestamp)
+                VALUES ('bad-new', ?, 'user', '{not-json', 1, ?)
+                """,
+                (new_id, "2024-01-02 12:00:00"),
+            )
+            conn.commit()
+            conn.close()
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.list(query(root), ReadBudget())
+            self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
+    def test_listed_sessions_zero_returns_empty(self) -> None:
+        from portable_resume.bounds import Bounds
+
+        root = fixture_root("s-go-01-user-basic")
+        summaries = ADAPTER.list(query(root), ReadBudget(Bounds(listed_sessions=0)))
+        self.assertEqual(summaries, [])
+
 
 if __name__ == "__main__":
     unittest.main()
