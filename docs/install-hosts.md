@@ -128,7 +128,7 @@ PYTHONPATH=src python3 scripts/install-resume-skills uninstall \
   --host qwen --scope project --project "$PWD" --json
 ```
 
-Use `--scope global` for the user root or `--root <path>` for an explicit root. `--host all` locks every unique physical root in a deterministic order, replans under those locks, then mutates; if a later root fails, same-process compensation restores earlier roots while the locks remain held (not durable multi-root atomicity across process crash — use `recover` per root). Codex and Antigravity both default to `.agents/skills` at project scope but render different host instructions, so install one to a distinct `--root`; otherwise the installer returns `E_INSTALL_CONFLICT` before mutation.
+Use `--scope global` for the user root or `--root <path>` for an explicit root. `--host all` locks every unique physical root in a deterministic order, replans under those locks, then mutates; if a later root fails, same-process compensation restores earlier roots while the locks remain held (not durable multi-root atomicity across process crash — use `recover` per root). Direct Skill payloads are **host-neutral** (`agent-skills-portable-v1`): Codex and Antigravity can both claim the natural project root `.agents/skills` with one set of `resume-*` bytes. Host-specific activation grammar lives in `install-resume-skills hosts` / this guide, not in the shared Skill body. Genuine same-path content divergence still fails with `E_INSTALL_CONFLICT` before mutation.
 
 ## Per-host routes
 

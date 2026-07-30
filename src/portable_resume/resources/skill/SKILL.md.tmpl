@@ -8,11 +8,17 @@ description: ${description}
 Import inert local **${source_title}** session context into a **fresh** session.
 This is context migration — never live process restoration.
 
-## Host activation (${host_profile})
+## Host activation
 
-${activation_help}
+Use this host's normal Skill discovery and invocation (slash command, `$name`,
+name mention, marketplace picker, or other host-native UI). See
+`install-resume-skills hosts` and `docs/install-hosts.md` for the accurate
+per-host activation grammar and arguments notes.
 
-${arguments_note}
+This Skill body is **host-neutral** so compatible Agent Skills roots (for
+example shared project `.agents/skills`) can hold one portable payload claimed
+by more than one destination host. Host-specific activation prose is not
+embedded here.
 
 ## Owned runner (mandatory)
 

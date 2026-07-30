@@ -60,17 +60,21 @@ def _read_template(name: str) -> Template:
     return Template(path.read_text(encoding="utf-8"))
 
 
-def render_skill_markdown(*, host: str, source: str) -> str:
-    profile = HOST_PROFILES[host]
+def render_skill_markdown(*, source: str, host: str | None = None) -> str:
+    """Render one portable ``resume-<source>/SKILL.md`` body.
+
+    ``host`` is accepted for API compatibility but is **not** baked into the
+    Skill body (#25). Compatible destinations share byte-identical Skill trees;
+    host-specific activation grammar lives in the catalog / hosts command / docs.
+    """
+    if host is not None and host not in HOST_PROFILES:
+        raise KeyError(host)
     tmpl = _read_template("SKILL.md.tmpl")
     return tmpl.safe_substitute(
         skill_name=skill_name_for(source),
         description=description_for(source),
         source_title=SOURCE_TITLES[source],
         source_key=source,
-        host_profile=profile.profile_id,
-        activation_help=profile.activation_help,
-        arguments_note=profile.arguments_note,
     )
 
 
@@ -95,7 +99,7 @@ def materialize_plan(host: str) -> dict[str, bytes]:
     # one skill for every supported source
     for source in sorted(SOURCE_KEYS):
         skill = skill_name_for(source)
-        files[f"{skill}/SKILL.md"] = render_skill_markdown(host=host, source=source).encode("utf-8")
+        files[f"{skill}/SKILL.md"] = render_skill_markdown(source=source, host=host).encode("utf-8")
         files[f"{skill}/scripts/run_reader.py"] = render_run_reader(source=source).encode("utf-8")
     return files
 

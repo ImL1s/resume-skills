@@ -12,6 +12,10 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Host-neutral Skill payloads (#25): direct `resume-*/SKILL.md` no longer embeds
+  host activation prose; all destinations share `agent-skills-portable-v1`
+  package bytes so Codex + Antigravity (and other shared-root pairs) can claim
+  one physical Skill tree. Host grammar stays in catalog / `hosts` / docs.
 - Multi-root install locking (#23): `--host all` / multi-target install
   acquires exclusive locks on every unique physical root in canonical order
   before checkpoint or mutation; replans and compensates while locks remain
