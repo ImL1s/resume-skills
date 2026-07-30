@@ -2043,13 +2043,27 @@ def restore_install_checkpoint(
                 if _unlink_regular_under_root_fd(root_fd, rel, expected_sha256=live):
                     removed.append(rel)
                     continue
-                # False: missing after check, or digest raced under quarantine.
-                # Still-present leaves must surface as recovery required.
+                # False: missing after check, digest raced under quarantine, or
+                # leaf became non-regular. Only a truly absent leaf is success.
                 try:
-                    _sha256_regular_under_root_fd(root_fd, rel)
+                    parent_fd, basename, owns_parent = _open_parent_under_root_fd(
+                        root_fd, rel, create=False
+                    )
                 except DiagnosticError:
+                    # Parent gone → treat as absent.
                     continue
-                raise DiagnosticError("E_RECOVERY_REQUIRED")
+                try:
+                    try:
+                        os.lstat(basename, dir_fd=parent_fd)
+                    except FileNotFoundError:
+                        continue
+                    except OSError as error:
+                        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+                    # Still present (regular or not) after failed unlink.
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+                finally:
+                    if owns_parent:
+                        os.close(parent_fd)
             if not os.path.lexists(dest):
                 continue
             if os.path.islink(dest) or not os.path.isfile(dest):
