@@ -367,8 +367,15 @@ def resolve_discovery_path(
     *,
     project_dir: str | None,
     home_dir: str,
+    host: str | None = None,
+    environ: dict[str, str] | None = None,
+    isolation: bool | None = None,
 ) -> str | None:
-    """Resolve *entry* to an absolute path, or None when base is unavailable."""
+    """Resolve *entry* to an absolute path, or None when base is unavailable.
+
+    Primary user roots use the same env-home policy as install (#24 / #34 P2):
+    e.g. Kimi ``$KIMI_CODE_HOME/skills`` when set and not isolation.
+    """
 
     if entry.base == "project":
         if not project_dir:
@@ -376,6 +383,22 @@ def resolve_discovery_path(
         base = os.path.realpath(project_dir)
         return os.path.join(base, *entry.rel.split("/"))
     if entry.base == "home":
+        if (
+            host is not None
+            and entry.role == "primary"
+            and entry.scope == "user"
+            and host in HOST_PROFILES
+        ):
+            from .catalog import resolve_skill_root_info
+
+            return resolve_skill_root_info(
+                host=host,
+                scope="global",
+                project_dir=None,
+                home_dir=home_dir,
+                environ=environ,
+                isolation=isolation,
+            ).path
         base = os.path.realpath(home_dir)
         return os.path.join(base, *entry.rel.split("/"))
     return None
@@ -477,8 +500,14 @@ def inspect_skill_copy(
     *,
     host: str,
     expected_payload_digest: str | None = None,
+    soft_manifest: bool = True,
 ) -> dict[str, Any]:
-    """Bounded read-only inspection of ``<skill_root>/<skill_name>``."""
+    """Bounded read-only inspection of ``<skill_root>/<skill_name>``.
+
+    When *soft_manifest* is true (alternate roots), malformed ownership
+    manifests are reported as unreadable metadata. When false (selected root
+    under audit), control-schema failures re-raise so callers can fail closed.
+    """
 
     skill_dir = os.path.join(skill_root, skill_name)
     skill_md = os.path.join(skill_dir, "SKILL.md")
@@ -542,10 +571,22 @@ def inspect_skill_copy(
         result["matches_expected"] = False
 
     # Ownership metadata from sibling support tree (informational; not identity).
-    # Lazy import: load_manifest lives in transaction (avoids import cycle).
+    # Malformed *alternate* manifests must not abort the whole scan (#34 P2).
+    # Selected-root audits keep hard fail via soft_manifest=False.
     from .transaction import load_manifest
 
-    manifest = load_manifest(skill_root)
+    try:
+        manifest = load_manifest(skill_root)
+    except DiagnosticError:
+        if not soft_manifest:
+            raise
+        result["owned"] = False
+        result["manifest_unreadable"] = True
+        # Byte-identical payload is still not "identical managed" without a
+        # readable ownership document on alternate roots.
+        result["payload_verified"] = False
+        result["matches_expected"] = False
+        return result
     if manifest is not None and manifest.claims:
         result["owned"] = True
         result["bundle_version"] = manifest.bundle_version
@@ -589,7 +630,9 @@ def scan_skill_duplicates(
     # Record selected root precedence from policy (best matching entry).
     selected_prec: int | None = None
     for entry in roots:
-        path = resolve_discovery_path(entry, project_dir=project_dir, home_dir=home_dir)
+        path = resolve_discovery_path(
+            entry, project_dir=project_dir, home_dir=home_dir, host=host
+        )
         if path is None:
             continue
         try:
@@ -639,7 +682,9 @@ def _scan_skill_duplicates_body(
     seen_physical: dict[str, str],
 ) -> dict[str, Any]:
     for entry in roots:
-        path = resolve_discovery_path(entry, project_dir=project_dir, home_dir=home_dir)
+        path = resolve_discovery_path(
+            entry, project_dir=project_dir, home_dir=home_dir, host=host
+        )
         row: dict[str, Any] = {
             **entry.to_dict(),
             "resolved": path is not None,
@@ -713,6 +758,8 @@ def _scan_skill_duplicates_body(
                 skill,
                 host=host,
                 expected_payload_digest=expected_identity,
+                # Selected root: keep hard control-plane errors for audit honesty.
+                soft_manifest=not row["is_selected"],
             )
             if not inspection["present"]:
                 continue
@@ -741,6 +788,7 @@ def _scan_skill_duplicates_body(
                     "owned": inspection["owned"],
                     "unsafe": inspection["unsafe"],
                     "payload_verified": inspection["payload_verified"],
+                    "manifest_unreadable": bool(inspection.get("manifest_unreadable")),
                     "payload_fingerprint": inspection["payload_fingerprint"],
                     "package_identity": inspection["package_identity"],
                     "bundle_version": inspection["bundle_version"],
@@ -838,6 +886,10 @@ def _classify_copy(
 
     if same_physical_prior or root_real == selected_real:
         return STATUS_SAME_PHYSICAL, POLICY_ALLOW, "same_physical_root"
+
+    if inspection.get("manifest_unreadable") and not is_selected:
+        # Exact package bytes with unreadable ownership → foreign/unverifiable.
+        return STATUS_DUP_FOREIGN, POLICY_WARN, "manifest_unreadable"
 
     if identical:
         if entry.scope == "plugin":

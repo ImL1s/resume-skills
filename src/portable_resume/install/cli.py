@@ -212,10 +212,13 @@ def run(argv: Sequence[str] | None = None) -> int:
                 raise DiagnosticError.invalid()
             if ns.scope == "project" and not ns.project and not ns.root:
                 raise DiagnosticError.invalid()
+            project_for_audit = ns.project
+            if ns.scope == "global" and not project_for_audit:
+                project_for_audit = os.getcwd()
             report = audit_host_report(
                 host=ns.host,
                 scope=ns.scope,
-                project_dir=ns.project,
+                project_dir=project_for_audit,
                 home_dir=ns.home,
                 root=ns.root,
             )
@@ -231,9 +234,14 @@ def run(argv: Sequence[str] | None = None) -> int:
             _reject_divergent_shared_roots(targets)
             # #34: fail closed on known higher-precedence divergent shadows
             # before any mutation (and report scan on dry-run).
+            # Global installs still need a project context so project-tier roots
+            # (higher precedence) are scanned — default to CWD when --project
+            # is omitted (quick-install / plain --scope global).
             project_for_scan = ns.project
             if ns.scope == "project" and not project_for_scan and not ns.root:
                 raise DiagnosticError.invalid()
+            if ns.scope == "global" and not project_for_scan:
+                project_for_scan = os.getcwd()
             discovery_by_host: dict[str, dict[str, Any]] = {}
             for host, root in targets:
                 discovery_by_host[host] = require_no_blocking_shadow(
@@ -289,10 +297,13 @@ def run(argv: Sequence[str] | None = None) -> int:
                     claim = claim_key(host=host, scope=ns.scope, root=root)
                     verified = verify_root(root, claim=claim)
                     # Observational discovery attachment (#34); never mutates.
+                    project_for_verify = ns.project
+                    if ns.scope == "global" and not project_for_verify:
+                        project_for_verify = os.getcwd()
                     discovery = scan_skill_duplicates(
                         host=host,
                         selected_root=root,
-                        project_dir=ns.project,
+                        project_dir=project_for_verify,
                         home_dir=ns.home,
                         selected_scope=ns.scope,
                     )
