@@ -557,6 +557,9 @@ def stable_scan_lines(
         before_entry = _target_entry_fingerprint(parent, basename, root=base)
         descriptor = _open_no_follow(safe, base)
         spool: tempfile.SpooledTemporaryFile | None = None
+        verified_spool: tempfile.SpooledTemporaryFile | None = None
+        pending_bytes = 0
+        pending_records = 0
         try:
             before_stat = os.fstat(descriptor)
             if not _entry_identity_matches(before_entry, before_stat):
@@ -599,23 +602,26 @@ def stable_scan_lines(
                 and pending_bytes == verified_size == final_size == before_stat.st_size
             ):
                 continue
+            # Hand off spool for post-close replay so the source fd is never
+            # held open while yielding to callers.
+            verified_spool = spool
+            spool = None
+        finally:
+            os.close(descriptor)
+            if spool is not None:
+                spool.close()
+        if verified_spool is not None:
             effective_budget.consume_bytes(pending_bytes)
             if charge_transcript:
                 effective_budget.consume_transcript_records(pending_records)
             else:
                 effective_budget.consume_records(pending_records)
             try:
-                spool.seek(0)
-                yield from _spool_iter_lines(spool)
+                verified_spool.seek(0)
+                yield from _spool_iter_lines(verified_spool)
             finally:
-                spool.close()
-                spool = None
+                verified_spool.close()
             return
-        finally:
-            os.close(descriptor)
-            if spool is not None:
-                # Failed attempt / early continue / exception — discard spool.
-                spool.close()
     family = (os.path.basename(safe),)
     raise DiagnosticError.source_busy(attempts=attempts, family=family)
 
