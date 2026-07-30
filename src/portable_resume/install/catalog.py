@@ -589,6 +589,47 @@ HOST_PROFILES: dict[str, HostProfile] = {
         ),
         evidence_level="verified-filesystem",
     ),
+    "crush": HostProfile(
+        key="crush",
+        profile_id="crush-v1",
+        project_rel=".crush/skills",
+        global_rel=".config/crush/skills",
+        display_name="Crush",
+        official_docs=(
+            "https://github.com/charmbracelet/crush",
+        ),
+        project_layout="<project>/.crush/skills/<name>/SKILL.md",
+        global_layout="~/.config/crush/skills/<name>/SKILL.md",
+        alternate_project_roots=(".agents/skills",),
+        alternate_global_roots=("~/.agents/skills", "~/.claude/skills"),
+        install_methods=(
+            "This installer: install-resume-skills install --host crush --scope project|global",
+            "Manual: copy each resume-*/ folder into .crush/skills/ or ~/.config/crush/skills/",
+        ),
+        activation_help=(
+            "Load resume-<source> from the Crush skills tree. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-crush with ref latest",
+            "Use skill resume-crush with a session id",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (native session id or latest). "
+            "Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
+        ),
+        caveats=(
+            "Per-project .crush/crush.db is the supported store; no recursive home scan.",
+            "Does not invoke Crush CLI/TUI, crush serve, migrations, MCP, or providers.",
+            "Native Crush UI / picker activation evidence remains not-run.",
+        ),
+        evidence_notes=(
+            "Crush crush.db goose_db_version=7 fixtures + Agent Skills roots "
+            "(checked 2026-07-30). Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+    ),
 }
 
 SOURCE_TITLES = {
@@ -602,6 +643,7 @@ SOURCE_TITLES = {
     "pi": "Pi agent",
     "openclaw": "OpenClaw",
     "goose": "goose",
+    "crush": "Crush",
     "qwen": "Qwen Code",
 }
 

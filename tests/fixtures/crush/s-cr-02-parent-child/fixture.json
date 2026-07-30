@@ -1,0 +1,10 @@
+{
+  "case": "s-cr-02-parent-child",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "crush-sqlite-v1",
+  "provenance_ref": "docs/source-formats.md#crush-sqlite-v1",
+  "source": "crush",
+  "synthetic": true
+}

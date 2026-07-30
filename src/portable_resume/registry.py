@@ -52,6 +52,7 @@ _DESTINATION_PAYLOAD_PROFILES: dict[str, str] = {
     "pi": "pi-v1",
     "openclaw": "openclaw-v1",
     "goose": "goose-v1",
+    "crush": "crush-v1",
 }
 
 _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
@@ -66,6 +67,7 @@ _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
     "pi": (".pi/skills", ".pi/agent/skills"),
     "openclaw": ("skills", ".openclaw/skills"),
     "goose": (".goose/skills", ".config/goose/skills"),
+    "crush": (".crush/skills", ".config/crush/skills"),
 }
 
 
@@ -138,6 +140,14 @@ SOURCE_PROFILES["goose"] = SourceProfile(
     fixture_profile="goose-sessions-sqlite-v15",
 )
 
+SOURCE_PROFILES["crush"] = SourceProfile(
+    key="crush",
+    adapter_module="portable_resume.adapters.crush",
+    format_ids=("crush-sqlite-v1",),
+    status="supported",
+    fixture_profile="crush-sqlite-v1",
+)
+
 # Native package surface key per destination (independent of direct Skills).
 # Hosts with only direct-skill install leave this unset (opencode, pi, …).
 _NATIVE_PACKAGE_BY_DESTINATION: dict[str, str] = {
@@ -190,6 +200,16 @@ DESTINATION_PROFILES["goose"] = DestinationProfile(
     direct_skill=True,
     project_rel=".goose/skills",
     global_rel=".config/goose/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["crush"] = DestinationProfile(
+    key="crush",
+    payload_profile="crush-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".crush/skills",
+    global_rel=".config/crush/skills",
     native_package_profile=None,
 )
 

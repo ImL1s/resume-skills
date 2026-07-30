@@ -20,6 +20,10 @@ class StatusHonestyTests(unittest.TestCase):
             text,
             r"(?i)goose[^.\n]{0,60}(picker|native).{0,20}pass",
         )
+        self.assertNotRegex(
+            text,
+            r"(?i)crush[^.\n]{0,60}(picker|native).{0,20}pass",
+        )
 
     def test_status_describes_registry_derived_matrix(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
@@ -29,7 +33,7 @@ class StatusHonestyTests(unittest.TestCase):
         )
         self.assertRegex(
             text,
-            r"11\s*[×x]\s*11|11×11=121|121/121|10\s*[×x]\s*10|100/100|9\s*[×x]\s*9\s*=\s*81|9×9=81",
+            r"12\s*[×x]\s*12|12×12=144|144/144|11\s*[×x]\s*11|11×11=121|121/121|10\s*[×x]\s*10|100/100|9\s*[×x]\s*9\s*=\s*81|9×9=81",
         )
 
     def test_status_open_work_links_next_wave_roadmap(self) -> None:
@@ -45,7 +49,7 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertIn("derived from registries", lowered)
         self.assertRegex(
             text,
-            r"11\s*[×x]\s*11|10\s*[×x]\s*10|9\s*[×x]\s*9|enabled_source|enabled_destination|registry",
+            r"12\s*[×x]\s*12|11\s*[×x]\s*11|10\s*[×x]\s*10|9\s*[×x]\s*9|enabled_source|enabled_destination|registry",
         )
 
     def test_readme_and_host_support_note_registry_derived_matrix(self) -> None:
@@ -124,8 +128,8 @@ class StatusHonestyTests(unittest.TestCase):
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
         self.assertRegex(text, r"\*\*\d+ pass locally\*\*")
-        # Current main is 121-cell; published 0.3.4 historical 81 remains noted.
-        self.assertRegex(text, r"121/121|100/100|81/81")
+        # Current main is 144-cell; published 0.3.4 historical 81 remains noted.
+        self.assertRegex(text, r"144/144|121/121|100/100|81/81")
         self.assertIn("359", text)  # archived local suite after Pi destination PR C
         self.assertIn("d9152cd", text)  # archived PR #51 merge tip
         self.assertIn("340", text)  # archived PR #51 merge count
@@ -138,8 +142,8 @@ class StatusHonestyTests(unittest.TestCase):
         )
         readme = Path("README.md").read_text(encoding="utf-8")
         self.assertRegex(readme, r"0\.3\.4")
-        self.assertRegex(readme, r"121/121|100/100|81/81|historical 81")
-        self.assertRegex(readme, r"(?i)pi.*native|Pi/OpenClaw|goose|not-run")
+        self.assertRegex(readme, r"144/144|121/121|100/100|81/81|historical 81")
+        self.assertRegex(readme, r"(?i)pi.*native|Pi/OpenClaw|goose|crush|not-run")
         self.assertRegex(readme, r"not-run")
 
 

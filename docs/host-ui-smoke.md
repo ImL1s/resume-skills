@@ -98,3 +98,5 @@ the six public installation rows and two picker rows above satisfy only those
 scoped v0.3.2 claims. A green filesystem/runner matrix (historical 64-cell or
 current 81-cell) is not substitute evidence for a host picker, a public catalog,
 or a vendor-curated directory.
+
+| crush | not-run | filesystem install only; native picker not-run |
