@@ -22,7 +22,13 @@ from typing import Any, Iterable, Mapping
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
-from ..paths import canonical_root, canonicalize_cwd, same_cwd
+from ..paths import (
+    canonical_root,
+    canonicalize_cwd,
+    is_within,
+    require_regular_no_symlinks,
+    same_cwd,
+)
 from ..sanitize import sanitize_turn_record
 from ..snapshot import FileSnapshot, StableWindows, snapshot_regular_file, stable_read_windows
 from .base import CapabilityReport, ResolvedRef
@@ -239,7 +245,18 @@ def _bounded_names(directory: str, *, limit: int) -> list[str]:
     return values
 
 
-def _project_dirs(root: str, *, prefer_slugs: tuple[str, ...] = ()) -> list[str]:
+def _project_dirs(
+    root: str,
+    *,
+    prefer_slugs: tuple[str, ...] = (),
+    prefer_only: bool = False,
+) -> list[str]:
+    """Return project directories under ``<root>/projects``.
+
+    When *prefer_only* is true, only the preferred cwd-slug directories are
+    considered — the projects tree is not enumerated. This keeps exact UUID +
+    cwd discovery off the broad ``_PROJECT_DIR_LIMIT`` / scandir path.
+    """
     projects = os.path.join(root, "projects")
     if not _regular_directory(projects, root):
         return []
@@ -252,6 +269,8 @@ def _project_dirs(root: str, *, prefer_slugs: tuple[str, ...] = ()) -> list[str]
         if _regular_directory(candidate, root):
             preferred.append(candidate)
             seen.add(slug)
+    if prefer_only:
+        return preferred
     names = _bounded_names(projects, limit=DEFAULT_BOUNDS.scanned_records)
     others: list[str] = []
     for name in names:
@@ -266,25 +285,100 @@ def _project_dirs(root: str, *, prefer_slugs: tuple[str, ...] = ()) -> list[str]
     return preferred + others
 
 
-def _session_paths(
-    root: str,
-    *,
-    prefer_slugs: tuple[str, ...] = (),
-    exact_uuid: str | None = None,
-    cwd_scoped: bool = False,
-) -> list[str]:
-    """Enumerate session JSONL paths.
+def _session_layout_ok(path: str, root: str) -> bool:
+    """True when *path* is ``projects/<slug>/<uuid>.jsonl`` under *root*."""
 
-    When *cwd_scoped* and a preferred slug directory exists, only that project
-    directory is scanned (Grok-build list behavior for a concrete cwd). Exact
-    UUID lookup still falls back to a broader scan when the slug dir misses.
-    """
-    project_dirs = _project_dirs(root, prefer_slugs=prefer_slugs)
-    if cwd_scoped and prefer_slugs:
-        scoped = [path for path in project_dirs if os.path.basename(path) in prefer_slugs]
-        if scoped:
-            project_dirs = scoped
+    if not is_within(path, root):
+        return False
+    relative = os.path.relpath(path, root)
+    parts = relative.split(os.sep)
+    if len(parts) != 3 or parts[0] != "projects" or not parts[1]:
+        return False
+    basename = parts[2]
+    if not basename.endswith(".jsonl"):
+        return False
+    try:
+        uuid.UUID(basename[:-6])
+    except ValueError:
+        return False
+    return True
+
+
+def _regular_session_file(path: str) -> bool:
+    try:
+        current = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(current.st_mode) and not stat.S_ISLNK(current.st_mode)
+
+
+def _direct_uuid_under_slugs(
+    root: str,
+    exact_uuid: str,
+    prefer_slugs: tuple[str, ...],
+) -> list[str]:
+    """Return existing ``projects/<slug>/<uuid>.jsonl`` paths without tree scans."""
+
+    projects = os.path.join(root, "projects")
+    if not _regular_directory(projects, root):
+        return []
     values: list[str] = []
+    seen: set[str] = set()
+    for slug in prefer_slugs:
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        project = os.path.join(projects, slug)
+        if not _regular_directory(project, root):
+            continue
+        candidate = os.path.join(project, f"{exact_uuid}.jsonl")
+        if _regular_session_file(candidate):
+            values.append(candidate)
+    return values
+
+
+def _exact_path_candidate(root: str, query: Query) -> str | None:
+    """Resolve an absolute path ref without store-wide discovery when possible.
+
+    Returns ``None`` when *query.ref* is not an absolute path. Raises
+    ``E_NO_MATCH`` / ``E_UNSAFE_PATH`` for absolute refs that fail validation.
+    """
+
+    ref = query.ref.strip() if query.ref else None
+    if not ref or not os.path.isabs(ref):
+        return None
+    try:
+        path, _ = require_regular_no_symlinks(ref, root)
+    except DiagnosticError as error:
+        if error.code == "E_UNSAFE_PATH" and not os.path.lexists(os.path.abspath(ref)):
+            raise DiagnosticError("E_NO_MATCH", source="claude", provider=FORMAT_ID) from error
+        raise
+    if not _session_layout_ok(path, root):
+        raise DiagnosticError.unsafe_path()
+    return path
+
+
+def _paths_under_projects(
+    project_dirs: list[str],
+    *,
+    exact_uuid: str | None = None,
+) -> list[str]:
+    """Collect session JSONL paths under the given project directories.
+
+    Exact UUID lookups probe only ``<uuid>.jsonl`` per project (no session-dir
+    scandir). Non-exact list still bounds directory membership.
+    """
+
+    values: list[str] = []
+    if exact_uuid is not None:
+        for project in project_dirs:
+            candidate = os.path.join(project, f"{exact_uuid}.jsonl")
+            if _regular_session_file(candidate):
+                values.append(candidate)
+                if len(values) > DEFAULT_BOUNDS.scanned_records:
+                    raise DiagnosticError.limit_exceeded()
+        return values
+
     for project in project_dirs:
         names = _bounded_names(project, limit=DEFAULT_BOUNDS.scanned_records)
         for name in names:
@@ -295,21 +389,53 @@ def _session_paths(
                 uuid.UUID(stem)
             except ValueError:
                 continue
-            if exact_uuid is not None and stem != exact_uuid:
-                continue
             candidate = os.path.join(project, name)
-            try:
-                current = os.lstat(candidate)
-            except OSError:
-                continue
-            if stat.S_ISREG(current.st_mode) and not stat.S_ISLNK(current.st_mode):
+            if _regular_session_file(candidate):
                 values.append(candidate)
                 if len(values) > DEFAULT_BOUNDS.scanned_records:
                     raise DiagnosticError.limit_exceeded()
-    if cwd_scoped and prefer_slugs and exact_uuid is not None and not values:
-        # UUID not under the cwd slug — scan remaining projects (Grok _find_claude_id).
-        return _session_paths(root, prefer_slugs=prefer_slugs, exact_uuid=exact_uuid, cwd_scoped=False)
     return values
+
+
+def _session_paths(
+    root: str,
+    *,
+    prefer_slugs: tuple[str, ...] = (),
+    exact_uuid: str | None = None,
+    cwd_scoped: bool = False,
+) -> list[str]:
+    """Enumerate session JSONL paths.
+
+    Fast paths (issue #19):
+
+    - exact UUID + preferred cwd slug(s): construct
+      ``projects/<slug>/<uuid>.jsonl`` and return it when present without
+      enumerating unrelated project directories
+    - cwd-scoped discovery uses preferred dirs only (no full projects scandir)
+      when those dirs exist
+
+    Exact UUID still falls back to a broader, basename-probed scan when the
+    direct candidate is absent. Recorded-cwd validation remains in
+    ``_summary`` / ``show`` — slug presence alone is never authority.
+    """
+    if exact_uuid is not None and prefer_slugs:
+        direct = _direct_uuid_under_slugs(root, exact_uuid, prefer_slugs)
+        if direct:
+            return direct
+        # Direct slug candidate absent — broad basename probe across projects
+        # (Grok `_find_claude_id` parity). Do not re-scope after this miss.
+        project_dirs = _project_dirs(root, prefer_slugs=prefer_slugs, prefer_only=False)
+        return _paths_under_projects(project_dirs, exact_uuid=exact_uuid)
+
+    if cwd_scoped and prefer_slugs:
+        preferred_dirs = _project_dirs(root, prefer_slugs=prefer_slugs, prefer_only=True)
+        if preferred_dirs:
+            return _paths_under_projects(preferred_dirs, exact_uuid=None)
+        # Preferred slug dir missing: preserve legacy broad list so sessions
+        # whose project bucket name differs can still match recorded cwd.
+
+    project_dirs = _project_dirs(root, prefer_slugs=prefer_slugs, prefer_only=False)
+    return _paths_under_projects(project_dirs, exact_uuid=exact_uuid)
 
 
 def _prefer_slugs_for(query: Query) -> tuple[str, ...]:
@@ -966,14 +1092,22 @@ class ClaudeAdapter:
         if root is None:
             raise DiagnosticError("E_CAPABILITY_UNAVAILABLE", source=self.key, provider=FORMAT_ID)
         values: list[SessionSummary] = []
-        exact = _exact_uuid_ref(query.ref)
-        prefer = _prefer_slugs_for(query)
-        for path in _session_paths(
-            root,
-            prefer_slugs=prefer,
-            exact_uuid=exact,
-            cwd_scoped=bool(prefer) and exact is None,
-        ):
+        # Absolute approved path: validate/read that file only (#19).
+        exact_path = _exact_path_candidate(root, query)
+        if exact_path is not None:
+            paths = [exact_path]
+        else:
+            exact = _exact_uuid_ref(query.ref)
+            prefer = _prefer_slugs_for(query)
+            # Exact UUID + cwd uses direct slug path inside `_session_paths`.
+            # Non-exact list still cwd-scopes when a preferred slug exists.
+            paths = _session_paths(
+                root,
+                prefer_slugs=prefer,
+                exact_uuid=exact,
+                cwd_scoped=bool(prefer) and exact is None,
+            )
+        for path in paths:
             # List still needs recorded cwd/title for collision safety; show does lineage.
             item = _summary(path, root, query, budget)
             if item is not None:

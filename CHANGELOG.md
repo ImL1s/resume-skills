@@ -12,6 +12,13 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Claude exact-reference discovery (#19): absolute approved
+  `projects/<slug>/<uuid>.jsonl` paths are validated/read without enumerating
+  unrelated project directories; exact UUID + concrete cwd constructs the
+  deterministic slug path first; missing direct candidates fall back to a
+  bounded basename probe across projects (no full per-project session scandir).
+  Recorded primary cwd remains authoritative — slug name alone never selects.
+  Discovery optimization only; graph/metadata-window behavior unchanged.
 - Native package contracts (#27): versioned offline contracts per direct-skill
   and plugin/marketplace surface (`package-contracts-v1`); builder validates
   each archive (members, manifests, skills layout, marketplace source paths,
