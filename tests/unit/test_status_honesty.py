@@ -19,6 +19,9 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertNotRegex(
             text,
             r"(?i)goose[^.\n]{0,60}(picker|native).{0,20}pass",
+        )
+        self.assertNotRegex(
+            text,
             r"(?i)crush[^.\n]{0,60}(picker|native).{0,20}pass",
         )
 

@@ -6,8 +6,8 @@
 |---|---|
 | Source adapters | 12: Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi, Pi, OpenClaw, goose, **Crush** |
 | Destination profiles | 12 including **Pi** + **OpenClaw** + **goose** + **Crush** (filesystem install supported) |
-| Packaging matrix | **121/121** on current main tip (**11×11**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
-| Installed runner matrix | **121/121** on current main tip (**11×11**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
+| Packaging matrix | **144/144** on current main tip (**12×12**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
+| Installed runner matrix | **144/144** on current main tip (**12×12**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
 | Python test suite | **426 pass locally** (**426 collected**) after Wave 0 activation baseline validators (pre-Wave 0 main was **407** post-#11/#72; v0.3.4 tag was 375; historical Pi destination PR C local suite remains **359**). |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |

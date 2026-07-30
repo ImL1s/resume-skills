@@ -96,7 +96,7 @@ class CrushAdapterTests(unittest.TestCase):
             conn.close()
             current = Query(
                 source="crush",
-                cwd=CWD,
+                cwd=str(project),
                 source_root=str(project),
                 within_min=0,
             )
@@ -104,6 +104,45 @@ class CrushAdapterTests(unittest.TestCase):
             self.assertEqual(report.state, "supported")
             summaries = ADAPTER.list(current, ReadBudget())
             self.assertEqual(len(summaries), 1)
+            self.assertEqual(summaries[0].cwd, str(project.resolve()))
+
+    def test_cwd_mismatch_on_project_layout_filtered(self) -> None:
+        import tempfile
+        from tests.fixtures.crush import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "proj-a"
+            project.mkdir()
+            data = project / ".crush"
+            db_path = data / "crush.db"
+            conn = bf._connect(db_path)
+            bf._create_schema(conn)
+            bf._insert_session(
+                conn, session_id=BASIC_ID, title="proj a", message_count=1
+            )
+            bf._insert_message(
+                conn,
+                message_id="m1",
+                session_id=BASIC_ID,
+                role="user",
+                text="project a context",
+            )
+            conn.commit()
+            conn.close()
+            other = Query(
+                source="crush",
+                cwd="/tmp/other-project",
+                source_root=str(project),
+                within_min=0,
+            )
+            self.assertEqual(ADAPTER.list(other, ReadBudget()), [])
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.show(
+                    ResolvedRef(session_id=BASIC_ID, source_path=str(db_path)),
+                    other,
+                    ReadBudget(),
+                )
+            self.assertEqual(caught.exception.code, "E_NO_MATCH")
 
     def test_malformed_parts_fail_closed(self) -> None:
         import tempfile

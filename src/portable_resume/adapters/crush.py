@@ -32,9 +32,10 @@ from .base import CapabilityReport, ResolvedRef
 from .common import within_age
 
 FORMAT_ID = "crush-sqlite-v1"
-# Migrations: initial + summary_message_id + created_at_indexes + provider +
-# is_summary_message + todos + read_files (pressly/goose version_id sequence).
-SCHEMA_VERSION = 7
+# Pressly/goose stores each migration filename's numeric prefix in version_id
+# (not a 1..N ordinal). Latest pinned migration:
+# 20260127000000_add_read_files_table.
+SCHEMA_VERSION = 20260127000000
 DB_BASENAME = "crush.db"
 DATA_DIR_NAME = ".crush"
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
@@ -195,6 +196,50 @@ def _exact_ref(value: str | None) -> str | None:
     return None
 
 
+def _project_root_for_database(database: str) -> str | None:
+    """When DB is ``<project>/.crush/crush.db``, return the project directory."""
+
+    parent = os.path.dirname(os.path.abspath(database))
+    if os.path.basename(parent) != DATA_DIR_NAME:
+        return None
+    project = os.path.dirname(parent)
+    return project if project else None
+
+
+def _project_cwd(database: str) -> str | None:
+    project = _project_root_for_database(database)
+    if project is None:
+        return None
+    try:
+        return canonicalize_cwd(project)
+    except DiagnosticError:
+        return None
+
+
+def _cwd_matches_query(query: Query, database: str) -> bool:
+    """False when a known project layout conflicts with query.cwd."""
+
+    if query.cwd is None:
+        return True
+    project_cwd = _project_cwd(database)
+    if project_cwd is None:
+        # Data-dir / exact DB without project layout: no invent / no false filter.
+        return True
+    try:
+        asked = canonicalize_cwd(query.cwd)
+    except DiagnosticError:
+        return False
+    return same_cwd(asked, project_cwd)
+
+
+def _session_cwd(query: Query, database: str) -> str | None:
+    """Handoff cwd from project layout only — never copy caller cwd (Codex P1)."""
+
+    if not _cwd_matches_query(query, database):
+        return None
+    return _project_cwd(database)
+
+
 def _stamp_ms(value: object) -> str | None:
     if value is None:
         return None
@@ -304,13 +349,9 @@ def _row_summary(
 ) -> SessionSummary | None:
     if not isinstance(session_id, str) or not session_id:
         return None
-    # Crush sessions do not store cwd; bind to query.cwd when provided for handoff metadata.
-    cwd: str | None = None
-    if query.cwd is not None:
-        try:
-            cwd = canonicalize_cwd(query.cwd)
-        except DiagnosticError:
-            return None
+    if not _cwd_matches_query(query, database):
+        return None
+    cwd = _session_cwd(query, database)
     stamp = _stamp_ms(updated_at) or _stamp_ms(created_at)
     if require_age and not within_age(
         stamp, query.within_min, default_minutes=DEFAULT_BOUNDS.listing_age_minutes
@@ -435,12 +476,9 @@ def _show_session(
     if len(rows) != 1:
         raise DiagnosticError("E_NO_MATCH", source="crush", provider=FORMAT_ID)
     _id, _parent, title, created_at, updated_at = rows[0]
-    cwd: str | None = None
-    if query.cwd is not None:
-        try:
-            cwd = canonicalize_cwd(query.cwd)
-        except DiagnosticError as error:
-            raise DiagnosticError("E_NO_MATCH", source="crush", provider=FORMAT_ID) from error
+    if not _cwd_matches_query(query, database):
+        raise DiagnosticError("E_NO_MATCH", source="crush", provider=FORMAT_ID)
+    cwd = _session_cwd(query, database)
 
     limit = budget.limits.transcript_records + 1
     cursor = connection.execute(

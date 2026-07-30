@@ -13,7 +13,17 @@ NOW = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 NOW_MS = int(NOW.timestamp() * 1000)
 BASIC_ID = "cr000101-0101-4101-8101-010101010101"
 CHILD_ID = "cr000102-0202-4202-8202-020202020202"
-SCHEMA_VERSION = 7
+# Real Pressly/goose version_ids = migration filename prefixes (not 1..N).
+MIGRATION_IDS = (
+    20250424200609,
+    20250515105448,
+    20250624000000,
+    20250627000000,
+    20250810000000,
+    20250812000000,
+    20260127000000,
+)
+SCHEMA_VERSION = MIGRATION_IDS[-1]
 
 SESSIONS_TABLE = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -94,14 +104,18 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _create_schema(conn: sqlite3.Connection, *, version: int = SCHEMA_VERSION) -> None:
+def _create_schema(
+    conn: sqlite3.Connection,
+    *,
+    migration_ids: tuple[int, ...] = MIGRATION_IDS,
+) -> None:
     conn.execute(GOOSE_VERSION_TABLE)
     conn.execute(SESSIONS_TABLE)
     conn.execute(MESSAGES_TABLE)
     conn.execute(FILES_TABLE)
     conn.execute(READ_FILES_TABLE)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages (session_id)")
-    for version_id in range(1, version + 1):
+    for version_id in migration_ids:
         conn.execute(
             "INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)",
             (version_id,),
@@ -261,7 +275,7 @@ def build_s_cr_03_unsupported() -> None:
     case_dir = FIXTURE_ROOT / case
     db_path = case_dir / "crush.db"
     conn = _connect(db_path)
-    _create_schema(conn, version=3)  # wrong max version
+    _create_schema(conn, migration_ids=MIGRATION_IDS[:3])  # wrong max version
     _insert_session(conn, session_id=BASIC_ID, title="old schema", message_count=1)
     _insert_message(
         conn,
