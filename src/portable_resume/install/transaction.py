@@ -1309,6 +1309,7 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                 "claim": plan.claim,
                 "stage_dir": stage_dir,
                 "backup_root": backup_root,
+                "operation": "install",
                 "paths": {},
             }
             if backups:
@@ -2088,16 +2089,39 @@ def _install_generation_is_published(root: str, journal: dict[str, Any]) -> bool
     Used after the ownership manifest has been atomically replaced: a subsequent
     failure to write ``state=complete`` must not let recover_root roll payload
     back under the already-published generation.
+
+    Uninstall journals (``operation=uninstall``) publish either a new generation
+    without the target claim, or removal of the ownership manifest when no claims
+    remain. Incomplete staging/committing must never be treated as published solely
+    because the manifest is missing (manual tamper residual).
     """
     if journal.get("state") == "complete":
         return True
     target = journal.get("target_generation", journal.get("generation"))
     if not isinstance(target, int):
         return False
+    operation = journal.get("operation") or "install"
     try:
         manifest = load_manifest(root)
     except DiagnosticError:
         return False
+    if operation == "uninstall":
+        claim = journal.get("claim")
+        if not isinstance(claim, str) or not claim:
+            return False
+        if manifest is None:
+            # Last-claim uninstall removes the ownership manifest only after
+            # entering publishing_manifest (or completing path removals).
+            if journal.get("state") == "publishing_manifest":
+                return True
+            paths = journal.get("paths") or {}
+            if not isinstance(paths, dict) or not paths:
+                return False
+            return all(
+                isinstance(meta, dict) and meta.get("state") in {"removed", "retained", "skipped"}
+                for meta in paths.values()
+            )
+        return manifest.generation == target and claim not in manifest.claims
     if manifest is None:
         return False
     return manifest.generation == target
@@ -2181,6 +2205,19 @@ def recover_root(root: str) -> dict[str, Any]:
 
 
 def verify_root(root: str, *, claim: str | None = None) -> dict[str, Any]:
+    """Observe one coherent ownership generation.
+
+    On POSIX, take the exclusive root lock so a cooperating install/uninstall/
+    recover cannot interleave mid-hash. Windows residual (#29): observational
+    verify without exclusive locking (mutating install already fails closed).
+    """
+    if os.name != "nt":
+        with RootLock(root):
+            return _verify_root_locked(root, claim=claim)
+    return _verify_root_locked(root, claim=claim)
+
+
+def _verify_root_locked(root: str, *, claim: str | None = None) -> dict[str, Any]:
     require_no_pending_journal(root)
     manifest = load_manifest(root)
     if manifest is None:
@@ -2243,7 +2280,40 @@ def verify_root(root: str, *, claim: str | None = None) -> dict[str, Any]:
     }
 
 
+def _read_regular_bytes_under_root_fd(root_fd: int, rel: str) -> tuple[bytes, int]:
+    """Return ``(body, mode)`` for a regular no-follow payload file under root_fd."""
+    parent_fd, basename, owns_parent = _open_parent_under_root_fd(root_fd, rel, create=False)
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(basename, flags, dir_fd=parent_fd)
+        except OSError as error:
+            raise DiagnosticError("E_INSTALL_CONFLICT") from error
+        try:
+            st = os.fstat(fd)
+            if not stat_mod.S_ISREG(st.st_mode):
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(fd, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks), stat_mod.S_IMODE(st.st_mode)
+        finally:
+            os.close(fd)
+    finally:
+        if owns_parent:
+            os.close(parent_fd)
+
+
 def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) -> dict[str, Any]:
+    """Remove one ownership claim under a durable recoverable journal (#22).
+
+    Removable sole-claim files are snapshotted into an installer stage tree before
+    unlink; crash recovery restores the previous payload + manifest generation
+    when the target generation is not yet published.
+    """
     claim = claim_key(host=host, scope=scope, root=root)
     if dry_run:
         manifest = load_manifest(root)
@@ -2260,92 +2330,193 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
             return {"ok": True, "removed_files": [], "claim": claim}
         if not _supports_descriptor_relative_commit():
             raise DiagnosticError("E_INSTALL_CONFLICT")
-        removed: list[str] = []
-        retained_drift: list[str] = []
-        # remove claim refs
-        del manifest.claims[claim]
+
+        base_generation = manifest.generation
+        target_generation = base_generation + 1
+        # Classify under the pinned root before any durable mutation.
         root_fd = _open_skill_root_descriptor(root)
+        removable: list[tuple[str, str]] = []  # (rel, expected_sha256)
+        retained_drift: list[str] = []
+        drop_from_manifest: list[str] = []
         try:
             for path, entry in list(manifest.files.items()):
-                if claim in entry.claims:
-                    entry.claims = [c for c in entry.claims if c != claim]
-                if entry.claims:
+                if claim not in entry.claims:
+                    continue
+                remaining = [c for c in entry.claims if c != claim]
+                if remaining:
+                    entry.claims = remaining
                     continue
                 try:
                     _safe_rel_path(path)
                 except DiagnosticError:
                     # Malicious/escaped manifest entry: drop from manifest, never delete outside root.
-                    del manifest.files[path]
+                    drop_from_manifest.append(path)
                     continue
                 try:
                     matches = _sha256_regular_under_root_fd(root_fd, path) == entry.sha256
                 except DiagnosticError:
                     matches = False
                 if matches:
+                    removable.append((path, entry.sha256))
+                    drop_from_manifest.append(path)
+                    continue
+                # Parent-swap / missing / drift: never ambient-delete.
+                try:
+                    parent_fd, basename, owns_parent = _open_parent_under_root_fd(
+                        root_fd, path, create=False
+                    )
+                except DiagnosticError:
+                    drop_from_manifest.append(path)
+                    continue
+                try:
                     try:
-                        if _unlink_regular_under_root_fd(
-                            root_fd,
-                            path,
-                            expected_sha256=entry.sha256,
-                        ):
-                            removed.append(path)
-                        else:
-                            retained_drift.append(path)
-                    except DiagnosticError as error:
-                        raise DiagnosticError("E_INSTALL_CONFLICT") from error
-                else:
-                    # Parent-swap / missing / drift: never ambient-delete.
-                    # Missing parents/files count as already removed. Existing non-regular
-                    # leaf is a conflict. Unopenable parents (symlink swap / missing) drop
-                    # the manifest entry without deleting outside.
-                    try:
-                        parent_fd, basename, owns_parent = _open_parent_under_root_fd(
-                            root_fd, path, create=False
-                        )
-                    except DiagnosticError:
-                        del manifest.files[path]
+                        st = os.lstat(basename, dir_fd=parent_fd)
+                    except FileNotFoundError:
+                        drop_from_manifest.append(path)
                         continue
-                    try:
-                        try:
-                            st = os.lstat(basename, dir_fd=parent_fd)
-                        except FileNotFoundError:
-                            del manifest.files[path]
-                            continue
-                        if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISREG(st.st_mode):
-                            raise DiagnosticError("E_INSTALL_CONFLICT")
-                        retained_drift.append(path)
-                    finally:
-                        if owns_parent:
-                            os.close(parent_fd)
-                del manifest.files[path]
+                    if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISREG(st.st_mode):
+                        raise DiagnosticError("E_INSTALL_CONFLICT")
+                    retained_drift.append(path)
+                    drop_from_manifest.append(path)
+                finally:
+                    if owns_parent:
+                        os.close(parent_fd)
         finally:
             os.close(root_fd)
-        manifest.generation += 1
-        if manifest.claims:
-            _atomic_write_support_file(
-                root,
-                MANIFEST_NAME,
-                manifest.dumps().encode("utf-8"),
+
+        del manifest.claims[claim]
+        for path in drop_from_manifest:
+            manifest.files.pop(path, None)
+        manifest.generation = target_generation
+
+        # No payload/manifest mutation required (claim gone from memory only after
+        # shared-file claim-ref updates + empty removable set still needs publish).
+        # Always journal when we will rewrite the ownership generation.
+        pin_root_fd: int | None = None
+        support_fd: int | None = None
+        stage_fd: int | None = None
+        journal: dict[str, Any] | None = None
+        stage_dir = ""
+        removed: list[str] = []
+        try:
+            pin_root_fd = _open_skill_root_descriptor(root)
+            support_fd = _open_directory_under_root(pin_root_fd, SUPPORT_DIR)
+            stage_name = _mkdir_unique_under_fd(support_fd, STAGE_PREFIX)
+            stage_dir = os.path.join(os.path.abspath(root), SUPPORT_DIR, stage_name)
+            stage_fd = os.open(
+                stage_name,
+                os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=support_fd,
             )
-        else:
-            # remove support metadata when no claims remain; keep drifted files
+            journal = {
+                "schema_version": "portable-resume/install-journal-v1",
+                "state": "staging",
+                "generation": base_generation,
+                "target_generation": target_generation,
+                "claim": claim,
+                "stage_dir": stage_dir,
+                "backup_root": None,
+                "operation": "uninstall",
+                "paths": {},
+            }
+            # Snapshot every removable owned file before the first unlink.
+            for rel, expected_sha in removable:
+                body, mode = _read_regular_bytes_under_root_fd(pin_root_fd, rel)
+                if sha256_bytes(body) != expected_sha:
+                    # Digest raced after classification: treat as retained drift.
+                    retained_drift.append(rel)
+                    continue
+                rollback_rel = f".rollback/{rel}"
+                _materialize_bytes_under_fd(stage_fd, rollback_rel, body, mode=mode)
+                journal["paths"][rel] = {
+                    "state": "pending",
+                    "existed": True,
+                    "rollback_backup": os.path.join(stage_dir, ".rollback", rel),
+                    "original_sha256": expected_sha,
+                    "sha256": expected_sha,
+                }
+            _write_journal(root, journal)
+
+            journal["state"] = "committing"
+            _write_journal(root, journal)
+            for rel, meta in list(journal["paths"].items()):
+                expected_sha = meta.get("original_sha256") or meta.get("sha256")
+                if not _is_hex_sha256(expected_sha):
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                try:
+                    if _unlink_regular_under_root_fd(
+                        pin_root_fd,
+                        rel,
+                        expected_sha256=str(expected_sha),
+                    ):
+                        removed.append(rel)
+                        meta["state"] = "removed"
+                    else:
+                        # Missing after snapshot counts as already removed.
+                        meta["state"] = "removed"
+                except DiagnosticError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                journal["paths"][rel] = meta
+                _write_journal(root, journal)
+
+            journal["state"] = "publishing_manifest"
+            journal["target_generation"] = target_generation
+            _write_journal(root, journal)
+            if manifest.claims:
+                _atomic_write_support_file(
+                    root,
+                    MANIFEST_NAME,
+                    manifest.dumps().encode("utf-8"),
+                )
+            else:
+                try:
+                    _unlink_support_control_file(root, MANIFEST_NAME)
+                except DiagnosticError:
+                    # Never ambient-fallback delete after control-store failure.
+                    raise
+
+            journal["state"] = "complete"
             try:
-                _unlink_support_control_file(root, MANIFEST_NAME)
+                _write_journal(root, journal)
             except DiagnosticError:
-                # Never ambient-fallback delete after control-store failure.
-                pass
-            # best-effort cleanup of empty owned skill dirs / support tree only
+                # Manifest/absence is already ownership truth; prefer dropping a
+                # stale incomplete journal so recover cannot re-install payload.
+                try:
+                    _unlink_support_control_file(root, JOURNAL_NAME)
+                except DiagnosticError:
+                    pass
             try:
-                _cleanup_empty_dirs(root, removed_paths=removed)
+                _delete_authorized_support_subtree(root, stage_dir, role="stage")
             except DiagnosticError:
                 pass
-        return {
-            "ok": True,
-            "claim": claim,
-            "removed_files": removed,
-            "retained_drift": retained_drift,
-            "generation": manifest.generation,
-        }
+            try:
+                if os.path.lexists(journal_path(root)):
+                    _unlink_support_control_file(root, JOURNAL_NAME)
+            except DiagnosticError:
+                pass
+            if not manifest.claims:
+                try:
+                    _cleanup_empty_dirs(root, removed_paths=removed)
+                except DiagnosticError:
+                    pass
+            return {
+                "ok": True,
+                "claim": claim,
+                "removed_files": removed,
+                "retained_drift": retained_drift,
+                "generation": target_generation,
+            }
+        except Exception:
+            if journal is not None and not _install_generation_is_published(root, journal):
+                _attempt_rollback(root, journal)
+            raise
+        finally:
+            if stage_fd is not None:
+                os.close(stage_fd)
+            if support_fd is not None:
+                os.close(support_fd)
+            if pin_root_fd is not None:
+                os.close(pin_root_fd)
 
 
 def _cleanup_empty_dirs(root: str, *, removed_paths: list[str] | None = None) -> None:
