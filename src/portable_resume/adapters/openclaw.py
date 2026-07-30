@@ -456,11 +456,51 @@ def _decode_event(raw: str) -> Mapping[str, Any]:
     return value
 
 
+def _nested_message(event: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    raw = event.get("message")
+    return raw if isinstance(raw, Mapping) else None
+
+
+def _event_role(event: Mapping[str, Any]) -> str | None:
+    role = event.get("role")
+    if isinstance(role, str):
+        return role
+    nested = _nested_message(event)
+    if nested is not None:
+        nested_role = nested.get("role")
+        if isinstance(nested_role, str):
+            return nested_role
+    return None
+
+
 def _message_text(event: Mapping[str, Any]) -> str | None:
-    for key in ("text", "content", "message", "summary"):
+    for key in ("text", "content", "summary"):
         value = event.get(key)
         if isinstance(value, str) and value.strip():
             return value
+    nested = _nested_message(event)
+    if nested is not None:
+        for key in ("text", "content"):
+            value = nested.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        # Nested content may be a list of parts with textual chunks.
+        parts = nested.get("content")
+        if isinstance(parts, list):
+            chunks: list[str] = []
+            for part in parts:
+                if isinstance(part, str) and part.strip():
+                    chunks.append(part)
+                elif isinstance(part, Mapping):
+                    text = part.get("text")
+                    if isinstance(text, str) and text.strip():
+                        chunks.append(text)
+            if chunks:
+                return "\n".join(chunks)
+    # Flat fixtures may store the message body under the bare "message" string key.
+    bare = event.get("message")
+    if isinstance(bare, str) and bare.strip():
+        return bare
     return None
 
 
@@ -468,33 +508,43 @@ def _active_branch_events(decoded: list[Mapping[str, Any]]) -> list[Mapping[str,
     """Return active-branch conversation events (message/compaction).
 
     When events carry ``id``/``parentId``, walk from the latest leaf. Linear
-    fixtures without ids keep sequence order.
+    fixtures without ids keep sequence order. ``branch_summary`` stays in the
+    ancestry index so children do not lose their parent pointer, but is not
+    emitted as a turn. Compaction nodes may retarget ancestry via
+    ``firstKeptEntryId`` / ``firstKeptSeq``.
     """
 
-    candidates = [
-        event
-        for event in decoded
-        if event.get("type") in {"message", "custom_message", "compaction"}
-    ]
+    graph_types = frozenset({"message", "custom_message", "compaction", "branch_summary"})
+    emit_types = frozenset({"message", "custom_message", "compaction"})
+    candidates = [event for event in decoded if event.get("type") in graph_types]
     if not candidates:
         return []
     if not any(isinstance(event.get("id"), str) and event.get("id") for event in candidates):
-        return candidates
+        return [event for event in candidates if event.get("type") in emit_types]
 
     by_id: dict[str, Mapping[str, Any]] = {}
-    for event in candidates:
+    by_seq: dict[int, Mapping[str, Any]] = {}
+    for index, event in enumerate(candidates):
         identifier = event.get("id")
         if isinstance(identifier, str) and identifier:
             by_id[identifier] = event
-    # Prefer the last candidate with an id as the active leaf (latest physical write).
+        # Sequence position for firstKeptSeq is the event's own seq if present.
+        seq = event.get("seq")
+        if isinstance(seq, int):
+            by_seq[seq] = event
+        else:
+            by_seq[index + 1] = event
+
     leaf: Mapping[str, Any] | None = None
     for event in reversed(candidates):
+        if event.get("type") not in emit_types:
+            continue
         identifier = event.get("id")
         if isinstance(identifier, str) and identifier in by_id:
             leaf = event
             break
     if leaf is None:
-        return candidates
+        return [event for event in candidates if event.get("type") in emit_types]
 
     path: list[Mapping[str, Any]] = []
     seen: set[str] = set()
@@ -505,6 +555,15 @@ def _active_branch_events(decoded: list[Mapping[str, Any]]) -> list[Mapping[str,
             break
         seen.add(identifier)
         path.append(current)
+        if current.get("type") == "compaction":
+            kept_id = current.get("firstKeptEntryId")
+            kept_seq = current.get("firstKeptSeq")
+            if isinstance(kept_id, str) and kept_id in by_id:
+                current = by_id[kept_id]
+                continue
+            if isinstance(kept_seq, int) and kept_seq in by_seq:
+                current = by_seq[kept_seq]
+                continue
         parent = current.get("parentId")
         if parent is None or parent == "":
             break
@@ -512,7 +571,7 @@ def _active_branch_events(decoded: list[Mapping[str, Any]]) -> list[Mapping[str,
             break
         current = by_id[parent]
     path.reverse()
-    return path
+    return [event for event in path if event.get("type") in emit_types]
 
 
 def _show_session(
@@ -612,8 +671,9 @@ def _show_session(
         if total_bytes > budget.limits.source_read_bytes:
             raise DiagnosticError.limit_exceeded()
         event = _decode_event(event_json)
-        if event["type"] in {"branch_summary", "custom", "session"}:
+        if event["type"] in {"custom", "session"}:
             continue
+        # Keep branch_summary for ancestry only; turn emission filters it out.
         decoded.append(event)
 
     for event in _active_branch_events(decoded):
@@ -624,7 +684,7 @@ def _show_session(
                 continue
             raw = {"role": "assistant", "content": text}
         elif kind in {"message", "custom_message"}:
-            role = event.get("role")
+            role = _event_role(event)
             if role not in {"user", "assistant", "tool"}:
                 continue
             text = _message_text(event)

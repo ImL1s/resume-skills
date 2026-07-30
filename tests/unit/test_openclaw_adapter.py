@@ -113,6 +113,44 @@ class OpenClawAdapterTests(unittest.TestCase):
         self.assertEqual(report.state, "supported")
         self.assertEqual(report.format_id, FORMAT_ID)
 
+    def test_nested_message_payload_and_compaction_retention(self) -> None:
+        from portable_resume.adapters import openclaw as oc
+
+        nested = {
+            "type": "message",
+            "id": "n1",
+            "parentId": None,
+            "message": {"role": "user", "content": "nested user"},
+        }
+        self.assertEqual(oc._event_role(nested), "user")
+        self.assertEqual(oc._message_text(nested), "nested user")
+
+        events = [
+            {"type": "message", "id": "a", "parentId": None, "role": "user", "text": "old"},
+            {"type": "message", "id": "b", "parentId": "a", "role": "assistant", "text": "replaced"},
+            {
+                "type": "compaction",
+                "id": "c",
+                "parentId": "b",
+                "firstKeptEntryId": "a",
+                "summary": "compacted",
+            },
+            {"type": "message", "id": "d", "parentId": "c", "role": "user", "text": "after"},
+        ]
+        path = oc._active_branch_events(events)
+        ids = [item.get("id") for item in path]
+        # Retains compaction summary and firstKept entry; skips replaced sibling path.
+        self.assertEqual(ids, ["a", "c", "d"])
+        self.assertNotIn("b", ids)
+
+        with_branch = [
+            {"type": "message", "id": "a", "parentId": None, "role": "user", "text": "root"},
+            {"type": "branch_summary", "id": "bs", "parentId": "a", "branch": "side"},
+            {"type": "message", "id": "z", "parentId": "bs", "role": "assistant", "text": "leaf"},
+        ]
+        path2 = oc._active_branch_events(with_branch)
+        self.assertEqual([item.get("id") for item in path2], ["a", "z"])
+
 
 if __name__ == "__main__":
     unittest.main()
