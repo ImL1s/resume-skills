@@ -1,3 +1,11 @@
+## Unreleased
+
+- Crush source + destination (#40): `crush-sqlite-v1` reader for per-project
+  `.crush/crush.db` (pinned goose_db_version max 7); default list hides child
+  sessions (`parent_session_id`); destination install to `.crush/skills` and
+  `~/.config/crush/skills`. Matrix is now registry-derived **12×12=144**. Native
+  Crush UI activation remains not-run.
+
 # Changelog
 
 ## Unreleased

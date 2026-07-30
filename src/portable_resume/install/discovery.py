@@ -382,6 +382,36 @@ def _host_alternate_roots(host: str) -> list[DiscoveryRoot]:
                 role="alternate",
             ),
         ]
+    if host == "crush":
+        return [
+            DiscoveryRoot(
+                root_id="crush.project.agents",
+                scope="compat",
+                base="project",
+                rel=".agents/skills",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="crush.user.agents",
+                scope="compat",
+                base="home",
+                rel=".agents/skills",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="crush.user.claude",
+                scope="compat",
+                base="home",
+                rel=".claude/skills",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+        ]
     if host == "codex":
         # Legacy community layout; precedence vs .agents unproven.
         return [

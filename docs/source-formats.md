@@ -117,3 +117,16 @@ by default (exact id can still select them). Destination filesystem install uses
 ## Clean-room boundary
 
 Do not copy real transcripts, credentials, developer home paths, or `~/.grok/bundled/skills/**`. See [`provenance.md`](provenance.md), [`clean-room-attestation.md`](clean-room-attestation.md), and `NOTICE`.
+
+## crush-sqlite-v1
+
+- **Store:** per-project data directory `crush.db` (default `.crush/crush.db`)
+- **Schema pin:** `goose_db_version.version_id` max = **7** (migrations through
+  `20260127000000_add_read_files_table` upstream charmbracelet/crush)
+- **Tables:** `sessions`, `messages` required; `files` / `read_files` optional and not loaded for handoff
+- **Messages:** `parts` is a JSON array of `{type, data}` wrappers (`text`, `tool_call`,
+  `tool_result`, `shell_command` admitted; reasoning/binary/image/finish skipped)
+- **List policy:** root sessions only (`parent_session_id` empty); require extractable public turns
+- **Roots:** `--source-root` as data dir, project root, or exact `crush.db`; without root, only `<cwd>/.crush`
+- **Out of scope:** Crush CLI/serve/migrations/MCP; recursive home multi-project scan; parent session merge
+

@@ -117,6 +117,15 @@ FIXTURES: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
             "synthetic goose assistant reply",
         ),
     ),
+    "crush": (
+        "tests/fixtures/crush/s-cr-01-user-basic",
+        "/tmp/project",
+        "cr000101-0101-4101-8101-010101010101",
+        (
+            "synthetic crush user prompt",
+            "synthetic crush assistant reply",
+        ),
+    ),
 }
 
 

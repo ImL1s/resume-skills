@@ -23,7 +23,7 @@ from portable_resume.registry import (
 
 
 class RegistryInvariantTests(unittest.TestCase):
-    def test_current_eleven_sources_and_eleven_destinations(self) -> None:
+    def test_current_twelve_sources_and_twelve_destinations(self) -> None:
         self.assertEqual(
             enabled_source_keys(),
             frozenset(
@@ -31,6 +31,7 @@ class RegistryInvariantTests(unittest.TestCase):
                     "antigravity",
                     "claude",
                     "codex",
+                    "crush",
                     "cursor",
                     "goose",
                     "grok",
@@ -49,6 +50,7 @@ class RegistryInvariantTests(unittest.TestCase):
                     "antigravity",
                     "claude",
                     "codex",
+                    "crush",
                     "cursor",
                     "goose",
                     "grok",
@@ -61,9 +63,9 @@ class RegistryInvariantTests(unittest.TestCase):
             ),
         )
         dims = matrix_dimensions()
-        self.assertEqual(dims["sources"], 11)
-        self.assertEqual(dims["destinations"], 11)
-        self.assertEqual(dims["cells"], 121)
+        self.assertEqual(dims["sources"], 12)
+        self.assertEqual(dims["destinations"], 12)
+        self.assertEqual(dims["cells"], 144)
 
     def test_source_and_destination_sets_are_independent_types(self) -> None:
         # Adding a destination-only key must not invent a source.
@@ -164,6 +166,7 @@ class RegistryInvariantTests(unittest.TestCase):
         self.assertIsNone(DESTINATION_PROFILES["opencode"].native_package_profile)
         self.assertIsNone(DESTINATION_PROFILES["openclaw"].native_package_profile)
         self.assertIsNone(DESTINATION_PROFILES["goose"].native_package_profile)
+        self.assertIsNone(DESTINATION_PROFILES["crush"].native_package_profile)
         for key, dest in DESTINATION_PROFILES.items():
             if dest.native_package_profile is None:
                 continue
@@ -186,6 +189,7 @@ class RegistryInvariantTests(unittest.TestCase):
             self.assertIn("pi", enum_values)
             self.assertIn("openclaw", enum_values)
             self.assertIn("goose", enum_values)
+            self.assertIn("crush", enum_values)
 
     def test_planned_profiles_excluded_from_enabled_sets(self) -> None:
         for profile in SOURCE_PROFILES.values():
@@ -235,7 +239,7 @@ class DynamicMatrixTests(unittest.TestCase):
         cells = matrix_cells()
         dims = matrix_dimensions()
         self.assertEqual(len(cells), dims["cells"])
-        self.assertEqual(len(cells), 121)
+        self.assertEqual(len(cells), 144)
 
     def test_destination_only_expands_rectangle(self) -> None:
         from portable_resume.registry import rectangular_cells
