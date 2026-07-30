@@ -611,10 +611,13 @@ def _migrate_v1_control_state(root: str) -> dict[str, Any]:
                 ):
                     raise DiagnosticError("E_INSTALL_CONFLICT")
                 try:
-                    os.lstat(name, dir_fd=state_fd)
+                    dst_st = os.lstat(name, dir_fd=state_fd)
                 except FileNotFoundError:
-                    pass
-                else:
+                    dst_st = None
+                if dst_st is not None:
+                    # Same inode (hardlink sentinel for lock) is already migrated.
+                    if st.st_ino == dst_st.st_ino and st.st_dev == dst_st.st_dev:
+                        return False
                     raise DiagnosticError("E_INSTALL_CONFLICT")
                 try:
                     os.rename(name, name, src_dir_fd=support_fd, dst_dir_fd=state_fd)
@@ -627,6 +630,11 @@ def _migrate_v1_control_state(root: str) -> dict[str, Any]:
             if not os.path.lexists(src):
                 return False
             if os.path.lexists(dst):
+                try:
+                    if os.path.samefile(src, dst):
+                        return False
+                except OSError:
+                    pass
                 raise DiagnosticError("E_INSTALL_CONFLICT")
             try:
                 st = os.lstat(src)
@@ -646,6 +654,11 @@ def _migrate_v1_control_state(root: str) -> dict[str, Any]:
         for name in (MANIFEST_NAME, JOURNAL_NAME, LOCK_NAME):
             if _rename_child(name, require_dir=False):
                 moved.append(name)
+                if name == LOCK_NAME:
+                    # Keep legacy lock pathname occupied with a hardlink to the
+                    # flocked inode so a concurrent pre-#33 installer cannot
+                    # create a second lock under the old path (#33 Codex P1).
+                    _link_lock_sentinel(support=support, state=state)
 
         if _rename_child(BACKUP_DIR, require_dir=True):
             moved.append(BACKUP_DIR)
@@ -679,6 +692,20 @@ def _migrate_v1_control_state(root: str) -> dict[str, Any]:
     }
 
 
+def _link_lock_sentinel(*, support: str, state: str) -> None:
+    """Hardlink ``state/install.lock`` back to ``support/install.lock`` when possible."""
+
+    src = os.path.join(state, LOCK_NAME)
+    dst = os.path.join(support, LOCK_NAME)
+    if not os.path.lexists(src) or os.path.lexists(dst):
+        return
+    try:
+        os.link(src, dst)
+    except OSError:
+        # Best-effort on platforms/filesystems without hardlinks.
+        return
+
+
 def _rewrite_journal_paths_after_migration(
     root: str,
     *,
@@ -705,23 +732,35 @@ def _rewrite_journal_paths_after_migration(
         nonlocal changed
         if not isinstance(path, str) or not path:
             return path
+        # Try abspath (symlink spelling) and realpath (resolved) so journals that
+        # recorded either form still remap after migration (#33 Codex P1).
+        candidates: list[str] = []
         try:
-            abs_path = os.path.abspath(path)
-            if os.path.commonpath((abs_path, support_real)) != support_real:
-                return path
-            rel = os.path.relpath(abs_path, support_real)
-        except (OSError, ValueError):
-            return path
-        if rel in {".", ""} or rel.startswith(".."):
-            return path
-        # Do not rewrite payload paths (runtime/resources).
-        top = rel.split(os.sep, 1)[0]
-        if top in {"runtime", "resources", STATE_SUBDIR, GITIGNORE_NAME}:
-            return path
-        remapped = os.path.join(state_real, rel)
-        if remapped != path:
-            changed = True
-        return remapped
+            candidates.append(os.path.abspath(path))
+        except OSError:
+            pass
+        try:
+            candidates.append(os.path.realpath(path))
+        except OSError:
+            pass
+        for abs_path in candidates:
+            try:
+                if os.path.commonpath((abs_path, support_real)) != support_real:
+                    continue
+                rel = os.path.relpath(abs_path, support_real)
+            except (OSError, ValueError):
+                continue
+            if rel in {".", ""} or rel.startswith(".."):
+                continue
+            # Do not rewrite payload paths (runtime/resources).
+            top = rel.split(os.sep, 1)[0]
+            if top in {"runtime", "resources", STATE_SUBDIR, GITIGNORE_NAME}:
+                continue
+            remapped = os.path.join(state_real, rel)
+            if remapped != path:
+                changed = True
+            return remapped
+        return path
 
     if "stage_dir" in journal:
         journal["stage_dir"] = _remap(journal.get("stage_dir"))
