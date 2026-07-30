@@ -12,6 +12,13 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Native package contracts (#27): versioned offline contracts per direct-skill
+  and plugin/marketplace surface (`package-contracts-v1`); builder validates
+  each archive (members, manifests, skills layout, marketplace source paths,
+  forbidden install runtime) before reporting; `host-packages.json` is
+  `host-packages-v2` with per-artifact `contract_id`, `offline_validation`,
+  and explicit `native_evidence_status=not-run` (historical v0.3.2 ref only).
+  Native CLI install/activate remains a separate evidence layer.
 - Installer CLI contract (#32 Option A): install/verify/uninstall/recover/
   matrix/quick-install/audit-host always emit versioned
   `portable-resume/install-result-v1` JSON on stdout with a uniform `results`
