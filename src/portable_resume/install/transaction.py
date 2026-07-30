@@ -989,11 +989,15 @@ def _materialize_bytes_under_fd(
 
 
 def _fsync_tree_dirfd(dir_fd: int) -> None:
-    """Durable-flush every regular file and directory under ``dir_fd`` (depth-first)."""
+    """Durable-flush every regular file and directory under ``dir_fd`` (depth-first).
+
+    Fail closed on traversal/open/fsync errors so callers never publish a journal
+    that depends on unsynced rollback material.
+    """
     try:
         names = os.listdir(dir_fd)
-    except OSError:
-        return
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
     flags_dir = (
         os.O_RDONLY
         | os.O_DIRECTORY
@@ -1004,37 +1008,37 @@ def _fsync_tree_dirfd(dir_fd: int) -> None:
     for name in names:
         try:
             st = os.lstat(name, dir_fd=dir_fd)
-        except OSError:
-            continue
+        except OSError as error:
+            raise DiagnosticError("E_INSTALL_CONFLICT") from error
         if stat_mod.S_ISDIR(st.st_mode):
             try:
                 child = os.open(name, flags_dir, dir_fd=dir_fd)
-            except OSError:
-                continue
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
             try:
                 _fsync_tree_dirfd(child)
                 try:
                     os.fsync(child)
-                except OSError:
-                    pass
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
             finally:
                 os.close(child)
         elif stat_mod.S_ISREG(st.st_mode):
             try:
                 fd = os.open(name, flags_file, dir_fd=dir_fd)
-            except OSError:
-                continue
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
             try:
                 try:
                     os.fsync(fd)
-                except OSError:
-                    pass
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
             finally:
                 os.close(fd)
     try:
         os.fsync(dir_fd)
-    except OSError:
-        pass
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
 
 
 def _unlink_regular_under_root_fd(
@@ -1230,6 +1234,13 @@ def _replace_under_root_from_support_path(
                     os.unlink(tmp_name, dir_fd=dst_parent_fd)
                 except OSError:
                     pass
+                # Prior attempt may have linked but crashed before parent fsync.
+                # Persist the existing destination dirent before callers discard
+                # stage evidence on "already present".
+                try:
+                    os.fsync(dst_parent_fd)
+                except OSError as error:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED") from error
                 return False
             except OSError as error:
                 try:
@@ -1237,6 +1248,10 @@ def _replace_under_root_from_support_path(
                 except OSError:
                     pass
                 if getattr(error, "errno", None) == getattr(os, "EEXIST", object()):
+                    try:
+                        os.fsync(dst_parent_fd)
+                    except OSError as fsync_error:
+                        raise DiagnosticError("E_RECOVERY_REQUIRED") from fsync_error
                     return False
                 raise DiagnosticError("E_RECOVERY_REQUIRED") from error
             try:
@@ -1247,8 +1262,8 @@ def _replace_under_root_from_support_path(
             # the stage snapshot that sourced this restore.
             try:
                 os.fsync(dst_parent_fd)
-            except OSError:
-                pass
+            except OSError as error:
+                raise DiagnosticError("E_RECOVERY_REQUIRED") from error
             return True
 
         try:
