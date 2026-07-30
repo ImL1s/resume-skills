@@ -167,6 +167,70 @@ class ControlStateSplitTests(unittest.TestCase):
         uninstall_claim(host="claude", scope="project", root=self.root)
         self.assertIsNone(load_manifest(self.root))
 
+    def test_migrate_rewrites_pending_journal_stage_paths(self) -> None:
+        """Pending v1 journal stage_dir is remapped into .state/ after migration."""
+        from portable_resume.install.transaction import (
+            STAGE_PREFIX,
+            journal_path,
+            recover_root,
+            _write_journal,
+        )
+
+        self._install()
+        state = control_state_dir(self.root)
+        support = Path(self.root) / SUPPORT_DIR
+        # Build a synthetic v1 layout with pending complete journal + stage.
+        stage_legacy = support / f"{STAGE_PREFIX}pending"
+        stage_legacy.mkdir()
+        (stage_legacy / "tmp.txt").write_text("stage", encoding="utf-8")
+        # Move control back to v1 locations.
+        for name in (MANIFEST_NAME, "install.lock"):
+            src = Path(state) / name
+            if src.is_file():
+                shutil.move(str(src), str(support / name))
+        # Write journal at legacy location via atomic helper then move if needed.
+        stage_path = str(stage_legacy)
+        # Ensure empty state dir except what remains
+        for name in list(os.listdir(state)):
+            p = os.path.join(state, name)
+            if os.path.isdir(p):
+                shutil.rmtree(p)
+            else:
+                os.unlink(p)
+        # Plant legacy journal with absolute stage path under support.
+        legacy_journal = support / "journal.json"
+        import json
+
+        legacy_journal.write_text(
+            json.dumps(
+                {
+                    "schema_version": "portable-resume/install-journal-v1",
+                    "state": "complete",
+                    "generation": 1,
+                    "claim": "x",
+                    "stage_dir": stage_path,
+                    "backup_root": None,
+                    "paths": {},
+                },
+                sort_keys=True,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        self.assertTrue(legacy_journal.is_file())
+        self.assertTrue(stage_legacy.is_dir())
+        # Mutation path migrates under lock and rewrites journal paths.
+        result = _migrate_v1_control_state(self.root)
+        self.assertTrue(result["migrated"])
+        self.assertFalse(legacy_journal.exists())
+        self.assertFalse(stage_legacy.exists())
+        self.assertTrue((Path(state) / f"{STAGE_PREFIX}pending").is_dir())
+        # recover_root must clear complete journal + stage (not fail on stale path).
+        recovered = recover_root(self.root)
+        self.assertTrue(recovered.get("ok"))
+        self.assertFalse(os.path.isfile(journal_path(self.root)))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -161,21 +161,37 @@ class RootLock:
         # Never open/create support paths on platforms without exclusive locking.
         require_mutating_install_platform()
         _ensure_control_state_directory(self.root)
-        # Idempotent v1 → #33 control layout migration before taking the new lock.
-        _migrate_v1_control_state(self.root)
         deadline = time.monotonic() + self.wait_seconds
         while True:
             fd: int | None = None
             try:
-                fd = _open_support_control_file(
-                    self.root,
-                    LOCK_NAME,
-                    flags=os.O_RDWR | os.O_CREAT,
-                    mode=0o644,
-                )
                 import fcntl
 
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                # #33 P1: if a v1 lock still exists, flock it *before* migration so
+                # a concurrent pre-#33 installer cannot publish under the old path
+                # while we rename control files out from under it.
+                legacy_lock = _legacy_lock_path(self.root)
+                new_lock = self.path
+                if os.path.lexists(legacy_lock) and not os.path.lexists(new_lock):
+                    fd = _open_legacy_support_control_file(
+                        self.root,
+                        LOCK_NAME,
+                        flags=os.O_RDWR,
+                        mode=0o644,
+                    )
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    # Rename keeps the flock on the same inode (POSIX).
+                    _migrate_v1_control_state(self.root)
+                else:
+                    fd = _open_support_control_file(
+                        self.root,
+                        LOCK_NAME,
+                        flags=os.O_RDWR | os.O_CREAT,
+                        mode=0o644,
+                    )
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    # Drain any stranded legacy artifacts (partial prior migrate).
+                    _migrate_v1_control_state(self.root)
                 os.ftruncate(fd, 0)
                 os.lseek(fd, 0, os.SEEK_SET)
                 payload = f"pid={os.getpid()}\n".encode("ascii")
@@ -548,8 +564,11 @@ def _ensure_control_state_directory(root: str) -> None:
 def _migrate_v1_control_state(root: str) -> dict[str, Any]:
     """Move pre-#33 control files from ``.portable-resume/`` into ``.state/``.
 
-    Idempotent. Refuses when both legacy and new manifests exist (ambiguous).
+    Idempotent and resumable: when the new manifest already exists, still drain
+    any remaining legacy journal/lock/backups/stage trees (partial migrate).
+    Refuses when both legacy and new manifests exist (ambiguous).
     Does not move payload ``runtime/`` or ``resources/``.
+    Rewrites absolute journal recovery paths that pointed at moved trees.
     """
 
     _ensure_control_state_directory(root)
@@ -559,16 +578,12 @@ def _migrate_v1_control_state(root: str) -> dict[str, Any]:
     legacy_manifest = os.path.join(support, MANIFEST_NAME)
     if os.path.lexists(new_manifest) and os.path.lexists(legacy_manifest):
         raise DiagnosticError("E_INSTALL_CONFLICT")
-    if os.path.lexists(new_manifest):
-        return {"migrated": False, "layout": "state-v1"}
 
     moved: list[str] = []
-    # Regular control files.
-    for name in (MANIFEST_NAME, JOURNAL_NAME, LOCK_NAME):
-        src = os.path.join(support, name)
-        dst = os.path.join(state, name)
+
+    def _rename_control(src: str, dst: str, label: str) -> None:
         if not os.path.lexists(src):
-            continue
+            return
         if os.path.lexists(dst):
             raise DiagnosticError("E_INSTALL_CONFLICT")
         try:
@@ -581,7 +596,15 @@ def _migrate_v1_control_state(root: str) -> dict[str, Any]:
             os.rename(src, dst)
         except OSError as error:
             raise DiagnosticError("E_INSTALL_CONFLICT") from error
-        moved.append(name)
+        moved.append(label)
+
+    # Regular control files (order: lock last so flock holders keep the inode).
+    for name in (MANIFEST_NAME, JOURNAL_NAME, LOCK_NAME):
+        _rename_control(
+            os.path.join(support, name),
+            os.path.join(state, name),
+            name,
+        )
 
     # backups/ directory
     legacy_backups = os.path.join(support, BACKUP_DIR)
@@ -609,27 +632,87 @@ def _migrate_v1_control_state(root: str) -> dict[str, Any]:
     for name in names:
         if not name.startswith(STAGE_PREFIX):
             continue
-        src = os.path.join(support, name)
-        dst = os.path.join(state, name)
-        if os.path.lexists(dst):
-            raise DiagnosticError("E_INSTALL_CONFLICT")
-        try:
-            st = os.lstat(src)
-        except OSError as error:
-            raise DiagnosticError("E_INSTALL_CONFLICT") from error
-        if stat_mod.S_ISLNK(st.st_mode):
-            raise DiagnosticError("E_INSTALL_CONFLICT")
-        try:
-            os.rename(src, dst)
-        except OSError as error:
-            raise DiagnosticError("E_INSTALL_CONFLICT") from error
-        moved.append(name)
+        _rename_control(
+            os.path.join(support, name),
+            os.path.join(state, name),
+            name,
+        )
+
+    if moved:
+        _rewrite_journal_paths_after_migration(root, support=support, state=state)
 
     return {
         "migrated": bool(moved),
         "layout": "state-v1",
         "moved": sorted(moved),
     }
+
+
+def _rewrite_journal_paths_after_migration(
+    root: str,
+    *,
+    support: str,
+    state: str,
+) -> None:
+    """Rewrite absolute journal recovery paths after v1→.state tree moves (#33)."""
+
+    journal_file = os.path.join(state, JOURNAL_NAME)
+    if not os.path.lexists(journal_file):
+        return
+    try:
+        raw = _read_support_control_file(root, JOURNAL_NAME)
+        journal = parse_journal_document(raw)
+    except (DiagnosticError, OSError, ControlSchemaError, TypeError, ValueError, UnicodeDecodeError):
+        # Leave unreadable journal for recover_root to fail closed.
+        return
+
+    support_real = os.path.realpath(support)
+    state_real = os.path.realpath(state)
+    changed = False
+
+    def _remap(path: object) -> object:
+        nonlocal changed
+        if not isinstance(path, str) or not path:
+            return path
+        try:
+            abs_path = os.path.abspath(path)
+            if os.path.commonpath((abs_path, support_real)) != support_real:
+                return path
+            rel = os.path.relpath(abs_path, support_real)
+        except (OSError, ValueError):
+            return path
+        if rel in {".", ""} or rel.startswith(".."):
+            return path
+        # Do not rewrite payload paths (runtime/resources).
+        top = rel.split(os.sep, 1)[0]
+        if top in {"runtime", "resources", STATE_SUBDIR, GITIGNORE_NAME}:
+            return path
+        remapped = os.path.join(state_real, rel)
+        if remapped != path:
+            changed = True
+        return remapped
+
+    if "stage_dir" in journal:
+        journal["stage_dir"] = _remap(journal.get("stage_dir"))
+    if "backup_root" in journal:
+        journal["backup_root"] = _remap(journal.get("backup_root"))
+    paths = journal.get("paths")
+    if isinstance(paths, dict):
+        for rel, meta in list(paths.items()):
+            if not isinstance(meta, dict):
+                continue
+            if "rollback_backup" in meta:
+                meta["rollback_backup"] = _remap(meta.get("rollback_backup"))
+            paths[rel] = meta
+        journal["paths"] = paths
+
+    if not changed:
+        return
+    try:
+        _write_journal(root, journal)
+    except DiagnosticError:
+        # Best-effort rewrite; recover remains fail-closed if paths stay stale.
+        return
 
 
 def _open_control_parent_fd(root_fd: int) -> tuple[int, int]:
