@@ -1153,10 +1153,9 @@ def _unlink_regular_under_root_fd(
                     except OSError as error:
                         raise DiagnosticError("E_INSTALL_CONFLICT") from error
                 else:
-                    try:
-                        os.unlink(quarantine, dir_fd=parent_fd)
-                    except OSError:
-                        pass
+                    # Basename occupied: keep quarantine under its unique name so
+                    # concurrent bytes are not destroyed (caller fails closed).
+                    pass
                 return False
             try:
                 os.unlink(quarantine, dir_fd=parent_fd)
@@ -1177,11 +1176,7 @@ def _unlink_regular_under_root_fd(
                         )
                     except OSError:
                         pass
-                else:
-                    try:
-                        os.unlink(quarantine, dir_fd=parent_fd)
-                    except OSError:
-                        pass
+                # If basename is occupied, leave quarantine name in place.
             raise
     finally:
         if owns_parent:
