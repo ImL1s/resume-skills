@@ -2042,7 +2042,14 @@ def restore_install_checkpoint(
                     raise DiagnosticError("E_RECOVERY_REQUIRED")
                 if _unlink_regular_under_root_fd(root_fd, rel, expected_sha256=live):
                     removed.append(rel)
-                continue
+                    continue
+                # False: missing after check, or digest raced under quarantine.
+                # Still-present leaves must surface as recovery required.
+                try:
+                    _sha256_regular_under_root_fd(root_fd, rel)
+                except DiagnosticError:
+                    continue
+                raise DiagnosticError("E_RECOVERY_REQUIRED")
             if not os.path.lexists(dest):
                 continue
             if os.path.islink(dest) or not os.path.isfile(dest):
