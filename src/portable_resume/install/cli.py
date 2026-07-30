@@ -261,7 +261,15 @@ def _print_hosts_human(report: dict[str, Any], stream=None) -> None:
 def run(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     try:
-        ns = parser.parse_args(list(argv) if argv is not None else None)
+        try:
+            ns = parser.parse_args(list(argv) if argv is not None else None)
+        except SystemExit as exit_error:
+            # argparse prints usage prose; still return the structured diagnostic
+            # contract for removed/unknown flags during the #32 transition.
+            code = exit_error.code
+            if code in (0, None):
+                return 0
+            return emit_diagnostic(DiagnosticError.invalid(), stream=sys.stderr)
         if ns.command == "quick-install":
             ns.command = "install"
             ns.scope = "project" if ns.project else "global"

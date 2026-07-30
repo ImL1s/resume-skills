@@ -108,15 +108,32 @@ class InstallCliContractTests(unittest.TestCase):
         self.assertIn("plan", result)
         self.assertIn("discovery", result)
 
-    def test_unknown_flag_fails_closed(self) -> None:
+    def test_unknown_flag_returns_structured_diagnostic(self) -> None:
         err = io.StringIO()
         with redirect_stdout(io.StringIO()), redirect_stderr(err):
-            # argparse SystemExit is caught? run() uses parse_args which SystemExit
-            # — actually uncaught SystemExit. Call parser instead.
-            parser = build_parser()
-            with self.assertRaises(SystemExit) as ctx:
-                parser.parse_args(["install", "--host", "claude", "--scope", "global", "--nope"])
-            self.assertNotEqual(ctx.exception.code, 0)
+            code = install_cli_run(
+                ["install", "--host", "claude", "--scope", "global", "--nope"]
+            )
+        self.assertEqual(code, 2)
+        payload = json.loads(err.getvalue().strip().splitlines()[-1])
+        self.assertEqual(payload["code"], "E_INVALID_INPUT")
+
+    def test_removed_json_flag_returns_structured_diagnostic(self) -> None:
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = install_cli_run(
+                [
+                    "install",
+                    "--host",
+                    "claude",
+                    "--scope",
+                    "global",
+                    "--json",
+                ]
+            )
+        self.assertEqual(code, 2)
+        payload = json.loads(err.getvalue().strip().splitlines()[-1])
+        self.assertEqual(payload["code"], "E_INVALID_INPUT")
 
 
 if __name__ == "__main__":
