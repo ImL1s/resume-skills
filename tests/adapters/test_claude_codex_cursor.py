@@ -485,6 +485,257 @@ class ClaudeAdapterTests(unittest.TestCase):
                 claude.ADAPTER.list(self.query(), ReadBudget())
         self.assertEqual(busy.exception.code, "E_SOURCE_BUSY")
 
+    def test_issue19_exact_path_skips_project_enumeration(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        _, path = self.session(
+            [self.turn("user", user_id, None, "exact path", 0, sessionId=session_id)],
+            identifier=session_id,
+            project=slug,
+        )
+        with mock.patch.object(
+            claude,
+            "_project_dirs",
+            side_effect=AssertionError("_project_dirs must not run for exact path"),
+        ):
+            values = claude.ADAPTER.list(
+                self.query(ref=str(path.resolve())),
+                ReadBudget(),
+            )
+        self.assertEqual([item.session_id for item in values], [session_id])
+        self.assertEqual(Path(values[0].source_path), path)
+
+    def test_issue19_missing_under_root_is_no_match_outside_stays_unsafe(self) -> None:
+        slug = claude._slugify_cwd(str(self.cwd))
+        project = self.root / "projects" / slug
+        project.mkdir(parents=True, exist_ok=True)
+        for _ in range(2_050):
+            (project / f"{uuid.uuid4()}.jsonl").write_text("{}\n", encoding="utf-8")
+        missing = project / f"{uuid.uuid4()}.jsonl"
+        with self.assertRaises(DiagnosticError) as missing_err:
+            claude.ADAPTER.list(self.query(ref=str(missing)), ReadBudget())
+        self.assertEqual(missing_err.exception.code, "E_NO_MATCH")
+        # probe must not fall through into sibling enumeration after missing path
+        report = claude.ADAPTER.probe(self.query(ref=str(missing)))
+        self.assertEqual(report.state, "supported")
+        outside = Path(tempfile.gettempdir()) / f"portable-resume-outside-{uuid.uuid4()}.jsonl"
+        with self.assertRaises(DiagnosticError) as outside_err:
+            claude.ADAPTER.list(self.query(ref=str(outside)), ReadBudget())
+        self.assertEqual(outside_err.exception.code, "E_UNSAFE_PATH")
+
+    def test_issue19_missing_leaf_under_symlink_parent_stays_unsafe(self) -> None:
+        real = self.root / "real-project"
+        real.mkdir(parents=True)
+        projects = self.root / "projects"
+        projects.mkdir(parents=True, exist_ok=True)
+        link = projects / "linked-slug"
+        link.symlink_to(real, target_is_directory=True)
+        missing = link / f"{uuid.uuid4()}.jsonl"
+        with self.assertRaises(DiagnosticError) as err:
+            claude.ADAPTER.list(self.query(ref=str(missing)), ReadBudget())
+        self.assertEqual(err.exception.code, "E_UNSAFE_PATH")
+
+    def test_issue19_missing_non_session_layout_under_root_stays_unsafe(self) -> None:
+        # Inside root but not projects/<slug>/<uuid>.jsonl — keep fail-closed unsafe.
+        weird = self.root / "not-projects" / "file.jsonl"
+        with self.assertRaises(DiagnosticError) as err:
+            claude.ADAPTER.list(self.query(ref=str(weird)), ReadBudget())
+        self.assertEqual(err.exception.code, "E_UNSAFE_PATH")
+
+    def test_issue19_probe_exact_uuid_survives_large_slug_dir(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        project = self.root / "projects" / slug
+        project.mkdir(parents=True, exist_ok=True)
+        for _ in range(2_050):
+            (project / f"{uuid.uuid4()}.jsonl").write_text("{}\n", encoding="utf-8")
+        # UUID lives outside the noisy slug dir.
+        _, path = self.session(
+            [self.turn("user", user_id, None, "elsewhere", 0, sessionId=session_id)],
+            identifier=session_id,
+            project="other-bucket",
+        )
+        report = claude.ADAPTER.probe(self.query(ref=session_id))
+        self.assertEqual(report.state, "supported")
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [session_id])
+        self.assertEqual(Path(values[0].source_path), path)
+
+    def test_issue19_exact_uuid_under_cwd_slug_survives_thousands_of_projects(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        projects = self.root / "projects"
+        for index in range(2_100):
+            (projects / f"noise-{index:04d}").mkdir(parents=True, exist_ok=True)
+        _, path = self.session(
+            [self.turn("user", user_id, None, "needle", 0, sessionId=session_id)],
+            identifier=session_id,
+            project=slug,
+        )
+        # Broad enumeration of 2100 project dirs would raise E_LIMIT_EXCEEDED
+        # (_PROJECT_DIR_LIMIT is 1024). Direct slug candidate must win first.
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [session_id])
+        self.assertEqual(Path(values[0].source_path), path)
+        session = claude.ADAPTER.show(
+            ResolvedRef.from_summary(values[0]),
+            self.query(ref=session_id),
+            ReadBudget(),
+        )
+        self.assertEqual([turn.content for turn in session.turns], ["needle"])
+
+    def test_issue19_direct_slug_file_rejects_mismatched_recorded_cwd(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        other_cwd = self.root / "other-repo"
+        other_cwd.mkdir()
+        # File lives under the query cwd slug, but records a different primary cwd.
+        path = self.root / "projects" / slug / f"{session_id}.jsonl"
+        write_jsonl(
+            path,
+            [
+                {
+                    "type": "user",
+                    "uuid": user_id,
+                    "parentUuid": None,
+                    "sessionId": session_id,
+                    "cwd": str(other_cwd),
+                    "timestamp": stamp(0),
+                    "message": {"role": "user", "content": "wrong bucket"},
+                }
+            ],
+        )
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual(values, [])
+
+    def test_issue19_cwd_mismatched_direct_still_finds_relocated_eligible_copy(self) -> None:
+        """Codex P2: slug-file present but wrong cwd must not hide a good copy."""
+        session_id = str(uuid.uuid4())
+        user_bad, user_good = str(uuid.uuid4()), str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        other_cwd = self.root / "other-repo"
+        other_cwd.mkdir()
+        write_jsonl(
+            self.root / "projects" / slug / f"{session_id}.jsonl",
+            [
+                {
+                    "type": "user",
+                    "uuid": user_bad,
+                    "parentUuid": None,
+                    "sessionId": session_id,
+                    "cwd": str(other_cwd),
+                    "timestamp": stamp(0),
+                    "message": {"role": "user", "content": "stale slug hit"},
+                }
+            ],
+        )
+        good_path = self.root / "projects" / "relocated-bucket" / f"{session_id}.jsonl"
+        write_jsonl(
+            good_path,
+            [
+                {
+                    "type": "user",
+                    "uuid": user_good,
+                    "parentUuid": None,
+                    "sessionId": session_id,
+                    "cwd": str(self.cwd),
+                    "timestamp": stamp(1),
+                    "message": {"role": "user", "content": "relocated good"},
+                }
+            ],
+        )
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual(len(values), 1)
+        self.assertEqual(Path(values[0].source_path), good_path)
+        session = claude.ADAPTER.show(
+            ResolvedRef(session_id, None),
+            self.query(ref=session_id),
+            ReadBudget(),
+        )
+        self.assertEqual([turn.content for turn in session.turns], ["relocated good"])
+        self.assertEqual(Path(session.source_path), good_path)
+
+    def test_issue19_exact_uuid_falls_back_when_slug_candidate_missing(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        # Stored under a non-slug project dir; cwd slug dir is absent.
+        _, path = self.session(
+            [self.turn("user", user_id, None, "relocated", 0, sessionId=session_id)],
+            identifier=session_id,
+            project="foreign-bucket",
+        )
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [session_id])
+        self.assertEqual(Path(values[0].source_path), path)
+
+    def test_issue19_duplicate_uuid_across_buckets_does_not_pick_wrong_cwd(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_a, user_b = str(uuid.uuid4()), str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        other_cwd = self.root / "other-repo"
+        other_cwd.mkdir()
+        other_slug = claude._slugify_cwd(str(other_cwd))
+        # Same UUID basename in two project buckets; only our cwd is eligible.
+        write_jsonl(
+            self.root / "projects" / other_slug / f"{session_id}.jsonl",
+            [
+                {
+                    "type": "user",
+                    "uuid": user_a,
+                    "parentUuid": None,
+                    "sessionId": session_id,
+                    "cwd": str(other_cwd),
+                    "timestamp": stamp(0),
+                    "message": {"role": "user", "content": "other"},
+                }
+            ],
+        )
+        write_jsonl(
+            self.root / "projects" / slug / f"{session_id}.jsonl",
+            [
+                {
+                    "type": "user",
+                    "uuid": user_b,
+                    "parentUuid": None,
+                    "sessionId": session_id,
+                    "cwd": str(self.cwd),
+                    "timestamp": stamp(1),
+                    "message": {"role": "user", "content": "mine"},
+                }
+            ],
+        )
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual(len(values), 1)
+        self.assertEqual(Path(values[0].source_path).parent.name, slug)
+        session = claude.ADAPTER.show(ResolvedRef.from_summary(values[0]), self.query(ref=session_id), ReadBudget())
+        self.assertEqual([turn.content for turn in session.turns], ["mine"])
+
+    def test_issue19_exact_path_survives_two_thousand_sibling_jsonl(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        project = self.root / "projects" / slug
+        project.mkdir(parents=True, exist_ok=True)
+        for index in range(2_050):
+            sibling = project / f"{uuid.uuid4()}.jsonl"
+            sibling.write_text("{}\n", encoding="utf-8")
+            del sibling, index
+        _, path = self.session(
+            [self.turn("user", user_id, None, "among siblings", 0, sessionId=session_id)],
+            identifier=session_id,
+            project=slug,
+        )
+        values = claude.ADAPTER.list(self.query(ref=str(path.resolve())), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [session_id])
+        # reader.probe runs before list/show — exact path must keep capability supported
+        # even when the project dir has > scanned_records siblings.
+        report = claude.ADAPTER.probe(self.query(ref=str(path.resolve())))
+        self.assertEqual(report.state, "supported")
+
 
 class CodexAdapterTests(unittest.TestCase):
     def setUp(self) -> None:
