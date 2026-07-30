@@ -12,6 +12,10 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Collect-free `stable_scan_lines` (#10 residual): verified attempts spool lines
+  (RAM spill to disk) and replay after fingerprint checks instead of retaining a
+  full `list[ScannedLine]`. Mid-attempt output is still never exposed. Zstd
+  whole-decompress for compressed Codex rollouts remains residual under #8.
 - Host-neutral Skill payloads (#25): direct `resume-*/SKILL.md` no longer embeds
   host activation prose; all destinations share `agent-skills-portable-v1`
   package bytes so Codex + Antigravity (and other shared-root pairs) can claim
