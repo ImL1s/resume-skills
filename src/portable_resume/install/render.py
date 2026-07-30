@@ -91,6 +91,13 @@ def materialize_plan(host: str) -> dict[str, bytes]:
     # support resources
     policy = (_RESOURCES / "handoff-policy.md").read_bytes()
     files[".portable-resume/resources/handoff-policy.md"] = policy
+    # Narrow ignore for machine-local control state only (#33 Option A).
+    # Deterministic shareable bytes — package identity includes this file.
+    files[".portable-resume/.gitignore"] = (
+        b"# portable-resume: machine-local control state only (#33)\n"
+        b"# Keep runtime/ and resources/ shareable; never commit locks/journals.\n"
+        b".state/\n"
+    )
     # runtime package copy (source tree under runtime/)
     for path in _iter_runtime_files():
         rel = path.relative_to(_RUNTIME_SRC)

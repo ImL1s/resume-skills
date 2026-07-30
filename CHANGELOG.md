@@ -12,6 +12,15 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Project-scope control state split (#33 Option A): mutable installer control
+  files (manifest, lock, journal, backups, stage) live under
+  `.portable-resume/.state/` with mode `0700` where supported; shareable
+  payload remains `.portable-resume/runtime|resources` plus deterministic
+  `.portable-resume/.gitignore` that ignores only `.state/`. Legacy v1 control
+  files migrate into `.state/` under lock; verify dual-reads legacy paths.
+  Absolute claim roots stay machine-local (never in committed payload).
+  Residual: portable relative claim identity still uses absolute root strings
+  inside gitignored manifest only.
 - Discovery duplicate/shadow scan (#34): each host has executable
   `DiscoveryRoot` policy (primary + known alternates); `install` fails closed
   with `E_INSTALL_SHADOW` when a higher-precedence root holds a divergent

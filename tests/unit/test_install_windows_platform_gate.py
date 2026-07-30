@@ -94,7 +94,7 @@ class WindowsPlatformGateTests(unittest.TestCase):
     def test_recover_with_journal_fails_closed_on_windows(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "skills"
-            support = root / ".portable-resume"
+            support = root / ".portable-resume" / ".state"
             support.mkdir(parents=True)
             (support / "journal.json").write_text("{}", encoding="utf-8")
             with mock.patch("portable_resume.install.transaction.os.name", "nt"):

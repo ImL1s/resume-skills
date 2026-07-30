@@ -95,14 +95,14 @@ class InstallControlSchemaTests(unittest.TestCase):
 
     def test_corrupt_manifest_on_disk_is_verify_mismatch(self) -> None:
         execute_install(plan_install(host="claude", scope="project", root=self.root))
-        path = Path(self.root) / ".portable-resume" / "manifest.json"
+        path = Path(self.root) / ".portable-resume" / ".state" / "manifest.json"
         path.write_text('{"schema_version":"x","a":1,"a":2}\n', encoding="utf-8")
         with self.assertRaises(DiagnosticError) as caught:
             load_manifest(self.root)
         self.assertEqual(caught.exception.code, "E_VERIFY_MISMATCH")
 
     def test_malformed_journal_is_recovery_required(self) -> None:
-        support = Path(self.root) / ".portable-resume"
+        support = Path(self.root) / ".portable-resume" / ".state"
         support.mkdir(parents=True)
         (support / "journal.json").write_text('{"state":"staging","a":1,"a":2}\n', encoding="utf-8")
         with self.assertRaises(DiagnosticError) as caught:

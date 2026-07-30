@@ -102,8 +102,13 @@ class InstallerTests(unittest.TestCase):
         self.project = Path(self._tmpdir.name) / "project"
         self.home.mkdir()
         self.project.mkdir()
+        # Isolate #34 global discovery project scan from the developer repo CWD
+        # (which may already hold .grok/skills etc.).
+        self._old_cwd = os.getcwd()
+        os.chdir(self.project)
 
     def tearDown(self) -> None:
+        os.chdir(self._old_cwd)
         self._tmpdir.cleanup()
 
     def _root(self, host: str, scope: str = "project") -> str:
@@ -193,7 +198,7 @@ class InstallerTests(unittest.TestCase):
         result = execute_install(plan, force_with_backup=True)
         self.assertTrue(result["ok"])
         self.assertNotEqual(target.read_text(encoding="utf-8"), "user owned skill\n")
-        backups = list((Path(root) / ".portable-resume" / "backups").rglob("SKILL.md"))
+        backups = list((Path(root) / ".portable-resume" / ".state" / "backups").rglob("SKILL.md"))
         self.assertTrue(backups)
         self.assertEqual(backups[0].read_text(encoding="utf-8"), "user owned skill\n")
         verify_root(root)
@@ -295,7 +300,7 @@ class InstallerTests(unittest.TestCase):
             )
 
         self.assertEqual(code, 0, stderr.getvalue())
-        self.assertTrue((shared / ".portable-resume" / "manifest.json").is_file())
+        self.assertTrue((shared / ".portable-resume" / ".state" / "manifest.json").is_file())
         self.assertTrue(any(shared.glob("resume-*")))
         verify_root(str(shared))
 
@@ -395,7 +400,7 @@ class InstallerTests(unittest.TestCase):
             return {
                 path: data
                 for path, data in tree.items()
-                if not path.endswith("/install.lock") and path != ".portable-resume/install.lock"
+                if not path.endswith("install.lock")
             }
 
         self.assertEqual(without_lock(self._file_bytes(earlier_root)), without_lock(before))
