@@ -19,6 +19,10 @@ MANIFEST_SCHEMA = "portable-resume/install-manifest-v1"
 SKILL_DIR_LAYOUT = "<skill-name>/SKILL.md + scripts/run_reader.py"
 
 
+# Compatible hosts with the same profile render byte-identical direct Skill trees (#25).
+SKILL_PAYLOAD_PORTABLE_V1 = "agent-skills-portable-v1"
+
+
 @dataclass(frozen=True, slots=True)
 class HostProfile:
     key: str
@@ -43,6 +47,8 @@ class HostProfile:
     # unless isolation --home is used (#24). Only destination-documented homes.
     global_home_env: str | None = None
     global_env_rel: str = "skills"
+    # Direct Skill tree compatibility group (#25). Same profile ⇒ same package bytes.
+    skill_payload_profile: str = SKILL_PAYLOAD_PORTABLE_V1
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,7 +295,7 @@ HOST_PROFILES: dict[str, HostProfile] = {
         ),
         arguments_note="No invented slash-command argv channel is claimed for this host.",
         caveats=(
-            "Project .agents/skills collides with Codex — use distinct --root when both hosts need divergent skill bodies.",
+            "Project `.agents/skills` is shared with Codex; host-neutral Skill payloads (#25) allow both claims on one tree.",
             "AGY / AGY CLI / AGY IDE may scan different global paths; ~/.gemini/config/skills is the cross-product global default here.",
             "Gemini CLI uses ~/.gemini/skills and .gemini/skills with .agents/skills alias precedence — not identical to Antigravity defaults.",
         ),
@@ -680,6 +686,7 @@ def host_install_record(
     return {
         "host": host,
         "profile_id": profile.profile_id,
+        "skill_payload_profile": profile.skill_payload_profile,
         "display_name": profile.display_name or host,
         "installer_defaults": {
             "project_rel": profile.project_rel,
