@@ -1191,6 +1191,19 @@ class ClaudeAdapter:
             except DiagnosticError as error:
                 if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"}:
                     return CapabilityReport(self.key, FORMAT_ID, "unsafe", root=root)
+                if (
+                    error.code == "E_NO_MATCH"
+                    and query.ref
+                    and os.path.isabs(query.ref.strip())
+                ):
+                    # Missing approved session path: capability remains supported
+                    # so list/show can surface E_NO_MATCH without sibling scandir.
+                    projects = os.path.join(root, "projects")
+                    if _regular_directory(projects, root):
+                        return CapabilityReport(
+                            self.key, FORMAT_ID, "supported", root=root, evidence=(FORMAT_ID,)
+                        )
+                    return CapabilityReport(self.key, FORMAT_ID, "unavailable", root=root)
                 exact_path = None
             if exact_path is not None:
                 report = _probe_path(exact_path)

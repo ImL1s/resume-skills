@@ -508,11 +508,17 @@ class ClaudeAdapterTests(unittest.TestCase):
 
     def test_issue19_missing_under_root_is_no_match_outside_stays_unsafe(self) -> None:
         slug = claude._slugify_cwd(str(self.cwd))
-        (self.root / "projects" / slug).mkdir(parents=True, exist_ok=True)
-        missing = self.root / "projects" / slug / f"{uuid.uuid4()}.jsonl"
+        project = self.root / "projects" / slug
+        project.mkdir(parents=True, exist_ok=True)
+        for _ in range(2_050):
+            (project / f"{uuid.uuid4()}.jsonl").write_text("{}\n", encoding="utf-8")
+        missing = project / f"{uuid.uuid4()}.jsonl"
         with self.assertRaises(DiagnosticError) as missing_err:
             claude.ADAPTER.list(self.query(ref=str(missing)), ReadBudget())
         self.assertEqual(missing_err.exception.code, "E_NO_MATCH")
+        # probe must not fall through into sibling enumeration after missing path
+        report = claude.ADAPTER.probe(self.query(ref=str(missing)))
+        self.assertEqual(report.state, "supported")
         outside = Path(tempfile.gettempdir()) / f"portable-resume-outside-{uuid.uuid4()}.jsonl"
         with self.assertRaises(DiagnosticError) as outside_err:
             claude.ADAPTER.list(self.query(ref=str(outside)), ReadBudget())
