@@ -2001,39 +2001,62 @@ def restore_install_checkpoint(
     concurrent mutation returns ``E_RECOVERY_REQUIRED`` (#23).
     """
     removed: list[str] = []
-    for rel, meta in checkpoint.paths.items():
-        # Exclusive install.lock is owned by the holding RootLock for the whole
-        # multi-root txn; never unlink it while compensation runs under locks.
-        if meta.get("transaction_lock"):
-            continue
-        dest = _dest_under_root(checkpoint.root, rel)
-        allowed = set(meta.get("allowed_sha256") or ())
-        snap_sha = meta.get("sha256")
-        if isinstance(snap_sha, str):
-            allowed.add(snap_sha)
-        if meta.get("existed"):
-            snapshot = meta.get("snapshot")
-            if not isinstance(snapshot, str) or not os.path.isfile(snapshot) or os.path.islink(snapshot):
+    root = checkpoint.root
+    root_fd: int | None = None
+    if _supports_descriptor_relative_commit():
+        try:
+            root_fd = _open_skill_root_descriptor(root)
+        except DiagnosticError as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+    try:
+        for rel, meta in checkpoint.paths.items():
+            # Exclusive install.lock is owned by the holding RootLock for the whole
+            # multi-root txn; never unlink it while compensation runs under locks.
+            if meta.get("transaction_lock"):
+                continue
+            dest = _dest_under_root(root, rel)
+            allowed = set(meta.get("allowed_sha256") or ())
+            snap_sha = meta.get("sha256")
+            if isinstance(snap_sha, str):
+                allowed.add(snap_sha)
+            if meta.get("existed"):
+                snapshot = meta.get("snapshot")
+                if not isinstance(snapshot, str) or not os.path.isfile(snapshot) or os.path.islink(snapshot):
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+                if sha256_file(snapshot) != meta.get("sha256"):
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+                _restore_regular_nofollow(
+                    snapshot,
+                    dest,
+                    allowed_live_sha256=allowed if allowed else None,
+                )
+                continue
+            # Path was absent at checkpoint: remove only if live digest is a
+            # transaction-created payload (quarantine unlink when dirfd works).
+            if root_fd is not None:
+                try:
+                    live = _sha256_regular_under_root_fd(root_fd, rel)
+                except DiagnosticError:
+                    continue
+                if live not in allowed:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+                if _unlink_regular_under_root_fd(root_fd, rel, expected_sha256=live):
+                    removed.append(rel)
+                continue
+            if not os.path.lexists(dest):
+                continue
+            if os.path.islink(dest) or not os.path.isfile(dest):
                 raise DiagnosticError("E_RECOVERY_REQUIRED")
-            if sha256_file(snapshot) != meta.get("sha256"):
+            if sha256_file(dest) not in allowed:
                 raise DiagnosticError("E_RECOVERY_REQUIRED")
-            _restore_regular_nofollow(
-                snapshot,
-                dest,
-                allowed_live_sha256=allowed if allowed else None,
-            )
-            continue
-        if not os.path.lexists(dest):
-            continue
-        if os.path.islink(dest) or not os.path.isfile(dest):
-            raise DiagnosticError("E_RECOVERY_REQUIRED")
-        if sha256_file(dest) not in allowed:
-            raise DiagnosticError("E_RECOVERY_REQUIRED")
-        os.remove(dest)
-        removed.append(rel)
+            os.remove(dest)
+            removed.append(rel)
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
     if backup_root:
-        _delete_authorized_support_subtree(checkpoint.root, backup_root, role="backup")
-    _cleanup_empty_dirs(checkpoint.root, removed_paths=removed)
+        _delete_authorized_support_subtree(root, backup_root, role="backup")
+    _cleanup_empty_dirs(root, removed_paths=removed)
 
 
 def install_multi_targets(
@@ -2126,13 +2149,11 @@ def install_multi_targets(
                 raise DiagnosticError("E_INSTALL_CONFLICT", family=tuple(sorted(hosts)))
 
         for plan in plans:
-            checkpoints.append(capture_install_checkpoint(plan))
-
-        for plan, checkpoint in zip(plans, checkpoints):
             key = os.path.realpath(plan.root)
             lock = lock_by_key[key]
-            # Replan immediately before each execute so shared physical roots
-            # observe the generation published by an earlier claim in this txn.
+            # Replan + checkpoint immediately before each execute so shared
+            # physical roots capture the generation that this step will undo
+            # (not the common pre-transaction generation).
             live_plan = plan_install(
                 host=plan.host,
                 scope=scope,
@@ -2140,6 +2161,8 @@ def install_multi_targets(
                 dry_run=False,
                 force_with_backup=force_with_backup,
             )
+            checkpoint = capture_install_checkpoint(live_plan)
+            checkpoints.append(checkpoint)
             result = execute_install(
                 live_plan,
                 force_with_backup=force_with_backup,
