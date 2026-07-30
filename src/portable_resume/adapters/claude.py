@@ -419,13 +419,11 @@ def _session_paths(
     ``_summary`` / ``show`` — slug presence alone is never authority.
     """
     if exact_uuid is not None and prefer_slugs:
-        direct = _direct_uuid_under_slugs(root, exact_uuid, prefer_slugs)
-        if direct:
-            return direct
-        # Direct slug candidate absent — broad basename probe across projects
-        # (Grok `_find_claude_id` parity). Do not re-scope after this miss.
-        project_dirs = _project_dirs(root, prefer_slugs=prefer_slugs, prefer_only=False)
-        return _paths_under_projects(project_dirs, exact_uuid=exact_uuid)
+        # Prefer direct slug path(s) first, then remaining project buckets via
+        # basename probe. Callers that can validate recorded cwd (list/show)
+        # should use `_exact_uuid_paths` so a cwd-mismatched direct file does
+        # not block an eligible relocated copy (Codex P2 on #19).
+        return _exact_uuid_paths(root, exact_uuid, prefer_slugs=prefer_slugs)
 
     if cwd_scoped and prefer_slugs:
         preferred_dirs = _project_dirs(root, prefer_slugs=prefer_slugs, prefer_only=True)
@@ -436,6 +434,33 @@ def _session_paths(
 
     project_dirs = _project_dirs(root, prefer_slugs=prefer_slugs, prefer_only=False)
     return _paths_under_projects(project_dirs, exact_uuid=exact_uuid)
+
+
+def _exact_uuid_paths(
+    root: str,
+    exact_uuid: str,
+    *,
+    prefer_slugs: tuple[str, ...] = (),
+) -> list[str]:
+    """Ordered exact-UUID candidates: preferred slug files, then broad probe.
+
+    Preferred direct files come first so callers can accept them without a full
+    projects scandir when recorded-cwd validation succeeds. Broad basename
+    probing still runs so a cwd-mismatched file under the guessed slug cannot
+    hide an eligible copy in another project bucket.
+    """
+
+    direct = _direct_uuid_under_slugs(root, exact_uuid, prefer_slugs)
+    project_dirs = _project_dirs(root, prefer_slugs=prefer_slugs, prefer_only=False)
+    broad = _paths_under_projects(project_dirs, exact_uuid=exact_uuid)
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for path in (*direct, *broad):
+        if path in seen:
+            continue
+        seen.add(path)
+        ordered.append(path)
+    return ordered
 
 
 def _prefer_slugs_for(query: Query) -> tuple[str, ...]:
@@ -1095,18 +1120,42 @@ class ClaudeAdapter:
         # Absolute approved path: validate/read that file only (#19).
         exact_path = _exact_path_candidate(root, query)
         if exact_path is not None:
-            paths = [exact_path]
+            paths: list[str] = [exact_path]
         else:
             exact = _exact_uuid_ref(query.ref)
             prefer = _prefer_slugs_for(query)
-            # Exact UUID + cwd uses direct slug path inside `_session_paths`.
-            # Non-exact list still cwd-scopes when a preferred slug exists.
-            paths = _session_paths(
-                root,
-                prefer_slugs=prefer,
-                exact_uuid=exact,
-                cwd_scoped=bool(prefer) and exact is None,
-            )
+            if exact is not None and prefer:
+                # Fast path: try preferred slug file(s) first without broad
+                # projects scandir. Only enumerate other buckets when none of
+                # the direct candidates survive recorded-cwd validation.
+                direct = _direct_uuid_under_slugs(root, exact, prefer)
+                for path in direct:
+                    item = _summary(path, root, query, budget)
+                    if item is not None:
+                        values.append(item)
+                if values:
+                    values.sort(
+                        key=lambda item: (
+                            item.updated_at is None,
+                            item.updated_at or "",
+                            item.session_id,
+                        ),
+                        reverse=True,
+                    )
+                    return values
+                # Direct file missing or cwd-mismatched — broad basename probe.
+                paths = _exact_uuid_paths(root, exact, prefer_slugs=prefer)
+                # Already tried direct paths above; skip re-summarizing them.
+                tried = set(direct)
+                paths = [path for path in paths if path not in tried]
+            else:
+                # Non-exact list still cwd-scopes when a preferred slug exists.
+                paths = _session_paths(
+                    root,
+                    prefer_slugs=prefer,
+                    exact_uuid=exact,
+                    cwd_scoped=bool(prefer) and exact is None,
+                )
         for path in paths:
             # List still needs recorded cwd/title for collision safety; show does lineage.
             item = _summary(path, root, query, budget)
@@ -1122,15 +1171,58 @@ class ClaudeAdapter:
         path = ref.source_path
         if path is None:
             prefer = _prefer_slugs_for(query)
-            matches = _session_paths(
-                root,
-                prefer_slugs=prefer,
-                exact_uuid=ref.session_id,
-                cwd_scoped=bool(prefer),
-            )
-            if len(matches) != 1:
-                raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
-            path = matches[0]
+            # Prefer direct slug file(s), then broad basename probe only if needed
+            # (cwd-mismatched direct must not hide a relocated eligible copy).
+            if prefer:
+                ordered = _direct_uuid_under_slugs(root, ref.session_id, prefer)
+            else:
+                ordered = []
+            if not ordered:
+                ordered = _session_paths(
+                    root,
+                    prefer_slugs=prefer,
+                    exact_uuid=ref.session_id,
+                    cwd_scoped=False,
+                )
+            else:
+                # Validate direct candidates; fall back to broad on total miss.
+                chosen: str | None = None
+                for candidate in ordered:
+                    try:
+                        summary = _summary(candidate, root, query, budget)
+                    except DiagnosticError:
+                        continue
+                    if summary is not None and summary.session_id == ref.session_id:
+                        chosen = candidate
+                        break
+                if chosen is not None:
+                    path = chosen
+                    ordered = []
+                else:
+                    tried = set(ordered)
+                    ordered = [
+                        item
+                        for item in _exact_uuid_paths(
+                            root, ref.session_id, prefer_slugs=prefer
+                        )
+                        if item not in tried
+                    ]
+            if path is None:
+                if not ordered:
+                    raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
+                if len(ordered) == 1:
+                    path = ordered[0]
+                else:
+                    for candidate in ordered:
+                        try:
+                            summary = _summary(candidate, root, query, budget)
+                        except DiagnosticError:
+                            continue
+                        if summary is not None and summary.session_id == ref.session_id:
+                            path = candidate
+                            break
+                    if path is None:
+                        raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
         _validate_claude_bounds(budget)
         with snapshot_regular_file(
             path,

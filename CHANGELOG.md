@@ -15,9 +15,11 @@
 - Claude exact-reference discovery (#19): absolute approved
   `projects/<slug>/<uuid>.jsonl` paths are validated/read without enumerating
   unrelated project directories; exact UUID + concrete cwd constructs the
-  deterministic slug path first; missing direct candidates fall back to a
-  bounded basename probe across projects (no full per-project session scandir).
-  Recorded primary cwd remains authoritative — slug name alone never selects.
+  deterministic slug path first and only broad-scans when that candidate is
+  absent or fails recorded-cwd validation (so a cwd-mismatched slug file
+  cannot hide a relocated eligible copy). Broad fallback uses a bounded
+  basename probe per project (no full per-project session scandir). Recorded
+  primary cwd remains authoritative — slug name alone never selects.
   Discovery optimization only; graph/metadata-window behavior unchanged.
 - Native package contracts (#27): versioned offline contracts per direct-skill
   and plugin/marketplace surface (`package-contracts-v1`); builder validates

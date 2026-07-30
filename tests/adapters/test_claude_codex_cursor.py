@@ -555,6 +555,53 @@ class ClaudeAdapterTests(unittest.TestCase):
         values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
         self.assertEqual(values, [])
 
+    def test_issue19_cwd_mismatched_direct_still_finds_relocated_eligible_copy(self) -> None:
+        """Codex P2: slug-file present but wrong cwd must not hide a good copy."""
+        session_id = str(uuid.uuid4())
+        user_bad, user_good = str(uuid.uuid4()), str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        other_cwd = self.root / "other-repo"
+        other_cwd.mkdir()
+        write_jsonl(
+            self.root / "projects" / slug / f"{session_id}.jsonl",
+            [
+                {
+                    "type": "user",
+                    "uuid": user_bad,
+                    "parentUuid": None,
+                    "sessionId": session_id,
+                    "cwd": str(other_cwd),
+                    "timestamp": stamp(0),
+                    "message": {"role": "user", "content": "stale slug hit"},
+                }
+            ],
+        )
+        good_path = self.root / "projects" / "relocated-bucket" / f"{session_id}.jsonl"
+        write_jsonl(
+            good_path,
+            [
+                {
+                    "type": "user",
+                    "uuid": user_good,
+                    "parentUuid": None,
+                    "sessionId": session_id,
+                    "cwd": str(self.cwd),
+                    "timestamp": stamp(1),
+                    "message": {"role": "user", "content": "relocated good"},
+                }
+            ],
+        )
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual(len(values), 1)
+        self.assertEqual(Path(values[0].source_path), good_path)
+        session = claude.ADAPTER.show(
+            ResolvedRef(session_id, None),
+            self.query(ref=session_id),
+            ReadBudget(),
+        )
+        self.assertEqual([turn.content for turn in session.turns], ["relocated good"])
+        self.assertEqual(Path(session.source_path), good_path)
+
     def test_issue19_exact_uuid_falls_back_when_slug_candidate_missing(self) -> None:
         session_id = str(uuid.uuid4())
         user_id = str(uuid.uuid4())
