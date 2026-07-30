@@ -280,6 +280,89 @@ class DuplicateScanTests(unittest.TestCase):
         self.assertEqual(report["aggregate_status"], STATUS_PRECEDENCE_UNKNOWN)
 
 
+class CodexFollowupTests(unittest.TestCase):
+    """Follow-ups from PR #102 Codex review on #34 HEAD."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self._tmp.name) / "home"
+        self.project = Path(self._tmp.name) / "project"
+        self.home.mkdir()
+        self.project.mkdir()
+        self._old_cwd = os.getcwd()
+        os.chdir(self.project)
+
+    def tearDown(self) -> None:
+        os.chdir(self._old_cwd)
+        self._tmp.cleanup()
+
+    def test_global_install_without_project_scans_cwd(self) -> None:
+        """Global install without --project must still see project-tier shadows."""
+        project_root = self.project / ".cursor" / "skills"
+        _write_skill(project_root, "resume-codex", b"STALE PROJECT\n")
+        import io
+        import sys
+
+        err = io.StringIO()
+        old_err = sys.stderr
+        sys.stderr = err
+        try:
+            code = install_cli_run(
+                [
+                    "install",
+                    "--host",
+                    "cursor",
+                    "--scope",
+                    "global",
+                    "--home",
+                    str(self.home),
+                    "--json",
+                ]
+            )
+        finally:
+            sys.stderr = old_err
+        self.assertEqual(code, 6)
+        self.assertIn("E_INSTALL_SHADOW", err.getvalue())
+
+    def test_malformed_alternate_manifest_does_not_abort(self) -> None:
+        selected = self.project / ".cursor" / "skills"
+        agents = self.project / ".agents" / "skills"
+        selected.mkdir(parents=True)
+        _write_skill(agents, "resume-codex")
+        support = agents / ".portable-resume"
+        support.mkdir()
+        (support / "manifest.json").write_text("{not-json", encoding="utf-8")
+        report = scan_skill_duplicates(
+            host="cursor",
+            selected_root=str(selected),
+            project_dir=str(self.project),
+            home_dir=str(self.home),
+            selected_scope="project",
+            skill_names=("resume-codex",),
+        )
+        self.assertTrue(report["ok"] or report["aggregate_policy"] == POLICY_WARN)
+        # Must not raise; findings still present for the foreign skill.
+        self.assertTrue(any(not f.get("is_selected") for f in report["findings"]))
+
+    def test_kimi_env_home_primary_user_root(self) -> None:
+        from portable_resume.install.discovery import discovery_roots_for_host, resolve_discovery_path
+
+        env_home = self.home / "kimi-custom"
+        env_home.mkdir()
+        entry = next(
+            r for r in discovery_roots_for_host("kimi") if r.root_id == "kimi.user.primary"
+        )
+        path = resolve_discovery_path(
+            entry,
+            project_dir=str(self.project),
+            home_dir=str(self.home),
+            host="kimi",
+            environ={"KIMI_CODE_HOME": str(env_home)},
+            isolation=False,
+        )
+        self.assertEqual(os.path.realpath(path), os.path.realpath(env_home / "skills"))
+
+
 class CliAuditAndInstallGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()

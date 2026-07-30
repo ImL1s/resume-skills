@@ -367,8 +367,15 @@ def resolve_discovery_path(
     *,
     project_dir: str | None,
     home_dir: str,
+    host: str | None = None,
+    environ: dict[str, str] | None = None,
+    isolation: bool | None = None,
 ) -> str | None:
-    """Resolve *entry* to an absolute path, or None when base is unavailable."""
+    """Resolve *entry* to an absolute path, or None when base is unavailable.
+
+    Primary user roots use the same env-home policy as install (#24 / #34 P2):
+    e.g. Kimi ``$KIMI_CODE_HOME/skills`` when set and not isolation.
+    """
 
     if entry.base == "project":
         if not project_dir:
@@ -376,6 +383,22 @@ def resolve_discovery_path(
         base = os.path.realpath(project_dir)
         return os.path.join(base, *entry.rel.split("/"))
     if entry.base == "home":
+        if (
+            host is not None
+            and entry.role == "primary"
+            and entry.scope == "user"
+            and host in HOST_PROFILES
+        ):
+            from .catalog import resolve_skill_root_info
+
+            return resolve_skill_root_info(
+                host=host,
+                scope="global",
+                project_dir=None,
+                home_dir=home_dir,
+                environ=environ,
+                isolation=isolation,
+            ).path
         base = os.path.realpath(home_dir)
         return os.path.join(base, *entry.rel.split("/"))
     return None
@@ -542,10 +565,15 @@ def inspect_skill_copy(
         result["matches_expected"] = False
 
     # Ownership metadata from sibling support tree (informational; not identity).
-    # Lazy import: load_manifest lives in transaction (avoids import cycle).
+    # Malformed alternate manifests must not abort the whole scan (#34 P2).
     from .transaction import load_manifest
 
-    manifest = load_manifest(skill_root)
+    try:
+        manifest = load_manifest(skill_root)
+    except DiagnosticError:
+        result["owned"] = False
+        result["manifest_unreadable"] = True
+        return result
     if manifest is not None and manifest.claims:
         result["owned"] = True
         result["bundle_version"] = manifest.bundle_version
@@ -589,7 +617,9 @@ def scan_skill_duplicates(
     # Record selected root precedence from policy (best matching entry).
     selected_prec: int | None = None
     for entry in roots:
-        path = resolve_discovery_path(entry, project_dir=project_dir, home_dir=home_dir)
+        path = resolve_discovery_path(
+            entry, project_dir=project_dir, home_dir=home_dir, host=host
+        )
         if path is None:
             continue
         try:
@@ -639,7 +669,9 @@ def _scan_skill_duplicates_body(
     seen_physical: dict[str, str],
 ) -> dict[str, Any]:
     for entry in roots:
-        path = resolve_discovery_path(entry, project_dir=project_dir, home_dir=home_dir)
+        path = resolve_discovery_path(
+            entry, project_dir=project_dir, home_dir=home_dir, host=host
+        )
         row: dict[str, Any] = {
             **entry.to_dict(),
             "resolved": path is not None,
