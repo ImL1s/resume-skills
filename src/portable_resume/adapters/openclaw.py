@@ -117,7 +117,11 @@ def _composite_id(agent_id: str, session_id: str) -> str:
 
 
 def _parse_ref(value: str | None) -> tuple[str | None, str | None]:
-    """Return (agent_id_or_None, session_id_or_None) from a ref string."""
+    """Return (agent_id_or_None, session_id_or_None) from a ref string.
+
+    Free-text titles (spaces / non-id tokens) return ``(None, None)`` so the
+    generic selector can match them after a normal bounded list.
+    """
 
     if not value:
         return None, None
@@ -128,9 +132,17 @@ def _parse_ref(value: str | None) -> tuple[str | None, str | None]:
         agent, session = text.split(":", 1)
         agent = agent.strip()
         session = session.strip()
-        if agent and session and _AGENT_ID_RE.fullmatch(agent):
+        if (
+            agent
+            and session
+            and _AGENT_ID_RE.fullmatch(agent)
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}", session)
+        ):
             return agent, session
-    return None, text
+        return None, None
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}", text):
+        return None, text
+    return None, None
 
 
 def _ms_stamp(value: object) -> str | None:
@@ -554,8 +566,10 @@ def _active_branch_events(decoded: list[Mapping[str, Any]]) -> list[Mapping[str,
     current: Mapping[str, Any] | None = leaf
     while current is not None:
         identifier = current.get("id")
-        if not isinstance(identifier, str) or not identifier or identifier in seen:
+        if not isinstance(identifier, str) or not identifier:
             break
+        if identifier in seen:
+            raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
         seen.add(identifier)
         path.append(current)
         if current.get("type") == "compaction":
@@ -676,8 +690,11 @@ def _show_session(
         event = _decode_event(event_json)
         if event["type"] in {"custom", "session"}:
             continue
+        # Attach SQL sequence for firstKeptSeq retention (Codex P1).
+        annotated = dict(event)
+        annotated["seq"] = seq
         # Keep branch_summary for ancestry only; turn emission filters it out.
-        decoded.append(event)
+        decoded.append(annotated)
 
     for event in _active_branch_events(decoded):
         kind = event["type"]
@@ -693,6 +710,25 @@ def _show_session(
             if role not in {"user", "assistant", "tool"}:
                 continue
             text = _message_text(event)
+            if text is None and role == "tool":
+                nested = _nested_message(event)
+                source = nested if nested is not None else event
+                command = source.get("command")
+                output = source.get("output")
+                chunks = []
+                if isinstance(command, str) and command.strip():
+                    chunks.append(command)
+                if isinstance(output, str) and output.strip():
+                    chunks.append(output)
+                text = "\n".join(chunks) if chunks else None
+            if text is None and kind == "custom_message":
+                # Visible custom_message may omit role; treat as inert assistant context.
+                if event.get("display") is False:
+                    continue
+                text = _message_text(event)
+                if text is None:
+                    continue
+                role = "assistant"
             if text is None:
                 continue
             raw = {"role": role, "content": text}
@@ -827,10 +863,14 @@ class OpenClawAdapter:
             values.extend(items[: DEFAULT_BOUNDS.listed_sessions])
         if not values and not any_supported and _agent_db_paths(root):
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+        # Newest first; ascending session_id tie-break (stable sort).
+        values.sort(key=lambda item: item.session_id)
         values.sort(
-            key=lambda item: (item.updated_at is None, item.updated_at or "", item.session_id),
+            key=lambda item: item.updated_at or "",
             reverse=True,
         )
+        # Missing timestamps last.
+        values.sort(key=lambda item: item.updated_at is None)
         if session_filter is not None:
             return values
         return values[: DEFAULT_BOUNDS.listed_sessions]
