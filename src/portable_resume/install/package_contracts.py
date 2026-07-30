@@ -19,11 +19,12 @@ from ..diagnostics import SOURCE_KEYS
 # Schema of this contracts module itself (bumped when contract fields change).
 PACKAGE_CONTRACTS_SCHEMA = "portable-resume/package-contracts-v1"
 
-# Shared forbidden path fragments inside any package archive.
+# Shared forbidden path fragments inside any package archive (match root-relative
+# and nested spellings — do not require a leading slash).
 FORBIDDEN_PATH_SUBSTRINGS: tuple[str, ...] = (
-    "/portable_resume/install/",
-    "\\portable_resume\\install\\",
-    "/.portable-resume/.state/",
+    "portable_resume/install/",
+    "portable_resume\\install\\",
+    ".portable-resume/.state/",
 )
 
 
@@ -336,19 +337,25 @@ def validate_manifest_document(
     return failures
 
 
+def _normalize_plugin_rel(path: str) -> str:
+    rel = path[2:] if path.startswith("./") else path
+    return rel.strip("/").replace("\\", "/")
+
+
 def validate_marketplace_source(
     archive: zipfile.ZipFile,
     contract: PackageContract,
 ) -> list[str]:
-    """Ensure marketplace entries point at an existing plugin root in-archive."""
+    """Ensure marketplace entries point at the contracted plugin root in-archive."""
 
     if not contract.plugin_root:
         return []
     failures: list[str] = []
     names = set(archive.namelist())
-    plugin_root = contract.plugin_root.rstrip("/") + "/"
-    if not any(name.startswith(plugin_root) for name in names):
-        failures.append(f"missing plugin root tree: {plugin_root}")
+    expected_root = _normalize_plugin_rel(contract.plugin_root)
+    plugin_prefix = expected_root + "/"
+    if not any(name.startswith(plugin_prefix) for name in names):
+        failures.append(f"missing plugin root tree: {plugin_prefix}")
     # Claude / Cursor / Codex marketplace files are listed in required_members.
     for member in contract.required_members:
         if "marketplace.json" not in member:
@@ -366,19 +373,30 @@ def validate_marketplace_source(
             if not isinstance(entry, dict):
                 failures.append(f"marketplace entry not an object in {member}")
                 continue
+            # Marketplace entry version must match the bundle when declared.
+            if "version" in entry and str(entry["version"]) != BUNDLE_VERSION:
+                failures.append(
+                    f"marketplace plugin version {entry['version']!r} != {BUNDLE_VERSION!r}"
+                )
             source = entry.get("source")
+            source_rel: str | None = None
             if isinstance(source, str):
-                rel = source[2:] if source.startswith("./") else source
-                rel = rel.rstrip("/") + "/"
-                if not any(name.startswith(rel) for name in names):
-                    failures.append(f"marketplace source missing tree: {source}")
+                source_rel = _normalize_plugin_rel(source)
             elif isinstance(source, dict):
                 path = source.get("path")
                 if isinstance(path, str):
-                    rel = path[2:] if path.startswith("./") else path
-                    rel = rel.rstrip("/") + "/"
-                    if not any(name.startswith(rel) for name in names):
-                        failures.append(f"marketplace source.path missing tree: {path}")
+                    source_rel = _normalize_plugin_rel(path)
+            if source_rel is None:
+                failures.append(f"marketplace entry missing source path in {member}")
+                continue
+            # Source must be exactly the contracted plugin root, not a subtree.
+            if source_rel != expected_root:
+                failures.append(
+                    f"marketplace source {source_rel!r} != plugin root {expected_root!r}"
+                )
+                continue
+            if not any(name.startswith(source_rel + "/") for name in names):
+                failures.append(f"marketplace source missing tree: {source_rel}")
     return failures
 
 

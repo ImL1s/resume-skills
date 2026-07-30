@@ -46,10 +46,20 @@ class PackageContractRegistryTests(unittest.TestCase):
 class OfflineValidationTests(unittest.TestCase):
     def test_rejects_parent_escape_and_install_runtime(self) -> None:
         failures = validate_member_paths(
-            ["ok/SKILL.md", "../escape", "x/portable_resume/install/cli.py"]
+            [
+                "ok/SKILL.md",
+                "../escape",
+                "x/portable_resume/install/cli.py",
+                "portable_resume/install/evil.py",
+                ".portable-resume/.state/manifest.json",
+            ]
         )
         self.assertTrue(any("unsafe" in f for f in failures))
         self.assertTrue(any("forbidden" in f for f in failures))
+        self.assertTrue(
+            any("portable_resume/install/evil.py" in f for f in failures)
+        )
+        self.assertTrue(any(".state/" in f for f in failures))
 
     def test_skills_layout_requires_all_sources(self) -> None:
         failures = validate_skills_layout(
@@ -76,6 +86,51 @@ class OfflineValidationTests(unittest.TestCase):
     def test_contract_for_unknown_raises(self) -> None:
         with self.assertRaises(KeyError):
             contract_for_package_type("nope")
+
+    def test_marketplace_rejects_stale_version_and_wrong_source_root(self) -> None:
+        import zipfile
+        from io import BytesIO
+
+        # Minimal fake claude marketplace archive with wrong version + skills subtree source.
+        files = {
+            ".claude-plugin/marketplace.json": json.dumps(
+                {
+                    "name": "portable-resume",
+                    "plugins": [
+                        {
+                            "name": "portable-resume",
+                            "version": "0.0.0",
+                            "source": "./plugins/portable-resume/skills",
+                        }
+                    ],
+                },
+                sort_keys=True,
+            ).encode()
+            + b"\n",
+            "plugins/portable-resume/.claude-plugin/plugin.json": json.dumps(
+                {
+                    "name": "portable-resume",
+                    "version": __version__,
+                    "description": "x",
+                    "author": {"name": "x"},
+                    "license": "Apache-2.0",
+                    "homepage": "https://example.com",
+                    "repository": "https://example.com",
+                },
+                sort_keys=True,
+            ).encode()
+            + b"\n",
+            "plugins/portable-resume/skills/resume-claude/SKILL.md": b"x",
+        }
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            for name, data in files.items():
+                archive.writestr(name, data)
+        report = validate_archive_bytes(buf.getvalue(), package_type="claude-marketplace")
+        self.assertFalse(report["ok"])
+        blob = " ".join(report["failures"])
+        self.assertIn("version", blob)
+        self.assertIn("plugin root", blob)
 
 
 if __name__ == "__main__":
