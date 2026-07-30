@@ -7,22 +7,31 @@ from pathlib import Path
 class StatusHonestyTests(unittest.TestCase):
     def test_status_does_not_claim_next_wave_supported(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
-        self.assertNotIn("OpenClaw: supported", text)
+        # goose remains fixtures-only; OpenClaw product path may claim supported.
         self.assertNotIn("goose source: supported", text.lower())
         self.assertNotRegex(
             text,
-            r"(?i)\b(openclaw|goose)\b[^.\n]{0,40}\bsupported\b",
+            r"(?i)\bgoose\b[^.\n]{0,40}\bsupported\b",
         )
         self.assertNotRegex(
             text,
             r"(?i)pi[^.\n]{0,40}(picker|native activation).{0,20}pass",
         )
+        self.assertNotRegex(
+            text,
+            r"(?i)openclaw[^.\n]{0,60}(picker|native).{0,20}pass",
+        )
 
     def test_status_describes_registry_derived_matrix(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
-        self.assertIn("derived from registries", lowered)
-        self.assertRegex(text, r"9\s*[×x]\s*9\s*=\s*81|9×9=81|currently 9×9")
+        self.assertTrue(
+            "derived from registries" in lowered or "registry-derived" in lowered
+        )
+        self.assertRegex(
+            text,
+            r"10\s*[×x]\s*10|10×10=100|100/100|9\s*[×x]\s*9\s*=\s*81|9×9=81",
+        )
 
     def test_status_open_work_links_next_wave_roadmap(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
@@ -37,7 +46,7 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertIn("derived from registries", lowered)
         self.assertRegex(
             text,
-            r"9\s*[×x]\s*9|9\s*[×x]\s*8|enabled_source|enabled_destination|registry",
+            r"10\s*[×x]\s*10|9\s*[×x]\s*9|enabled_source|enabled_destination|registry",
         )
 
     def test_readme_and_host_support_note_registry_derived_matrix(self) -> None:
@@ -116,8 +125,9 @@ class StatusHonestyTests(unittest.TestCase):
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
         self.assertRegex(text, r"\*\*\d+ pass locally\*\*")
-        self.assertRegex(text, r"81/81")
-        self.assertIn("359", text)  # current local suite after Pi destination PR C
+        # Current main is 100-cell; published 0.3.4 historical 81 remains noted.
+        self.assertRegex(text, r"100/100|81/81")
+        self.assertIn("359", text)  # archived local suite after Pi destination PR C
         self.assertIn("d9152cd", text)  # archived PR #51 merge tip
         self.assertIn("340", text)  # archived PR #51 merge count
         self.assertRegex(text, r"(?i)pi.*destination.*(supported|pass)")
@@ -127,11 +137,10 @@ class StatusHonestyTests(unittest.TestCase):
             and "source" in lowered
             and "supported" in lowered
         )
-        # Published 0.3.4 claims the 81-cell matrix; keep Pi native UI unclaimed.
         readme = Path("README.md").read_text(encoding="utf-8")
         self.assertRegex(readme, r"0\.3\.4")
-        self.assertRegex(readme, r"81/81")
-        self.assertRegex(readme, r"(?i)pi native UI|Pi native UI")
+        self.assertRegex(readme, r"100/100|81/81|historical 81")
+        self.assertRegex(readme, r"(?i)pi.*native|Pi/OpenClaw native|Pi native UI")
         self.assertRegex(readme, r"not-run")
 
 

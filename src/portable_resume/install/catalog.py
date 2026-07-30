@@ -505,6 +505,49 @@ HOST_PROFILES: dict[str, HostProfile] = {
         ),
         evidence_level="verified-filesystem",
     ),
+    "openclaw": HostProfile(
+        key="openclaw",
+        profile_id="openclaw-v1",
+        project_rel="skills",
+        global_rel=".openclaw/skills",
+        display_name="OpenClaw",
+        official_docs=(
+            "https://github.com/openclaw/openclaw/blob/main/docs/tools/skills.md",
+        ),
+        project_layout="<workspace>/skills/<name>/SKILL.md",
+        global_layout="~/.openclaw/skills/<name>/SKILL.md",
+        alternate_project_roots=(".agents/skills",),
+        alternate_global_roots=("~/.agents/skills",),
+        install_methods=(
+            "This installer: install-resume-skills install --host openclaw --scope project|global",
+            "Manual: copy each resume-*/ folder into workspace skills/ or ~/.openclaw/skills/",
+            "Also: openclaw skills install <local-skill-directory> [--global] (native route; not-run here)",
+        ),
+        activation_help=(
+            "Load resume-<source> from the workspace skills/ or ~/.openclaw/skills tree. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-openclaw with ref latest",
+            "Use skill resume-claude with ref main:sess-…",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (composite agentId:sessionId, native session id when unique, "
+            "or latest). Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
+        ),
+        caveats=(
+            "Default project root is workspace skills/ (first-class Agent Skills root); "
+            ".agents/skills is compatibility-only for this installer.",
+            "Does not start Gateway, ClawHub, or messaging transports.",
+            "Native openclaw skills install / picker activation evidence remains not-run.",
+        ),
+        evidence_notes=(
+            "OpenClaw Skills docs: workspace skills/, .agents/skills, ~/.agents/skills, "
+            "~/.openclaw/skills (checked 2026-07-26). Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+    ),
 }
 
 SOURCE_TITLES = {
@@ -516,6 +559,7 @@ SOURCE_TITLES = {
     "grok": "Grok Build",
     "kimi": "Kimi CLI / Kimi Code CLI",
     "pi": "Pi agent",
+    "openclaw": "OpenClaw",
     "qwen": "Qwen Code",
 }
 

@@ -11,6 +11,14 @@
   parent-directory symlink swaps cannot redirect writes or deletes outside the
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
+### Added
+- OpenClaw source + destination (#37): `openclaw-agent-sqlite-v1` reader for
+  per-agent `agents/<id>/agent/openclaw-agent.sqlite` (schema user_version 11);
+  composite session ids `agentId:sessionId`; default list filters internal/cron
+  runs; destination filesystem install to workspace `skills/` and
+  `~/.openclaw/skills`. Matrix is now registry-derived **10×10=100**. Native
+  `openclaw skills install` / picker activation remains not-run.
+
 ### Fixed
 - Claude exact-reference discovery (#19): absolute approved
   `projects/<slug>/<uuid>.jsonl` paths are validated/read without enumerating
