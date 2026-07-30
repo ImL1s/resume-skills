@@ -6,7 +6,7 @@ This repository ships nine `resume-<source>` Skills to nine destination hosts (d
 
 ```bash
 PYTHONPATH=src python3 scripts/install-resume-skills hosts --json
-PYTHONPATH=src python3 scripts/install-resume-skills matrix --json
+PYTHONPATH=src python3 scripts/install-resume-skills matrix
 python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
@@ -119,16 +119,16 @@ download a package; every bundled reader remains offline.
 ```bash
 # Preview, install, verify, then uninstall one profile
 PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host qwen --scope project --project "$PWD" --dry-run --json
+  --host qwen --scope project --project "$PWD" --dry-run
 PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host qwen --scope project --project "$PWD" --json
+  --host qwen --scope project --project "$PWD"
 PYTHONPATH=src python3 scripts/install-resume-skills verify \
-  --host qwen --scope project --project "$PWD" --json
+  --host qwen --scope project --project "$PWD"
 PYTHONPATH=src python3 scripts/install-resume-skills uninstall \
-  --host qwen --scope project --project "$PWD" --json
+  --host qwen --scope project --project "$PWD"
 ```
 
-Use `--scope global` for the user root or `--root <path>` for an explicit root. `--host all` locks every unique physical root in a deterministic order, replans under those locks, then mutates; if a later root fails, same-process compensation restores earlier roots while the locks remain held (not durable multi-root atomicity across process crash — use `recover` per root). Direct Skill payloads are **host-neutral** (`agent-skills-portable-v1`): Codex and Antigravity can both claim the natural project root `.agents/skills` with one set of `resume-*` bytes. Host-specific activation grammar lives in `install-resume-skills hosts` / this guide, not in the shared Skill body. Genuine same-path content divergence still fails with `E_INSTALL_CONFLICT` before mutation.
+Use `--scope global` for the user root or `--root <path>` for an explicit root. `--host all` locks every unique physical root in a deterministic order, replans under those locks, then mutates; if a later root fails, same-process compensation restores earlier roots while the locks remain held (not durable multi-root atomicity across process crash — use `recover` per root). Direct Skill payloads are **host-neutral** (`agent-skills-portable-v1`): Codex and Antigravity can both claim the natural project root `.agents/skills` with one set of `resume-*` bytes. Host-specific activation grammar lives in `install-resume-skills hosts --json` / this guide, not in the shared Skill body. Genuine same-path content divergence still fails with `E_INSTALL_CONFLICT` before mutation.
 
 ## Per-host routes
 
@@ -175,11 +175,11 @@ runtime.
 ```bash
 # Read-only scan (bounded known roots + resume-* names only)
 PYTHONPATH=src python3 scripts/install-resume-skills audit-host \
-  --host cursor --scope project --project "$PWD" --json
+  --host cursor --scope project --project "$PWD"
 
 # Install preflight: known higher-precedence divergent copy → E_INSTALL_SHADOW
 PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host cursor --scope global --project "$PWD" --home "$HOME" --dry-run --json
+  --host cursor --scope global --project "$PWD" --home "$HOME" --dry-run
 ```
 
 Safe consolidation workflow:

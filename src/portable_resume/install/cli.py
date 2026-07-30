@@ -1,4 +1,13 @@
-"""Installer CLI: quick-install / install / verify / uninstall / matrix / recover."""
+"""Installer CLI: quick-install / install / verify / uninstall / matrix / recover / audit-host.
+
+#32 contract (Option A for mutation/status commands):
+- install, verify, uninstall, recover, matrix, quick-install, audit-host always emit
+  one versioned JSON document on stdout (pretty-printed, sorted keys).
+- Those commands do **not** accept a no-op ``--json`` flag (removed).
+- ``hosts`` remains dual-mode: human by default, ``--json`` for machine output.
+- ``verify`` does not accept ``--dry-run`` (already pure; flag was a silent no-op).
+- ``install`` / ``uninstall`` / ``quick-install`` keep real ``--dry-run`` semantics.
+"""
 
 from __future__ import annotations
 
@@ -24,6 +33,8 @@ from .transaction import (
     verify_root,
 )
 
+RESULT_SCHEMA = "portable-resume/install-result-v1"
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="install-resume-skills")
@@ -34,21 +45,54 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    for name in ("install", "verify", "uninstall"):
-        p = sub.add_parser(name)
-        p.add_argument("--host", required=True, help="host key or 'all'")
-        p.add_argument("--scope", choices=("project", "global"), required=True)
-        p.add_argument("--project")
-        p.add_argument("--root", help="explicit skill root override")
-        p.add_argument("--home", default=os.path.expanduser("~"))
-        p.add_argument("--dry-run", action="store_true")
-        p.add_argument("--json", action="store_true")
-        if name == "install":
-            p.add_argument("--force-with-backup", action="store_true")
+    # --- install (JSON-only stdout) ---
+    inst = sub.add_parser(
+        "install",
+        help="install resume-* Skills into a destination host root (JSON stdout)",
+    )
+    inst.add_argument("--host", required=True, help="host key or 'all'")
+    inst.add_argument("--scope", choices=("project", "global"), required=True)
+    inst.add_argument("--project", help="project directory (required for project scope)")
+    inst.add_argument("--root", help="explicit skill root override")
+    inst.add_argument("--home", default=os.path.expanduser("~"))
+    inst.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="plan only; observationally pure (no mutation)",
+    )
+    inst.add_argument("--force-with-backup", action="store_true")
 
+    # --- verify (JSON-only; no dry-run — already read-only) ---
+    ver = sub.add_parser(
+        "verify",
+        help="verify owned install under a host root (JSON stdout; always read-only)",
+    )
+    ver.add_argument("--host", required=True, help="host key or 'all'")
+    ver.add_argument("--scope", choices=("project", "global"), required=True)
+    ver.add_argument("--project")
+    ver.add_argument("--root", help="explicit skill root override")
+    ver.add_argument("--home", default=os.path.expanduser("~"))
+
+    # --- uninstall ---
+    un = sub.add_parser(
+        "uninstall",
+        help="remove one ownership claim (JSON stdout)",
+    )
+    un.add_argument("--host", required=True, help="host key or 'all'")
+    un.add_argument("--scope", choices=("project", "global"), required=True)
+    un.add_argument("--project")
+    un.add_argument("--root", help="explicit skill root override")
+    un.add_argument("--home", default=os.path.expanduser("~"))
+    un.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report removable paths without mutation",
+    )
+
+    # --- quick-install ---
     quick = sub.add_parser(
         "quick-install",
-        help="install one host (or all hosts) globally with safe defaults",
+        help="install one host (or all) with safe defaults (JSON stdout)",
     )
     quick.add_argument(
         "host",
@@ -65,34 +109,45 @@ def build_parser() -> argparse.ArgumentParser:
     quick.add_argument("--home", default=os.path.expanduser("~"))
     quick.add_argument("--dry-run", action="store_true")
     quick.add_argument("--force-with-backup", action="store_true")
-    quick.add_argument("--json", action="store_true")
 
-    m = sub.add_parser("matrix")
-    m.add_argument("--json", action="store_true")
+    # --- matrix (JSON-only) ---
+    sub.add_parser(
+        "matrix",
+        help="report packaging matrix status (JSON stdout)",
+    )
 
+    # --- hosts (human default + optional --json) ---
     h = sub.add_parser(
         "hosts",
-        help="list each destination host's skill roots, install methods, and activation notes",
+        help="list destination host skill roots, install methods, and activation notes",
     )
     h.add_argument("--host", default="all", help="host key or 'all' (default)")
     h.add_argument("--project", default=None, help="resolve project roots against this path")
     h.add_argument("--home", default=os.path.expanduser("~"))
-    h.add_argument("--json", action="store_true")
+    h.add_argument(
+        "--json",
+        action="store_true",
+        help="emit machine-readable JSON instead of the human report",
+    )
 
-    r = sub.add_parser("recover")
+    # --- recover (JSON-only) ---
+    r = sub.add_parser(
+        "recover",
+        help="recover a root with a pending install journal (JSON stdout)",
+    )
     r.add_argument("--root", required=True)
-    r.add_argument("--json", action="store_true")
+    # No --dry-run until a zero-mutation plan is implemented (#32).
 
+    # --- audit-host (JSON-only) ---
     a = sub.add_parser(
         "audit-host",
-        help="read-only scan for duplicate/shadow Portable Resume Skills (#34)",
+        help="read-only scan for duplicate/shadow Portable Resume Skills (#34; JSON stdout)",
     )
     a.add_argument("--host", required=True, help="host key (not 'all')")
     a.add_argument("--scope", choices=("project", "global"), required=True)
     a.add_argument("--project", default=None, help="project dir for project scope / alt roots")
     a.add_argument("--root", help="explicit skill root override")
     a.add_argument("--home", default=os.path.expanduser("~"))
-    a.add_argument("--json", action="store_true")
 
     return parser
 
@@ -124,12 +179,36 @@ def _reject_divergent_shared_roots(targets: list[tuple[str, str]]) -> None:
             raise DiagnosticError("E_INSTALL_CONFLICT", family=tuple(sorted(hosts)))
 
 
-def _print(value: Any, *, as_json: bool, stream=None) -> None:
+def _print_json(value: Any, stream=None) -> None:
     out = sys.stdout if stream is None else stream
-    if as_json:
-        out.write(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
-    else:
-        out.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
+    out.write(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+
+
+def _envelope(
+    *,
+    command: str,
+    results: list[dict[str, Any]],
+    ok: bool | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Stable multi-target-first result document (#32).
+
+    Always uses a ``results`` array (length 1 for single-target commands) so
+    automation never has to special-case bare vs wrapped payloads.
+    """
+
+    if ok is None:
+        ok = all(bool(item.get("ok", True)) for item in results) if results else True
+    doc: dict[str, Any] = {
+        "schema_version": RESULT_SCHEMA,
+        "command": command,
+        "ok": bool(ok),
+        "results": results,
+    }
+    for key, value in sorted(extra.items()):
+        if value is not None:
+            doc[key] = value
+    return doc
 
 
 def _print_hosts_human(report: dict[str, Any], stream=None) -> None:
@@ -161,7 +240,6 @@ def _print_hosts_human(report: dict[str, Any], stream=None) -> None:
         cmds = rec.get("installer_commands") or {}
         project_cmd = cmds.get("project")
         if isinstance(project_cmd, dict):
-            # Prefer console entrypoint that works after pipx/wheel install (#66).
             if project_cmd.get("installed"):
                 stream.write(f"  cmd: {project_cmd['installed']}\n")
             if project_cmd.get("source_checkout"):
@@ -183,13 +261,26 @@ def _print_hosts_human(report: dict[str, Any], stream=None) -> None:
 def run(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     try:
-        ns = parser.parse_args(list(argv) if argv is not None else None)
+        try:
+            ns = parser.parse_args(list(argv) if argv is not None else None)
+        except SystemExit as exit_error:
+            # argparse prints usage prose; still return the structured diagnostic
+            # contract for removed/unknown flags during the #32 transition.
+            code = exit_error.code
+            if code in (0, None):
+                return 0
+            return emit_diagnostic(DiagnosticError.invalid(), stream=sys.stderr)
         if ns.command == "quick-install":
             ns.command = "install"
             ns.scope = "project" if ns.project else "global"
         if ns.command == "matrix":
             report = matrix_report()
-            _print(report, as_json=True)
+            doc = _envelope(
+                command="matrix",
+                results=[report],
+                ok=bool(report.get("ok")),
+            )
+            _print_json(doc)
             return 0 if report["ok"] else 7
         if ns.command == "hosts":
             selected = None if ns.host == "all" else _hosts(ns.host)
@@ -199,13 +290,23 @@ def run(argv: Sequence[str] | None = None) -> int:
                 hosts=selected,
             )
             if ns.json:
-                _print(report, as_json=True)
+                doc = _envelope(
+                    command="hosts",
+                    results=[report],
+                    ok=bool(report.get("ok", True)),
+                )
+                _print_json(doc)
             else:
                 _print_hosts_human(report)
             return 0
         if ns.command == "recover":
             result = recover_root(ns.root)
-            _print(result, as_json=bool(ns.json) or True)
+            doc = _envelope(
+                command="recover",
+                results=[result],
+                ok=bool(result.get("ok", True)),
+            )
+            _print_json(doc)
             return 0
         if ns.command == "audit-host":
             if ns.host == "all" or ns.host not in HOST_KEYS:
@@ -222,21 +323,25 @@ def run(argv: Sequence[str] | None = None) -> int:
                 home_dir=ns.home,
                 root=ns.root,
             )
-            _print(report, as_json=True)
+            doc = _envelope(
+                command="audit-host",
+                results=[report],
+                ok=bool(report.get("ok", True)),
+            )
+            _print_json(doc)
             return 0 if report.get("ok", True) else 6
         hosts = _hosts(ns.host)
         targets = [
             (host, _root_for(host, ns.scope, ns.project, ns.home, ns.root))
             for host in hosts
         ]
-        results = []
+        results: list[dict[str, Any]] = []
+        dry_run = bool(getattr(ns, "dry_run", False))
+        force = bool(getattr(ns, "force_with_backup", False))
         if ns.command == "install":
             _reject_divergent_shared_roots(targets)
             # #34: fail closed on known higher-precedence divergent shadows
             # before any mutation (and report scan on dry-run).
-            # Global installs still need a project context so project-tier roots
-            # (higher precedence) are scanned — default to CWD when --project
-            # is omitted (quick-install / plain --scope global).
             project_for_scan = ns.project
             if ns.scope == "project" and not project_for_scan and not ns.root:
                 raise DiagnosticError.invalid()
@@ -251,23 +356,19 @@ def run(argv: Sequence[str] | None = None) -> int:
                     home_dir=ns.home,
                     selected_scope=ns.scope,
                 )
-            # Multi-root: lock all unique physical roots first, then replan /
-            # checkpoint / mutate / compensate under those locks (#23).
-            # Single-root path still uses execute_install directly for dry-run
-            # parity and simpler stack traces.
-            if ns.dry_run or len(targets) == 1:
+            if dry_run or len(targets) == 1:
                 plans = [
                     plan_install(
                         host=host,
                         scope=ns.scope,
                         root=root,
-                        dry_run=ns.dry_run,
-                        force_with_backup=ns.force_with_backup,
+                        dry_run=dry_run,
+                        force_with_backup=force,
                     )
                     for host, root in targets
                 ]
                 results = [
-                    execute_install(plan, force_with_backup=ns.force_with_backup)
+                    execute_install(plan, force_with_backup=force)
                     for plan in plans
                 ]
             else:
@@ -275,28 +376,21 @@ def run(argv: Sequence[str] | None = None) -> int:
                     targets,
                     scope=ns.scope,
                     dry_run=False,
-                    force_with_backup=ns.force_with_backup,
+                    force_with_backup=force,
                 )
-            # Attach discovery scan to install results (warn-level alts stay ok).
-            if len(results) == 1:
-                host0 = targets[0][0]
-                results[0] = {
-                    **results[0],
-                    "discovery": discovery_by_host[host0],
-                }
-            else:
-                for idx, (host, _root) in enumerate(targets):
-                    if idx < len(results) and isinstance(results[idx], dict):
-                        results[idx] = {
-                            **results[idx],
-                            "discovery": discovery_by_host[host],
-                        }
+            # Attach discovery + host identity to each result.
+            for idx, (host, _root) in enumerate(targets):
+                if idx < len(results) and isinstance(results[idx], dict):
+                    results[idx] = {
+                        **results[idx],
+                        "host": host,
+                        "discovery": discovery_by_host[host],
+                    }
         else:
             for host, root in targets:
                 if ns.command == "verify":
                     claim = claim_key(host=host, scope=ns.scope, root=root)
                     verified = verify_root(root, claim=claim)
-                    # Observational discovery attachment (#34); never mutates.
                     project_for_verify = ns.project
                     if ns.scope == "global" and not project_for_verify:
                         project_for_verify = os.getcwd()
@@ -307,23 +401,38 @@ def run(argv: Sequence[str] | None = None) -> int:
                         home_dir=ns.home,
                         selected_scope=ns.scope,
                     )
-                    verified = {
-                        **verified,
-                        "discovery": {
-                            "aggregate_status": discovery["aggregate_status"],
-                            "aggregate_policy": discovery["aggregate_policy"],
-                            "blocking_count": discovery["blocking_count"],
-                            "warning_count": discovery["warning_count"],
-                            "findings": discovery["findings"],
-                        },
-                    }
-                    results.append(verified)
+                    results.append(
+                        {
+                            **verified,
+                            "host": host,
+                            "discovery": {
+                                "aggregate_status": discovery["aggregate_status"],
+                                "aggregate_policy": discovery["aggregate_policy"],
+                                "blocking_count": discovery["blocking_count"],
+                                "warning_count": discovery["warning_count"],
+                                "findings": discovery["findings"],
+                            },
+                        }
+                    )
                 elif ns.command == "uninstall":
                     results.append(
-                        uninstall_claim(host=host, scope=ns.scope, root=root, dry_run=ns.dry_run)
+                        {
+                            **uninstall_claim(
+                                host=host,
+                                scope=ns.scope,
+                                root=root,
+                                dry_run=dry_run,
+                            ),
+                            "host": host,
+                        }
                     )
-        payload: Any = results[0] if len(results) == 1 else {"results": results}
-        _print(payload, as_json=True)
+        doc = _envelope(
+            command=ns.command,
+            results=results,
+            dry_run=dry_run if ns.command in {"install", "uninstall"} else None,
+            scope=getattr(ns, "scope", None),
+        )
+        _print_json(doc)
         return 0
     except DiagnosticError as error:
         return emit_diagnostic(error, stream=sys.stderr)

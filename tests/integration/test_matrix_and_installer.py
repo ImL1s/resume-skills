@@ -295,7 +295,6 @@ class InstallerTests(unittest.TestCase):
                     "global",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
 
@@ -314,14 +313,16 @@ class InstallerTests(unittest.TestCase):
                     "qwen",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
 
         self.assertEqual(code, 0, stderr.getvalue())
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["plan"]["host"], "qwen")
-        self.assertEqual(payload["plan"]["scope"], "global")
+        self.assertEqual(payload["schema_version"], "portable-resume/install-result-v1")
+        self.assertEqual(payload["command"], "install")
+        result = payload["results"][0]
+        self.assertEqual(result["plan"]["host"], "qwen")
+        self.assertEqual(result["plan"]["scope"], "global")
         root = Path(self._root("qwen", scope="global"))
         self.assertTrue((root / "resume-qwen" / "SKILL.md").is_file())
         verify_root(
@@ -347,7 +348,6 @@ class InstallerTests(unittest.TestCase):
                     "global",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
 
@@ -388,7 +388,6 @@ class InstallerTests(unittest.TestCase):
                     "global",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
 
@@ -434,7 +433,6 @@ class InstallerTests(unittest.TestCase):
                     "global",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
 
@@ -480,7 +478,6 @@ class InstallerTests(unittest.TestCase):
                     "global",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
 
@@ -509,7 +506,6 @@ class InstallerTests(unittest.TestCase):
                     "global",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
         self.assertEqual(code, 7)

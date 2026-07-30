@@ -259,7 +259,6 @@ def main(argv: list[str] | None = None) -> int:
                     str(home),
                     "--root",
                     skill_root,
-                    "--json",
                 ],
                 env=env,
             )

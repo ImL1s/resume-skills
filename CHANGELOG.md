@@ -12,6 +12,11 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Installer CLI contract (#32 Option A): install/verify/uninstall/recover/
+  matrix/quick-install/audit-host always emit versioned
+  `portable-resume/install-result-v1` JSON on stdout with a uniform `results`
+  array (no silent no-op `--json`). `verify` no longer accepts `--dry-run`.
+  `hosts` remains human by default with optional `--json`. Docs/scripts updated.
 - Project-scope control state split (#33 Option A): mutable installer control
   files (manifest, lock, journal, backups, stage) live under
   `.portable-resume/.state/` with mode `0700` where supported; shareable
