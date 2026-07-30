@@ -500,8 +500,14 @@ def inspect_skill_copy(
     *,
     host: str,
     expected_payload_digest: str | None = None,
+    soft_manifest: bool = True,
 ) -> dict[str, Any]:
-    """Bounded read-only inspection of ``<skill_root>/<skill_name>``."""
+    """Bounded read-only inspection of ``<skill_root>/<skill_name>``.
+
+    When *soft_manifest* is true (alternate roots), malformed ownership
+    manifests are reported as unreadable metadata. When false (selected root
+    under audit), control-schema failures re-raise so callers can fail closed.
+    """
 
     skill_dir = os.path.join(skill_root, skill_name)
     skill_md = os.path.join(skill_dir, "SKILL.md")
@@ -565,14 +571,21 @@ def inspect_skill_copy(
         result["matches_expected"] = False
 
     # Ownership metadata from sibling support tree (informational; not identity).
-    # Malformed alternate manifests must not abort the whole scan (#34 P2).
+    # Malformed *alternate* manifests must not abort the whole scan (#34 P2).
+    # Selected-root audits keep hard fail via soft_manifest=False.
     from .transaction import load_manifest
 
     try:
         manifest = load_manifest(skill_root)
     except DiagnosticError:
+        if not soft_manifest:
+            raise
         result["owned"] = False
         result["manifest_unreadable"] = True
+        # Byte-identical payload is still not "identical managed" without a
+        # readable ownership document on alternate roots.
+        result["payload_verified"] = False
+        result["matches_expected"] = False
         return result
     if manifest is not None and manifest.claims:
         result["owned"] = True
@@ -745,6 +758,8 @@ def _scan_skill_duplicates_body(
                 skill,
                 host=host,
                 expected_payload_digest=expected_identity,
+                # Selected root: keep hard control-plane errors for audit honesty.
+                soft_manifest=not row["is_selected"],
             )
             if not inspection["present"]:
                 continue
@@ -773,6 +788,7 @@ def _scan_skill_duplicates_body(
                     "owned": inspection["owned"],
                     "unsafe": inspection["unsafe"],
                     "payload_verified": inspection["payload_verified"],
+                    "manifest_unreadable": bool(inspection.get("manifest_unreadable")),
                     "payload_fingerprint": inspection["payload_fingerprint"],
                     "package_identity": inspection["package_identity"],
                     "bundle_version": inspection["bundle_version"],
@@ -870,6 +886,10 @@ def _classify_copy(
 
     if same_physical_prior or root_real == selected_real:
         return STATUS_SAME_PHYSICAL, POLICY_ALLOW, "same_physical_root"
+
+    if inspection.get("manifest_unreadable") and not is_selected:
+        # Exact package bytes with unreadable ownership → foreign/unverifiable.
+        return STATUS_DUP_FOREIGN, POLICY_WARN, "manifest_unreadable"
 
     if identical:
         if entry.scope == "plugin":
