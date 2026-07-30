@@ -931,8 +931,19 @@ def _mkdir_unique_under_fd(parent_fd: int, prefix: str) -> str:
     raise DiagnosticError("E_INSTALL_CONFLICT")
 
 
-def _materialize_bytes_under_fd(base_fd: int, rel: str, data: bytes, *, mode: int) -> None:
-    """Write ``rel`` under base_fd with mkdir-nofollow + O_EXCL regular create."""
+def _materialize_bytes_under_fd(
+    base_fd: int,
+    rel: str,
+    data: bytes,
+    *,
+    mode: int,
+    fsync: bool = False,
+) -> None:
+    """Write ``rel`` under base_fd with mkdir-nofollow + O_EXCL regular create.
+
+    When ``fsync`` is True, durable-flush the new regular file before return
+    (required before a journal may authorize deletes that depend on the snapshot).
+    """
     safe = _safe_rel_path(rel)
     parent_rel = os.path.dirname(safe)
     basename = os.path.basename(safe)
@@ -959,8 +970,19 @@ def _materialize_bytes_under_fd(base_fd: int, rel: str, data: bytes, *, mode: in
                 written = os.write(fd, view)
                 view = view[written:]
             os.fchmod(fd, mode)
+            if fsync:
+                try:
+                    os.fsync(fd)
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
         finally:
             os.close(fd)
+        if fsync:
+            try:
+                os.fsync(parent_fd)
+            except OSError:
+                # Directory fsync is best-effort on platforms that reject it.
+                pass
     finally:
         if owns_parent:
             os.close(parent_fd)
@@ -1117,6 +1139,10 @@ def _replace_under_root_from_support_path(
             root_fd, rel, create=True
         )
         if if_absent:
+            # Write a complete temp leaf, fsync, then link into place. link fails with
+            # EEXIST when the destination already exists, so partial writes never become
+            # the durable destination name (retry keeps the intact stage snapshot).
+            tmp_name = f".portable-resume-restore-{secrets.token_hex(8)}"
             excl = (
                 os.O_WRONLY
                 | os.O_CREAT
@@ -1125,12 +1151,8 @@ def _replace_under_root_from_support_path(
                 | getattr(os, "O_NOFOLLOW", 0)
             )
             try:
-                out_fd = os.open(dst_basename, excl, snap_mode, dir_fd=dst_parent_fd)
-            except FileExistsError:
-                return False
+                out_fd = os.open(tmp_name, excl, snap_mode, dir_fd=dst_parent_fd)
             except OSError as error:
-                if getattr(error, "errno", None) == getattr(os, "EEXIST", object()):
-                    return False
                 raise DiagnosticError("E_RECOVERY_REQUIRED") from error
             try:
                 view = memoryview(body)
@@ -1141,8 +1163,37 @@ def _replace_under_root_from_support_path(
                     os.fchmod(out_fd, snap_mode)
                 except OSError:
                     pass
+                try:
+                    os.fsync(out_fd)
+                except OSError as error:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED") from error
             finally:
                 os.close(out_fd)
+            try:
+                os.link(
+                    tmp_name,
+                    dst_basename,
+                    src_dir_fd=dst_parent_fd,
+                    dst_dir_fd=dst_parent_fd,
+                )
+            except FileExistsError:
+                try:
+                    os.unlink(tmp_name, dir_fd=dst_parent_fd)
+                except OSError:
+                    pass
+                return False
+            except OSError as error:
+                try:
+                    os.unlink(tmp_name, dir_fd=dst_parent_fd)
+                except OSError:
+                    pass
+                if getattr(error, "errno", None) == getattr(os, "EEXIST", object()):
+                    return False
+                raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+            try:
+                os.unlink(tmp_name, dir_fd=dst_parent_fd)
+            except OSError:
+                pass
             return True
 
         try:
@@ -2483,6 +2534,8 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
                 "paths": {},
             }
             # Snapshot every removable owned file before the first unlink.
+            # Durable-flush each snapshot (and parents) so a crash after the journal
+            # write cannot lose rollback material while deletions are authorized.
             for rel, expected_sha in removable:
                 body, mode = _read_regular_bytes_under_root_fd(pin_root_fd, rel)
                 if sha256_bytes(body) != expected_sha:
@@ -2490,7 +2543,13 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
                     retained_drift.append(rel)
                     continue
                 rollback_rel = f".rollback/{rel}"
-                _materialize_bytes_under_fd(stage_fd, rollback_rel, body, mode=mode)
+                _materialize_bytes_under_fd(
+                    stage_fd,
+                    rollback_rel,
+                    body,
+                    mode=mode,
+                    fsync=True,
+                )
                 journal["paths"][rel] = {
                     "state": "pending",
                     "existed": True,
@@ -2498,6 +2557,10 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
                     "original_sha256": expected_sha,
                     "sha256": expected_sha,
                 }
+            try:
+                os.fsync(stage_fd)
+            except OSError:
+                pass
             _write_journal(root, journal)
 
             journal["state"] = "committing"
