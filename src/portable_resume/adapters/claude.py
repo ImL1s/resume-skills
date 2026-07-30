@@ -347,17 +347,45 @@ def _lexical_under_root(path: str, root: str) -> bool:
     return relative != os.pardir and not relative.startswith(os.pardir + os.sep) and not os.path.isabs(relative)
 
 
-def _missing_under_safe_parents(path: str, root: str) -> bool:
-    """True when *path* is missing under *root* with no symlink parents.
-
-    Used to map ``E_UNSAFE_PATH`` from a missing leaf to ``E_NO_MATCH`` only when
-    every existing parent component under the approved root is a real directory.
-    A symlinked parent (even with a missing leaf) stays unsafe.
-    """
+def _lexical_session_shape(path: str, root: str) -> bool:
+    """True when *path* is lexically ``projects/<slug>/<uuid>.jsonl`` under *root*."""
 
     absolute = os.path.abspath(path)
     abs_root = os.path.abspath(root)
     if not _lexical_under_root(absolute, abs_root):
+        return False
+    try:
+        relative = os.path.relpath(absolute, abs_root)
+    except ValueError:
+        return False
+    parts = [part for part in Path(relative).parts if part not in ("", ".")]
+    if len(parts) != 3 or parts[0] != "projects" or not parts[1]:
+        return False
+    basename = parts[2]
+    if not basename.endswith(".jsonl"):
+        return False
+    try:
+        uuid.UUID(basename[:-6])
+    except ValueError:
+        return False
+    return True
+
+
+def _missing_under_safe_parents(path: str, root: str) -> bool:
+    """True when a missing *path* is a valid under-root session shape with safe parents.
+
+    Used to map ``E_UNSAFE_PATH`` from a missing leaf to ``E_NO_MATCH`` only when:
+
+    - the path is lexically ``projects/<slug>/<uuid>.jsonl`` under *root*
+    - the leaf does not exist
+    - every existing parent under the root is a real (non-symlink) directory
+
+    Symlinked parents, invalid layout, and non-ENOENT parent errors stay unsafe.
+    """
+
+    absolute = os.path.abspath(path)
+    abs_root = os.path.abspath(root)
+    if not _lexical_session_shape(absolute, abs_root):
         return False
     if os.path.lexists(absolute):
         return False
@@ -367,17 +395,18 @@ def _missing_under_safe_parents(path: str, root: str) -> bool:
         return False
     current = abs_root
     parts = [part for part in Path(relative).parts if part not in ("", ".")]
-    if not parts:
-        return False
     for part in parts[:-1]:
         if part == os.pardir:
             return False
         current = os.path.join(current, part)
         try:
             mode = os.lstat(current).st_mode
-        except OSError:
-            # Intermediate component missing — still a under-root no-match.
+        except FileNotFoundError:
+            # Intermediate component missing — under-root session shape no-match.
             return True
+        except OSError:
+            # EACCES / other errors must not be reclassified as ordinary no-match.
+            return False
         if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
             return False
     return True

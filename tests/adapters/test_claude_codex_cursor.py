@@ -530,6 +530,13 @@ class ClaudeAdapterTests(unittest.TestCase):
             claude.ADAPTER.list(self.query(ref=str(missing)), ReadBudget())
         self.assertEqual(err.exception.code, "E_UNSAFE_PATH")
 
+    def test_issue19_missing_non_session_layout_under_root_stays_unsafe(self) -> None:
+        # Inside root but not projects/<slug>/<uuid>.jsonl — keep fail-closed unsafe.
+        weird = self.root / "not-projects" / "file.jsonl"
+        with self.assertRaises(DiagnosticError) as err:
+            claude.ADAPTER.list(self.query(ref=str(weird)), ReadBudget())
+        self.assertEqual(err.exception.code, "E_UNSAFE_PATH")
+
     def test_issue19_probe_exact_uuid_survives_large_slug_dir(self) -> None:
         session_id = str(uuid.uuid4())
         user_id = str(uuid.uuid4())
