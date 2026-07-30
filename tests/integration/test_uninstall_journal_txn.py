@@ -237,6 +237,47 @@ class UninstallJournalTransactionTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "E_VERIFY_MISMATCH")
         self.assertFalse((empty / SUPPORT_DIR).exists())
 
+    def test_incomplete_uninstall_rollback_preserves_live_leaf(self) -> None:
+        """Even pending (pre-unlink) paths must not clobber concurrent edits."""
+        self._install()
+        claim = next(iter(load_manifest(self.root).claims))
+        skill = Path(self.root) / "resume-claude" / "SKILL.md"
+        original = skill.read_bytes()
+        digest = sha256_file(str(skill))
+        user_edit = original + b"\n# edit-before-unlink\n"
+        stage = Path(self.root) / SUPPORT_DIR / f"{STAGE_PREFIX}sim-pending-drift"
+        rollback = stage / ".rollback" / "resume-claude"
+        rollback.mkdir(parents=True)
+        snap = rollback / "SKILL.md"
+        snap.write_bytes(original)
+        skill.write_bytes(user_edit)
+        _write_journal(
+            self.root,
+            {
+                "schema_version": "portable-resume/install-journal-v1",
+                "state": "committing",
+                "generation": 1,
+                "target_generation": 2,
+                "claim": claim,
+                "stage_dir": str(stage),
+                "backup_root": None,
+                "operation": "uninstall",
+                "paths": {
+                    "resume-claude/SKILL.md": {
+                        "state": "pending",
+                        "existed": True,
+                        "rollback_backup": str(snap),
+                        "original_sha256": digest,
+                        "sha256": digest,
+                    }
+                },
+            },
+        )
+        recovered = recover_root(self.root)
+        self.assertTrue(recovered["ok"])
+        self.assertTrue(skill.is_file())
+        self.assertEqual(skill.read_bytes(), user_edit)
+
     def test_post_snapshot_drift_is_retained_not_overwritten_on_rollback(self) -> None:
         self._install()
         skill = Path(self.root) / "resume-claude" / "SKILL.md"

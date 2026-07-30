@@ -2013,6 +2013,7 @@ def _rollback_paths(root: str, journal: dict[str, Any]) -> tuple[int, bool]:
     if not _supports_descriptor_relative_commit():
         # Payload restore/delete mutations require dirfd containment (Windows residual #29).
         return 0, False
+    operation = journal.get("operation") or "install"
     try:
         root_fd = _open_skill_root_descriptor(root)
     except DiagnosticError:
@@ -2038,6 +2039,18 @@ def _rollback_paths(root: str, journal: dict[str, Any]) -> tuple[int, bool]:
                 if not _is_hex_sha256(original_sha):
                     complete = False
                     continue
+                # Uninstall snapshots protect sole-claim deletes. If the live leaf still
+                # exists and no longer matches the snapshotted digest (concurrent edit
+                # after staging, or crash before unlink), never overwrite that content.
+                # Install rollback intentionally restores originals over staged payloads.
+                if operation == "uninstall":
+                    try:
+                        live_sha = _sha256_regular_under_root_fd(root_fd, safe)
+                    except DiagnosticError:
+                        live_sha = None
+                    if live_sha is not None:
+                        # Present: preserve whatever is there (original or drifted).
+                        continue
                 if os.path.isfile(rollback_backup) and not os.path.islink(rollback_backup):
                     try:
                         _replace_under_root_from_support_path(
