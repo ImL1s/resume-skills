@@ -202,7 +202,7 @@ def _write_manifest(
 def build_s_cr_01() -> None:
     case = "s-cr-01-user-basic"
     case_dir = FIXTURE_ROOT / case
-    db_path = case_dir / "crush.db"
+    db_path = case_dir / ".crush" / "crush.db"
     conn = _connect(db_path)
     _create_schema(conn)
     _insert_session(conn, session_id=BASIC_ID, title="basic crush session", message_count=2)
@@ -229,7 +229,7 @@ def build_s_cr_01() -> None:
 def build_s_cr_02_parent_child() -> None:
     case = "s-cr-02-parent-child"
     case_dir = FIXTURE_ROOT / case
-    db_path = case_dir / "crush.db"
+    db_path = case_dir / ".crush" / "crush.db"
     conn = _connect(db_path)
     _create_schema(conn)
     _insert_session(conn, session_id=BASIC_ID, title="parent session", message_count=2)
@@ -273,7 +273,7 @@ def build_s_cr_02_parent_child() -> None:
 def build_s_cr_03_unsupported() -> None:
     case = "s-cr-03-unsupported-schema"
     case_dir = FIXTURE_ROOT / case
-    db_path = case_dir / "crush.db"
+    db_path = case_dir / ".crush" / "crush.db"
     conn = _connect(db_path)
     _create_schema(conn, migration_ids=MIGRATION_IDS[:3])  # wrong max version
     _insert_session(conn, session_id=BASIC_ID, title="old schema", message_count=1)

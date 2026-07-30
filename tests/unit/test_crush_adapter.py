@@ -21,10 +21,12 @@ def fixture_root(case: str) -> Path:
 
 
 def query(root: Path, ref: str | None = None, **kwargs: object) -> Query:
+    # Project-layout fixtures bind cwd to the project root (parent of .crush).
+    cwd = kwargs.pop("cwd", str(root))
     return Query(
         source="crush",
         ref=ref,
-        cwd=CWD,
+        cwd=cwd,
         source_root=str(root),
         within_min=0,
         **kwargs,
@@ -60,7 +62,7 @@ class CrushAdapterTests(unittest.TestCase):
         self.assertEqual([item.session_id for item in summaries], [BASIC_ID])
         # Exact id still reaches the child.
         child = ADAPTER.show(
-            ResolvedRef(session_id=CHILD_ID, source_path=str(root / "crush.db")),
+            ResolvedRef(session_id=CHILD_ID, source_path=str(root / ".crush" / "crush.db")),
             query(root, ref=CHILD_ID),
             ReadBudget(),
         )

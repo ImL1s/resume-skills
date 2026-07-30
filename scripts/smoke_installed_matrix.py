@@ -304,6 +304,10 @@ def main(argv: list[str] | None = None) -> int:
             for source in SOURCES:
                 _fixture_rel, cwd, session_id, contents = FIXTURES[source]
                 fixture = fixtures[source]
+                # Crush binds cwd from project layout (<project>/.crush/crush.db);
+                # align smoke query.cwd with the synthetic project root.
+                if source == "crush":
+                    cwd = str(fixture.resolve())
                 runner = Path(skill_root) / f"resume-{source}" / "scripts" / "run_reader.py"
                 if not runner.is_file():
                     cells.append(
