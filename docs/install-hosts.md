@@ -16,7 +16,7 @@ plugin/marketplace archives, and `host-packages.json` (`host-packages-v2`) with
 SHA-256 digests, per-artifact offline `contract_id` validation (#27), and honest
 `native_evidence_status=not-run` until host CLI revalidation is recorded.
 Published `0.3.4` release assets remain historical nine-destination archives;
-current `main` builds ten. Replace `<version>` below with the release version.
+current `main` builds eleven. Replace `<version>` below with the release version.
 
 Download and verify an exact release before installing a plugin:
 

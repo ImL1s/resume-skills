@@ -68,6 +68,11 @@ def _object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def _root_candidate(query: Query) -> str:
     if query.source_root:
         return query.source_root
+    # Windows Goose Desktop/CLI uses %APPDATA%/Block/goose/data (upstream Paths).
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return os.path.join(appdata, "Block", "goose", "data")
     data_home = os.environ.get("XDG_DATA_HOME")
     if data_home:
         return os.path.join(data_home, "goose")
