@@ -988,6 +988,55 @@ def _materialize_bytes_under_fd(
             os.close(parent_fd)
 
 
+def _fsync_tree_dirfd(dir_fd: int) -> None:
+    """Durable-flush every regular file and directory under ``dir_fd`` (depth-first)."""
+    try:
+        names = os.listdir(dir_fd)
+    except OSError:
+        return
+    flags_dir = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    flags_file = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    for name in names:
+        try:
+            st = os.lstat(name, dir_fd=dir_fd)
+        except OSError:
+            continue
+        if stat_mod.S_ISDIR(st.st_mode):
+            try:
+                child = os.open(name, flags_dir, dir_fd=dir_fd)
+            except OSError:
+                continue
+            try:
+                _fsync_tree_dirfd(child)
+                try:
+                    os.fsync(child)
+                except OSError:
+                    pass
+            finally:
+                os.close(child)
+        elif stat_mod.S_ISREG(st.st_mode):
+            try:
+                fd = os.open(name, flags_file, dir_fd=dir_fd)
+            except OSError:
+                continue
+            try:
+                try:
+                    os.fsync(fd)
+                except OSError:
+                    pass
+            finally:
+                os.close(fd)
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+
+
 def _unlink_regular_under_root_fd(
     root_fd: int,
     rel: str,
@@ -1194,6 +1243,12 @@ def _replace_under_root_from_support_path(
                 os.unlink(tmp_name, dir_fd=dst_parent_fd)
             except OSError:
                 pass
+            # Persist the destination directory entry before callers may discard
+            # the stage snapshot that sourced this restore.
+            try:
+                os.fsync(dst_parent_fd)
+            except OSError:
+                pass
             return True
 
         try:
@@ -1205,6 +1260,10 @@ def _replace_under_root_from_support_path(
             )
         except OSError as error:
             raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        try:
+            os.fsync(dst_parent_fd)
+        except OSError:
+            pass
         return True
     finally:
         if owns_dst_parent and dst_parent_fd is not None:
@@ -2557,10 +2616,10 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
                     "original_sha256": expected_sha,
                     "sha256": expected_sha,
                 }
-            try:
-                os.fsync(stage_fd)
-            except OSError:
-                pass
+            # Fsync the full stage tree (nested .rollback/... dirs + files) so
+            # directory entries for intermediate path components are durable
+            # before the journal authorizes payload unlinks.
+            _fsync_tree_dirfd(stage_fd)
             _write_journal(root, journal)
 
             journal["state"] = "committing"
