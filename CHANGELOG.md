@@ -12,6 +12,14 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Installer uninstall/verify transactions (#22): `uninstall` is a journaled
+  recoverable transaction (`operation=uninstall`) that snapshots sole-claim
+  owned files before unlink; `recover` finishes published uninstalls or rolls
+  incomplete ones back to the previous generation. Post-snapshot digest drift
+  is retained (not rolled back over concurrent user edits). `verify` takes the
+  exclusive root lock on POSIX only when a support tree already exists so
+  never-installed roots stay observationally pure (Windows residual remains
+  #29). Pending journals report `E_RECOVERY_REQUIRED`, not false drift.
 - Destination root resolution (#24): global install honors documented host
   env homes (Kimi `$KIMI_CODE_HOME/skills`); isolation `--home` ignores host
   env overrides; `hosts --json` reports `global_root_source` / `project_root_source`.
