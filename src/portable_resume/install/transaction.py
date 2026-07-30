@@ -2034,18 +2034,37 @@ def restore_install_checkpoint(
             # Path was absent at checkpoint: remove only if live digest is a
             # transaction-created payload (quarantine unlink when dirfd works).
             if root_fd is not None:
+                # Probe with lstat first so symlink/non-regular/unopenable parents
+                # fail closed; only a confirmed missing leaf is a no-op success.
+                try:
+                    parent_fd, basename, owns_parent = _open_parent_under_root_fd(
+                        root_fd, rel, create=False
+                    )
+                except DiagnosticError as error:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+                try:
+                    try:
+                        st = os.lstat(basename, dir_fd=parent_fd)
+                    except FileNotFoundError:
+                        continue
+                    except OSError as error:
+                        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+                    if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISREG(st.st_mode):
+                        raise DiagnosticError("E_RECOVERY_REQUIRED")
+                finally:
+                    if owns_parent:
+                        os.close(parent_fd)
                 try:
                     live = _sha256_regular_under_root_fd(root_fd, rel)
-                except DiagnosticError:
-                    continue
+                except DiagnosticError as error:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED") from error
                 if live not in allowed:
                     raise DiagnosticError("E_RECOVERY_REQUIRED")
                 if _unlink_regular_under_root_fd(root_fd, rel, expected_sha256=live):
                     removed.append(rel)
                     continue
                 # False: missing after check, digest raced under quarantine, or
-                # leaf became non-regular. Only a truly absent leaf is success;
-                # unsafe/unopenable parents fail closed (do not treat as absent).
+                # leaf became non-regular. Only a truly absent leaf is success.
                 try:
                     parent_fd, basename, owns_parent = _open_parent_under_root_fd(
                         root_fd, rel, create=False
@@ -2059,7 +2078,6 @@ def restore_install_checkpoint(
                         continue
                     except OSError as error:
                         raise DiagnosticError("E_RECOVERY_REQUIRED") from error
-                    # Still present (regular or not) after failed unlink.
                     raise DiagnosticError("E_RECOVERY_REQUIRED")
                 finally:
                     if owns_parent:
