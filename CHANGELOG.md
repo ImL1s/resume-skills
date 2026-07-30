@@ -12,12 +12,19 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Added
+- goose source + destination (#39): `goose-sessions-sqlite-v15` reader for
+  `sessions/sessions.db` (schema_version max 15); default list prefers
+  `session_type=user` and hides scheduled/sub_agent/hidden/gateway/acp plus
+  archived rows (exact id can still select them); destination filesystem
+  install to `.goose/skills` and `~/.config/goose/skills`. Matrix is now
+  registry-derived **11×11=121**. Legacy JSONL and native goose UI activation
+  remain out of scope / not-run.
 - OpenClaw source + destination (#37): `openclaw-agent-sqlite-v1` reader for
   per-agent `agents/<id>/agent/openclaw-agent.sqlite` (schema user_version 11);
   composite session ids `agentId:sessionId`; default list filters internal/cron
   runs; destination filesystem install to workspace `skills/` and
-  `~/.openclaw/skills`. Matrix is now registry-derived **10×10=100**. Native
-  `openclaw skills install` / picker activation remains not-run.
+  `~/.openclaw/skills`. Native `openclaw skills install` / picker activation
+  remains not-run.
 
 ### Fixed
 - Claude exact-reference discovery (#19): absolute approved

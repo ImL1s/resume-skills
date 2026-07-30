@@ -14,7 +14,7 @@ Adapters are clean-room compatibility readers built from public documentation/so
 | Kimi Code / legacy Kimi CLI | `kimi-code-wire-jsonl-v1`, `kimi-legacy-context-jsonl-v1` | Kimi Code `a2401cc1ed26e5758c081e657bcff6a75cb061bb`; legacy Kimi CLI `4a550effdfcb29a25a5d325bf935296cc50cd417`; fixtures | supported (fixture/parser) | bounded live support; tool execution is never replayed |
 | Pi | `pi-session-jsonl-v3`, `pi-session-jsonl-v2` | Pi public session-format docs + synthetic fixtures | supported (fixture/parser) | v3 primary; v2 read-only compat; destination filesystem install supported; native UI activation not-run |
 | OpenClaw | `openclaw-agent-sqlite-v1` | OpenClaw public schema/session docs + synthetic fixtures | supported (fixture/parser) | per-agent SQLite under `agents/<id>/agent/openclaw-agent.sqlite`; destination filesystem install supported; native UI activation not-run |
-| goose | `goose-sessions-sqlite-v15` | aaif-goose `CURRENT_SCHEMA_VERSION=15` + synthetic fixtures | planned (fixtures-only) | SQLite authority only; legacy JSONL out of scope; adapter not landed (#39) |
+| goose | `goose-sessions-sqlite-v15` | aaif-goose `CURRENT_SCHEMA_VERSION=15` + synthetic fixtures | supported (fixture/parser) | SQLite authority only; default list prefers `user` sessions; legacy JSONL out of scope; dest filesystem install supported; native UI not-run |
 
 ## Provenance anchors
 
@@ -109,9 +109,10 @@ workspace `skills/` and `~/.openclaw/skills`. See `tests/fixtures/openclaw/`.
 Goose `sessions/sessions.db` SQLite store at schema version 15 (`schema_version`,
 `sessions`, `messages`, `usage_ledger`). Upstream `session_type` values are snake_case
 (`sub_agent`, `gateway`, `acp`, …). Synthetic fixtures: `tests/fixtures/goose/`.
-Legacy JSONL session files are not fixture-covered. Future adapter `list` should prefer
-`user` sessions and exclude `scheduled`, `sub_agent`, `hidden`, `gateway`, and `acp` by
-default unless explicitly requested.
+Legacy JSONL session files are not fixture-covered. Adapter `goose` list prefers
+`user` sessions and excludes `scheduled`, `sub_agent`, `hidden`, `gateway`, and `acp`
+by default (exact id can still select them). Destination filesystem install uses
+`.goose/skills` and `~/.config/goose/skills`.
 
 ## Clean-room boundary
 

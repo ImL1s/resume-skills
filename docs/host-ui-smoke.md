@@ -4,8 +4,8 @@
 
 | Layer | What it proves | Status |
 |---|---|---|
-| Packaging matrix | Enabled destinations × sources render safely (currently **10×10** on `main`) | **100/100** on current main (published `0.3.4` remains historical **81/81**) |
-| Installed runner | Installed `run_reader` list/show works on fixtures | **100/100** on current main (published `0.3.4` remains historical **81/81**) |
+| Packaging matrix | Enabled destinations × sources render safely (currently **11×11** on `main`) | **121/121** on current main (published `0.3.4` remains historical **81/81**) |
+| Installed runner | Installed `run_reader` list/show works on fixtures | **121/121** on current main (published `0.3.4` remains historical **81/81**) |
 | Native package install | Host CLI/TUI accepts the generated local plugin/extension | **7/7 tested on v0.3.2** |
 | Host-native headless activation | Host discovers/invokes the Skill and runs its owned reader | **8/8 tested** in v0.3.2-era evidence; fresh v0.3.4 host activation and Pi native activation **not-run** |
 | Public marketplace install | Host installs a published listing | **6/6 compatible hosts tested on v0.3.2**; fresh v0.3.4 reinstall **not-run** |

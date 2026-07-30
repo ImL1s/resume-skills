@@ -108,6 +108,15 @@ FIXTURES: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
             "Synthetic assistant reply",
         ),
     ),
+    "goose": (
+        "tests/fixtures/goose/s-go-01-user-basic",
+        "/tmp/project",
+        "go000101-0101-4101-8101-010101010101",
+        (
+            "synthetic goose user prompt",
+            "synthetic goose assistant reply",
+        ),
+    ),
 }
 
 

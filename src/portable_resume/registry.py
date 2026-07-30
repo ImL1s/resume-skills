@@ -51,6 +51,7 @@ _DESTINATION_PAYLOAD_PROFILES: dict[str, str] = {
     "qwen": "qwen-v1",
     "pi": "pi-v1",
     "openclaw": "openclaw-v1",
+    "goose": "goose-v1",
 }
 
 _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
@@ -64,6 +65,7 @@ _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
     "qwen": (".qwen/skills", ".qwen/skills"),
     "pi": (".pi/skills", ".pi/agent/skills"),
     "openclaw": ("skills", ".openclaw/skills"),
+    "goose": (".goose/skills", ".config/goose/skills"),
 }
 
 
@@ -128,6 +130,14 @@ SOURCE_PROFILES["openclaw"] = SourceProfile(
     fixture_profile="openclaw-agent-sqlite-v1",
 )
 
+SOURCE_PROFILES["goose"] = SourceProfile(
+    key="goose",
+    adapter_module="portable_resume.adapters.goose",
+    format_ids=("goose-sessions-sqlite-v15",),
+    status="supported",
+    fixture_profile="goose-sessions-sqlite-v15",
+)
+
 # Native package surface key per destination (independent of direct Skills).
 # Hosts with only direct-skill install leave this unset (opencode, pi, …).
 _NATIVE_PACKAGE_BY_DESTINATION: dict[str, str] = {
@@ -170,6 +180,16 @@ DESTINATION_PROFILES["openclaw"] = DestinationProfile(
     direct_skill=True,
     project_rel="skills",
     global_rel=".openclaw/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["goose"] = DestinationProfile(
+    key="goose",
+    payload_profile="goose-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".goose/skills",
+    global_rel=".config/goose/skills",
     native_package_profile=None,
 )
 
