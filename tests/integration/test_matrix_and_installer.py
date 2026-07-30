@@ -407,7 +407,14 @@ class InstallerTests(unittest.TestCase):
             )
 
         self.assertEqual(code, 8)
-        self.assertEqual(self._file_bytes(earlier_root), {})
+        # Exclusive install.lock may remain while multi-root releases locks
+        # after compensation (#23); payload/manifest must be gone.
+        remaining = {
+            path: data
+            for path, data in self._file_bytes(earlier_root).items()
+            if not path.endswith("install.lock")
+        }
+        self.assertEqual(remaining, {})
 
     def test_all_host_reports_partial_state_when_compensation_fails(self) -> None:
         original_execute = transaction_module.execute_install

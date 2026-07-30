@@ -2002,6 +2002,10 @@ def restore_install_checkpoint(
     """
     removed: list[str] = []
     for rel, meta in checkpoint.paths.items():
+        # Exclusive install.lock is owned by the holding RootLock for the whole
+        # multi-root txn; never unlink it while compensation runs under locks.
+        if meta.get("transaction_lock"):
+            continue
         dest = _dest_under_root(checkpoint.root, rel)
         allowed = set(meta.get("allowed_sha256") or ())
         snap_sha = meta.get("sha256")
@@ -2013,29 +2017,18 @@ def restore_install_checkpoint(
                 raise DiagnosticError("E_RECOVERY_REQUIRED")
             if sha256_file(snapshot) != meta.get("sha256"):
                 raise DiagnosticError("E_RECOVERY_REQUIRED")
-            if os.path.lexists(dest):
-                if os.path.islink(dest) or not os.path.isfile(dest):
-                    raise DiagnosticError("E_RECOVERY_REQUIRED")
-                live = sha256_file(dest)
-                if live not in allowed:
-                    # Concurrent foreign edit after this transaction committed.
-                    raise DiagnosticError("E_RECOVERY_REQUIRED")
-            _restore_regular_nofollow(snapshot, dest)
+            _restore_regular_nofollow(
+                snapshot,
+                dest,
+                allowed_live_sha256=allowed if allowed else None,
+            )
             continue
         if not os.path.lexists(dest):
             continue
         if os.path.islink(dest) or not os.path.isfile(dest):
             raise DiagnosticError("E_RECOVERY_REQUIRED")
         if sha256_file(dest) not in allowed:
-            if not meta.get("transaction_lock"):
-                raise DiagnosticError("E_RECOVERY_REQUIRED")
-            lock_bytes = Path(dest).read_bytes()
-            if not (
-                lock_bytes.startswith(b"pid=")
-                and lock_bytes.endswith(b"\n")
-                and lock_bytes[4:-1].isdigit()
-            ):
-                raise DiagnosticError("E_RECOVERY_REQUIRED")
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
         os.remove(dest)
         removed.append(rel)
     if backup_root:
@@ -2138,8 +2131,17 @@ def install_multi_targets(
         for plan, checkpoint in zip(plans, checkpoints):
             key = os.path.realpath(plan.root)
             lock = lock_by_key[key]
+            # Replan immediately before each execute so shared physical roots
+            # observe the generation published by an earlier claim in this txn.
+            live_plan = plan_install(
+                host=plan.host,
+                scope=scope,
+                root=plan.root,
+                dry_run=False,
+                force_with_backup=force_with_backup,
+            )
             result = execute_install(
-                plan,
+                live_plan,
                 force_with_backup=force_with_backup,
                 lock=lock,
             )
@@ -2179,15 +2181,60 @@ def discard_install_checkpoint(checkpoint: InstallCheckpoint) -> None:
     shutil.rmtree(checkpoint.snapshot_dir, ignore_errors=True)
 
 
-def _restore_regular_nofollow(snapshot: str, dest: str) -> None:
-    """Atomically restore one checkpoint file without following destination symlinks."""
+def _restore_regular_nofollow(
+    snapshot: str,
+    dest: str,
+    *,
+    allowed_live_sha256: set[str] | None = None,
+) -> None:
+    """Atomically restore one checkpoint file without following destination symlinks.
+
+    When ``allowed_live_sha256`` is set and ``dest`` exists, re-hash the live
+    regular inode under ``O_NOFOLLOW`` and refuse replace unless that digest is
+    still in the allowed transaction set (binds check to the replaced leaf).
+    """
     parent = os.path.dirname(dest)
     os.makedirs(parent, exist_ok=True)
+    if allowed_live_sha256 is not None and os.path.lexists(dest):
+        if os.path.islink(dest) or not os.path.isfile(dest):
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            live_fd = os.open(dest, flags)
+        except OSError as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        try:
+            st = os.fstat(live_fd)
+            if not stat_mod.S_ISREG(st.st_mode):
+                raise DiagnosticError("E_RECOVERY_REQUIRED")
+            live = _sha256_open_fd(live_fd)
+            if live not in allowed_live_sha256:
+                raise DiagnosticError("E_RECOVERY_REQUIRED")
+        finally:
+            os.close(live_fd)
     fd, temporary = tempfile.mkstemp(prefix=".portable-resume-restore-", dir=parent)
     os.close(fd)
     os.remove(temporary)
     try:
         _copy_regular_nofollow(snapshot, temporary)
+        # Re-check immediately before replace when a live leaf was present.
+        if allowed_live_sha256 is not None and os.path.lexists(dest):
+            if os.path.islink(dest) or not os.path.isfile(dest):
+                raise DiagnosticError("E_RECOVERY_REQUIRED")
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                live_fd = os.open(dest, flags)
+            except OSError as error:
+                raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+            try:
+                st = os.fstat(live_fd)
+                if not stat_mod.S_ISREG(st.st_mode):
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+                live = _sha256_open_fd(live_fd)
+                if live not in allowed_live_sha256:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+            finally:
+                os.close(live_fd)
         os.replace(temporary, dest)
     finally:
         try:
