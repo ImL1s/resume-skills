@@ -260,7 +260,13 @@ def _list_sessions(
             """
             SELECT id, name, session_type, working_dir, created_at, updated_at, archived_at
             FROM sessions
-            WHERE session_type = 'user' AND archived_at IS NULL
+            WHERE session_type = 'user'
+              AND archived_at IS NULL
+              AND EXISTS (
+                SELECT 1 FROM messages m
+                WHERE m.session_id = sessions.id
+                  AND m.role IN ('user', 'assistant', 'tool')
+              )
             ORDER BY updated_at DESC, id ASC
             LIMIT ?
             """,
@@ -298,12 +304,12 @@ def _list_sessions(
 def _content_text(content_json: str) -> str | None:
     try:
         payload = json.loads(content_json, object_pairs_hook=_object)
-    except (json.JSONDecodeError, _DuplicateKey, RecursionError, UnicodeDecodeError):
-        return None
+    except (json.JSONDecodeError, _DuplicateKey, RecursionError, UnicodeDecodeError) as error:
+        raise DiagnosticError("E_CORRUPT_RECORD", source="goose", provider=FORMAT_ID) from error
     if isinstance(payload, str) and payload.strip():
         return payload
     if not isinstance(payload, list):
-        return None
+        raise DiagnosticError("E_CORRUPT_RECORD", source="goose", provider=FORMAT_ID)
     chunks: list[str] = []
     for part in payload:
         if isinstance(part, str) and part.strip():

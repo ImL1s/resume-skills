@@ -83,6 +83,68 @@ class GooseAdapterTests(unittest.TestCase):
         self.assertEqual(report.state, "supported")
         self.assertEqual(report.format_id, FORMAT_ID)
 
+    def test_empty_user_session_does_not_win_latest(self) -> None:
+        import sqlite3
+        import tempfile
+        from tests.fixtures.goose import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            db_path = root / "sessions" / "sessions.db"
+            conn = bf._connect(db_path)
+            bf._create_core_schema(conn)
+            bf._insert_schema_versions(conn, range(1, 16))
+            old_id = "goempty01-0101-4101-8101-010101010101"
+            new_id = "goempty02-0202-4202-8202-020202020202"
+            bf._insert_session(conn, session_id=old_id, name="old with messages", session_type="user")
+            bf._insert_message(
+                conn,
+                session_id=old_id,
+                message_id="old-msg",
+                role="user",
+                text="keep me",
+            )
+            # Newer empty session must not crowd out recoverable history.
+            conn.execute(
+                """
+                INSERT INTO sessions (
+                    id, name, description, user_set_name, session_type, working_dir,
+                    created_at, updated_at, extension_data, goose_mode
+                ) VALUES (?, 'empty newer', 'empty newer', 0, 'user', ?, ?, ?, '{}', 'auto')
+                """,
+                (new_id, CWD, "2024-01-02 12:00:00", "2024-01-02 12:00:00"),
+            )
+            conn.commit()
+            conn.close()
+            summaries = ADAPTER.list(query(root), ReadBudget())
+            self.assertEqual([item.session_id for item in summaries], [old_id])
+
+    def test_malformed_message_json_fails_closed(self) -> None:
+        import tempfile
+        from tests.fixtures.goose import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            db_path = root / "sessions" / "sessions.db"
+            conn = bf._connect(db_path)
+            bf._create_core_schema(conn)
+            bf._insert_schema_versions(conn, range(1, 16))
+            session_id = "gocorrupt-0101-4101-8101-010101010101"
+            bf._insert_session(conn, session_id=session_id, name="corrupt", session_type="user")
+            conn.execute(
+                """
+                INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp, timestamp)
+                VALUES ('bad', ?, 'user', '{not-json', 1, ?)
+                """,
+                (session_id, "2024-01-01 12:00:00"),
+            )
+            conn.commit()
+            conn.close()
+            current = query(root, ref=session_id)
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.show(ResolvedRef(session_id=session_id, source_path=str(db_path)), current, ReadBudget())
+            self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
 
 if __name__ == "__main__":
     unittest.main()
