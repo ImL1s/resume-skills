@@ -144,13 +144,13 @@ class UninstallJournalTransactionTests(unittest.TestCase):
         skill = Path(self.root) / "resume-claude" / "SKILL.md"
         body = skill.read_bytes()
         digest = sha256_file(str(skill))
-        stage = Path(self.root) / SUPPORT_DIR / f"{STAGE_PREFIX}sim-published"
+        stage = Path(self.root) / SUPPORT_DIR / ".state" / f"{STAGE_PREFIX}sim-published"
         rollback = stage / ".rollback" / "resume-claude"
         rollback.mkdir(parents=True)
         snap = rollback / "SKILL.md"
         snap.write_bytes(body)
         skill.unlink()
-        os.unlink(os.path.join(self.root, SUPPORT_DIR, "manifest.json"))
+        os.unlink(os.path.join(self.root, SUPPORT_DIR, ".state", "manifest.json"))
         _write_journal(
             self.root,
             {

@@ -97,7 +97,9 @@ class InstallControlStoreTests(unittest.TestCase):
         self.assertEqual(target.read_text(encoding="utf-8"), "pre")
 
     def test_symlinked_manifest_rejected_on_load(self) -> None:
-        _ensure_support_directory(self.root)
+        from portable_resume.install.transaction import _ensure_control_state_directory
+
+        _ensure_control_state_directory(self.root)
         target = self.outside / "manifest-target.json"
         target.write_text('{"not":"ours"}\n', encoding="utf-8")
         Path(manifest_path(self.root)).symlink_to(target)
@@ -107,8 +109,10 @@ class InstallControlStoreTests(unittest.TestCase):
         self.assertEqual(target.read_text(encoding="utf-8"), '{"not":"ours"}\n')
 
     def test_lock_write_truncates_trailing_bytes(self) -> None:
-        _ensure_support_directory(self.root)
-        lock = Path(self.root) / SUPPORT_DIR / LOCK_NAME
+        from portable_resume.install.transaction import _ensure_control_state_directory
+
+        _ensure_control_state_directory(self.root)
+        lock = Path(self.root) / SUPPORT_DIR / ".state" / LOCK_NAME
         lock.write_bytes(b"pid=999999999999\nEXTRA_TRAILING_SHOULD_GO\n")
         with RootLock(self.root):
             data = lock.read_bytes()
@@ -118,10 +122,12 @@ class InstallControlStoreTests(unittest.TestCase):
         self.assertEqual(data, f"pid={os.getpid()}\n".encode("ascii"))
 
     def test_planted_journal_tmp_symlink_is_not_followed(self) -> None:
-        _ensure_support_directory(self.root)
+        from portable_resume.install.transaction import _ensure_control_state_directory
+
+        _ensure_control_state_directory(self.root)
         secret = self.outside / "secret-journal.txt"
         secret.write_text("outside-journal\n", encoding="utf-8")
-        planted = Path(self.root) / SUPPORT_DIR / f"{JOURNAL_NAME}.tmp"
+        planted = Path(self.root) / SUPPORT_DIR / ".state" / f"{JOURNAL_NAME}.tmp"
         planted.symlink_to(secret)
         _write_journal(
             self.root,
@@ -158,8 +164,10 @@ class InstallControlStoreTests(unittest.TestCase):
         self.assertFalse(Path(manifest_path(self.root)).is_symlink())
 
     def test_fifo_lock_path_rejected(self) -> None:
-        _ensure_support_directory(self.root)
-        lock = Path(self.root) / SUPPORT_DIR / LOCK_NAME
+        from portable_resume.install.transaction import _ensure_control_state_directory
+
+        _ensure_control_state_directory(self.root)
+        lock = Path(self.root) / SUPPORT_DIR / ".state" / LOCK_NAME
         try:
             os.mkfifo(lock)
         except OSError as error:
@@ -188,7 +196,7 @@ class InstallControlStoreTests(unittest.TestCase):
         self.assertIsNotNone(manifest)
         assert manifest is not None
         self.assertGreaterEqual(manifest.generation, 1)
-        lock = Path(self.root) / SUPPORT_DIR / LOCK_NAME
+        lock = Path(self.root) / SUPPORT_DIR / ".state" / LOCK_NAME
         self.assertTrue(lock.is_file())
         self.assertTrue(stat.S_ISREG(lock.stat().st_mode))
 

@@ -31,23 +31,39 @@ from .manifest import (
 from .render import frontmatter_keys, materialize_plan, package_identity, render_skill_markdown
 
 SUPPORT_DIR = ".portable-resume"
+# Machine-local control plane under support (#33 Option A). Shareable payload
+# stays at SUPPORT_DIR/runtime and SUPPORT_DIR/resources; mutable state lives
+# under SUPPORT_DIR/STATE_SUBDIR and is gitignored for project installs.
+STATE_SUBDIR = ".state"
 MANIFEST_NAME = "manifest.json"
 LOCK_NAME = "install.lock"
 JOURNAL_NAME = "journal.json"
 BACKUP_DIR = "backups"
 STAGE_PREFIX = "portable-resume-stage-"
 _BACKUP_NAME_PREFIX_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-")
+# Deterministic shareable ignore policy for project-committed payload trees.
+GITIGNORE_NAME = ".gitignore"
+GITIGNORE_BYTES = (
+    b"# portable-resume: machine-local control state only (#33)\n"
+    b"# Keep runtime/ and resources/ shareable; never commit locks/journals.\n"
+    b".state/\n"
+)
 # Names under SUPPORT_DIR that journals must never be allowed to delete.
 _PROTECTED_SUPPORT_NAMES = frozenset(
     {
         "runtime",
         "resources",
+        STATE_SUBDIR,
+        GITIGNORE_NAME,
+        # Legacy v1 control basenames (pre-#33) until migration completes.
         BACKUP_DIR,
         MANIFEST_NAME,
         LOCK_NAME,
         JOURNAL_NAME,
     }
 )
+# Control basenames live under SUPPORT_DIR/STATE_SUBDIR after #33.
+_CONTROL_BASENAMES = frozenset({LOCK_NAME, JOURNAL_NAME, MANIFEST_NAME})
 
 
 # Content identity for the previous ownership manifest (not generation alone).
@@ -122,31 +138,60 @@ def require_mutating_install_platform() -> None:
         raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
 
 
+def control_state_dir(root: str) -> str:
+    """Absolute path to machine-local control state (``…/.portable-resume/.state``)."""
+
+    return os.path.join(root, SUPPORT_DIR, STATE_SUBDIR)
+
+
+def support_dir(root: str) -> str:
+    return os.path.join(root, SUPPORT_DIR)
+
+
 class RootLock:
     def __init__(self, root: str, *, wait_seconds: float = 5.0) -> None:
         self.root = root
-        self.support = os.path.join(root, SUPPORT_DIR)
-        self.path = os.path.join(self.support, LOCK_NAME)
+        self.support = support_dir(root)
+        self.state = control_state_dir(root)
+        self.path = os.path.join(self.state, LOCK_NAME)
         self._fd: int | None = None
         self.wait_seconds = wait_seconds
 
     def __enter__(self) -> "RootLock":
         # Never open/create support paths on platforms without exclusive locking.
         require_mutating_install_platform()
-        _ensure_support_directory(self.root)
+        _ensure_control_state_directory(self.root)
         deadline = time.monotonic() + self.wait_seconds
         while True:
             fd: int | None = None
             try:
-                fd = _open_support_control_file(
-                    self.root,
-                    LOCK_NAME,
-                    flags=os.O_RDWR | os.O_CREAT,
-                    mode=0o644,
-                )
                 import fcntl
 
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                # #33 P1: if a v1 lock still exists, flock it *before* migration so
+                # a concurrent pre-#33 installer cannot publish under the old path
+                # while we rename control files out from under it.
+                legacy_lock = _legacy_lock_path(self.root)
+                new_lock = self.path
+                if os.path.lexists(legacy_lock) and not os.path.lexists(new_lock):
+                    fd = _open_legacy_support_control_file(
+                        self.root,
+                        LOCK_NAME,
+                        flags=os.O_RDWR,
+                        mode=0o644,
+                    )
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    # Rename keeps the flock on the same inode (POSIX).
+                    _migrate_v1_control_state(self.root)
+                else:
+                    fd = _open_support_control_file(
+                        self.root,
+                        LOCK_NAME,
+                        flags=os.O_RDWR | os.O_CREAT,
+                        mode=0o644,
+                    )
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    # Drain any stranded legacy artifacts (partial prior migrate).
+                    _migrate_v1_control_state(self.root)
                 os.ftruncate(fd, 0)
                 os.lseek(fd, 0, os.SEEK_SET)
                 payload = f"pid={os.getpid()}\n".encode("ascii")
@@ -193,21 +238,52 @@ class RootLock:
 
 
 def journal_path(root: str) -> str:
-    return os.path.join(root, SUPPORT_DIR, JOURNAL_NAME)
+    """Preferred (#33) journal path; may not exist until migration/write."""
+
+    return os.path.join(control_state_dir(root), JOURNAL_NAME)
 
 
 def manifest_path(root: str) -> str:
+    """Preferred (#33) manifest path for writes; readers use resolve helpers."""
+
+    return os.path.join(control_state_dir(root), MANIFEST_NAME)
+
+
+def _legacy_manifest_path(root: str) -> str:
     return os.path.join(root, SUPPORT_DIR, MANIFEST_NAME)
 
 
+def _legacy_journal_path(root: str) -> str:
+    return os.path.join(root, SUPPORT_DIR, JOURNAL_NAME)
+
+
+def _legacy_lock_path(root: str) -> str:
+    return os.path.join(root, SUPPORT_DIR, LOCK_NAME)
+
+
+def resolve_manifest_path(root: str) -> str | None:
+    """Return the on-disk manifest path (new or legacy), or None if absent."""
+
+    new = manifest_path(root)
+    if os.path.lexists(new):
+        return new
+    legacy = _legacy_manifest_path(root)
+    if os.path.lexists(legacy):
+        return legacy
+    return None
+
+
 def load_manifest(root: str) -> Manifest | None:
-    path = manifest_path(root)
-    if not os.path.lexists(path):
+    path = resolve_manifest_path(root)
+    if path is None:
         return None
+    # Prefer #33 state path open; fall back to legacy basename under support.
     try:
-        raw = _read_support_control_file(root, MANIFEST_NAME)
+        if path == manifest_path(root):
+            raw = _read_support_control_file(root, MANIFEST_NAME)
+        else:
+            raw = _read_legacy_support_control_file(root, MANIFEST_NAME)
     except DiagnosticError as error:
-        # Missing is None; corrupt/symlink/type issues are verify failures.
         if not os.path.lexists(path):
             return None
         raise DiagnosticError("E_VERIFY_MISMATCH") from error
@@ -220,12 +296,12 @@ def load_manifest(root: str) -> Manifest | None:
 
 
 def require_no_pending_journal(root: str) -> None:
-    path = journal_path(root)
-    if not os.path.lexists(path):
-        return
-    if os.path.islink(path) or not os.path.isfile(path):
+    for path in (journal_path(root), _legacy_journal_path(root)):
+        if not os.path.lexists(path):
+            continue
+        if os.path.islink(path) or not os.path.isfile(path):
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
         raise DiagnosticError("E_RECOVERY_REQUIRED")
-    raise DiagnosticError("E_RECOVERY_REQUIRED")
 
 
 def _tree_snapshot(root: str) -> dict[str, tuple[int, float]]:
@@ -355,9 +431,6 @@ def _supports_descriptor_relative_commit() -> bool:
     return os.name != "nt" and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
 
 
-_CONTROL_BASENAMES = frozenset({LOCK_NAME, JOURNAL_NAME, MANIFEST_NAME})
-
-
 def _ensure_install_root_exists(root: str) -> None:
     """Create the skill-root directory if missing (legacy makedirs support-path behavior)."""
     if os.path.lexists(root):
@@ -369,6 +442,26 @@ def _ensure_install_root_exists(root: str) -> None:
     except OSError as error:
         raise DiagnosticError("E_INSTALL_CONFLICT") from error
     if not os.path.isdir(root) or (os.path.islink(root) and not os.path.isdir(root)):
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+
+
+def _mkdir_nofollow_child(parent_fd: int, name: str, *, mode: int = 0o755) -> None:
+    """Create *name* under *parent_fd* if missing; reject symlink/non-dir."""
+
+    try:
+        st = os.lstat(name, dir_fd=parent_fd)
+    except FileNotFoundError:
+        try:
+            os.mkdir(name, mode, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        try:
+            st = os.lstat(name, dir_fd=parent_fd)
+        except OSError as error:
+            raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISDIR(st.st_mode):
         raise DiagnosticError("E_INSTALL_CONFLICT")
 
 
@@ -406,7 +499,7 @@ def _ensure_support_directory(root: str) -> None:
         finally:
             os.close(root_fd)
 
-    support = os.path.join(root, SUPPORT_DIR)
+    support = support_dir(root)
     if os.path.lexists(support):
         try:
             st = os.lstat(support)
@@ -429,6 +522,288 @@ def _ensure_support_directory(root: str) -> None:
         raise DiagnosticError("E_INSTALL_CONFLICT")
 
 
+def _ensure_control_state_directory(root: str) -> None:
+    """Ensure shareable support dir and private ``.state`` control dir exist (#33)."""
+
+    _ensure_support_directory(root)
+    if _supports_descriptor_relative_commit():
+        root_fd = _open_skill_root_descriptor(root)
+        support_fd: int | None = None
+        try:
+            support_fd = _open_directory_under_root(root_fd, SUPPORT_DIR)
+            _mkdir_nofollow_child(support_fd, STATE_SUBDIR, mode=0o700)
+            return
+        finally:
+            if support_fd is not None:
+                os.close(support_fd)
+            os.close(root_fd)
+
+    state = control_state_dir(root)
+    if os.path.lexists(state):
+        try:
+            st = os.lstat(state)
+        except OSError as error:
+            raise DiagnosticError("E_INSTALL_CONFLICT") from error
+        if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISDIR(st.st_mode):
+            raise DiagnosticError("E_INSTALL_CONFLICT")
+        return
+    try:
+        os.mkdir(state, 0o700)
+    except FileExistsError:
+        pass
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    try:
+        st = os.lstat(state)
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISDIR(st.st_mode):
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+
+
+def _migrate_v1_control_state(root: str) -> dict[str, Any]:
+    """Move pre-#33 control files from ``.portable-resume/`` into ``.state/``.
+
+    Idempotent and resumable: when the new manifest already exists, still drain
+    any remaining legacy journal/lock/backups/stage trees (partial migrate).
+    Refuses when both legacy and new manifests exist (ambiguous).
+    Does not move payload ``runtime/`` or ``resources/``.
+    Rewrites absolute journal recovery paths that pointed at moved trees.
+    """
+
+    _ensure_control_state_directory(root)
+    support = support_dir(root)
+    state = control_state_dir(root)
+    new_manifest = os.path.join(state, MANIFEST_NAME)
+    legacy_manifest = os.path.join(support, MANIFEST_NAME)
+    if os.path.lexists(new_manifest) and os.path.lexists(legacy_manifest):
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+
+    moved: list[str] = []
+
+    # Prefer descriptor-relative renames so a post-open support/.state symlink
+    # swap cannot redirect migration outside the skill root (#33 Codex P1).
+    use_dirfd = _supports_descriptor_relative_commit()
+    root_fd: int | None = None
+    support_fd: int | None = None
+    state_fd: int | None = None
+    try:
+        if use_dirfd:
+            root_fd = _open_skill_root_descriptor(root)
+            support_fd, state_fd = _open_control_parent_fd(root_fd)
+
+        def _rename_child(name: str, *, require_dir: bool = False) -> bool:
+            """Rename support/*name* → state/*name*. Return True if moved."""
+
+            if use_dirfd and support_fd is not None and state_fd is not None:
+                try:
+                    st = os.lstat(name, dir_fd=support_fd)
+                except FileNotFoundError:
+                    return False
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                if stat_mod.S_ISLNK(st.st_mode):
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                if require_dir and not stat_mod.S_ISDIR(st.st_mode):
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                if not require_dir and not stat_mod.S_ISREG(st.st_mode) and not stat_mod.S_ISDIR(
+                    st.st_mode
+                ):
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                try:
+                    dst_st = os.lstat(name, dir_fd=state_fd)
+                except FileNotFoundError:
+                    dst_st = None
+                if dst_st is not None:
+                    # Same inode (hardlink sentinel for lock) is already migrated.
+                    if st.st_ino == dst_st.st_ino and st.st_dev == dst_st.st_dev:
+                        return False
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                try:
+                    os.rename(name, name, src_dir_fd=support_fd, dst_dir_fd=state_fd)
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                return True
+
+            src = os.path.join(support, name)
+            dst = os.path.join(state, name)
+            if not os.path.lexists(src):
+                return False
+            if os.path.lexists(dst):
+                try:
+                    if os.path.samefile(src, dst):
+                        return False
+                except OSError:
+                    pass
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            try:
+                st = os.lstat(src)
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            if stat_mod.S_ISLNK(st.st_mode):
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            if require_dir and not stat_mod.S_ISDIR(st.st_mode):
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            try:
+                os.rename(src, dst)
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            return True
+
+        # Regular control files (order: lock last so flock holders keep the inode).
+        for name in (MANIFEST_NAME, JOURNAL_NAME, LOCK_NAME):
+            if _rename_child(name, require_dir=False):
+                moved.append(name)
+                if name == LOCK_NAME:
+                    # Keep legacy lock pathname occupied with a hardlink to the
+                    # flocked inode so a concurrent pre-#33 installer cannot
+                    # create a second lock under the old path (#33 Codex P1).
+                    _link_lock_sentinel(support=support, state=state)
+
+        if _rename_child(BACKUP_DIR, require_dir=True):
+            moved.append(BACKUP_DIR)
+
+        # Stage trees that lived as direct children of support.
+        try:
+            names = os.listdir(support)
+        except OSError:
+            names = []
+        for name in names:
+            if not name.startswith(STAGE_PREFIX):
+                continue
+            if _rename_child(name, require_dir=True):
+                moved.append(name)
+    finally:
+        if state_fd is not None:
+            os.close(state_fd)
+        if support_fd is not None:
+            os.close(support_fd)
+        if root_fd is not None:
+            os.close(root_fd)
+
+    # Always attempt journal path rewrite: a prior crash may have moved trees
+    # already while leaving absolute legacy paths in the journal body.
+    _rewrite_journal_paths_after_migration(root, support=support, state=state)
+
+    return {
+        "migrated": bool(moved),
+        "layout": "state-v1",
+        "moved": sorted(moved),
+    }
+
+
+def _link_lock_sentinel(*, support: str, state: str) -> None:
+    """Hardlink ``state/install.lock`` back to ``support/install.lock`` when possible."""
+
+    src = os.path.join(state, LOCK_NAME)
+    dst = os.path.join(support, LOCK_NAME)
+    if not os.path.lexists(src) or os.path.lexists(dst):
+        return
+    try:
+        os.link(src, dst)
+    except OSError:
+        # Best-effort on platforms/filesystems without hardlinks.
+        return
+
+
+def _rewrite_journal_paths_after_migration(
+    root: str,
+    *,
+    support: str,
+    state: str,
+) -> None:
+    """Rewrite absolute journal recovery paths after v1→.state tree moves (#33)."""
+
+    journal_file = os.path.join(state, JOURNAL_NAME)
+    if not os.path.lexists(journal_file):
+        return
+    try:
+        raw = _read_support_control_file(root, JOURNAL_NAME)
+        journal = parse_journal_document(raw)
+    except (DiagnosticError, OSError, ControlSchemaError, TypeError, ValueError, UnicodeDecodeError):
+        # Leave unreadable journal for recover_root to fail closed.
+        return
+
+    support_real = os.path.realpath(support)
+    state_real = os.path.realpath(state)
+    changed = False
+
+    def _remap(path: object) -> object:
+        nonlocal changed
+        if not isinstance(path, str) or not path:
+            return path
+        # Try abspath (symlink spelling) and realpath (resolved) so journals that
+        # recorded either form still remap after migration (#33 Codex P1).
+        candidates: list[str] = []
+        try:
+            candidates.append(os.path.abspath(path))
+        except OSError:
+            pass
+        try:
+            candidates.append(os.path.realpath(path))
+        except OSError:
+            pass
+        for abs_path in candidates:
+            try:
+                if os.path.commonpath((abs_path, support_real)) != support_real:
+                    continue
+                rel = os.path.relpath(abs_path, support_real)
+            except (OSError, ValueError):
+                continue
+            if rel in {".", ""} or rel.startswith(".."):
+                continue
+            # Do not rewrite payload paths (runtime/resources).
+            top = rel.split(os.sep, 1)[0]
+            if top in {"runtime", "resources", STATE_SUBDIR, GITIGNORE_NAME}:
+                continue
+            remapped = os.path.join(state_real, rel)
+            if remapped != path:
+                changed = True
+            return remapped
+        return path
+
+    if "stage_dir" in journal:
+        journal["stage_dir"] = _remap(journal.get("stage_dir"))
+    if "backup_root" in journal:
+        journal["backup_root"] = _remap(journal.get("backup_root"))
+    paths = journal.get("paths")
+    if isinstance(paths, dict):
+        for rel, meta in list(paths.items()):
+            if not isinstance(meta, dict):
+                continue
+            if "rollback_backup" in meta:
+                meta["rollback_backup"] = _remap(meta.get("rollback_backup"))
+            paths[rel] = meta
+        journal["paths"] = paths
+
+    if not changed:
+        return
+    try:
+        _write_journal(root, journal)
+    except DiagnosticError:
+        # Best-effort rewrite; recover remains fail-closed if paths stay stale.
+        return
+
+
+def _open_control_parent_fd(root_fd: int) -> tuple[int, int]:
+    """Return ``(support_fd, state_fd)``; caller closes both."""
+
+    support_fd = _open_directory_under_root(root_fd, SUPPORT_DIR)
+    try:
+        _mkdir_nofollow_child(support_fd, STATE_SUBDIR, mode=0o700)
+        flags = (
+            os.O_RDONLY
+            | os.O_DIRECTORY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        state_fd = os.open(STATE_SUBDIR, flags, dir_fd=support_fd)
+    except OSError as error:
+        os.close(support_fd)
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    return support_fd, state_fd
+
+
 def _open_support_control_file(
     root: str,
     name: str,
@@ -436,7 +811,79 @@ def _open_support_control_file(
     flags: int,
     mode: int = 0o644,
 ) -> int:
-    """Open a control-plane basename under support with no-follow regular-file checks."""
+    """Open a control-plane basename under ``.portable-resume/.state`` (#33)."""
+    if name not in _CONTROL_BASENAMES:
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    _ensure_control_state_directory(root)
+    if _supports_descriptor_relative_commit():
+        root_fd = _open_skill_root_descriptor(root)
+        support_fd: int | None = None
+        state_fd: int | None = None
+        try:
+            support_fd, state_fd = _open_control_parent_fd(root_fd)
+            try:
+                existing = os.lstat(name, dir_fd=state_fd)
+            except FileNotFoundError:
+                existing = None
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            if existing is not None and (
+                stat_mod.S_ISLNK(existing.st_mode) or not stat_mod.S_ISREG(existing.st_mode)
+            ):
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            open_flags = flags | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                fd = os.open(name, open_flags, mode, dir_fd=state_fd)
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            try:
+                st = os.fstat(fd)
+            except OSError as error:
+                os.close(fd)
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            if not stat_mod.S_ISREG(st.st_mode):
+                os.close(fd)
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            return fd
+        finally:
+            if state_fd is not None:
+                os.close(state_fd)
+            if support_fd is not None:
+                os.close(support_fd)
+            os.close(root_fd)
+
+    path = os.path.join(control_state_dir(root), name)
+    if os.path.lexists(path):
+        try:
+            st = os.lstat(path)
+        except OSError as error:
+            raise DiagnosticError("E_INSTALL_CONFLICT") from error
+        if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISREG(st.st_mode):
+            raise DiagnosticError("E_INSTALL_CONFLICT")
+    try:
+        fd = os.open(path, flags | getattr(os, "O_CLOEXEC", 0), mode)
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    try:
+        st = os.fstat(fd)
+    except OSError as error:
+        os.close(fd)
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    if not stat_mod.S_ISREG(st.st_mode):
+        os.close(fd)
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    return fd
+
+
+def _open_legacy_support_control_file(
+    root: str,
+    name: str,
+    *,
+    flags: int,
+    mode: int = 0o644,
+) -> int:
+    """Open a v1 control basename directly under ``.portable-resume/`` (read migration)."""
+
     if name not in _CONTROL_BASENAMES:
         raise DiagnosticError("E_INSTALL_CONFLICT")
     _ensure_support_directory(root)
@@ -511,21 +958,36 @@ def _read_support_control_file(root: str, name: str) -> bytes:
         os.close(fd)
 
 
+def _read_legacy_support_control_file(root: str, name: str) -> bytes:
+    fd = _open_legacy_support_control_file(root, name, flags=os.O_RDONLY)
+    try:
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
 def _atomic_write_support_file(root: str, name: str, data: bytes) -> None:
-    """Atomically replace a control document under the pinned support directory."""
+    """Atomically replace a control document under ``.portable-resume/.state`` (#33)."""
     if name not in {JOURNAL_NAME, MANIFEST_NAME}:
         raise DiagnosticError("E_INSTALL_CONFLICT")
     if not isinstance(data, (bytes, bytearray)):
         raise DiagnosticError("E_INSTALL_CONFLICT")
     payload = bytes(data)
-    _ensure_support_directory(root)
+    _ensure_control_state_directory(root)
 
     if _supports_descriptor_relative_commit():
         root_fd = _open_skill_root_descriptor(root)
         support_fd: int | None = None
+        state_fd: int | None = None
         tmp_name: str | None = None
         try:
-            support_fd = _open_directory_under_root(root_fd, SUPPORT_DIR)
+            support_fd, state_fd = _open_control_parent_fd(root_fd)
             tmp_name = f".{name}.tmp-{secrets.token_hex(8)}"
             flags = (
                 os.O_WRONLY
@@ -535,7 +997,7 @@ def _atomic_write_support_file(root: str, name: str, data: bytes) -> None:
                 | getattr(os, "O_NOFOLLOW", 0)
             )
             try:
-                fd = os.open(tmp_name, flags, 0o644, dir_fd=support_fd)
+                fd = os.open(tmp_name, flags, 0o644, dir_fd=state_fd)
             except OSError as error:
                 raise DiagnosticError("E_INSTALL_CONFLICT") from error
             try:
@@ -550,12 +1012,12 @@ def _atomic_write_support_file(root: str, name: str, data: bytes) -> None:
             finally:
                 os.close(fd)
             try:
-                existing = os.lstat(name, dir_fd=support_fd)
+                existing = os.lstat(name, dir_fd=state_fd)
             except FileNotFoundError:
                 existing = None
             except OSError as error:
                 try:
-                    os.unlink(tmp_name, dir_fd=support_fd)
+                    os.unlink(tmp_name, dir_fd=state_fd)
                 except OSError:
                     pass
                 raise DiagnosticError("E_INSTALL_CONFLICT") from error
@@ -563,39 +1025,41 @@ def _atomic_write_support_file(root: str, name: str, data: bytes) -> None:
                 stat_mod.S_ISLNK(existing.st_mode) or not stat_mod.S_ISREG(existing.st_mode)
             ):
                 try:
-                    os.unlink(tmp_name, dir_fd=support_fd)
+                    os.unlink(tmp_name, dir_fd=state_fd)
                 except OSError:
                     pass
                 raise DiagnosticError("E_INSTALL_CONFLICT")
             try:
-                os.replace(tmp_name, name, src_dir_fd=support_fd, dst_dir_fd=support_fd)
+                os.replace(tmp_name, name, src_dir_fd=state_fd, dst_dir_fd=state_fd)
             except OSError as error:
                 try:
-                    os.unlink(tmp_name, dir_fd=support_fd)
+                    os.unlink(tmp_name, dir_fd=state_fd)
                 except OSError:
                     pass
                 raise DiagnosticError("E_INSTALL_CONFLICT") from error
             tmp_name = None
             try:
-                os.fsync(support_fd)
+                os.fsync(state_fd)
             except OSError:
                 pass
             return
         finally:
-            if tmp_name is not None and support_fd is not None:
+            if tmp_name is not None and state_fd is not None:
                 try:
-                    os.unlink(tmp_name, dir_fd=support_fd)
+                    os.unlink(tmp_name, dir_fd=state_fd)
                 except OSError:
                     pass
+            if state_fd is not None:
+                os.close(state_fd)
             if support_fd is not None:
                 os.close(support_fd)
             os.close(root_fd)
 
-    support = os.path.join(root, SUPPORT_DIR)
-    path = os.path.join(support, name)
+    state = control_state_dir(root)
+    path = os.path.join(state, name)
     if os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path)):
         raise DiagnosticError("E_INSTALL_CONFLICT")
-    tmp_path = os.path.join(support, f".{name}.tmp-{secrets.token_hex(8)}")
+    tmp_path = os.path.join(state, f".{name}.tmp-{secrets.token_hex(8)}")
     try:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
         fd = os.open(tmp_path, flags, 0o644)
@@ -1401,11 +1865,21 @@ def _commit_payload_file(
 
     _mkdir_directory_under_root(root_fd, parent_rel)
     support_fd = _open_directory_under_root(root_fd, SUPPORT_DIR)
+    state_fd: int | None = None
     stage_fd: int | None = None
     src_parent_fd: int | None = None
     dst_parent_fd: int | None = None
     try:
-        stage_fd = _open_directory_under_root(support_fd, stage_name)
+        # Stage trees live under .portable-resume/.state/ after #33.
+        # Legacy single-component stage under support is still authorized for recovery.
+        stage_parent_rel = os.path.dirname(
+            os.path.relpath(authorized_stage, os.path.join(os.path.abspath(root), SUPPORT_DIR))
+        )
+        if stage_parent_rel in ("", "."):
+            stage_fd = _open_directory_under_root(support_fd, stage_name)
+        else:
+            state_fd = _open_directory_under_root(support_fd, STATE_SUBDIR)
+            stage_fd = _open_directory_under_root(state_fd, stage_name)
         if src_parent_rel in ("", "."):
             src_parent_fd = stage_fd
         else:
@@ -1427,11 +1901,13 @@ def _commit_payload_file(
             os.close(dst_parent_fd)
         if (
             src_parent_fd is not None
-            and src_parent_fd not in (stage_fd, support_fd, root_fd)
+            and src_parent_fd not in (stage_fd, state_fd, support_fd, root_fd)
         ):
             os.close(src_parent_fd)
-        if stage_fd is not None and stage_fd not in (support_fd, root_fd):
+        if stage_fd is not None and stage_fd not in (state_fd, support_fd, root_fd):
             os.close(stage_fd)
+        if state_fd is not None and state_fd not in (support_fd, root_fd):
+            os.close(state_fd)
         if support_fd is not root_fd:
             os.close(support_fd)
 
@@ -1563,22 +2039,23 @@ def _execute_install_under_lock(
         )
         if kind == "backup":
             backups.append(rel)
-    _ensure_support_directory(root)
+    _ensure_control_state_directory(root)
     if not _supports_descriptor_relative_commit():
         raise DiagnosticError("E_INSTALL_CONFLICT")
     pin_root_fd = _open_skill_root_descriptor(root)
     support_fd: int | None = None
+    state_fd: int | None = None
     stage_fd: int | None = None
     stage_dir = ""
     backup_root: str | None = None
     try:
-        support_fd = _open_directory_under_root(pin_root_fd, SUPPORT_DIR)
-        stage_name = _mkdir_unique_under_fd(support_fd, STAGE_PREFIX)
-        stage_dir = os.path.join(os.path.abspath(root), SUPPORT_DIR, stage_name)
+        support_fd, state_fd = _open_control_parent_fd(pin_root_fd)
+        stage_name = _mkdir_unique_under_fd(state_fd, STAGE_PREFIX)
+        stage_dir = os.path.join(control_state_dir(root), stage_name)
         stage_fd = os.open(
             stage_name,
             os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-            dir_fd=support_fd,
+            dir_fd=state_fd,
         )
         journal = {
             "schema_version": "portable-resume/install-journal-v1",
@@ -1592,10 +2069,10 @@ def _execute_install_under_lock(
         }
         if backups:
             try:
-                os.mkdir(BACKUP_DIR, 0o755, dir_fd=support_fd)
+                os.mkdir(BACKUP_DIR, 0o755, dir_fd=state_fd)
             except FileExistsError:
                 pass
-            # Re-open backups under support without following a symlink leaf.
+            # Re-open backups under state without following a symlink leaf.
             try:
                 backup_parent_fd = os.open(
                     BACKUP_DIR,
@@ -1603,7 +2080,7 @@ def _execute_install_under_lock(
                     | os.O_DIRECTORY
                     | getattr(os, "O_CLOEXEC", 0)
                     | getattr(os, "O_NOFOLLOW", 0),
-                    dir_fd=support_fd,
+                    dir_fd=state_fd,
                 )
             except OSError as error:
                 raise DiagnosticError("E_INSTALL_CONFLICT") from error
@@ -1614,7 +2091,7 @@ def _execute_install_under_lock(
                 )
             finally:
                 os.close(backup_parent_fd)
-            backup_root = os.path.join(os.path.abspath(root), SUPPORT_DIR, BACKUP_DIR, backup_name)
+            backup_root = os.path.join(control_state_dir(root), BACKUP_DIR, backup_name)
             journal["backup_root"] = backup_root
         for rel, data in plan.files.items():
             safe = _safe_rel_path(rel)
@@ -1704,7 +2181,7 @@ def _execute_install_under_lock(
                     os.close(src_parent_fd)
             if sha256_bytes(body) != body_digest:
                 raise DiagnosticError("E_INSTALL_CONFLICT")
-            # Write under backup dir via support_fd/backups/<name>/...
+            # Write under backup dir via state_fd/backups/<name>/...
             backup_name = os.path.basename(backup_root)
             backups_fd = os.open(
                 BACKUP_DIR,
@@ -1712,7 +2189,7 @@ def _execute_install_under_lock(
                 | os.O_DIRECTORY
                 | getattr(os, "O_CLOEXEC", 0)
                 | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=support_fd,
+                dir_fd=state_fd,
             )
             try:
                 one_backup_fd = os.open(
@@ -1860,6 +2337,8 @@ def _execute_install_under_lock(
     finally:
         if stage_fd is not None:
             os.close(stage_fd)
+        if state_fd is not None:
+            os.close(state_fd)
         if support_fd is not None:
             os.close(support_fd)
         os.close(pin_root_fd)
@@ -1876,12 +2355,19 @@ def _write_journal(root: str, journal: dict[str, Any]) -> None:
 
 
 def _unlink_support_control_file(root: str, name: str) -> None:
-    """Unlink a control basename under support without following a symlink leaf."""
+    """Unlink a control basename under ``.portable-resume/.state`` (#33)."""
     if name not in _CONTROL_BASENAMES:
         raise DiagnosticError("E_INSTALL_CONFLICT")
     if not _supports_descriptor_relative_commit():
-        path = os.path.join(root, SUPPORT_DIR, name)
+        path = os.path.join(control_state_dir(root), name)
         if not os.path.lexists(path):
+            # Legacy v1 location during migration window.
+            legacy = os.path.join(root, SUPPORT_DIR, name)
+            if not os.path.lexists(legacy):
+                return
+            if os.path.islink(legacy) or not os.path.isfile(legacy):
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            os.unlink(legacy)
             return
         if os.path.islink(path) or not os.path.isfile(path):
             raise DiagnosticError("E_INSTALL_CONFLICT")
@@ -1889,13 +2375,14 @@ def _unlink_support_control_file(root: str, name: str) -> None:
         return
     root_fd = _open_skill_root_descriptor(root)
     support_fd: int | None = None
+    state_fd: int | None = None
     try:
         try:
-            support_fd = _open_directory_under_root(root_fd, SUPPORT_DIR)
+            support_fd, state_fd = _open_control_parent_fd(root_fd)
         except DiagnosticError:
             return
         try:
-            st = os.lstat(name, dir_fd=support_fd)
+            st = os.lstat(name, dir_fd=state_fd)
         except FileNotFoundError:
             return
         except OSError as error:
@@ -1903,12 +2390,14 @@ def _unlink_support_control_file(root: str, name: str) -> None:
         if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISREG(st.st_mode):
             raise DiagnosticError("E_INSTALL_CONFLICT")
         try:
-            os.unlink(name, dir_fd=support_fd)
+            os.unlink(name, dir_fd=state_fd)
         except FileNotFoundError:
             return
         except OSError as error:
             raise DiagnosticError("E_INSTALL_CONFLICT") from error
     finally:
+        if state_fd is not None:
+            os.close(state_fd)
         if support_fd is not None:
             os.close(support_fd)
         os.close(root_fd)
@@ -1969,6 +2458,9 @@ def capture_install_checkpoint(plan: ActionPlan) -> InstallCheckpoint:
     candidates = set(plan.files)
     if existing is not None:
         candidates.update(existing.files)
+    candidates.add(f"{SUPPORT_DIR}/{STATE_SUBDIR}/{MANIFEST_NAME}")
+    candidates.add(f"{SUPPORT_DIR}/{STATE_SUBDIR}/{LOCK_NAME}")
+    # Legacy v1 control paths (pre-#33) still snapshotted during migration windows.
     candidates.add(f"{SUPPORT_DIR}/{MANIFEST_NAME}")
     candidates.add(f"{SUPPORT_DIR}/{LOCK_NAME}")
     try:
@@ -1978,9 +2470,15 @@ def capture_install_checkpoint(plan: ActionPlan) -> InstallCheckpoint:
             meta: dict[str, Any] = {"existed": False, "allowed_sha256": []}
             if safe in plan.files:
                 meta["allowed_sha256"].append(sha256_bytes(plan.files[safe]))
-            if safe == f"{SUPPORT_DIR}/{MANIFEST_NAME}":
+            if safe in {
+                f"{SUPPORT_DIR}/{STATE_SUBDIR}/{MANIFEST_NAME}",
+                f"{SUPPORT_DIR}/{MANIFEST_NAME}",
+            }:
                 meta["allowed_sha256"].append(sha256_bytes(plan.manifest.dumps().encode("utf-8")))
-            if safe == f"{SUPPORT_DIR}/{LOCK_NAME}":
+            if safe in {
+                f"{SUPPORT_DIR}/{STATE_SUBDIR}/{LOCK_NAME}",
+                f"{SUPPORT_DIR}/{LOCK_NAME}",
+            }:
                 # Never snapshot the live exclusive lock we hold: compensation
                 # always removes installer lock metadata rather than restoring a
                 # pid file from mid-transaction (#23 multi-root holds locks
@@ -2341,10 +2839,11 @@ def _path_within_support(root: str, path: str) -> bool:
 def _authorize_support_cleanup(root: str, path: str, *, role: str) -> str | None:
     """Authorize journal-driven deletion of stage/backup trees only.
 
-    ``role`` is ``\"stage\"`` (direct child ``portable-resume-stage-*`` under
-    ``.portable-resume``) or ``\"backup\"`` (direct child under
-    ``.portable-resume/backups``). Protected control-plane names such as
-    ``runtime``, ``resources``, and ``backups`` itself are never authorized.
+    ``role`` is ``\"stage\"`` (``portable-resume-stage-*`` under
+    ``.portable-resume/.state`` or legacy under ``.portable-resume``) or
+    ``\"backup\"`` under ``.portable-resume/.state/backups`` (or legacy
+    ``.portable-resume/backups``). Protected payload names such as ``runtime``
+    and ``resources`` are never authorized.
 
     Returns the absolute path to delete, or ``None`` when the authorized path is
     already absent (idempotent cleanup).
@@ -2378,15 +2877,23 @@ def _authorize_support_cleanup(root: str, path: str, *, role: str) -> str | None
         raise DiagnosticError("E_RECOVERY_REQUIRED")
 
     if role == "stage":
-        if len(parts) != 1:
+        # #33: .state/<stage>  |  legacy: <stage>
+        if len(parts) == 2 and parts[0] == STATE_SUBDIR:
+            name = parts[1]
+        elif len(parts) == 1:
+            name = parts[0]
+        else:
             raise DiagnosticError("E_RECOVERY_REQUIRED")
-        name = parts[0]
         if name in _PROTECTED_SUPPORT_NAMES or not name.startswith(STAGE_PREFIX):
             raise DiagnosticError("E_RECOVERY_REQUIRED")
     else:
-        if len(parts) != 2 or parts[0] != BACKUP_DIR:
+        # #33: .state/backups/<name>  |  legacy: backups/<name>
+        if len(parts) == 3 and parts[0] == STATE_SUBDIR and parts[1] == BACKUP_DIR:
+            backup_name = parts[2]
+        elif len(parts) == 2 and parts[0] == BACKUP_DIR:
+            backup_name = parts[1]
+        else:
             raise DiagnosticError("E_RECOVERY_REQUIRED")
-        backup_name = parts[1]
         if (
             not backup_name
             or backup_name in {os.pardir, "."}
@@ -2737,14 +3244,20 @@ def _attempt_rollback(root: str, journal: dict[str, Any]) -> None:
 
 def recover_root(root: str) -> dict[str, Any]:
     path = journal_path(root)
-    if not os.path.lexists(path):
+    legacy_path = _legacy_journal_path(root)
+    if not os.path.lexists(path) and not os.path.lexists(legacy_path):
         return {"ok": True, "recovered": False}
-    if os.path.islink(path) or not os.path.isfile(path):
+    active = path if os.path.lexists(path) else legacy_path
+    if os.path.islink(active) or not os.path.isfile(active):
         raise DiagnosticError("E_RECOVERY_REQUIRED")
     require_mutating_install_platform()
     with RootLock(root):
         try:
-            raw = _read_support_control_file(root, JOURNAL_NAME)
+            # Migration may have moved the journal into .state/ under the lock.
+            if os.path.lexists(journal_path(root)):
+                raw = _read_support_control_file(root, JOURNAL_NAME)
+            else:
+                raw = _read_legacy_support_control_file(root, JOURNAL_NAME)
             journal = parse_journal_document(raw)
         except (DiagnosticError, OSError, ControlSchemaError, TypeError, ValueError, UnicodeDecodeError) as error:
             raise DiagnosticError("E_RECOVERY_REQUIRED") from error
@@ -2773,7 +3286,16 @@ def verify_root(root: str, *, claim: str | None = None) -> dict[str, Any]:
     installed (stay observationally pure). Windows residual (#29): observational
     verify without exclusive locking (mutating install already fails closed).
     """
-    if os.name != "nt" and os.path.isdir(os.path.join(root, SUPPORT_DIR)):
+    # Lock when either #33 state or legacy v1 support ownership exists.
+    has_control = os.path.isdir(control_state_dir(root)) or (
+        os.path.isdir(os.path.join(root, SUPPORT_DIR))
+        and (
+            os.path.lexists(_legacy_manifest_path(root))
+            or os.path.lexists(manifest_path(root))
+            or os.path.lexists(_legacy_lock_path(root))
+        )
+    )
+    if os.name != "nt" and has_control:
         with RootLock(root):
             return _verify_root_locked(root, claim=claim)
     return _verify_root_locked(root, claim=claim)
@@ -2839,6 +3361,8 @@ def _verify_root_locked(root: str, *, claim: str | None = None) -> dict[str, Any
         "claims": sorted(manifest.claims),
         "files": len(manifest.files),
         "owner": OWNER_MARKER,
+        "control_state_dir": control_state_dir(root),
+        "control_layout": "state-v1",
     }
 
 
@@ -2956,19 +3480,20 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
         # Always journal when we will rewrite the ownership generation.
         pin_root_fd: int | None = None
         support_fd: int | None = None
+        state_fd: int | None = None
         stage_fd: int | None = None
         journal: dict[str, Any] | None = None
         stage_dir = ""
         removed: list[str] = []
         try:
             pin_root_fd = _open_skill_root_descriptor(root)
-            support_fd = _open_directory_under_root(pin_root_fd, SUPPORT_DIR)
-            stage_name = _mkdir_unique_under_fd(support_fd, STAGE_PREFIX)
-            stage_dir = os.path.join(os.path.abspath(root), SUPPORT_DIR, stage_name)
+            support_fd, state_fd = _open_control_parent_fd(pin_root_fd)
+            stage_name = _mkdir_unique_under_fd(state_fd, STAGE_PREFIX)
+            stage_dir = os.path.join(control_state_dir(root), stage_name)
             stage_fd = os.open(
                 stage_name,
                 os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=support_fd,
+                dir_fd=state_fd,
             )
             journal = {
                 "schema_version": "portable-resume/install-journal-v1",
@@ -3100,6 +3625,8 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
         finally:
             if stage_fd is not None:
                 os.close(stage_fd)
+            if state_fd is not None:
+                os.close(state_fd)
             if support_fd is not None:
                 os.close(support_fd)
             if pin_root_fd is not None:

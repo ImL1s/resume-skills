@@ -155,6 +155,17 @@ For direct archives, extract the archive contents into the selected Skill root. 
 - **Kimi:** the destination bundle targets current Kimi Code CLI. Legacy Python Kimi CLI session data is readable as a source, but its plugin format and `~/.kimi` data root are different.
 - **All plugin routes:** plugins can have broader execution authority than Skills. Inspect the archive and verify its published SHA-256 first.
 
+## Project-scope shareable payload vs local control state (#33)
+
+Direct project installs write two classes of files under the Skill root:
+
+| Class | Path | Commit? |
+|---|---|---|
+| Shareable payload | `resume-*/`, `.portable-resume/runtime/`, `.portable-resume/resources/`, `.portable-resume/.gitignore` | Yes (deterministic) |
+| Machine-local control | `.portable-resume/.state/` (manifest, lock, journal, backups, stage) | **No** — ignored by generated `.gitignore` |
+
+Do not commit `.portable-resume/.state/`. Teammates checking out the shareable tree should run `install-resume-skills install …` (or verify after a local install) so each machine gets its own control state. Global/user installs use the same layout; the ignore file is harmless there.
+
 ## Duplicate / shadow Skill audit (#34)
 
 Several hosts load Skills from more than one discovery root. The installer only

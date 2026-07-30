@@ -96,7 +96,7 @@ class RecoverCompleteJournalContainmentTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(journal_path(self.root)))
 
     def test_complete_journal_cannot_delete_backups_root(self) -> None:
-        support = Path(self.root) / ".portable-resume"
+        support = Path(self.root) / ".portable-resume" / ".state"
         backups = support / "backups"
         backups.mkdir(parents=True)
         marker = backups / "keep-me.txt"
@@ -110,7 +110,7 @@ class RecoverCompleteJournalContainmentTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(journal_path(self.root)))
 
     def test_owned_stage_is_deleted_and_journal_cleared(self) -> None:
-        support = Path(self.root) / ".portable-resume"
+        support = Path(self.root) / ".portable-resume" / ".state"
         stage = support / "portable-resume-stage-ok"
         stage.mkdir(parents=True)
         (stage / "tmp.txt").write_text("stage", encoding="utf-8")
@@ -123,7 +123,7 @@ class RecoverCompleteJournalContainmentTests(unittest.TestCase):
         self.assertFalse(os.path.isfile(journal_path(self.root)))
 
     def test_complete_journal_recover_preserves_force_backup_root(self) -> None:
-        support = Path(self.root) / ".portable-resume"
+        support = Path(self.root) / ".portable-resume" / ".state"
         stage = support / "portable-resume-stage-ok"
         stage.mkdir(parents=True)
         (stage / "tmp.txt").write_text("stage", encoding="utf-8")
@@ -143,7 +143,7 @@ class RecoverCompleteJournalContainmentTests(unittest.TestCase):
         self.assertFalse(os.path.isfile(journal_path(self.root)))
 
     def test_authorize_backup_rejects_non_timestamp_directory_name(self) -> None:
-        support = Path(self.root) / ".portable-resume"
+        support = Path(self.root) / ".portable-resume" / ".state"
         backups = support / "backups"
         backups.mkdir(parents=True)
         bad_backup = backups / "user-archive"
@@ -159,7 +159,7 @@ class RecoverCompleteJournalContainmentTests(unittest.TestCase):
     @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd recovery delete path")
     def test_safe_rmtree_rejects_symlinked_cleanup_target(self) -> None:
         """P1-B: symlinked stage/backup paths must not delete the link target."""
-        support = Path(self.root) / ".portable-resume"
+        support = Path(self.root) / ".portable-resume" / ".state"
         real_target = support / "real-stage"
         real_target.mkdir(parents=True)
         marker = real_target / "keep-me.txt"
@@ -176,7 +176,7 @@ class RecoverCompleteJournalContainmentTests(unittest.TestCase):
 
     @unittest.skipUnless(_supports_descriptor_relative_commit(), "dirfd recovery delete path")
     def test_stage_symlink_swap_before_delete_fails_closed(self) -> None:
-        support = Path(self.root) / ".portable-resume"
+        support = Path(self.root) / ".portable-resume" / ".state"
         stage_dir = support / "portable-resume-stage-test"
         stage_dir.mkdir(parents=True)
         (stage_dir / "staged.txt").write_text("stage payload", encoding="utf-8")
