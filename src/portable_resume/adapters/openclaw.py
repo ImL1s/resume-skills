@@ -266,6 +266,119 @@ def _require_schema(connection: sqlite3.Connection, *, expected_agent: str | Non
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="openclaw", provider=FORMAT_ID) from error
 
 
+def _row_to_summary(
+    *,
+    agent_id: str,
+    database: str,
+    session_id: str,
+    entry_json: object,
+    updated_at: object,
+    created_at: object,
+    display_name: object,
+    last_interaction_at: object,
+    query: Query,
+    require_age: bool,
+) -> SessionSummary | None:
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    cwd = _cwd_from_entry(entry_json if isinstance(entry_json, str) else None)
+    if query.cwd is not None:
+        if cwd is None or not same_cwd(cwd, query.cwd):
+            return None
+    stamp = _ms_stamp(last_interaction_at if last_interaction_at is not None else updated_at)
+    if require_age and not within_age(
+        stamp, query.within_min, default_minutes=DEFAULT_BOUNDS.listing_age_minutes
+    ):
+        return None
+    title = display_name if isinstance(display_name, str) and display_name.strip() else None
+    return SessionSummary(
+        source="openclaw",
+        session_id=_composite_id(agent_id, session_id),
+        source_path=database,
+        title=title,
+        cwd=cwd,
+        branch=None,
+        created_at=_ms_stamp(created_at),
+        updated_at=stamp,
+        provider=FORMAT_ID,
+        warnings=(),
+    )
+
+
+def _exact_session_summaries(
+    connection: sqlite3.Connection,
+    *,
+    agent_id: str,
+    database: str,
+    session_filter: str,
+    query: Query,
+) -> list[SessionSummary]:
+    """Resolve exact composite/native ids before the normal listing cap."""
+
+    values: list[SessionSummary] = []
+    nodes = connection.execute(
+        """
+        SELECT
+          current_session_id, entry_json, updated_at, created_at, display_name,
+          last_interaction_at, archived_at, created_via
+        FROM session_nodes
+        WHERE current_session_id = ?
+        LIMIT 4
+        """,
+        (session_filter,),
+    ).fetchall()
+    for row in nodes:
+        item = _row_to_summary(
+            agent_id=agent_id,
+            database=database,
+            session_id=row[0],
+            entry_json=row[1],
+            updated_at=row[2],
+            created_at=row[3],
+            display_name=row[4],
+            last_interaction_at=row[5],
+            query=query,
+            require_age=False,
+        )
+        if item is not None:
+            values.append(item)
+    if values:
+        return values
+    # Historical/reset window not pointed by current_session_id.
+    windows = connection.execute(
+        """
+        SELECT
+          w.session_id,
+          n.entry_json,
+          w.updated_at,
+          w.created_at,
+          COALESCE(w.display_name, n.display_name),
+          n.last_interaction_at
+        FROM session_windows w
+        LEFT JOIN session_nodes n ON n.session_key = w.session_key
+        WHERE w.session_id = ?
+        LIMIT 4
+        """,
+        (session_filter,),
+    ).fetchall()
+    for row in windows:
+        item = _row_to_summary(
+            agent_id=agent_id,
+            database=database,
+            session_id=row[0],
+            entry_json=row[1],
+            updated_at=row[2],
+            created_at=row[3],
+            display_name=row[4],
+            last_interaction_at=row[5],
+            query=query,
+            require_age=False,
+        )
+        if item is not None:
+            values.append(item)
+    return values
+
+
 def _list_nodes(
     connection: sqlite3.Connection,
     *,
@@ -295,7 +408,7 @@ def _list_nodes(
     values: list[SessionSummary] = []
     for row in rows:
         (
-            session_key,
+            _session_key,
             session_id,
             entry_json,
             updated_at,
@@ -305,8 +418,6 @@ def _list_nodes(
             archived_at,
             last_interaction_at,
         ) = row
-        if not isinstance(session_id, str) or not session_id:
-            continue
         if archived_at is not None and not include_internal:
             continue
         if (
@@ -315,31 +426,21 @@ def _list_nodes(
             and created_via in _DEFAULT_EXCLUDE_VIA
         ):
             continue
-        cwd = _cwd_from_entry(entry_json if isinstance(entry_json, str) else None)
-        if query.cwd is not None:
-            if cwd is None or not same_cwd(cwd, query.cwd):
-                continue
-        stamp = _ms_stamp(last_interaction_at if last_interaction_at is not None else updated_at)
-        if not within_age(stamp, query.within_min, default_minutes=DEFAULT_BOUNDS.listing_age_minutes):
-            # Exact refs bypass age in caller by setting within_min=0 when needed;
-            # keep normal list age filter here.
-            if not include_internal:
-                continue
-        title = display_name if isinstance(display_name, str) and display_name.strip() else None
-        values.append(
-            SessionSummary(
-                source="openclaw",
-                session_id=_composite_id(agent_id, session_id),
-                source_path=database,
-                title=title,
-                cwd=cwd,
-                branch=None,
-                created_at=_ms_stamp(created_at),
-                updated_at=stamp,
-                provider=FORMAT_ID,
-                warnings=(),
-            )
+        item = _row_to_summary(
+            agent_id=agent_id,
+            database=database,
+            session_id=session_id,
+            entry_json=entry_json,
+            updated_at=updated_at,
+            created_at=created_at,
+            display_name=display_name,
+            last_interaction_at=last_interaction_at,
+            query=query,
+            require_age=not include_internal,
         )
+        if item is None:
+            continue
+        values.append(item)
         if len(values) >= DEFAULT_BOUNDS.listed_sessions:
             break
     return values
@@ -356,11 +457,62 @@ def _decode_event(raw: str) -> Mapping[str, Any]:
 
 
 def _message_text(event: Mapping[str, Any]) -> str | None:
-    for key in ("text", "content", "message"):
+    for key in ("text", "content", "message", "summary"):
         value = event.get(key)
         if isinstance(value, str) and value.strip():
             return value
     return None
+
+
+def _active_branch_events(decoded: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """Return active-branch conversation events (message/compaction).
+
+    When events carry ``id``/``parentId``, walk from the latest leaf. Linear
+    fixtures without ids keep sequence order.
+    """
+
+    candidates = [
+        event
+        for event in decoded
+        if event.get("type") in {"message", "custom_message", "compaction"}
+    ]
+    if not candidates:
+        return []
+    if not any(isinstance(event.get("id"), str) and event.get("id") for event in candidates):
+        return candidates
+
+    by_id: dict[str, Mapping[str, Any]] = {}
+    for event in candidates:
+        identifier = event.get("id")
+        if isinstance(identifier, str) and identifier:
+            by_id[identifier] = event
+    # Prefer the last candidate with an id as the active leaf (latest physical write).
+    leaf: Mapping[str, Any] | None = None
+    for event in reversed(candidates):
+        identifier = event.get("id")
+        if isinstance(identifier, str) and identifier in by_id:
+            leaf = event
+            break
+    if leaf is None:
+        return candidates
+
+    path: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    current: Mapping[str, Any] | None = leaf
+    while current is not None:
+        identifier = current.get("id")
+        if not isinstance(identifier, str) or not identifier or identifier in seen:
+            break
+        seen.add(identifier)
+        path.append(current)
+        parent = current.get("parentId")
+        if parent is None or parent == "":
+            break
+        if not isinstance(parent, str) or parent not in by_id:
+            break
+        current = by_id[parent]
+    path.reverse()
+    return path
 
 
 def _show_session(
@@ -425,7 +577,7 @@ def _show_session(
         raise DiagnosticError("E_NO_MATCH", source="openclaw", provider=FORMAT_ID)
 
     limit = budget.limits.transcript_records + 1
-    rows = connection.execute(
+    cursor = connection.execute(
         """
         SELECT seq, event_json, created_at
         FROM transcript_events
@@ -434,15 +586,18 @@ def _show_session(
         LIMIT ?
         """,
         (session_id, limit),
-    ).fetchall()
-    if len(rows) > budget.limits.transcript_records:
-        raise DiagnosticError.limit_exceeded()
+    )
     turns: list[Turn] = []
     warnings: list[str] = []
     seen_seq: set[int] = set()
     total_bytes = 0
+    decoded: list[Mapping[str, Any]] = []
     turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
-    for seq, event_json, _created in rows:
+    row_count = 0
+    for seq, event_json, _created in cursor:
+        row_count += 1
+        if row_count > budget.limits.transcript_records:
+            raise DiagnosticError.limit_exceeded()
         if not isinstance(seq, int):
             raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
         if seq in seen_seq:
@@ -450,16 +605,25 @@ def _show_session(
         seen_seq.add(seq)
         if not isinstance(event_json, str):
             raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
-        total_bytes += len(event_json.encode("utf-8"))
+        encoded = event_json.encode("utf-8")
+        if len(encoded) > budget.limits.record_bytes:
+            raise DiagnosticError.limit_exceeded()
+        total_bytes += len(encoded)
         if total_bytes > budget.limits.source_read_bytes:
             raise DiagnosticError.limit_exceeded()
-        if len(event_json.encode("utf-8")) > budget.limits.record_bytes:
-            raise DiagnosticError.limit_exceeded()
         event = _decode_event(event_json)
-        kind = event["type"]
-        if kind in {"compaction", "branch_summary", "custom", "session"}:
+        if event["type"] in {"branch_summary", "custom", "session"}:
             continue
-        if kind in {"message", "custom_message"}:
+        decoded.append(event)
+
+    for event in _active_branch_events(decoded):
+        kind = event["type"]
+        if kind == "compaction":
+            text = _message_text(event)
+            if text is None:
+                continue
+            raw = {"role": "assistant", "content": text}
+        elif kind in {"message", "custom_message"}:
             role = event.get("role")
             if role not in {"user", "assistant", "tool"}:
                 continue
@@ -467,18 +631,17 @@ def _show_session(
             if text is None:
                 continue
             raw = {"role": role, "content": text}
-            turn, turn_warnings = sanitize_turn_record(
-                raw,
-                ordinal=len(turns),
-                bounds=turn_bounds,
-            )
-            warnings.extend(turn_warnings)
-            if turn is not None:
-                budget.consume_turns()
-                turns.append(turn)
+        else:
             continue
-        # Unknown event families: skip without inventing content.
-        continue
+        turn, turn_warnings = sanitize_turn_record(
+            raw,
+            ordinal=len(turns),
+            bounds=turn_bounds,
+        )
+        warnings.extend(turn_warnings)
+        if turn is not None:
+            budget.consume_turns()
+            turns.append(turn)
 
     last_user = next((turn.content for turn in reversed(turns) if turn.role == "user"), None)
     last_assistant = next(
@@ -572,26 +735,30 @@ class OpenClawAdapter:
             try:
                 with _open_connection(database, root, budget) as connection:
                     _require_schema(connection, expected_agent=agent_id)
-                    items = _list_nodes(
-                        connection,
-                        agent_id=agent_id,
-                        database=database,
-                        query=list_query,
-                        include_internal=include_internal,
-                    )
+                    if session_filter is not None:
+                        # Exact refs bypass listed_sessions prefix (Codex P1).
+                        items = _exact_session_summaries(
+                            connection,
+                            agent_id=agent_id,
+                            database=database,
+                            session_filter=session_filter,
+                            query=list_query,
+                        )
+                    else:
+                        items = _list_nodes(
+                            connection,
+                            agent_id=agent_id,
+                            database=database,
+                            query=list_query,
+                            include_internal=include_internal,
+                        )
                 any_supported = True
             except DiagnosticError as error:
                 if error.code == "E_UNSUPPORTED_FORMAT":
                     continue
                 raise
-            if session_filter is not None:
-                for item in items:
-                    native = item.session_id.split(":", 1)[-1]
-                    if item.session_id == _composite_id(agent_id, session_filter) or native == session_filter:
-                        values.append(item)
-            else:
-                values.extend(items)
-            if len(values) >= DEFAULT_BOUNDS.listed_sessions:
+            values.extend(items)
+            if session_filter is None and len(values) >= DEFAULT_BOUNDS.listed_sessions:
                 break
         if not values and not any_supported and _agent_db_paths(root):
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
@@ -599,6 +766,8 @@ class OpenClawAdapter:
             key=lambda item: (item.updated_at is None, item.updated_at or "", item.session_id),
             reverse=True,
         )
+        if session_filter is not None:
+            return values
         return values[: DEFAULT_BOUNDS.listed_sessions]
 
     def show(self, ref: ResolvedRef, query: Query, budget: ReadBudget) -> Session:

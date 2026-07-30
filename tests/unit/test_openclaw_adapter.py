@@ -73,10 +73,23 @@ class OpenClawAdapterTests(unittest.TestCase):
         self.assertEqual([item.session_id for item in summaries], ["main:sess-compact-reset"])
         session = ADAPTER.show(ResolvedRef.from_summary(summaries[0]), current, ReadBudget())
         contents = [turn.content for turn in session.turns]
-        self.assertEqual(contents, ["Long thread before compaction", "Post-reset assistant line"])
+        # Compaction summary is inert recovered context on the active window.
+        self.assertEqual(
+            contents,
+            [
+                "Long thread before compaction",
+                "Synthetic compaction kept first message",
+                "Post-reset assistant line",
+            ],
+        )
         combined = " ".join(contents)
         self.assertNotIn("side-task", combined)
-        self.assertNotIn("Synthetic compaction", combined)
+
+    def test_exact_historical_window_id_is_selectable(self) -> None:
+        root = fixture_root("s-oc-03-compaction-reset")
+        current = query(root, ref="main:sess-compact-initial")
+        summaries = ADAPTER.list(current, ReadBudget())
+        self.assertEqual([item.session_id for item in summaries], ["main:sess-compact-initial"])
 
     def test_internal_and_cron_hidden_unless_exact(self) -> None:
         root = fixture_root("s-oc-04-internal-filter")
