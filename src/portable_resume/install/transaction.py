@@ -1136,11 +1136,27 @@ def _unlink_regular_under_root_fd(
             finally:
                 os.close(fd)
             if digest != expected_sha256:
+                # Only restore quarantine when basename is still free. If a
+                # concurrent writer created a new leaf under the original name,
+                # leave both entries (do not clobber the new leaf).
                 try:
-                    os.rename(quarantine, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-                    restored = True
-                except OSError as error:
-                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                    os.lstat(basename, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    try:
+                        os.rename(
+                            quarantine,
+                            basename,
+                            src_dir_fd=parent_fd,
+                            dst_dir_fd=parent_fd,
+                        )
+                        restored = True
+                    except OSError as error:
+                        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                else:
+                    try:
+                        os.unlink(quarantine, dir_fd=parent_fd)
+                    except OSError:
+                        pass
                 return False
             try:
                 os.unlink(quarantine, dir_fd=parent_fd)
@@ -1150,9 +1166,22 @@ def _unlink_regular_under_root_fd(
         except Exception:
             if not restored:
                 try:
-                    os.rename(quarantine, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-                except OSError:
-                    pass
+                    os.lstat(basename, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    try:
+                        os.rename(
+                            quarantine,
+                            basename,
+                            src_dir_fd=parent_fd,
+                            dst_dir_fd=parent_fd,
+                        )
+                    except OSError:
+                        pass
+                else:
+                    try:
+                        os.unlink(quarantine, dir_fd=parent_fd)
+                    except OSError:
+                        pass
             raise
     finally:
         if owns_parent:
