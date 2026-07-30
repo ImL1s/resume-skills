@@ -581,65 +581,96 @@ def _migrate_v1_control_state(root: str) -> dict[str, Any]:
 
     moved: list[str] = []
 
-    def _rename_control(src: str, dst: str, label: str) -> None:
-        if not os.path.lexists(src):
-            return
-        if os.path.lexists(dst):
-            raise DiagnosticError("E_INSTALL_CONFLICT")
-        try:
-            st = os.lstat(src)
-        except OSError as error:
-            raise DiagnosticError("E_INSTALL_CONFLICT") from error
-        if stat_mod.S_ISLNK(st.st_mode):
-            raise DiagnosticError("E_INSTALL_CONFLICT")
-        try:
-            os.rename(src, dst)
-        except OSError as error:
-            raise DiagnosticError("E_INSTALL_CONFLICT") from error
-        moved.append(label)
-
-    # Regular control files (order: lock last so flock holders keep the inode).
-    for name in (MANIFEST_NAME, JOURNAL_NAME, LOCK_NAME):
-        _rename_control(
-            os.path.join(support, name),
-            os.path.join(state, name),
-            name,
-        )
-
-    # backups/ directory
-    legacy_backups = os.path.join(support, BACKUP_DIR)
-    new_backups = os.path.join(state, BACKUP_DIR)
-    if os.path.lexists(legacy_backups):
-        if os.path.lexists(new_backups):
-            raise DiagnosticError("E_INSTALL_CONFLICT")
-        try:
-            st = os.lstat(legacy_backups)
-        except OSError as error:
-            raise DiagnosticError("E_INSTALL_CONFLICT") from error
-        if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISDIR(st.st_mode):
-            raise DiagnosticError("E_INSTALL_CONFLICT")
-        try:
-            os.rename(legacy_backups, new_backups)
-        except OSError as error:
-            raise DiagnosticError("E_INSTALL_CONFLICT") from error
-        moved.append(BACKUP_DIR)
-
-    # Stage trees that lived as direct children of support.
+    # Prefer descriptor-relative renames so a post-open support/.state symlink
+    # swap cannot redirect migration outside the skill root (#33 Codex P1).
+    use_dirfd = _supports_descriptor_relative_commit()
+    root_fd: int | None = None
+    support_fd: int | None = None
+    state_fd: int | None = None
     try:
-        names = os.listdir(support)
-    except OSError:
-        names = []
-    for name in names:
-        if not name.startswith(STAGE_PREFIX):
-            continue
-        _rename_control(
-            os.path.join(support, name),
-            os.path.join(state, name),
-            name,
-        )
+        if use_dirfd:
+            root_fd = _open_skill_root_descriptor(root)
+            support_fd, state_fd = _open_control_parent_fd(root_fd)
 
-    if moved:
-        _rewrite_journal_paths_after_migration(root, support=support, state=state)
+        def _rename_child(name: str, *, require_dir: bool = False) -> bool:
+            """Rename support/*name* → state/*name*. Return True if moved."""
+
+            if use_dirfd and support_fd is not None and state_fd is not None:
+                try:
+                    st = os.lstat(name, dir_fd=support_fd)
+                except FileNotFoundError:
+                    return False
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                if stat_mod.S_ISLNK(st.st_mode):
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                if require_dir and not stat_mod.S_ISDIR(st.st_mode):
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                if not require_dir and not stat_mod.S_ISREG(st.st_mode) and not stat_mod.S_ISDIR(
+                    st.st_mode
+                ):
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                try:
+                    os.lstat(name, dir_fd=state_fd)
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                try:
+                    os.rename(name, name, src_dir_fd=support_fd, dst_dir_fd=state_fd)
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                return True
+
+            src = os.path.join(support, name)
+            dst = os.path.join(state, name)
+            if not os.path.lexists(src):
+                return False
+            if os.path.lexists(dst):
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            try:
+                st = os.lstat(src)
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            if stat_mod.S_ISLNK(st.st_mode):
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            if require_dir and not stat_mod.S_ISDIR(st.st_mode):
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            try:
+                os.rename(src, dst)
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            return True
+
+        # Regular control files (order: lock last so flock holders keep the inode).
+        for name in (MANIFEST_NAME, JOURNAL_NAME, LOCK_NAME):
+            if _rename_child(name, require_dir=False):
+                moved.append(name)
+
+        if _rename_child(BACKUP_DIR, require_dir=True):
+            moved.append(BACKUP_DIR)
+
+        # Stage trees that lived as direct children of support.
+        try:
+            names = os.listdir(support)
+        except OSError:
+            names = []
+        for name in names:
+            if not name.startswith(STAGE_PREFIX):
+                continue
+            if _rename_child(name, require_dir=True):
+                moved.append(name)
+    finally:
+        if state_fd is not None:
+            os.close(state_fd)
+        if support_fd is not None:
+            os.close(support_fd)
+        if root_fd is not None:
+            os.close(root_fd)
+
+    # Always attempt journal path rewrite: a prior crash may have moved trees
+    # already while leaving absolute legacy paths in the journal body.
+    _rewrite_journal_paths_after_migration(root, support=support, state=state)
 
     return {
         "migrated": bool(moved),
