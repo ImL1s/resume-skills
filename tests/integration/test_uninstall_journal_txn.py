@@ -229,6 +229,59 @@ class UninstallJournalTransactionTests(unittest.TestCase):
             verify_root(self.root)
         self.assertEqual(ctx.exception.code, "E_RECOVERY_REQUIRED")
 
+    def test_verify_never_installed_root_is_pure(self) -> None:
+        empty = Path(self._tmpdir.name) / "empty-skills"
+        empty.mkdir()
+        with self.assertRaises(DiagnosticError) as ctx:
+            verify_root(str(empty))
+        self.assertEqual(ctx.exception.code, "E_VERIFY_MISMATCH")
+        self.assertFalse((empty / SUPPORT_DIR).exists())
+
+    def test_post_snapshot_drift_is_retained_not_overwritten_on_rollback(self) -> None:
+        self._install()
+        skill = Path(self.root) / "resume-claude" / "SKILL.md"
+        original = skill.read_bytes()
+        user_edit = original + b"\n# concurrent-user-edit\n"
+        orig_unlink = transaction_module._unlink_regular_under_root_fd
+
+        def unlink_then_drift(root_fd, rel, *, expected_sha256=None):
+            if rel == "resume-claude/SKILL.md":
+                # Simulate concurrent edit after stage snapshot: digest no longer matches.
+                skill.write_bytes(user_edit)
+                return False
+            return orig_unlink(root_fd, rel, expected_sha256=expected_sha256)
+
+        with mock.patch.object(
+            transaction_module,
+            "_unlink_regular_under_root_fd",
+            side_effect=unlink_then_drift,
+        ):
+            # Force a later failure after SKILL.md was classified retained.
+            real_write = transaction_module._write_journal
+            writes = {"n": 0}
+
+            def write_then_fail(root, journal):
+                writes["n"] += 1
+                real_write(root, journal)
+                # After committing path updates include a retained entry, fail.
+                paths = journal.get("paths") or {}
+                if journal.get("state") == "committing" and any(
+                    isinstance(m, dict) and m.get("state") == "retained" for m in paths.values()
+                ):
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+
+            with mock.patch.object(
+                transaction_module,
+                "_write_journal",
+                side_effect=write_then_fail,
+            ):
+                with self.assertRaises(DiagnosticError) as ctx:
+                    uninstall_claim(host="claude", scope="project", root=self.root)
+        self.assertEqual(ctx.exception.code, "E_INSTALL_CONFLICT")
+        # User edit must survive rollback of the incomplete uninstall.
+        self.assertTrue(skill.is_file())
+        self.assertEqual(skill.read_bytes(), user_edit)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2025,6 +2025,10 @@ def _rollback_paths(root: str, journal: dict[str, Any]) -> tuple[int, bool]:
                 # Ignore unusable journal path keys (e.g. ``../escape``) so recovery is not
                 # stuck forever on entries that can never be applied under the root.
                 continue
+            # Retained/skipped paths must not be rewritten from stage snapshots
+            # (post-snapshot drift / shared-claim policy).
+            if isinstance(meta, dict) and meta.get("state") in {"retained", "skipped"}:
+                continue
             rollback_backup = meta.get("rollback_backup") or meta.get("backup")
             if rollback_backup:
                 if not isinstance(rollback_backup, str) or not _path_within_support(root, rollback_backup):
@@ -2207,11 +2211,13 @@ def recover_root(root: str) -> dict[str, Any]:
 def verify_root(root: str, *, claim: str | None = None) -> dict[str, Any]:
     """Observe one coherent ownership generation.
 
-    On POSIX, take the exclusive root lock so a cooperating install/uninstall/
-    recover cannot interleave mid-hash. Windows residual (#29): observational
+    On POSIX, when an ownership support tree already exists, take the exclusive
+    root lock so a cooperating install/uninstall/recover cannot interleave
+    mid-hash. Do not create support/lock paths for roots that were never
+    installed (stay observationally pure). Windows residual (#29): observational
     verify without exclusive locking (mutating install already fails closed).
     """
-    if os.name != "nt":
+    if os.name != "nt" and os.path.isdir(os.path.join(root, SUPPORT_DIR)):
         with RootLock(root):
             return _verify_root_locked(root, claim=claim)
     return _verify_root_locked(root, claim=claim)
@@ -2444,18 +2450,31 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
                 if not _is_hex_sha256(expected_sha):
                     raise DiagnosticError("E_INSTALL_CONFLICT")
                 try:
-                    if _unlink_regular_under_root_fd(
+                    unlinked = _unlink_regular_under_root_fd(
                         pin_root_fd,
                         rel,
                         expected_sha256=str(expected_sha),
-                    ):
+                    )
+                except DiagnosticError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                if unlinked:
+                    removed.append(rel)
+                    meta["state"] = "removed"
+                else:
+                    # False means missing *or* post-snapshot digest drift.
+                    # Never treat live drifted content as removed: rollback must
+                    # not overwrite concurrent user edits with the stage snapshot.
+                    try:
+                        _sha256_regular_under_root_fd(pin_root_fd, rel)
+                    except DiagnosticError:
+                        # Leaf/parent gone after snapshot — already removed.
                         removed.append(rel)
                         meta["state"] = "removed"
                     else:
-                        # Missing after snapshot counts as already removed.
-                        meta["state"] = "removed"
-                except DiagnosticError as error:
-                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                        meta["state"] = "retained"
+                        meta.pop("rollback_backup", None)
+                        meta.pop("original_sha256", None)
+                        retained_drift.append(rel)
                 journal["paths"][rel] = meta
                 _write_journal(root, journal)
 
