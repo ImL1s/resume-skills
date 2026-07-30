@@ -1050,8 +1050,17 @@ def _replace_under_root_from_support_path(
     rel: str,
     support_src: str,
     expected_sha256: str | None = None,
-) -> None:
-    """Atomically replace payload ``rel`` from an authorized path under ``.portable-resume``."""
+    if_absent: bool = False,
+) -> bool:
+    """Place payload ``rel`` from an authorized path under ``.portable-resume``.
+
+    Returns True when a payload leaf was written/replaced.
+
+    * ``if_absent=False`` (install recovery): ``os.replace`` snapshot → dest.
+    * ``if_absent=True`` (uninstall recovery): exclusive-create the destination
+      from snapshot bytes; return False when a live leaf already exists so
+      concurrent edits / unreadable leaves are never overwritten.
+    """
     if not _path_within_support(root, support_src):
         raise DiagnosticError("E_RECOVERY_REQUIRED")
     if expected_sha256 is not None and not _is_hex_sha256(expected_sha256):
@@ -1070,7 +1079,6 @@ def _replace_under_root_from_support_path(
     dst_parent_fd: int | None = None
     owns_dst_parent = False
     try:
-        # Open source parent under support without following symlinks.
         if len(src_parts) == 1:
             src_parent_fd = support_fd
             src_basename = src_parts[0]
@@ -1078,16 +1086,28 @@ def _replace_under_root_from_support_path(
             src_parent_rel = "/".join(src_parts[:-1])
             src_parent_fd = _open_directory_under_root(support_fd, src_parent_rel)
             src_basename = src_parts[-1]
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+        read_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         try:
-            src_fd = os.open(src_basename, flags, dir_fd=src_parent_fd)
+            src_fd = os.open(src_basename, read_flags, dir_fd=src_parent_fd)
         except OSError as error:
             raise DiagnosticError("E_RECOVERY_REQUIRED") from error
         try:
             st = os.fstat(src_fd)
             if not stat_mod.S_ISREG(st.st_mode):
                 raise DiagnosticError("E_RECOVERY_REQUIRED")
-            if expected_sha256 is not None:
+            snap_mode = stat_mod.S_IMODE(st.st_mode) or 0o644
+            if if_absent:
+                chunks: list[bytes] = []
+                while True:
+                    chunk = os.read(src_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                body = b"".join(chunks)
+                if expected_sha256 is not None and sha256_bytes(body) != expected_sha256:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+            elif expected_sha256 is not None:
                 if _sha256_open_fd(src_fd) != expected_sha256:
                     raise DiagnosticError("E_RECOVERY_REQUIRED")
         finally:
@@ -1096,6 +1116,35 @@ def _replace_under_root_from_support_path(
         dst_parent_fd, dst_basename, owns_dst_parent = _open_parent_under_root_fd(
             root_fd, rel, create=True
         )
+        if if_absent:
+            excl = (
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            try:
+                out_fd = os.open(dst_basename, excl, snap_mode, dir_fd=dst_parent_fd)
+            except FileExistsError:
+                return False
+            except OSError as error:
+                if getattr(error, "errno", None) == getattr(os, "EEXIST", object()):
+                    return False
+                raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+            try:
+                view = memoryview(body)
+                while view:
+                    written = os.write(out_fd, view)
+                    view = view[written:]
+                try:
+                    os.fchmod(out_fd, snap_mode)
+                except OSError:
+                    pass
+            finally:
+                os.close(out_fd)
+            return True
+
         try:
             os.replace(
                 src_basename,
@@ -1105,6 +1154,7 @@ def _replace_under_root_from_support_path(
             )
         except OSError as error:
             raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        return True
     finally:
         if owns_dst_parent and dst_parent_fd is not None:
             os.close(dst_parent_fd)
@@ -2039,28 +2089,22 @@ def _rollback_paths(root: str, journal: dict[str, Any]) -> tuple[int, bool]:
                 if not _is_hex_sha256(original_sha):
                     complete = False
                     continue
-                # Uninstall snapshots protect sole-claim deletes. If the live leaf still
-                # exists and no longer matches the snapshotted digest (concurrent edit
-                # after staging, or crash before unlink), never overwrite that content.
-                # Install rollback intentionally restores originals over staged payloads.
-                if operation == "uninstall":
-                    try:
-                        live_sha = _sha256_regular_under_root_fd(root_fd, safe)
-                    except DiagnosticError:
-                        live_sha = None
-                    if live_sha is not None:
-                        # Present: preserve whatever is there (original or drifted).
-                        continue
                 if os.path.isfile(rollback_backup) and not os.path.islink(rollback_backup):
                     try:
-                        _replace_under_root_from_support_path(
+                        # Uninstall: exclusive-create only (never overwrite a live leaf,
+                        # including unreadable mode-000 / concurrent edits). Install:
+                        # replace is intentional to restore pre-commit originals.
+                        wrote = _replace_under_root_from_support_path(
                             root=root,
                             root_fd=root_fd,
                             rel=safe,
                             support_src=rollback_backup,
                             expected_sha256=str(original_sha),
+                            if_absent=(operation == "uninstall"),
                         )
-                        restored += 1
+                        if wrote:
+                            restored += 1
+                        # if_absent and live leaf present → preserved; still complete.
                         continue
                     except DiagnosticError:
                         complete = False

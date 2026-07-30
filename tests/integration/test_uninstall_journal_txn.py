@@ -278,6 +278,52 @@ class UninstallJournalTransactionTests(unittest.TestCase):
         self.assertTrue(skill.is_file())
         self.assertEqual(skill.read_bytes(), user_edit)
 
+    def test_uninstall_rollback_preserves_unreadable_live_leaf(self) -> None:
+        """Mode-000 live leaves must not be treated as missing and overwritten."""
+        self._install()
+        claim = next(iter(load_manifest(self.root).claims))
+        skill = Path(self.root) / "resume-claude" / "SKILL.md"
+        original = skill.read_bytes()
+        digest = sha256_file(str(skill))
+        stage = Path(self.root) / SUPPORT_DIR / f"{STAGE_PREFIX}sim-mode000"
+        rollback = stage / ".rollback" / "resume-claude"
+        rollback.mkdir(parents=True)
+        snap = rollback / "SKILL.md"
+        snap.write_bytes(original)
+        # Keep live original content but make it unreadable to the process.
+        # O_EXCL restore must still refuse to overwrite the existing leaf.
+        skill.write_bytes(original)
+        skill.chmod(0o000)
+        try:
+            _write_journal(
+                self.root,
+                {
+                    "schema_version": "portable-resume/install-journal-v1",
+                    "state": "committing",
+                    "generation": 1,
+                    "target_generation": 2,
+                    "claim": claim,
+                    "stage_dir": str(stage),
+                    "backup_root": None,
+                    "operation": "uninstall",
+                    "paths": {
+                        "resume-claude/SKILL.md": {
+                            "state": "pending",
+                            "existed": True,
+                            "rollback_backup": str(snap),
+                            "original_sha256": digest,
+                            "sha256": digest,
+                        }
+                    },
+                },
+            )
+            recovered = recover_root(self.root)
+            self.assertTrue(recovered["ok"])
+        finally:
+            skill.chmod(0o644)
+        self.assertTrue(skill.is_file())
+        self.assertEqual(skill.read_bytes(), original)
+
     def test_post_snapshot_drift_is_retained_not_overwritten_on_rollback(self) -> None:
         self._install()
         skill = Path(self.root) / "resume-claude" / "SKILL.md"
