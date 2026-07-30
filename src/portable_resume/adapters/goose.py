@@ -241,13 +241,43 @@ def _row_summary(
     )
 
 
+def _session_has_extractable_turn(connection: sqlite3.Connection, session_id: str) -> bool:
+    """True when at least one public message yields non-empty text after decode."""
+
+    rows = connection.execute(
+        """
+        SELECT role, content_json
+        FROM messages
+        WHERE session_id = ?
+          AND role IN ('user', 'assistant', 'tool', 'toolResult', 'tool_result', 'function')
+        ORDER BY id ASC
+        LIMIT 64
+        """,
+        (session_id,),
+    )
+    for role, content_json in rows:
+        if not isinstance(role, str) or not isinstance(content_json, str):
+            continue
+        try:
+            text = _content_text(content_json)
+        except DiagnosticError:
+            continue
+        if text is not None and text.strip():
+            return True
+    return False
+
+
 def _list_sessions(
     connection: sqlite3.Connection,
     *,
     database: str,
     query: Query,
     exact_id: str | None,
+    budget: ReadBudget,
 ) -> list[SessionSummary]:
+    scan_limit = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
+    list_limit = min(budget.limits.listed_sessions, DEFAULT_BOUNDS.listed_sessions)
+
     def _fetch_exact(session_key: str) -> list[tuple]:
         return connection.execute(
             """
@@ -260,7 +290,7 @@ def _list_sessions(
         ).fetchall()
 
     def _fetch_normal() -> list[tuple]:
-        limit = DEFAULT_BOUNDS.scanned_records + 1
+        limit = scan_limit + 1
         rows = connection.execute(
             """
             SELECT id, name, session_type, working_dir, created_at, updated_at, archived_at
@@ -271,17 +301,13 @@ def _list_sessions(
                 SELECT 1 FROM messages m
                 WHERE m.session_id = sessions.id
                   AND m.role IN ('user', 'assistant', 'tool')
-                  AND (
-                    m.content_json LIKE '%"text"%'
-                    OR m.content_json LIKE '%"content"%'
-                  )
               )
             ORDER BY updated_at DESC, id ASC
             LIMIT ?
             """,
             (limit,),
         ).fetchall()
-        if len(rows) > DEFAULT_BOUNDS.scanned_records:
+        if len(rows) > scan_limit:
             raise DiagnosticError.limit_exceeded()
         return rows
 
@@ -305,6 +331,8 @@ def _list_sessions(
                 continue
             if isinstance(session_type, str) and session_type in _DEFAULT_EXCLUDE_TYPES:
                 continue
+            if not _session_has_extractable_turn(connection, session_id):
+                continue
         item = _row_summary(
             database=database,
             session_id=session_id,
@@ -317,7 +345,8 @@ def _list_sessions(
         )
         if item is not None:
             values.append(item)
-            if exact_id is None and len(values) >= DEFAULT_BOUNDS.listed_sessions:
+            budget.consume_records()
+            if exact_id is None and len(values) >= list_limit:
                 break
     return values
 
@@ -506,6 +535,7 @@ class GooseAdapter:
                 database=database,
                 query=list_query,
                 exact_id=exact,
+                budget=budget,
             )
         values.sort(key=lambda item: item.session_id)
         values.sort(key=lambda item: item.updated_at or "", reverse=True)
