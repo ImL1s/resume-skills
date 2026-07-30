@@ -11,6 +11,7 @@ from typing import Any, Sequence
 from .. import __version__
 from ..diagnostics import DiagnosticError, SOURCE_KEYS, emit_diagnostic
 from .catalog import HOST_KEYS, hosts_report, resolve_skill_root
+from .discovery import audit_host_report, require_no_blocking_shadow, scan_skill_duplicates
 from .manifest import claim_key
 from .render import materialize_plan, package_identity
 from .transaction import (
@@ -81,6 +82,17 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("recover")
     r.add_argument("--root", required=True)
     r.add_argument("--json", action="store_true")
+
+    a = sub.add_parser(
+        "audit-host",
+        help="read-only scan for duplicate/shadow Portable Resume Skills (#34)",
+    )
+    a.add_argument("--host", required=True, help="host key (not 'all')")
+    a.add_argument("--scope", choices=("project", "global"), required=True)
+    a.add_argument("--project", default=None, help="project dir for project scope / alt roots")
+    a.add_argument("--root", help="explicit skill root override")
+    a.add_argument("--home", default=os.path.expanduser("~"))
+    a.add_argument("--json", action="store_true")
 
     return parser
 
@@ -195,6 +207,20 @@ def run(argv: Sequence[str] | None = None) -> int:
             result = recover_root(ns.root)
             _print(result, as_json=bool(ns.json) or True)
             return 0
+        if ns.command == "audit-host":
+            if ns.host == "all" or ns.host not in HOST_KEYS:
+                raise DiagnosticError.invalid()
+            if ns.scope == "project" and not ns.project and not ns.root:
+                raise DiagnosticError.invalid()
+            report = audit_host_report(
+                host=ns.host,
+                scope=ns.scope,
+                project_dir=ns.project,
+                home_dir=ns.home,
+                root=ns.root,
+            )
+            _print(report, as_json=True)
+            return 0 if report.get("ok", True) else 6
         hosts = _hosts(ns.host)
         targets = [
             (host, _root_for(host, ns.scope, ns.project, ns.home, ns.root))
@@ -203,6 +229,20 @@ def run(argv: Sequence[str] | None = None) -> int:
         results = []
         if ns.command == "install":
             _reject_divergent_shared_roots(targets)
+            # #34: fail closed on known higher-precedence divergent shadows
+            # before any mutation (and report scan on dry-run).
+            project_for_scan = ns.project
+            if ns.scope == "project" and not project_for_scan and not ns.root:
+                raise DiagnosticError.invalid()
+            discovery_by_host: dict[str, dict[str, Any]] = {}
+            for host, root in targets:
+                discovery_by_host[host] = require_no_blocking_shadow(
+                    host=host,
+                    selected_root=root,
+                    project_dir=project_for_scan,
+                    home_dir=ns.home,
+                    selected_scope=ns.scope,
+                )
             # Multi-root: lock all unique physical roots first, then replan /
             # checkpoint / mutate / compensate under those locks (#23).
             # Single-root path still uses execute_install directly for dry-run
@@ -229,11 +269,44 @@ def run(argv: Sequence[str] | None = None) -> int:
                     dry_run=False,
                     force_with_backup=ns.force_with_backup,
                 )
+            # Attach discovery scan to install results (warn-level alts stay ok).
+            if len(results) == 1:
+                host0 = targets[0][0]
+                results[0] = {
+                    **results[0],
+                    "discovery": discovery_by_host[host0],
+                }
+            else:
+                for idx, (host, _root) in enumerate(targets):
+                    if idx < len(results) and isinstance(results[idx], dict):
+                        results[idx] = {
+                            **results[idx],
+                            "discovery": discovery_by_host[host],
+                        }
         else:
             for host, root in targets:
                 if ns.command == "verify":
                     claim = claim_key(host=host, scope=ns.scope, root=root)
-                    results.append(verify_root(root, claim=claim))
+                    verified = verify_root(root, claim=claim)
+                    # Observational discovery attachment (#34); never mutates.
+                    discovery = scan_skill_duplicates(
+                        host=host,
+                        selected_root=root,
+                        project_dir=ns.project,
+                        home_dir=ns.home,
+                        selected_scope=ns.scope,
+                    )
+                    verified = {
+                        **verified,
+                        "discovery": {
+                            "aggregate_status": discovery["aggregate_status"],
+                            "aggregate_policy": discovery["aggregate_policy"],
+                            "blocking_count": discovery["blocking_count"],
+                            "warning_count": discovery["warning_count"],
+                            "findings": discovery["findings"],
+                        },
+                    }
+                    results.append(verified)
                 elif ns.command == "uninstall":
                     results.append(
                         uninstall_claim(host=host, scope=ns.scope, root=root, dry_run=ns.dry_run)

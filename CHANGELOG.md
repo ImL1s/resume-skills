@@ -12,6 +12,15 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Discovery duplicate/shadow scan (#34): each host has executable
+  `DiscoveryRoot` policy (primary + known alternates); `install` fails closed
+  with `E_INSTALL_SHADOW` when a higher-precedence root holds a divergent
+  `resume-*` Skill; equal-tier / unknown-precedence copies warn; identical
+  payloads and same-physical shared roots allow. New read-only
+  `install-resume-skills audit-host`; `verify` attaches a discovery report;
+  `hosts --json` emits `discovery_roots`. Foreign roots stay read-only;
+  no automatic delete. Residual: plugin tree wildcards, host-native
+  activation provenance, versioned precedence evidence (#27).
 - Collect-free `stable_scan_lines` (#10 residual): verified attempts spool lines
   (RAM spill to disk) and replay after fingerprint checks instead of retaining a
   full `list[ScannedLine]`. Mid-attempt output is still never exposed. Zstd
