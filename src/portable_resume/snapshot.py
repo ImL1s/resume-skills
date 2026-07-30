@@ -7,9 +7,10 @@ import hashlib
 import os
 import sqlite3
 import stat
+import struct
 import tempfile
 from dataclasses import dataclass
-from typing import Callable, Iterator
+from typing import BinaryIO, Callable, Iterator
 from urllib.parse import quote
 
 from .bounds import DEFAULT_BOUNDS, Bounds, ReadBudget
@@ -323,22 +324,75 @@ def stable_read_bytes(
     raise DiagnosticError.source_busy(attempts=attempts, family=family)
 
 
+# Length-prefixed spool records for verified-attempt line replay (#10).
+# Layout per line: >I (ordinal) >Q (byte_offset) >B (flags) >I (text_len) + utf-8
+_SPOOL_HEADER = struct.Struct(">IQBI")
+_SPOOL_FLAG_TERMINATED = 0x01
+_SPOOL_FLAG_UTF8_VALID = 0x02
+# Spill to disk above this so multi-MiB transcripts are not one big list[ScannedLine].
+_SPOOL_RAM_CAP = 256 * 1024
+
+
+def _spool_write_line(spool: BinaryIO, line: ScannedLine) -> None:
+    text_b = line.text.encode("utf-8")
+    flags = 0
+    if line.terminated:
+        flags |= _SPOOL_FLAG_TERMINATED
+    if line.utf8_valid:
+        flags |= _SPOOL_FLAG_UTF8_VALID
+    spool.write(
+        _SPOOL_HEADER.pack(line.ordinal, line.byte_offset, flags, len(text_b))
+    )
+    spool.write(text_b)
+
+
+def _spool_iter_lines(spool: BinaryIO) -> Iterator[ScannedLine]:
+    header_size = _SPOOL_HEADER.size
+    while True:
+        header = spool.read(header_size)
+        if not header:
+            return
+        if len(header) != header_size:
+            raise DiagnosticError("E_INVARIANT")
+        ordinal, byte_offset, flags, text_len = _SPOOL_HEADER.unpack(header)
+        text_b = spool.read(text_len)
+        if len(text_b) != text_len:
+            raise DiagnosticError("E_INVARIANT")
+        try:
+            text = text_b.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise DiagnosticError("E_INVARIANT") from error
+        yield ScannedLine(
+            ordinal=ordinal,
+            text=text,
+            byte_offset=byte_offset,
+            terminated=bool(flags & _SPOOL_FLAG_TERMINATED),
+            utf8_valid=bool(flags & _SPOOL_FLAG_UTF8_VALID),
+        )
+
+
 def _collect_scanned_lines(
     descriptor: int,
     *,
     max_line_bytes: int,
     budget: ReadBudget | None,
     charge_transcript: bool,
-) -> tuple[list[ScannedLine], int, int, str]:
+    spool: BinaryIO | None = None,
+) -> tuple[list[ScannedLine] | None, int, int, str]:
     """Stream lines from an open descriptor.
 
     Newline-terminated records set ``terminated=True``. A final buffer without a
     trailing newline is emitted with ``terminated=False`` when within bounds.
+
+    When ``spool`` is provided, lines are written there (collect-free path for
+    ``stable_scan_lines``) and the returned list is ``None``. Otherwise lines are
+    collected into a list (unit-test / compatibility path).
     """
 
     buffer = bytearray()
     absolute_offset = 0
-    collected: list[ScannedLine] = []
+    collected: list[ScannedLine] | None = None if spool is not None else []
+    line_ordinal = 0
     pending_bytes = 0
     pending_records = 0
     chunk_size = 64 * 1024
@@ -373,6 +427,15 @@ def _collect_scanned_lines(
         if effective_len > max_line_bytes:
             raise DiagnosticError.limit_exceeded()
 
+    def emit(line: ScannedLine) -> None:
+        nonlocal line_ordinal
+        if spool is not None:
+            _spool_write_line(spool, line)
+        else:
+            assert collected is not None
+            collected.append(line)
+        line_ordinal += 1
+
     def drain_complete_lines() -> None:
         nonlocal absolute_offset, pending_records
         while True:
@@ -395,9 +458,9 @@ def _collect_scanned_lines(
                 text = payload.decode("utf-8")
             except UnicodeDecodeError as error:
                 raise DiagnosticError("E_CORRUPT_RECORD") from error
-            collected.append(
+            emit(
                 ScannedLine(
-                    ordinal=len(collected),
+                    ordinal=line_ordinal,
                     text=text,
                     byte_offset=absolute_offset,
                     terminated=True,
@@ -431,9 +494,9 @@ def _collect_scanned_lines(
                 raise DiagnosticError("E_CORRUPT_RECORD") from error
             text = bytes(buffer).decode("utf-8", errors="replace").removesuffix("\r")
             utf8_valid = False
-        collected.append(
+        emit(
             ScannedLine(
-                ordinal=len(collected),
+                ordinal=line_ordinal,
                 text=text,
                 byte_offset=absolute_offset,
                 terminated=False,
@@ -459,7 +522,10 @@ def stable_scan_lines(
     trailing newline) is emitted as one last line when within max_line_bytes.
     Caller-lowered ``Bounds`` for record_bytes, snapshot_attempts, and
     scanned_records membership are honored and clamped to DEFAULT_BOUNDS.
-    Yields from a per-attempt collected list until true streaming yield lands.
+
+    Attempt-local lines are spooled (RAM up to ``_SPOOL_RAM_CAP``, then disk)
+    and only replayed after the attempt fully verifies — never mid-attempt, and
+    without retaining a full ``list[ScannedLine]`` (#10 collect-free residual).
     """
 
     # Always bound memory: a missing caller budget still uses DEFAULT_BOUNDS.
@@ -490,6 +556,10 @@ def stable_scan_lines(
     for attempt in range(1, attempts + 1):
         before_entry = _target_entry_fingerprint(parent, basename, root=base)
         descriptor = _open_no_follow(safe, base)
+        spool: tempfile.SpooledTemporaryFile | None = None
+        verified_spool: tempfile.SpooledTemporaryFile | None = None
+        pending_bytes = 0
+        pending_records = 0
         try:
             before_stat = os.fstat(descriptor)
             if not _entry_identity_matches(before_entry, before_stat):
@@ -498,11 +568,13 @@ def stable_scan_lines(
                 raise DiagnosticError.limit_exceeded()
             if hook:
                 hook("before-read", attempt, safe)
-            collected, pending_bytes, pending_records, content_hash = _collect_scanned_lines(
+            spool = tempfile.SpooledTemporaryFile(max_size=_SPOOL_RAM_CAP, mode="w+b")
+            _list, pending_bytes, pending_records, content_hash = _collect_scanned_lines(
                 descriptor,
                 max_line_bytes=line_limit,
                 budget=effective_budget,
                 charge_transcript=charge_transcript,
+                spool=spool,
             )
             observed = _fingerprint(before_stat, content_hash)
             if hook:
@@ -521,22 +593,34 @@ def stable_scan_lines(
             )
             final_stat = os.fstat(descriptor)
             final = _fingerprint(final_stat, final_hash)
+            after_entry = _target_entry_fingerprint(parent, basename, root=base)
+            if not (
+                observed == verified == final
+                and before_entry == middle_entry == after_entry
+                and _entry_identity_matches(before_entry, before_stat)
+                and _entry_identity_matches(after_entry, final_stat)
+                and pending_bytes == verified_size == final_size == before_stat.st_size
+            ):
+                continue
+            # Hand off spool for post-close replay so the source fd is never
+            # held open while yielding to callers.
+            verified_spool = spool
+            spool = None
         finally:
             os.close(descriptor)
-        after_entry = _target_entry_fingerprint(parent, basename, root=base)
-        if (
-            observed == verified == final
-            and before_entry == middle_entry == after_entry
-            and _entry_identity_matches(before_entry, before_stat)
-            and _entry_identity_matches(after_entry, final_stat)
-            and pending_bytes == verified_size == final_size == before_stat.st_size
-        ):
+            if spool is not None:
+                spool.close()
+        if verified_spool is not None:
             effective_budget.consume_bytes(pending_bytes)
             if charge_transcript:
                 effective_budget.consume_transcript_records(pending_records)
             else:
                 effective_budget.consume_records(pending_records)
-            yield from collected
+            try:
+                verified_spool.seek(0)
+                yield from _spool_iter_lines(verified_spool)
+            finally:
+                verified_spool.close()
             return
     family = (os.path.basename(safe),)
     raise DiagnosticError.source_busy(attempts=attempts, family=family)

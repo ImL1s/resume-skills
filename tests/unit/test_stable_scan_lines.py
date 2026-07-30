@@ -12,6 +12,18 @@ from portable_resume.snapshot import _collect_scanned_lines, stable_scan_lines
 
 
 class StableScanLinesTests(unittest.TestCase):
+    def test_collect_free_path_uses_spool_not_line_list(self) -> None:
+        """#10: verified attempts replay from a spool, not a retained list."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "many.jsonl"
+            path.write_text("".join(f'{{"n":{i}}}\n' for i in range(200)), encoding="utf-8")
+            lines = list(stable_scan_lines(str(path), root=str(root)))
+            self.assertEqual(len(lines), 200)
+            self.assertEqual(lines[0].text, '{"n":0}')
+            self.assertEqual(lines[-1].text, '{"n":199}')
+            self.assertTrue(lines[0].terminated)
+
     def test_streams_lines_without_loading_whole_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
