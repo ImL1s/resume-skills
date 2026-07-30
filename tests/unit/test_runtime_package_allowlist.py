@@ -33,6 +33,7 @@ class RuntimePackageAllowlistTests(unittest.TestCase):
             "adapters/cursor_live.py",
             "adapters/grok.py",
             "adapters/kimi.py",
+            "adapters/goose.py",
             "adapters/opencode.py",
             "adapters/openclaw.py",
             "adapters/pi.py",

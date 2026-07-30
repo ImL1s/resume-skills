@@ -26,7 +26,7 @@ _REQUIRED = frozenset(
 _SLUG = re.compile(r"^[a-z0-9]+(?:[a-z0-9._-]*[a-z0-9])?$")
 _PRIVATE_PATH = re.compile(r"(?:^|[\\/])(?:Users|home)[\\/][^\\/]+", re.IGNORECASE)
 _WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:[\\/]")
-_FIXTURE_ONLY_SOURCES = frozenset({"goose"})
+_FIXTURE_ONLY_SOURCES = frozenset()
 
 
 class FixtureManifestError(ValueError):

@@ -548,6 +548,47 @@ HOST_PROFILES: dict[str, HostProfile] = {
         ),
         evidence_level="verified-filesystem",
     ),
+    "goose": HostProfile(
+        key="goose",
+        profile_id="goose-v1",
+        project_rel=".goose/skills",
+        global_rel=".config/goose/skills",
+        display_name="goose",
+        official_docs=(
+            "https://github.com/aaif-goose/goose/blob/main/documentation/docs/guides/context-engineering/using-skills.md",
+        ),
+        project_layout="<project>/.goose/skills/<name>/SKILL.md",
+        global_layout="~/.config/goose/skills/<name>/SKILL.md",
+        alternate_project_roots=(".agents/skills",),
+        alternate_global_roots=("~/.agents/skills",),
+        install_methods=(
+            "This installer: install-resume-skills install --host goose --scope project|global",
+            "Manual: copy each resume-*/ folder into .goose/skills/ or ~/.config/goose/skills/",
+        ),
+        activation_help=(
+            "Load resume-<source> from the goose skills tree. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-goose with ref latest",
+            "Use skill resume-goose with a session id",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (native session id or latest). "
+            "Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
+        ),
+        caveats=(
+            "SQLite sessions.db is the only supported source store; legacy JSONL is out of scope.",
+            "Does not invoke goose CLI/Desktop, Chat Recall, MCP, or ACP.",
+            "Native goose UI / picker activation evidence remains not-run.",
+        ),
+        evidence_notes=(
+            "goose Agent Skills docs + sessions.db schema v15 fixtures (checked 2026-07-26). "
+            "Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+    ),
 }
 
 SOURCE_TITLES = {
@@ -560,6 +601,7 @@ SOURCE_TITLES = {
     "kimi": "Kimi CLI / Kimi Code CLI",
     "pi": "Pi agent",
     "openclaw": "OpenClaw",
+    "goose": "goose",
     "qwen": "Qwen Code",
 }
 
