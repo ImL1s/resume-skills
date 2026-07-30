@@ -527,6 +527,8 @@ def _active_branch_events(decoded: list[Mapping[str, Any]]) -> list[Mapping[str,
     for index, event in enumerate(candidates):
         identifier = event.get("id")
         if isinstance(identifier, str) and identifier:
+            if identifier in by_id:
+                raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
             by_id[identifier] = event
         # Sequence position for firstKeptSeq is the event's own seq if present.
         seq = event.get("seq")
@@ -535,10 +537,11 @@ def _active_branch_events(decoded: list[Mapping[str, Any]]) -> list[Mapping[str,
         else:
             by_seq[index + 1] = event
 
+    # Leaf is the latest graph node (including branch_summary). Emitting types are
+    # preferred only when no later graph node exists; a trailing branch_summary
+    # must win so we do not select an abandoned sibling (Codex P1).
     leaf: Mapping[str, Any] | None = None
     for event in reversed(candidates):
-        if event.get("type") not in emit_types:
-            continue
         identifier = event.get("id")
         if isinstance(identifier, str) and identifier in by_id:
             leaf = event
@@ -685,6 +688,8 @@ def _show_session(
             raw = {"role": "assistant", "content": text}
         elif kind in {"message", "custom_message"}:
             role = _event_role(event)
+            if role in {"toolResult", "bashExecution", "tool_result", "function"}:
+                role = "tool"
             if role not in {"user", "assistant", "tool"}:
                 continue
             text = _message_text(event)
@@ -817,9 +822,9 @@ class OpenClawAdapter:
                 if error.code == "E_UNSUPPORTED_FORMAT":
                     continue
                 raise
-            values.extend(items)
-            if session_filter is None and len(values) >= DEFAULT_BOUNDS.listed_sessions:
-                break
+            # Bound per agent, but never stop scanning other agents before the
+            # global timestamp sort (Codex P1 multi-agent latest).
+            values.extend(items[: DEFAULT_BOUNDS.listed_sessions])
         if not values and not any_supported and _agent_db_paths(root):
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
         values.sort(
