@@ -2044,14 +2044,14 @@ def restore_install_checkpoint(
                     removed.append(rel)
                     continue
                 # False: missing after check, digest raced under quarantine, or
-                # leaf became non-regular. Only a truly absent leaf is success.
+                # leaf became non-regular. Only a truly absent leaf is success;
+                # unsafe/unopenable parents fail closed (do not treat as absent).
                 try:
                     parent_fd, basename, owns_parent = _open_parent_under_root_fd(
                         root_fd, rel, create=False
                     )
-                except DiagnosticError:
-                    # Parent gone → treat as absent.
-                    continue
+                except DiagnosticError as error:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED") from error
                 try:
                     try:
                         os.lstat(basename, dir_fd=parent_fd)
