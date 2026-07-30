@@ -329,21 +329,21 @@ class InstallerTests(unittest.TestCase):
         earlier_root = Path(self._root("claude", scope="global"))
         execute_install(plan_install(host="claude", scope="global", root=str(earlier_root)))
         before = self._file_bytes(earlier_root)
-        original_execute = install_cli_module.execute_install
+        original_execute = transaction_module.execute_install
         calls = 0
 
-        def fail_later_root(plan, *, force_with_backup=False):
+        def fail_later_root(plan, *, force_with_backup=False, lock=None):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise OSError("injected later-root failure")
-            return original_execute(plan, force_with_backup=force_with_backup)
+            return original_execute(plan, force_with_backup=force_with_backup, lock=lock)
 
         stdout = StringIO()
         stderr = StringIO()
         with (
             mock.patch.object(install_cli_module, "_hosts", return_value=["claude", "grok"]),
-            mock.patch.object(install_cli_module, "execute_install", side_effect=fail_later_root),
+            mock.patch.object(transaction_module, "execute_install", side_effect=fail_later_root),
             redirect_stdout(stdout),
             redirect_stderr(stderr),
         ):
@@ -362,25 +362,34 @@ class InstallerTests(unittest.TestCase):
 
         self.assertEqual(code, 8)
         self.assertEqual(json.loads(stderr.getvalue())["code"], "E_INVARIANT")
-        self.assertEqual(self._file_bytes(earlier_root), before)
+        # Installer lock metadata is process-owned and may be rewritten while
+        # multi-root holds exclusive locks (#23); compare payload+manifest only.
+        def without_lock(tree: dict[str, bytes]) -> dict[str, bytes]:
+            return {
+                path: data
+                for path, data in tree.items()
+                if not path.endswith("/install.lock") and path != ".portable-resume/install.lock"
+            }
+
+        self.assertEqual(without_lock(self._file_bytes(earlier_root)), without_lock(before))
         verify_root(str(earlier_root))
 
     def test_all_host_later_failure_removes_earlier_fresh_install(self) -> None:
         earlier_root = Path(self._root("claude", scope="global"))
         self.assertEqual(self._file_bytes(earlier_root), {})
-        original_execute = install_cli_module.execute_install
+        original_execute = transaction_module.execute_install
         calls = 0
 
-        def fail_later_root(plan, *, force_with_backup=False):
+        def fail_later_root(plan, *, force_with_backup=False, lock=None):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise OSError("injected later-root failure")
-            return original_execute(plan, force_with_backup=force_with_backup)
+            return original_execute(plan, force_with_backup=force_with_backup, lock=lock)
 
         with (
             mock.patch.object(install_cli_module, "_hosts", return_value=["claude", "grok"]),
-            mock.patch.object(install_cli_module, "execute_install", side_effect=fail_later_root),
+            mock.patch.object(transaction_module, "execute_install", side_effect=fail_later_root),
             redirect_stdout(StringIO()),
             redirect_stderr(StringIO()),
         ):
@@ -398,25 +407,32 @@ class InstallerTests(unittest.TestCase):
             )
 
         self.assertEqual(code, 8)
-        self.assertEqual(self._file_bytes(earlier_root), {})
+        # Exclusive install.lock may remain while multi-root releases locks
+        # after compensation (#23); payload/manifest must be gone.
+        remaining = {
+            path: data
+            for path, data in self._file_bytes(earlier_root).items()
+            if not path.endswith("install.lock")
+        }
+        self.assertEqual(remaining, {})
 
     def test_all_host_reports_partial_state_when_compensation_fails(self) -> None:
-        original_execute = install_cli_module.execute_install
+        original_execute = transaction_module.execute_install
         calls = 0
 
-        def fail_later_root(plan, *, force_with_backup=False):
+        def fail_later_root(plan, *, force_with_backup=False, lock=None):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise OSError("injected later-root failure")
-            return original_execute(plan, force_with_backup=force_with_backup)
+            return original_execute(plan, force_with_backup=force_with_backup, lock=lock)
 
         stderr = StringIO()
         with (
             mock.patch.object(install_cli_module, "_hosts", return_value=["claude", "grok"]),
-            mock.patch.object(install_cli_module, "execute_install", side_effect=fail_later_root),
+            mock.patch.object(transaction_module, "execute_install", side_effect=fail_later_root),
             mock.patch.object(
-                install_cli_module,
+                transaction_module,
                 "restore_install_checkpoint",
                 side_effect=DiagnosticError("E_RECOVERY_REQUIRED"),
             ),

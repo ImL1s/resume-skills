@@ -14,14 +14,11 @@ from .catalog import HOST_KEYS, hosts_report, resolve_skill_root
 from .manifest import claim_key
 from .render import materialize_plan, package_identity
 from .transaction import (
-    capture_install_checkpoint,
-    discard_install_checkpoint,
     execute_install,
+    install_multi_targets,
     matrix_report,
     plan_install,
     recover_root,
-    require_no_pending_journal,
-    restore_install_checkpoint,
     uninstall_claim,
     verify_root,
 )
@@ -206,67 +203,32 @@ def run(argv: Sequence[str] | None = None) -> int:
         results = []
         if ns.command == "install":
             _reject_divergent_shared_roots(targets)
-            # Plan every target before the first mutation so a deterministic
-            # conflict in a later root cannot leave an earlier root installed.
-            plans = [
-                plan_install(
-                    host=host,
-                    scope=ns.scope,
-                    root=root,
-                    dry_run=ns.dry_run,
-                    force_with_backup=ns.force_with_backup,
-                )
-                for host, root in targets
-            ]
-            if ns.dry_run:
+            # Multi-root: lock all unique physical roots first, then replan /
+            # checkpoint / mutate / compensate under those locks (#23).
+            # Single-root path still uses execute_install directly for dry-run
+            # parity and simpler stack traces.
+            if ns.dry_run or len(targets) == 1:
+                plans = [
+                    plan_install(
+                        host=host,
+                        scope=ns.scope,
+                        root=root,
+                        dry_run=ns.dry_run,
+                        force_with_backup=ns.force_with_backup,
+                    )
+                    for host, root in targets
+                ]
                 results = [
                     execute_install(plan, force_with_backup=ns.force_with_backup)
                     for plan in plans
                 ]
             else:
-                for _host, root in targets:
-                    require_no_pending_journal(root)
-                checkpoints = []
-                try:
-                    for plan in plans:
-                        checkpoints.append(capture_install_checkpoint(plan))
-                except Exception:
-                    for checkpoint in checkpoints:
-                        discard_install_checkpoint(checkpoint)
-                    raise
-                completed: list[tuple[str, Any, dict[str, Any]]] = []
-                try:
-                    # Re-plan under the latest manifest generation. This matters
-                    # when byte-identical host profiles intentionally share a root.
-                    for (host, root), checkpoint in zip(targets, checkpoints):
-                        plan = plan_install(
-                            host=host,
-                            scope=ns.scope,
-                            root=root,
-                            force_with_backup=ns.force_with_backup,
-                        )
-                        result = execute_install(plan, force_with_backup=ns.force_with_backup)
-                        results.append(result)
-                        completed.append((host, checkpoint, result))
-                except Exception:
-                    compensation_failures: list[str] = []
-                    for host, checkpoint, result in reversed(completed):
-                        try:
-                            restore_install_checkpoint(
-                                checkpoint,
-                                backup_root=result.get("backup_root"),
-                            )
-                        except Exception:
-                            compensation_failures.append(host)
-                    if compensation_failures:
-                        raise DiagnosticError(
-                            "E_RECOVERY_REQUIRED",
-                            family=tuple(sorted(compensation_failures)),
-                        )
-                    raise
-                finally:
-                    for checkpoint in checkpoints:
-                        discard_install_checkpoint(checkpoint)
+                results = install_multi_targets(
+                    targets,
+                    scope=ns.scope,
+                    dry_run=False,
+                    force_with_backup=ns.force_with_backup,
+                )
         else:
             for host, root in targets:
                 if ns.command == "verify":

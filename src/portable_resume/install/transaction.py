@@ -1136,11 +1136,26 @@ def _unlink_regular_under_root_fd(
             finally:
                 os.close(fd)
             if digest != expected_sha256:
+                # Only restore quarantine when basename is still free. If a
+                # concurrent writer created a new leaf under the original name,
+                # leave both entries (do not clobber the new leaf).
                 try:
-                    os.rename(quarantine, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-                    restored = True
-                except OSError as error:
-                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                    os.lstat(basename, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    try:
+                        os.rename(
+                            quarantine,
+                            basename,
+                            src_dir_fd=parent_fd,
+                            dst_dir_fd=parent_fd,
+                        )
+                        restored = True
+                    except OSError as error:
+                        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                else:
+                    # Basename occupied: keep quarantine under its unique name so
+                    # concurrent bytes are not destroyed (caller fails closed).
+                    pass
                 return False
             try:
                 os.unlink(quarantine, dir_fd=parent_fd)
@@ -1150,9 +1165,18 @@ def _unlink_regular_under_root_fd(
         except Exception:
             if not restored:
                 try:
-                    os.rename(quarantine, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-                except OSError:
-                    pass
+                    os.lstat(basename, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    try:
+                        os.rename(
+                            quarantine,
+                            basename,
+                            src_dir_fd=parent_fd,
+                            dst_dir_fd=parent_fd,
+                        )
+                    except OSError:
+                        pass
+                # If basename is occupied, leave quarantine name in place.
             raise
     finally:
         if owns_parent:
@@ -1448,7 +1472,18 @@ def _classify_dest(
     raise DiagnosticError("E_INSTALL_CONFLICT")
 
 
-def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dict[str, Any]:
+def execute_install(
+    plan: ActionPlan,
+    *,
+    force_with_backup: bool = False,
+    lock: RootLock | None = None,
+) -> dict[str, Any]:
+    """Install one claim into ``plan.root``.
+
+    When ``lock`` is provided (multi-root orchestration, #23), the caller must
+    already hold that exclusive ``RootLock`` for ``plan.root``; this path will
+    not re-acquire (locks are not re-entrant).
+    """
     root = plan.root
     if plan.dry_run:
         before = _tree_snapshot(root)
@@ -1459,199 +1494,110 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
         return {"ok": True, "dry_run": True, "plan": plan.to_dict()}
 
     require_mutating_install_platform()
+    if lock is not None:
+        _require_held_root_lock(lock, root)
+        return _execute_install_under_lock(plan, force_with_backup=force_with_backup)
     with RootLock(root):
-        require_no_pending_journal(root)
-        # Preflight token is advisory for payload bytes, but ownership identity
-        # must still match: if the locked manifest digest diverged, fail busy so
-        # multi-root compensation restores the captured checkpoint rather than
-        # committing a newer concurrent generation then rolling it back (#35).
-        existing_pre = load_manifest(root)
-        current_digest = manifest_content_digest(existing_pre)
-        if current_digest != plan.base_manifest_digest:
-            raise DiagnosticError("E_INSTALL_BUSY")
-        changed_since_preflight = False
+        return _execute_install_under_lock(plan, force_with_backup=force_with_backup)
 
-        # Honor preflight force classification when the Python API calls
-        # execute_install(plan) without repeating force_with_backup=True.
-        effective_force = force_with_backup or bool(plan.backups)
-        locked = plan_install(
-            host=plan.host,
-            scope=plan.scope,
-            root=plan.root,
-            dry_run=False,
-            force_with_backup=effective_force,
+
+def _require_held_root_lock(lock: RootLock, root: str) -> None:
+    if lock._fd is None:
+        raise DiagnosticError("E_INSTALL_BUSY")
+    if os.path.realpath(lock.root) != os.path.realpath(root):
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+
+
+def _execute_install_under_lock(
+    plan: ActionPlan,
+    *,
+    force_with_backup: bool = False,
+) -> dict[str, Any]:
+    """Mutating install body. Caller must hold ``RootLock`` for ``plan.root``."""
+    root = plan.root
+    require_no_pending_journal(root)
+    # Preflight token is advisory for payload bytes, but ownership identity
+    # must still match: if the locked manifest digest diverged, fail busy so
+    # multi-root compensation restores the captured checkpoint rather than
+    # committing a newer concurrent generation then rolling it back (#35).
+    existing_pre = load_manifest(root)
+    current_digest = manifest_content_digest(existing_pre)
+    if current_digest != plan.base_manifest_digest:
+        raise DiagnosticError("E_INSTALL_BUSY")
+    changed_since_preflight = False
+
+    # Honor preflight force classification when the Python API calls
+    # execute_install(plan) without repeating force_with_backup=True.
+    effective_force = force_with_backup or bool(plan.backups)
+    locked = plan_install(
+        host=plan.host,
+        scope=plan.scope,
+        root=plan.root,
+        dry_run=False,
+        force_with_backup=effective_force,
+    )
+    # Request identity must match; payload/manifest always come from locked rebuild.
+    if (
+        locked.host != plan.host
+        or locked.scope != plan.scope
+        or locked.claim != plan.claim
+        or os.path.realpath(locked.root) != os.path.realpath(plan.root)
+    ):
+        raise DiagnosticError("E_INSTALL_BUSY")
+    # Digest must still match after replan observation (same locked read path).
+    if locked.base_manifest_digest != plan.base_manifest_digest:
+        raise DiagnosticError("E_INSTALL_BUSY")
+    plan = locked
+    existing = existing_pre
+    # Re-evaluate ownership under the lock for the rebuilt plan only.
+    planned_backups = set(plan.backups)
+    backups: list[str] = []
+    for rel, data in plan.files.items():
+        kind = _classify_dest(
+            root=root,
+            rel=rel,
+            data=data,
+            existing=existing,
+            claim=plan.claim,
+            force_with_backup=effective_force or rel in planned_backups,
         )
-        # Request identity must match; payload/manifest always come from locked rebuild.
-        if (
-            locked.host != plan.host
-            or locked.scope != plan.scope
-            or locked.claim != plan.claim
-            or os.path.realpath(locked.root) != os.path.realpath(plan.root)
-        ):
-            raise DiagnosticError("E_INSTALL_BUSY")
-        # Digest must still match after replan observation (same locked read path).
-        if locked.base_manifest_digest != plan.base_manifest_digest:
-            raise DiagnosticError("E_INSTALL_BUSY")
-        plan = locked
-        existing = existing_pre
-        # Re-evaluate ownership under the lock for the rebuilt plan only.
-        planned_backups = set(plan.backups)
-        backups: list[str] = []
-        for rel, data in plan.files.items():
-            kind = _classify_dest(
-                root=root,
-                rel=rel,
-                data=data,
-                existing=existing,
-                claim=plan.claim,
-                force_with_backup=effective_force or rel in planned_backups,
-            )
-            if kind == "backup":
-                backups.append(rel)
-        _ensure_support_directory(root)
-        if not _supports_descriptor_relative_commit():
-            raise DiagnosticError("E_INSTALL_CONFLICT")
-        pin_root_fd = _open_skill_root_descriptor(root)
-        support_fd: int | None = None
-        stage_fd: int | None = None
-        stage_dir = ""
-        backup_root: str | None = None
-        try:
-            support_fd = _open_directory_under_root(pin_root_fd, SUPPORT_DIR)
-            stage_name = _mkdir_unique_under_fd(support_fd, STAGE_PREFIX)
-            stage_dir = os.path.join(os.path.abspath(root), SUPPORT_DIR, stage_name)
-            stage_fd = os.open(
-                stage_name,
-                os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=support_fd,
-            )
-            journal = {
-                "schema_version": "portable-resume/install-journal-v1",
-                "state": "staging",
-                "generation": plan.generation,
-                "claim": plan.claim,
-                "stage_dir": stage_dir,
-                "backup_root": backup_root,
-                "operation": "install",
-                "paths": {},
-            }
-            if backups:
-                try:
-                    os.mkdir(BACKUP_DIR, 0o755, dir_fd=support_fd)
-                except FileExistsError:
-                    pass
-                # Re-open backups under support without following a symlink leaf.
-                try:
-                    backup_parent_fd = os.open(
-                        BACKUP_DIR,
-                        os.O_RDONLY
-                        | os.O_DIRECTORY
-                        | getattr(os, "O_CLOEXEC", 0)
-                        | getattr(os, "O_NOFOLLOW", 0),
-                        dir_fd=support_fd,
-                    )
-                except OSError as error:
-                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
-                try:
-                    backup_name = _mkdir_unique_under_fd(
-                        backup_parent_fd,
-                        time.strftime("%Y%m%dT%H%M%SZ-", time.gmtime()),
-                    )
-                finally:
-                    os.close(backup_parent_fd)
-                backup_root = os.path.join(os.path.abspath(root), SUPPORT_DIR, BACKUP_DIR, backup_name)
-                journal["backup_root"] = backup_root
-            for rel, data in plan.files.items():
-                safe = _safe_rel_path(rel)
-                mode = 0o755 if rel.endswith("run_reader.py") else 0o644
-                _materialize_bytes_under_fd(stage_fd, safe, data, mode=mode)
-                journal["paths"][safe] = {
-                    "state": "staged",
-                    "sha256": sha256_bytes(data),
-                    "existed": False,
-                }
-            # Snapshot every existing destination before the first replacement.
-            # Owned files need the same rollback protection as foreign conflicts.
-            for rel in sorted(plan.files):
-                safe = _safe_rel_path(rel)
-                try:
-                    src_parent_fd, src_base, owns_src_parent = _open_parent_under_root_fd(
-                        pin_root_fd, safe, create=False
-                    )
-                except DiagnosticError:
-                    # Parent path missing → create target; no snapshot.
-                    continue
-                try:
-                    try:
-                        st = os.lstat(src_base, dir_fd=src_parent_fd)
-                    except FileNotFoundError:
-                        continue
-                    except OSError as error:
-                        raise DiagnosticError("E_INSTALL_CONFLICT") from error
-                    if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISREG(st.st_mode):
-                        raise DiagnosticError("E_INSTALL_CONFLICT")
-                    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-                    try:
-                        src_fd = os.open(src_base, flags, dir_fd=src_parent_fd)
-                    except OSError as error:
-                        raise DiagnosticError("E_INSTALL_CONFLICT") from error
-                    try:
-                        st = os.fstat(src_fd)
-                        if not stat_mod.S_ISREG(st.st_mode):
-                            raise DiagnosticError("E_INSTALL_CONFLICT")
-                        snap_mode = stat_mod.S_IMODE(st.st_mode)
-                        chunks: list[bytes] = []
-                        while True:
-                            chunk = os.read(src_fd, 1024 * 1024)
-                            if not chunk:
-                                break
-                            chunks.append(chunk)
-                        body = b"".join(chunks)
-                    finally:
-                        os.close(src_fd)
-                finally:
-                    if owns_src_parent:
-                        os.close(src_parent_fd)
-                payload_digest = sha256_bytes(body)
-                rollback_rel = f".rollback/{safe}"
-                _materialize_bytes_under_fd(stage_fd, rollback_rel, body, mode=snap_mode)
-                target = os.path.join(stage_dir, ".rollback", safe)
-                journal["paths"][safe]["existed"] = True
-                journal["paths"][safe]["rollback_backup"] = target
-                journal["paths"][safe]["original_sha256"] = payload_digest
-            # backup non-owned conflicts / forced replaces
-            for rel in backups:
-                safe = _safe_rel_path(rel)
-                if backup_root is None:
-                    raise DiagnosticError("E_INSTALL_CONFLICT")
-                try:
-                    body_digest = _sha256_regular_under_root_fd(pin_root_fd, safe)
-                except DiagnosticError as error:
-                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
-                src_parent_fd, src_base, owns_src_parent = _open_parent_under_root_fd(
-                    pin_root_fd, safe, create=False
-                )
-                try:
-                    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-                    src_fd = os.open(src_base, flags, dir_fd=src_parent_fd)
-                    try:
-                        chunks = []
-                        while True:
-                            chunk = os.read(src_fd, 1024 * 1024)
-                            if not chunk:
-                                break
-                            chunks.append(chunk)
-                        body = b"".join(chunks)
-                    finally:
-                        os.close(src_fd)
-                finally:
-                    if owns_src_parent:
-                        os.close(src_parent_fd)
-                if sha256_bytes(body) != body_digest:
-                    raise DiagnosticError("E_INSTALL_CONFLICT")
-                # Write under backup dir via support_fd/backups/<name>/...
-                backup_name = os.path.basename(backup_root)
-                backups_fd = os.open(
+        if kind == "backup":
+            backups.append(rel)
+    _ensure_support_directory(root)
+    if not _supports_descriptor_relative_commit():
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    pin_root_fd = _open_skill_root_descriptor(root)
+    support_fd: int | None = None
+    stage_fd: int | None = None
+    stage_dir = ""
+    backup_root: str | None = None
+    try:
+        support_fd = _open_directory_under_root(pin_root_fd, SUPPORT_DIR)
+        stage_name = _mkdir_unique_under_fd(support_fd, STAGE_PREFIX)
+        stage_dir = os.path.join(os.path.abspath(root), SUPPORT_DIR, stage_name)
+        stage_fd = os.open(
+            stage_name,
+            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=support_fd,
+        )
+        journal = {
+            "schema_version": "portable-resume/install-journal-v1",
+            "state": "staging",
+            "generation": plan.generation,
+            "claim": plan.claim,
+            "stage_dir": stage_dir,
+            "backup_root": backup_root,
+            "operation": "install",
+            "paths": {},
+        }
+        if backups:
+            try:
+                os.mkdir(BACKUP_DIR, 0o755, dir_fd=support_fd)
+            except FileExistsError:
+                pass
+            # Re-open backups under support without following a symlink leaf.
+            try:
+                backup_parent_fd = os.open(
                     BACKUP_DIR,
                     os.O_RDONLY
                     | os.O_DIRECTORY
@@ -1659,155 +1605,264 @@ def execute_install(plan: ActionPlan, *, force_with_backup: bool = False) -> dic
                     | getattr(os, "O_NOFOLLOW", 0),
                     dir_fd=support_fd,
                 )
-                try:
-                    one_backup_fd = os.open(
-                        backup_name,
-                        os.O_RDONLY
-                        | os.O_DIRECTORY
-                        | getattr(os, "O_CLOEXEC", 0)
-                        | getattr(os, "O_NOFOLLOW", 0),
-                        dir_fd=backups_fd,
-                    )
-                    try:
-                        _materialize_bytes_under_fd(one_backup_fd, safe, body, mode=0o644)
-                    finally:
-                        os.close(one_backup_fd)
-                finally:
-                    os.close(backups_fd)
-                journal["paths"][safe]["backup"] = os.path.join(backup_root, safe)
-            journal["state"] = "committing"
-            _write_journal(root, journal)
-            # commit files
-            root_fd: int | None = pin_root_fd
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
             try:
-                for rel in sorted(plan.files):
-                    safe = _safe_rel_path(rel)
-                    # re-check each path immediately before replace
-                    kind = _classify_dest(
-                        root=root,
-                        rel=safe,
-                        data=plan.files[rel],
-                        existing=existing,
-                        claim=plan.claim,
-                        force_with_backup=effective_force or safe in planned_backups or safe in backups,
-                    )
-                    if kind == "backup" and safe not in backups and not effective_force and safe not in planned_backups:
-                        raise DiagnosticError("E_INSTALL_CONFLICT")
-                    if kind == "retain":
-                        journal["paths"][safe]["state"] = "retained"
-                        _write_journal(root, journal)
-                        continue
-                    src = os.path.join(stage_dir, safe)
-                    _commit_payload_file(
-                        root=root,
-                        root_fd=root_fd,
-                        rel=safe,
-                        staged_src=src,
-                        stage_dir=stage_dir,
-                        expected_sha256=sha256_bytes(plan.files[rel]),
-                    )
-                    journal["paths"][safe]["state"] = "committed"
-                    _write_journal(root, journal)
+                backup_name = _mkdir_unique_under_fd(
+                    backup_parent_fd,
+                    time.strftime("%Y%m%dT%H%M%SZ-", time.gmtime()),
+                )
             finally:
-                # pin_root_fd is closed in outer finally; do not close here.
-                root_fd = None
-            # Remove owned orphans (in old manifest, not in new plan, sole claim released).
-            # Journal orphan targets *before* delete so crash recovery can reason about them.
-            orphan_removed: list[str] = []
-            orphan_pending: list[tuple[str, str]] = []  # rel, sha256
-            if existing is not None:
-                for rel, entry in list(existing.files.items()):
-                    if rel in plan.files:
-                        continue
-                    # After rebuild, plan.manifest already dropped empty-claim orphans.
-                    if rel in plan.manifest.files:
-                        continue
-                    try:
-                        digest = _sha256_regular_under_root_fd(pin_root_fd, rel)
-                    except DiagnosticError:
-                        continue
-                    if digest == entry.sha256:
-                        orphan_pending.append((rel, entry.sha256))
-            if orphan_pending:
-                journal["orphans"] = {
-                    rel: {"sha256": digest, "state": "pending"}
-                    for rel, digest in orphan_pending
-                }
-                journal["state"] = "orphaning"
-                _write_journal(root, journal)
-                for rel, digest in orphan_pending:
-                    try:
-                        removed = _unlink_regular_under_root_fd(
-                            pin_root_fd,
-                            rel,
-                            expected_sha256=digest,
-                        )
-                        if removed:
-                            orphan_removed.append(rel)
-                            journal["orphans"][rel]["state"] = "removed"
-                        else:
-                            journal["orphans"][rel]["state"] = "skipped"
-                        _write_journal(root, journal)
-                    except DiagnosticError:
-                        journal["orphans"][rel]["state"] = "skipped"
-                        _write_journal(root, journal)
-            # Durable intent before replacing the ownership manifest: on-disk journal
-            # records the target generation so recover can recognize a published
-            # generation even if the later ``complete`` journal write fails.
-            journal["state"] = "publishing_manifest"
-            journal["target_generation"] = plan.generation
-            _write_journal(root, journal)
-            _atomic_write_support_file(
-                root,
-                MANIFEST_NAME,
-                plan.manifest.dumps().encode("utf-8"),
-            )
-            journal["state"] = "complete"
-            try:
-                _write_journal(root, journal)
-            except DiagnosticError:
-                # Manifest is already the ownership source of truth. Prefer dropping a
-                # stale incomplete journal so recover cannot rollback under gen N.
-                try:
-                    _unlink_support_control_file(root, JOURNAL_NAME)
-                except DiagnosticError:
-                    pass
-            # After the new manifest is published, never payload-rollback on cleanup
-            # failure: leave a complete journal (or generation-matched stale journal)
-            # for recover_root instead.
-            try:
-                _delete_authorized_support_subtree(root, stage_dir, role="stage")
-            except DiagnosticError:
-                pass
-            try:
-                if os.path.lexists(journal_path(root)):
-                    _unlink_support_control_file(root, JOURNAL_NAME)
-            except DiagnosticError:
-                pass
-            result = {
-                "ok": True,
-                "dry_run": False,
-                "plan": plan.to_dict(),
-                "generation": plan.generation,
-                "changed_since_preflight": changed_since_preflight,
-                "previous_manifest_digest": plan.base_manifest_digest,
+                os.close(backup_parent_fd)
+            backup_root = os.path.join(os.path.abspath(root), SUPPORT_DIR, BACKUP_DIR, backup_name)
+            journal["backup_root"] = backup_root
+        for rel, data in plan.files.items():
+            safe = _safe_rel_path(rel)
+            mode = 0o755 if rel.endswith("run_reader.py") else 0o644
+            _materialize_bytes_under_fd(stage_fd, safe, data, mode=mode)
+            journal["paths"][safe] = {
+                "state": "staged",
+                "sha256": sha256_bytes(data),
+                "existed": False,
             }
-            if orphan_removed:
-                result["orphan_removed"] = orphan_removed
-            if backups:
-                result["backup_root"] = backup_root
-            return result
-        except Exception:
-            if "journal" in locals() and isinstance(journal, dict):
-                if not _install_generation_is_published(root, journal):
-                    _attempt_rollback(root, journal)
-            raise
+        # Snapshot every existing destination before the first replacement.
+        # Owned files need the same rollback protection as foreign conflicts.
+        for rel in sorted(plan.files):
+            safe = _safe_rel_path(rel)
+            try:
+                src_parent_fd, src_base, owns_src_parent = _open_parent_under_root_fd(
+                    pin_root_fd, safe, create=False
+                )
+            except DiagnosticError:
+                # Parent path missing → create target; no snapshot.
+                continue
+            try:
+                try:
+                    st = os.lstat(src_base, dir_fd=src_parent_fd)
+                except FileNotFoundError:
+                    continue
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISREG(st.st_mode):
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+                try:
+                    src_fd = os.open(src_base, flags, dir_fd=src_parent_fd)
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                try:
+                    st = os.fstat(src_fd)
+                    if not stat_mod.S_ISREG(st.st_mode):
+                        raise DiagnosticError("E_INSTALL_CONFLICT")
+                    snap_mode = stat_mod.S_IMODE(st.st_mode)
+                    chunks: list[bytes] = []
+                    while True:
+                        chunk = os.read(src_fd, 1024 * 1024)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                    body = b"".join(chunks)
+                finally:
+                    os.close(src_fd)
+            finally:
+                if owns_src_parent:
+                    os.close(src_parent_fd)
+            payload_digest = sha256_bytes(body)
+            rollback_rel = f".rollback/{safe}"
+            _materialize_bytes_under_fd(stage_fd, rollback_rel, body, mode=snap_mode)
+            target = os.path.join(stage_dir, ".rollback", safe)
+            journal["paths"][safe]["existed"] = True
+            journal["paths"][safe]["rollback_backup"] = target
+            journal["paths"][safe]["original_sha256"] = payload_digest
+        # backup non-owned conflicts / forced replaces
+        for rel in backups:
+            safe = _safe_rel_path(rel)
+            if backup_root is None:
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            try:
+                body_digest = _sha256_regular_under_root_fd(pin_root_fd, safe)
+            except DiagnosticError as error:
+                raise DiagnosticError("E_INSTALL_CONFLICT") from error
+            src_parent_fd, src_base, owns_src_parent = _open_parent_under_root_fd(
+                pin_root_fd, safe, create=False
+            )
+            try:
+                flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+                src_fd = os.open(src_base, flags, dir_fd=src_parent_fd)
+                try:
+                    chunks = []
+                    while True:
+                        chunk = os.read(src_fd, 1024 * 1024)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                    body = b"".join(chunks)
+                finally:
+                    os.close(src_fd)
+            finally:
+                if owns_src_parent:
+                    os.close(src_parent_fd)
+            if sha256_bytes(body) != body_digest:
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            # Write under backup dir via support_fd/backups/<name>/...
+            backup_name = os.path.basename(backup_root)
+            backups_fd = os.open(
+                BACKUP_DIR,
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=support_fd,
+            )
+            try:
+                one_backup_fd = os.open(
+                    backup_name,
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=backups_fd,
+                )
+                try:
+                    _materialize_bytes_under_fd(one_backup_fd, safe, body, mode=0o644)
+                finally:
+                    os.close(one_backup_fd)
+            finally:
+                os.close(backups_fd)
+            journal["paths"][safe]["backup"] = os.path.join(backup_root, safe)
+        journal["state"] = "committing"
+        _write_journal(root, journal)
+        # commit files
+        root_fd: int | None = pin_root_fd
+        try:
+            for rel in sorted(plan.files):
+                safe = _safe_rel_path(rel)
+                # re-check each path immediately before replace
+                kind = _classify_dest(
+                    root=root,
+                    rel=safe,
+                    data=plan.files[rel],
+                    existing=existing,
+                    claim=plan.claim,
+                    force_with_backup=effective_force or safe in planned_backups or safe in backups,
+                )
+                if kind == "backup" and safe not in backups and not effective_force and safe not in planned_backups:
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                if kind == "retain":
+                    journal["paths"][safe]["state"] = "retained"
+                    _write_journal(root, journal)
+                    continue
+                src = os.path.join(stage_dir, safe)
+                _commit_payload_file(
+                    root=root,
+                    root_fd=root_fd,
+                    rel=safe,
+                    staged_src=src,
+                    stage_dir=stage_dir,
+                    expected_sha256=sha256_bytes(plan.files[rel]),
+                )
+                journal["paths"][safe]["state"] = "committed"
+                _write_journal(root, journal)
         finally:
-            if stage_fd is not None:
-                os.close(stage_fd)
-            if support_fd is not None:
-                os.close(support_fd)
-            os.close(pin_root_fd)
+            # pin_root_fd is closed in outer finally; do not close here.
+            root_fd = None
+        # Remove owned orphans (in old manifest, not in new plan, sole claim released).
+        # Journal orphan targets *before* delete so crash recovery can reason about them.
+        orphan_removed: list[str] = []
+        orphan_pending: list[tuple[str, str]] = []  # rel, sha256
+        if existing is not None:
+            for rel, entry in list(existing.files.items()):
+                if rel in plan.files:
+                    continue
+                # After rebuild, plan.manifest already dropped empty-claim orphans.
+                if rel in plan.manifest.files:
+                    continue
+                try:
+                    digest = _sha256_regular_under_root_fd(pin_root_fd, rel)
+                except DiagnosticError:
+                    continue
+                if digest == entry.sha256:
+                    orphan_pending.append((rel, entry.sha256))
+        if orphan_pending:
+            journal["orphans"] = {
+                rel: {"sha256": digest, "state": "pending"}
+                for rel, digest in orphan_pending
+            }
+            journal["state"] = "orphaning"
+            _write_journal(root, journal)
+            for rel, digest in orphan_pending:
+                try:
+                    removed = _unlink_regular_under_root_fd(
+                        pin_root_fd,
+                        rel,
+                        expected_sha256=digest,
+                    )
+                    if removed:
+                        orphan_removed.append(rel)
+                        journal["orphans"][rel]["state"] = "removed"
+                    else:
+                        journal["orphans"][rel]["state"] = "skipped"
+                    _write_journal(root, journal)
+                except DiagnosticError:
+                    journal["orphans"][rel]["state"] = "skipped"
+                    _write_journal(root, journal)
+        # Durable intent before replacing the ownership manifest: on-disk journal
+        # records the target generation so recover can recognize a published
+        # generation even if the later ``complete`` journal write fails.
+        journal["state"] = "publishing_manifest"
+        journal["target_generation"] = plan.generation
+        _write_journal(root, journal)
+        _atomic_write_support_file(
+            root,
+            MANIFEST_NAME,
+            plan.manifest.dumps().encode("utf-8"),
+        )
+        journal["state"] = "complete"
+        try:
+            _write_journal(root, journal)
+        except DiagnosticError:
+            # Manifest is already the ownership source of truth. Prefer dropping a
+            # stale incomplete journal so recover cannot rollback under gen N.
+            try:
+                _unlink_support_control_file(root, JOURNAL_NAME)
+            except DiagnosticError:
+                pass
+        # After the new manifest is published, never payload-rollback on cleanup
+        # failure: leave a complete journal (or generation-matched stale journal)
+        # for recover_root instead.
+        try:
+            _delete_authorized_support_subtree(root, stage_dir, role="stage")
+        except DiagnosticError:
+            pass
+        try:
+            if os.path.lexists(journal_path(root)):
+                _unlink_support_control_file(root, JOURNAL_NAME)
+        except DiagnosticError:
+            pass
+        result = {
+            "ok": True,
+            "dry_run": False,
+            "plan": plan.to_dict(),
+            "generation": plan.generation,
+            "changed_since_preflight": changed_since_preflight,
+            "previous_manifest_digest": plan.base_manifest_digest,
+        }
+        if orphan_removed:
+            result["orphan_removed"] = orphan_removed
+        if backups:
+            result["backup_root"] = backup_root
+        return result
+    except Exception:
+        if "journal" in locals() and isinstance(journal, dict):
+            if not _install_generation_is_published(root, journal):
+                _attempt_rollback(root, journal)
+        raise
+    finally:
+        if stage_fd is not None:
+            os.close(stage_fd)
+        if support_fd is not None:
+            os.close(support_fd)
+        os.close(pin_root_fd)
 
 
 def _write_journal(root: str, journal: dict[str, Any]) -> None:
@@ -1904,7 +1959,10 @@ def _copy_regular_nofollow(src: str, target: str) -> None:
 
 
 def capture_install_checkpoint(plan: ActionPlan) -> InstallCheckpoint:
-    """Capture every file an install plan may mutate for cross-root compensation."""
+    """Capture every file an install plan may mutate for cross-root compensation.
+
+    Call only while the corresponding root lock is held (#23).
+    """
     snapshot_dir = tempfile.mkdtemp(prefix="portable-resume-checkpoint-")
     paths: dict[str, dict[str, Any]] = {}
     existing = load_manifest(plan.root)
@@ -1923,19 +1981,31 @@ def capture_install_checkpoint(plan: ActionPlan) -> InstallCheckpoint:
             if safe == f"{SUPPORT_DIR}/{MANIFEST_NAME}":
                 meta["allowed_sha256"].append(sha256_bytes(plan.manifest.dumps().encode("utf-8")))
             if safe == f"{SUPPORT_DIR}/{LOCK_NAME}":
+                # Never snapshot the live exclusive lock we hold: compensation
+                # always removes installer lock metadata rather than restoring a
+                # pid file from mid-transaction (#23 multi-root holds locks
+                # before checkpoint).
                 meta["transaction_lock"] = True
+                meta["existed"] = False
+                paths[safe] = meta
+                continue
             if os.path.lexists(dest):
                 if os.path.islink(dest) or not os.path.isfile(dest):
                     raise DiagnosticError("E_INSTALL_CONFLICT")
                 snapshot = os.path.join(snapshot_dir, safe)
                 _copy_regular_nofollow(dest, snapshot)
+                digest = sha256_file(snapshot)
                 meta.update(
                     {
                         "existed": True,
                         "snapshot": snapshot,
-                        "sha256": sha256_file(snapshot),
+                        "sha256": digest,
                     }
                 )
+                # Live pre-state is also an allowed post-transaction identity for
+                # compensation drift checks (already at checkpoint).
+                if digest not in meta["allowed_sha256"]:
+                    meta["allowed_sha256"].append(digest)
             paths[safe] = meta
         return InstallCheckpoint(root=plan.root, snapshot_dir=snapshot_dir, paths=paths)
     except Exception:
@@ -1948,53 +2018,309 @@ def restore_install_checkpoint(
     *,
     backup_root: str | None = None,
 ) -> None:
-    """Restore a completed root install to its captured byte-for-byte file state."""
+    """Restore a completed root install to its captured byte-for-byte file state.
+
+    Never overwrites a live regular file whose digest is outside the transaction's
+    allowed set (pre-checkpoint snapshot or planned post-install bytes). Unknown
+    concurrent mutation returns ``E_RECOVERY_REQUIRED`` (#23).
+    """
     removed: list[str] = []
-    for rel, meta in checkpoint.paths.items():
-        dest = _dest_under_root(checkpoint.root, rel)
-        if meta.get("existed"):
-            snapshot = meta.get("snapshot")
-            if not isinstance(snapshot, str) or not os.path.isfile(snapshot) or os.path.islink(snapshot):
+    root = checkpoint.root
+    root_fd: int | None = None
+    if _supports_descriptor_relative_commit():
+        try:
+            root_fd = _open_skill_root_descriptor(root)
+        except DiagnosticError as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+    try:
+        for rel, meta in checkpoint.paths.items():
+            # Exclusive install.lock is owned by the holding RootLock for the whole
+            # multi-root txn; never unlink it while compensation runs under locks.
+            if meta.get("transaction_lock"):
+                continue
+            dest = _dest_under_root(root, rel)
+            allowed = set(meta.get("allowed_sha256") or ())
+            snap_sha = meta.get("sha256")
+            if isinstance(snap_sha, str):
+                allowed.add(snap_sha)
+            if meta.get("existed"):
+                snapshot = meta.get("snapshot")
+                if not isinstance(snapshot, str) or not os.path.isfile(snapshot) or os.path.islink(snapshot):
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+                if sha256_file(snapshot) != meta.get("sha256"):
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+                _restore_regular_nofollow(
+                    snapshot,
+                    dest,
+                    allowed_live_sha256=allowed if allowed else None,
+                )
+                continue
+            # Path was absent at checkpoint: remove only if live digest is a
+            # transaction-created payload (quarantine unlink when dirfd works).
+            if root_fd is not None:
+                # Probe with lstat first so symlink/non-regular/unopenable parents
+                # fail closed; only a confirmed missing leaf is a no-op success.
+                try:
+                    parent_fd, basename, owns_parent = _open_parent_under_root_fd(
+                        root_fd, rel, create=False
+                    )
+                except DiagnosticError as error:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+                try:
+                    try:
+                        st = os.lstat(basename, dir_fd=parent_fd)
+                    except FileNotFoundError:
+                        continue
+                    except OSError as error:
+                        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+                    if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISREG(st.st_mode):
+                        raise DiagnosticError("E_RECOVERY_REQUIRED")
+                finally:
+                    if owns_parent:
+                        os.close(parent_fd)
+                try:
+                    live = _sha256_regular_under_root_fd(root_fd, rel)
+                except DiagnosticError as error:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+                if live not in allowed:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+                if _unlink_regular_under_root_fd(root_fd, rel, expected_sha256=live):
+                    removed.append(rel)
+                    continue
+                # False: missing after check, digest raced under quarantine, or
+                # leaf became non-regular. Only a truly absent leaf is success.
+                try:
+                    parent_fd, basename, owns_parent = _open_parent_under_root_fd(
+                        root_fd, rel, create=False
+                    )
+                except DiagnosticError as error:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+                try:
+                    try:
+                        os.lstat(basename, dir_fd=parent_fd)
+                    except FileNotFoundError:
+                        continue
+                    except OSError as error:
+                        raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+                finally:
+                    if owns_parent:
+                        os.close(parent_fd)
+            if not os.path.lexists(dest):
+                continue
+            if os.path.islink(dest) or not os.path.isfile(dest):
                 raise DiagnosticError("E_RECOVERY_REQUIRED")
-            if sha256_file(snapshot) != meta.get("sha256"):
+            if sha256_file(dest) not in allowed:
                 raise DiagnosticError("E_RECOVERY_REQUIRED")
-            _restore_regular_nofollow(snapshot, dest)
-            continue
-        if not os.path.lexists(dest):
-            continue
-        if os.path.islink(dest) or not os.path.isfile(dest):
-            raise DiagnosticError("E_RECOVERY_REQUIRED")
-        allowed = set(meta.get("allowed_sha256") or ())
-        if sha256_file(dest) not in allowed:
-            if not meta.get("transaction_lock"):
-                raise DiagnosticError("E_RECOVERY_REQUIRED")
-            lock_bytes = Path(dest).read_bytes()
-            if not (
-                lock_bytes.startswith(b"pid=")
-                and lock_bytes.endswith(b"\n")
-                and lock_bytes[4:-1].isdigit()
-            ):
-                raise DiagnosticError("E_RECOVERY_REQUIRED")
-        os.remove(dest)
-        removed.append(rel)
+            os.remove(dest)
+            removed.append(rel)
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
     if backup_root:
-        _delete_authorized_support_subtree(checkpoint.root, backup_root, role="backup")
-    _cleanup_empty_dirs(checkpoint.root, removed_paths=removed)
+        _delete_authorized_support_subtree(root, backup_root, role="backup")
+    _cleanup_empty_dirs(root, removed_paths=removed)
+
+
+def install_multi_targets(
+    targets: list[tuple[str, str]],
+    *,
+    scope: str,
+    dry_run: bool = False,
+    force_with_backup: bool = False,
+) -> list[dict[str, Any]]:
+    """Install multiple ``(host, root)`` targets as one same-process multi-root txn (#23).
+
+    Acquires exclusive locks on unique physical roots in canonical order, then
+    replans, checkpoints, mutates, and compensates **while all locks remain held**.
+
+    Durability boundary: in-memory ``/tmp`` checkpoints do not survive process
+    crash; per-root journals remain independently recoverable via ``recover_root``.
+    This is same-process compensation, not durable cross-root atomicity.
+    """
+    if not targets:
+        return []
+    if dry_run:
+        results: list[dict[str, Any]] = []
+        for host, root in targets:
+            plan = plan_install(
+                host=host,
+                scope=scope,
+                root=root,
+                dry_run=True,
+                force_with_backup=force_with_backup,
+            )
+            results.append(execute_install(plan, force_with_backup=force_with_backup))
+        return results
+
+    require_mutating_install_platform()
+
+    # Unlocked preflight: catch deterministic conflicts (foreign files, plans)
+    # before creating support/lock trees on every target root.
+    for host, root in targets:
+        plan_install(
+            host=host,
+            scope=scope,
+            root=root,
+            dry_run=False,
+            force_with_backup=force_with_backup,
+        )
+
+    # Canonical unique physical roots (dedupe shared destinations).
+    physical_to_roots: dict[str, str] = {}
+    for _host, root in targets:
+        key = os.path.realpath(root)
+        physical_to_roots.setdefault(key, root)
+    ordered_keys = sorted(physical_to_roots.keys())
+
+    held: list[tuple[str, RootLock]] = []
+    checkpoints: list[InstallCheckpoint] = []
+    completed: list[tuple[str, InstallCheckpoint, dict[str, Any]]] = []
+    results: list[dict[str, Any]] = []
+    try:
+        for key in ordered_keys:
+            lock = RootLock(physical_to_roots[key])
+            lock.__enter__()
+            held.append((key, lock))
+
+        lock_by_key = {key: lock for key, lock in held}
+
+        # Journals + replan only after every lock is held.
+        for key, lock in held:
+            require_no_pending_journal(lock.root)
+
+        plans: list[ActionPlan] = []
+        for host, root in targets:
+            plan = plan_install(
+                host=host,
+                scope=scope,
+                root=root,
+                dry_run=False,
+                force_with_backup=force_with_backup,
+            )
+            plans.append(plan)
+
+        # Shared-root package identity recheck under locks.
+        groups: dict[str, list[str]] = {}
+        for plan in plans:
+            groups.setdefault(os.path.realpath(plan.root), []).append(plan.host)
+        for hosts in groups.values():
+            if len(hosts) < 2:
+                continue
+            identities = {package_identity(materialize_plan(host)) for host in hosts}
+            if len(identities) > 1:
+                raise DiagnosticError("E_INSTALL_CONFLICT", family=tuple(sorted(hosts)))
+
+        for plan in plans:
+            key = os.path.realpath(plan.root)
+            lock = lock_by_key[key]
+            # Replan + checkpoint immediately before each execute so shared
+            # physical roots capture the generation that this step will undo
+            # (not the common pre-transaction generation).
+            live_plan = plan_install(
+                host=plan.host,
+                scope=scope,
+                root=plan.root,
+                dry_run=False,
+                force_with_backup=force_with_backup,
+            )
+            checkpoint = capture_install_checkpoint(live_plan)
+            checkpoints.append(checkpoint)
+            result = execute_install(
+                live_plan,
+                force_with_backup=force_with_backup,
+                lock=lock,
+            )
+            results.append(result)
+            completed.append((plan.host, checkpoint, result))
+        return results
+    except Exception:
+        compensation_failures: list[str] = []
+        for host, checkpoint, result in reversed(completed):
+            try:
+                restore_install_checkpoint(
+                    checkpoint,
+                    backup_root=result.get("backup_root"),
+                )
+            except Exception:
+                compensation_failures.append(host)
+        if compensation_failures:
+            raise DiagnosticError(
+                "E_RECOVERY_REQUIRED",
+                family=tuple(sorted(compensation_failures)),
+            )
+        raise
+    finally:
+        for checkpoint in checkpoints:
+            try:
+                discard_install_checkpoint(checkpoint)
+            except Exception:
+                pass
+        for _key, lock in reversed(held):
+            try:
+                lock.__exit__(None, None, None)
+            except Exception:
+                pass
 
 
 def discard_install_checkpoint(checkpoint: InstallCheckpoint) -> None:
     shutil.rmtree(checkpoint.snapshot_dir, ignore_errors=True)
 
 
-def _restore_regular_nofollow(snapshot: str, dest: str) -> None:
-    """Atomically restore one checkpoint file without following destination symlinks."""
+def _restore_regular_nofollow(
+    snapshot: str,
+    dest: str,
+    *,
+    allowed_live_sha256: set[str] | None = None,
+) -> None:
+    """Atomically restore one checkpoint file without following destination symlinks.
+
+    When ``allowed_live_sha256`` is set and ``dest`` exists, re-hash the live
+    regular inode under ``O_NOFOLLOW`` and refuse replace unless that digest is
+    still in the allowed transaction set (binds check to the replaced leaf).
+    """
     parent = os.path.dirname(dest)
     os.makedirs(parent, exist_ok=True)
+    if allowed_live_sha256 is not None and os.path.lexists(dest):
+        if os.path.islink(dest) or not os.path.isfile(dest):
+            raise DiagnosticError("E_RECOVERY_REQUIRED")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            live_fd = os.open(dest, flags)
+        except OSError as error:
+            raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+        try:
+            st = os.fstat(live_fd)
+            if not stat_mod.S_ISREG(st.st_mode):
+                raise DiagnosticError("E_RECOVERY_REQUIRED")
+            live = _sha256_open_fd(live_fd)
+            if live not in allowed_live_sha256:
+                raise DiagnosticError("E_RECOVERY_REQUIRED")
+        finally:
+            os.close(live_fd)
     fd, temporary = tempfile.mkstemp(prefix=".portable-resume-restore-", dir=parent)
     os.close(fd)
     os.remove(temporary)
     try:
         _copy_regular_nofollow(snapshot, temporary)
+        # Re-check immediately before replace when a live leaf was present.
+        if allowed_live_sha256 is not None and os.path.lexists(dest):
+            if os.path.islink(dest) or not os.path.isfile(dest):
+                raise DiagnosticError("E_RECOVERY_REQUIRED")
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                live_fd = os.open(dest, flags)
+            except OSError as error:
+                raise DiagnosticError("E_RECOVERY_REQUIRED") from error
+            try:
+                st = os.fstat(live_fd)
+                if not stat_mod.S_ISREG(st.st_mode):
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+                live = _sha256_open_fd(live_fd)
+                if live not in allowed_live_sha256:
+                    raise DiagnosticError("E_RECOVERY_REQUIRED")
+            finally:
+                os.close(live_fd)
         os.replace(temporary, dest)
     finally:
         try:

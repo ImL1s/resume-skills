@@ -12,6 +12,12 @@
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
 ### Fixed
+- Multi-root install locking (#23): `--host all` / multi-target install
+  acquires exclusive locks on every unique physical root in canonical order
+  before checkpoint or mutation; replans and compensates while locks remain
+  held. Compensation refuses foreign digests outside the transaction allowed
+  set. Same-process compensation only — per-root journals remain the durable
+  crash boundary (not a durable multi-root coordinator).
 - Installer uninstall/verify transactions (#22): `uninstall` is a journaled
   recoverable transaction (`operation=uninstall`) that snapshots sole-claim
   owned files before unlink; `recover` finishes published uninstalls or rolls
