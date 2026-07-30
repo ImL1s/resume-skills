@@ -243,18 +243,18 @@ def _list_sessions(
     query: Query,
     exact_id: str | None,
 ) -> list[SessionSummary]:
-    if exact_id is not None:
-        rows = connection.execute(
+    def _fetch_exact(session_key: str) -> list[tuple]:
+        return connection.execute(
             """
             SELECT id, name, session_type, working_dir, created_at, updated_at, archived_at
             FROM sessions
-            WHERE id = ?
+            WHERE id = ? OR lower(id) = lower(?)
             LIMIT 2
             """,
-            (exact_id,),
+            (session_key, session_key),
         ).fetchall()
-        require_age = False
-    else:
+
+    def _fetch_normal() -> list[tuple]:
         limit = DEFAULT_BOUNDS.scanned_records + 1
         rows = connection.execute(
             """
@@ -266,6 +266,10 @@ def _list_sessions(
                 SELECT 1 FROM messages m
                 WHERE m.session_id = sessions.id
                   AND m.role IN ('user', 'assistant', 'tool')
+                  AND (
+                    m.content_json LIKE '%"text"%'
+                    OR m.content_json LIKE '%"content"%'
+                  )
               )
             ORDER BY updated_at DESC, id ASC
             LIMIT ?
@@ -274,6 +278,18 @@ def _list_sessions(
         ).fetchall()
         if len(rows) > DEFAULT_BOUNDS.scanned_records:
             raise DiagnosticError.limit_exceeded()
+        return rows
+
+    if exact_id is not None:
+        rows = _fetch_exact(exact_id)
+        require_age = False
+        # Exact miss falls back so free-text / title selection still works (Codex P2).
+        if not rows:
+            rows = _fetch_normal()
+            require_age = True
+            exact_id = None
+    else:
+        rows = _fetch_normal()
         require_age = True
 
     values: list[SessionSummary] = []

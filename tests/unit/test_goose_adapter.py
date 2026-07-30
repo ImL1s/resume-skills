@@ -84,7 +84,6 @@ class GooseAdapterTests(unittest.TestCase):
         self.assertEqual(report.format_id, FORMAT_ID)
 
     def test_empty_user_session_does_not_win_latest(self) -> None:
-        import sqlite3
         import tempfile
         from tests.fixtures.goose import build_fixtures as bf
 
@@ -96,6 +95,7 @@ class GooseAdapterTests(unittest.TestCase):
             bf._insert_schema_versions(conn, range(1, 16))
             old_id = "goempty01-0101-4101-8101-010101010101"
             new_id = "goempty02-0202-4202-8202-020202020202"
+            empty_json_id = "goempty03-0303-4303-8303-030303030303"
             bf._insert_session(conn, session_id=old_id, name="old with messages", session_type="user")
             bf._insert_message(
                 conn,
@@ -113,6 +113,23 @@ class GooseAdapterTests(unittest.TestCase):
                 ) VALUES (?, 'empty newer', 'empty newer', 0, 'user', ?, ?, ?, '{}', 'auto')
                 """,
                 (new_id, CWD, "2024-01-02 12:00:00", "2024-01-02 12:00:00"),
+            )
+            # Newer session with non-extractable payload (empty content array).
+            conn.execute(
+                """
+                INSERT INTO sessions (
+                    id, name, description, user_set_name, session_type, working_dir,
+                    created_at, updated_at, extension_data, goose_mode
+                ) VALUES (?, 'empty json', 'empty json', 0, 'user', ?, ?, ?, '{}', 'auto')
+                """,
+                (empty_json_id, CWD, "2024-01-03 12:00:00", "2024-01-03 12:00:00"),
+            )
+            conn.execute(
+                """
+                INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp, timestamp)
+                VALUES ('empty-json', ?, 'user', '[]', 1, ?)
+                """,
+                (empty_json_id, "2024-01-03 12:00:00"),
             )
             conn.commit()
             conn.close()
