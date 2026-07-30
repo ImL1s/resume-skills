@@ -347,13 +347,49 @@ def _lexical_under_root(path: str, root: str) -> bool:
     return relative != os.pardir and not relative.startswith(os.pardir + os.sep) and not os.path.isabs(relative)
 
 
+def _missing_under_safe_parents(path: str, root: str) -> bool:
+    """True when *path* is missing under *root* with no symlink parents.
+
+    Used to map ``E_UNSAFE_PATH`` from a missing leaf to ``E_NO_MATCH`` only when
+    every existing parent component under the approved root is a real directory.
+    A symlinked parent (even with a missing leaf) stays unsafe.
+    """
+
+    absolute = os.path.abspath(path)
+    abs_root = os.path.abspath(root)
+    if not _lexical_under_root(absolute, abs_root):
+        return False
+    if os.path.lexists(absolute):
+        return False
+    try:
+        relative = os.path.relpath(absolute, abs_root)
+    except ValueError:
+        return False
+    current = abs_root
+    parts = [part for part in Path(relative).parts if part not in ("", ".")]
+    if not parts:
+        return False
+    for part in parts[:-1]:
+        if part == os.pardir:
+            return False
+        current = os.path.join(current, part)
+        try:
+            mode = os.lstat(current).st_mode
+        except OSError:
+            # Intermediate component missing — still a under-root no-match.
+            return True
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            return False
+    return True
+
+
 def _exact_path_candidate(root: str, query: Query) -> str | None:
     """Resolve an absolute path ref without store-wide discovery when possible.
 
     Returns ``None`` when *query.ref* is not an absolute path. Raises
-    ``E_NO_MATCH`` for a missing path that is still under the approved root,
-    and ``E_UNSAFE_PATH`` for outside/symlink/layout failures (including a
-    missing path that is not under the root).
+    ``E_NO_MATCH`` for a missing path that is still under the approved root
+    with safe real parents, and ``E_UNSAFE_PATH`` for outside/symlink/layout
+    failures (including a missing leaf under a symlinked parent).
     """
 
     ref = query.ref.strip() if query.ref else None
@@ -364,9 +400,9 @@ def _exact_path_candidate(root: str, query: Query) -> str | None:
     except DiagnosticError as error:
         if error.code == "E_UNSAFE_PATH":
             absolute = os.path.abspath(ref)
-            # Missing under-root target → no match. Outside / traversal stays unsafe
-            # even when the leaf does not exist (Codex P2 on #19).
-            if _lexical_under_root(absolute, root) and not os.path.lexists(absolute):
+            # Missing under-root target with safe parents → no match.
+            # Outside / symlink parents stay unsafe even when the leaf is absent.
+            if _missing_under_safe_parents(absolute, root):
                 raise DiagnosticError("E_NO_MATCH", source="claude", provider=FORMAT_ID) from error
         raise
     if not _session_layout_ok(path, root):
@@ -1134,11 +1170,23 @@ class ClaudeAdapter:
 
             exact = _exact_uuid_ref(query.ref)
             prefer = _prefer_slugs_for(query)
-            if exact is not None and prefer:
-                for path in _direct_uuid_under_slugs(root, exact, prefer):
+            if exact is not None:
+                # Exact UUID: basename probe only (never scandir session siblings).
+                if prefer:
+                    for path in _direct_uuid_under_slugs(root, exact, prefer):
+                        report = _probe_path(path)
+                        if report is not None:
+                            return report
+                for path in _exact_uuid_paths(root, exact, prefer_slugs=prefer):
                     report = _probe_path(path)
                     if report is not None:
                         return report
+                projects = os.path.join(root, "projects")
+                if _regular_directory(projects, root):
+                    return CapabilityReport(
+                        self.key, FORMAT_ID, "supported", root=root, evidence=(FORMAT_ID,)
+                    )
+                return CapabilityReport(self.key, FORMAT_ID, "unavailable", root=root)
 
             paths = _session_paths(root, prefer_slugs=prefer, cwd_scoped=bool(prefer))
             if not paths:

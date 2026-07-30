@@ -508,6 +508,7 @@ class ClaudeAdapterTests(unittest.TestCase):
 
     def test_issue19_missing_under_root_is_no_match_outside_stays_unsafe(self) -> None:
         slug = claude._slugify_cwd(str(self.cwd))
+        (self.root / "projects" / slug).mkdir(parents=True, exist_ok=True)
         missing = self.root / "projects" / slug / f"{uuid.uuid4()}.jsonl"
         with self.assertRaises(DiagnosticError) as missing_err:
             claude.ADAPTER.list(self.query(ref=str(missing)), ReadBudget())
@@ -516,6 +517,38 @@ class ClaudeAdapterTests(unittest.TestCase):
         with self.assertRaises(DiagnosticError) as outside_err:
             claude.ADAPTER.list(self.query(ref=str(outside)), ReadBudget())
         self.assertEqual(outside_err.exception.code, "E_UNSAFE_PATH")
+
+    def test_issue19_missing_leaf_under_symlink_parent_stays_unsafe(self) -> None:
+        real = self.root / "real-project"
+        real.mkdir(parents=True)
+        projects = self.root / "projects"
+        projects.mkdir(parents=True, exist_ok=True)
+        link = projects / "linked-slug"
+        link.symlink_to(real, target_is_directory=True)
+        missing = link / f"{uuid.uuid4()}.jsonl"
+        with self.assertRaises(DiagnosticError) as err:
+            claude.ADAPTER.list(self.query(ref=str(missing)), ReadBudget())
+        self.assertEqual(err.exception.code, "E_UNSAFE_PATH")
+
+    def test_issue19_probe_exact_uuid_survives_large_slug_dir(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        project = self.root / "projects" / slug
+        project.mkdir(parents=True, exist_ok=True)
+        for _ in range(2_050):
+            (project / f"{uuid.uuid4()}.jsonl").write_text("{}\n", encoding="utf-8")
+        # UUID lives outside the noisy slug dir.
+        _, path = self.session(
+            [self.turn("user", user_id, None, "elsewhere", 0, sessionId=session_id)],
+            identifier=session_id,
+            project="other-bucket",
+        )
+        report = claude.ADAPTER.probe(self.query(ref=session_id))
+        self.assertEqual(report.state, "supported")
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [session_id])
+        self.assertEqual(Path(values[0].source_path), path)
 
     def test_issue19_exact_uuid_under_cwd_slug_survives_thousands_of_projects(self) -> None:
         session_id = str(uuid.uuid4())
