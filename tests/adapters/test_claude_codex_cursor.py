@@ -506,6 +506,17 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual([item.session_id for item in values], [session_id])
         self.assertEqual(Path(values[0].source_path), path)
 
+    def test_issue19_missing_under_root_is_no_match_outside_stays_unsafe(self) -> None:
+        slug = claude._slugify_cwd(str(self.cwd))
+        missing = self.root / "projects" / slug / f"{uuid.uuid4()}.jsonl"
+        with self.assertRaises(DiagnosticError) as missing_err:
+            claude.ADAPTER.list(self.query(ref=str(missing)), ReadBudget())
+        self.assertEqual(missing_err.exception.code, "E_NO_MATCH")
+        outside = Path(tempfile.gettempdir()) / f"portable-resume-outside-{uuid.uuid4()}.jsonl"
+        with self.assertRaises(DiagnosticError) as outside_err:
+            claude.ADAPTER.list(self.query(ref=str(outside)), ReadBudget())
+        self.assertEqual(outside_err.exception.code, "E_UNSAFE_PATH")
+
     def test_issue19_exact_uuid_under_cwd_slug_survives_thousands_of_projects(self) -> None:
         session_id = str(uuid.uuid4())
         user_id = str(uuid.uuid4())

@@ -337,11 +337,23 @@ def _direct_uuid_under_slugs(
     return values
 
 
+def _lexical_under_root(path: str, root: str) -> bool:
+    """True when *path* is lexically under *root* (abspath spellings only)."""
+
+    try:
+        relative = os.path.relpath(os.path.abspath(path), os.path.abspath(root))
+    except ValueError:
+        return False
+    return relative != os.pardir and not relative.startswith(os.pardir + os.sep) and not os.path.isabs(relative)
+
+
 def _exact_path_candidate(root: str, query: Query) -> str | None:
     """Resolve an absolute path ref without store-wide discovery when possible.
 
     Returns ``None`` when *query.ref* is not an absolute path. Raises
-    ``E_NO_MATCH`` / ``E_UNSAFE_PATH`` for absolute refs that fail validation.
+    ``E_NO_MATCH`` for a missing path that is still under the approved root,
+    and ``E_UNSAFE_PATH`` for outside/symlink/layout failures (including a
+    missing path that is not under the root).
     """
 
     ref = query.ref.strip() if query.ref else None
@@ -350,8 +362,12 @@ def _exact_path_candidate(root: str, query: Query) -> str | None:
     try:
         path, _ = require_regular_no_symlinks(ref, root)
     except DiagnosticError as error:
-        if error.code == "E_UNSAFE_PATH" and not os.path.lexists(os.path.abspath(ref)):
-            raise DiagnosticError("E_NO_MATCH", source="claude", provider=FORMAT_ID) from error
+        if error.code == "E_UNSAFE_PATH":
+            absolute = os.path.abspath(ref)
+            # Missing under-root target → no match. Outside / traversal stays unsafe
+            # even when the leaf does not exist (Codex P2 on #19).
+            if _lexical_under_root(absolute, root) and not os.path.lexists(absolute):
+                raise DiagnosticError("E_NO_MATCH", source="claude", provider=FORMAT_ID) from error
         raise
     if not _session_layout_ok(path, root):
         raise DiagnosticError.unsafe_path()
