@@ -1,3 +1,5 @@
+# Changelog
+
 ## Unreleased
 
 - Release identity hardening (#118): advance post-`v0.3.4` development to
@@ -75,10 +77,6 @@
   sessions (`parent_session_id`); destination install to `.crush/skills` and
   `~/.config/crush/skills`. Matrix is now registry-derived **12×12=144**. Native
   Crush UI activation remains not-run.
-
-# Changelog
-
-## Unreleased
 
 ### Security
 - Installer control plane (#21): pin `.portable-resume`, no-follow regular-file

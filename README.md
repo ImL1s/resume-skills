@@ -1,7 +1,7 @@
 # portable-resume-skills
 
 <p align="center">
-  <img src="docs/assets/portable-resume-skills-hero-v2.jpg" alt="Nine local coding-agent sources flow into a sealed context archive, then into nine fresh destination sessions" width="920" />
+  <img src="docs/assets/portable-resume-skills-hero-v2.jpg" alt="Local coding-agent session stores flow into a sealed context archive, then into fresh destination sessions" width="920" />
 </p>
 
 <p align="center">
@@ -104,28 +104,47 @@ fallbacks are in [`docs/install-hosts.md`](docs/install-hosts.md).
 The lower-level transactional command remains available for previews, custom
 roots, verification, and uninstall:
 
+Installed (pipx/pip):
+
 ```bash
-# Inspect capabilities and the registry-derived matrix (currently 17×18)
+# Inspect capabilities and the registry-derived matrix
+portable-resume --version
+install-resume-skills --version
+portable-resume self-check --json
+install-resume-skills matrix
+install-resume-skills hosts --json
+
+# Preview, install, verify, and uninstall one destination
+install-resume-skills install \
+  --host qwen --scope project --project "$PWD" --dry-run
+install-resume-skills install \
+  --host qwen --scope project --project "$PWD"
+install-resume-skills verify \
+  --host qwen --scope project --project "$PWD"
+install-resume-skills uninstall \
+  --host qwen --scope project --project "$PWD" --dry-run
+```
+
+From a source checkout (no install):
+
+```bash
 PYTHONPATH=src python3 scripts/portable-resume --version
 PYTHONPATH=src python3 scripts/install-resume-skills --version
 python3 scripts/check_version_state.py --require-git --json
 PYTHONPATH=src python3 scripts/portable-resume self-check --json
 PYTHONPATH=src python3 scripts/install-resume-skills matrix
 PYTHONPATH=src python3 scripts/install-resume-skills hosts --json
+PYTHONPATH=src python3 scripts/install-resume-skills install \
+  --host qwen --scope project --project "$PWD" --dry-run
+```
 
-# Read a synthetic Claude fixture
+The synthetic fixture exists only in a source checkout:
+
+```bash
 PYTHONPATH=src python3 scripts/portable-resume claude show latest \
   --cwd /workspace/project \
   --source-root tests/fixtures/claude/s-cla-01-ordered-parent-chain/root \
   --format handoff
-
-# Preview, install, verify, and uninstall one destination
-PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host qwen --scope project --project "$PWD" --dry-run
-PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host qwen --scope project --project "$PWD"
-PYTHONPATH=src python3 scripts/install-resume-skills verify \
-  --host qwen --scope project --project "$PWD"
 ```
 
 Full roots, activation grammar, direct archives, and marketplace/plugin routes are in [`docs/install-hosts.md`](docs/install-hosts.md). Release assets are generated with:
