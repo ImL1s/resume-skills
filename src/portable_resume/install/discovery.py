@@ -658,6 +658,20 @@ def resolve_discovery_path(
                 environ=environ,
                 isolation=isolation,
             ).path
+        # Kilo: singular skill/ under the same config home as plural skills/
+        # (default ~/.config/kilo or $KILO_CONFIG_DIR when set, non-isolation).
+        if host == "kilo" and entry.root_id == "kilo.user.config.skill":
+            from .catalog import resolve_skill_root_info
+
+            primary = resolve_skill_root_info(
+                host="kilo",
+                scope="global",
+                project_dir=None,
+                home_dir=home_dir,
+                environ=environ,
+                isolation=isolation,
+            ).path
+            return os.path.join(os.path.dirname(primary), "skill")
         base = os.path.realpath(home_dir)
         return os.path.join(base, *entry.rel.split("/"))
     return None
