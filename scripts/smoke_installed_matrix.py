@@ -162,6 +162,16 @@ FIXTURES: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
             "synthetic gemini assistant reply",
         ),
     ),
+    "github-copilot": (
+        "tests/fixtures/github-copilot/s-gcp-01-user-basic",
+        "/tmp/project",
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        (
+            "synthetic copilot user prompt",
+            "synthetic copilot assistant reply",
+            "bash",
+        ),
+    ),
 }
 
 

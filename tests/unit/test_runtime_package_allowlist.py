@@ -39,6 +39,7 @@ class RuntimePackageAllowlistTests(unittest.TestCase):
             "adapters/openhands.py",
             "adapters/hermes.py",
             "adapters/gemini.py",
+            "adapters/github_copilot.py",
             "adapters/opencode.py",
             "adapters/openclaw.py",
             "adapters/pi.py",

@@ -162,13 +162,15 @@ Do not copy real transcripts, credentials, developer home paths, or `~/.grok/bun
 - **Roots:** `HERMES_HOME` (absolute), `~/.hermes`, exact `state.db`, or `--source-root`
 - **Out of scope:** Hermes CLI/gateway, Skill hub/taps, messaging retrieval, FTS search, migrations
 
-## github-copilot (research — not enabled)
+## copilot-cli-events-jsonl-v1
 
-- **Status:** research / not in enabled sources (#44 Track B)
-- **Store (documented):** `$COPILOT_HOME/session-state/<id>/events.jsonl` + `session-store.db` index
-- **Blocker:** public event discriminators / rewind / subagent / sync authority not fixture-pinned
+- **Store:** `$COPILOT_HOME/session-state/<session-id>/events.jsonl` (default `~/.copilot/…`)
+- **Authority:** local `events.jsonl` only; `session-store.db` is Chronicle/search index, not list/show authority
+- **Public turns:** `user.message` / `assistant.message` string `data.content`; `tool.execution_start` tool names only
+- **Omit:** `reasoningText`, tool args/results, hooks, subagent payloads, system/compaction/control events
+- **cwd:** from `session.start` / `session.context_changed` context; filter when query.cwd set
 - **Destination:** supported as `github-copilot` (`.github/skills`, `$COPILOT_HOME/skills`)
-- **Out of scope until qualification:** source probe/list/show, Chronicle, cloud session sync
+- **Out of scope:** copilot CLI process, Chronicle reindex, cloud session sync, plugins
 
 ## kilo (research — not enabled)
 

@@ -1,0 +1,10 @@
+{
+  "case": "s-gcp-03-corrupt",
+  "expected_code": 7,
+  "expected_operation": "error",
+  "expected_warnings": [],
+  "format_id": "copilot-cli-events-jsonl-v1",
+  "provenance_ref": "docs/source-formats.md#copilot-cli-events-jsonl-v1",
+  "source": "github-copilot",
+  "synthetic": true
+}

@@ -184,13 +184,12 @@ SOURCE_PROFILES["hermes"] = SourceProfile(
     fixture_profile="hermes-state-sqlite-v1",
 )
 
-# Destination lands first (#44). Source stays research until events.jsonl schema is pinned.
 SOURCE_PROFILES["github-copilot"] = SourceProfile(
     key="github-copilot",
     adapter_module="portable_resume.adapters.github_copilot",
-    format_ids=(),
-    status="research",
-    fixture_profile=None,
+    format_ids=("copilot-cli-events-jsonl-v1",),
+    status="supported",
+    fixture_profile="copilot-cli-events-jsonl-v1",
 )
 
 SOURCE_PROFILES["gemini"] = SourceProfile(

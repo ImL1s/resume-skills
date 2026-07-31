@@ -1,6 +1,6 @@
 # Destination installation guide
 
-This repository ships sixteen `resume-<source>` Skills to eighteen destination hosts (derived from registries; currently **16×18=288** cells). The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
+This repository ships seventeen `resume-<source>` Skills to eighteen destination hosts (derived from registries; currently **17×18=306** cells). The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
 
 ## Build or inspect packages
 

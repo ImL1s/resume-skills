@@ -791,8 +791,8 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "GitHub Copilot is destination-only in this release; no copilot source adapter yet."
         ),
         caveats=(
-            "Destination-only: no github-copilot source adapter until events.jsonl schema is pinned (#44 Track B).",
-            "Does not invoke copilot CLI, plugins network install, Chronicle, or GitHub session sync.",
+            "Source: local events.jsonl only (copilot-cli-events-jsonl-v1); session-store.db is not authority.",
+            "Does not invoke copilot CLI, plugins network install, Chronicle reindex, or GitHub cloud session sync.",
             "Native copilot plugins install / picker activation evidence remains not-run.",
             "Global installs honor COPILOT_HOME when set (absolute path).",
         ),
@@ -934,6 +934,7 @@ SOURCE_TITLES = {
     "openhands": "OpenHands",
     "hermes": "Hermes Agent",
     "gemini": "Gemini CLI",
+    "github-copilot": "GitHub Copilot CLI",
     "qwen": "Qwen Code",
 }
 
