@@ -36,6 +36,20 @@ Plans 045–047 fix that chain.
 | 054 | Runtime drift detection for stale/foreign skill copies | P2 | M | — (design call) | TODO |
 | 055 | Trigger-first skill `description` | P2 | S | — (wording call) | TODO |
 
+### Published issues (2026-08-01 run)
+
+045 [#162](https://github.com/ImL1s/resume-skills/issues/162) ·
+046 [#163](https://github.com/ImL1s/resume-skills/issues/163) ·
+047 [#164](https://github.com/ImL1s/resume-skills/issues/164) ·
+048 [#165](https://github.com/ImL1s/resume-skills/issues/165) ·
+049 [#166](https://github.com/ImL1s/resume-skills/issues/166) ·
+050 [#167](https://github.com/ImL1s/resume-skills/issues/167) ·
+051 [#168](https://github.com/ImL1s/resume-skills/issues/168) ·
+052 [#169](https://github.com/ImL1s/resume-skills/issues/169) ·
+053 [#170](https://github.com/ImL1s/resume-skills/issues/170) ·
+054 [#171](https://github.com/ImL1s/resume-skills/issues/171) ·
+055 [#172](https://github.com/ImL1s/resume-skills/issues/172)
+
 ### Dependency notes (2026-08-01)
 
 - **045 → 046 → 047**: 045 lands the real-schema fixture and pins today's

@@ -17,6 +17,7 @@
 - **Depends on**: none
 - **Category**: bug (handoff content fidelity)
 - **Planned at**: commit `2b4611c`, 2026-08-01
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/166
 
 ## Why this matters
 

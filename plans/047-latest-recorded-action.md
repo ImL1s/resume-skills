@@ -17,6 +17,7 @@
 - **Depends on**: plans/045 (fixture) and preferably plans/046 (tool turns carry identity)
 - **Category**: bug (handoff content)
 - **Planned at**: commit `2b4611c`, 2026-08-01
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/164
 
 ## Why this matters
 

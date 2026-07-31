@@ -17,6 +17,7 @@
 - **Depends on**: **plans/045-claude-tool-fixture-real-schema.md** (its fixture is the only real-schema regression net)
 - **Category**: bug (handoff content)
 - **Planned at**: commit `2b4611c`, 2026-08-01
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/163
 
 ## Why this matters
 

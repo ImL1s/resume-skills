@@ -17,6 +17,7 @@
 - **Depends on**: none. **Coordinate with plan 014** (metadata-only list perf, already DONE) and **plan 006** (ReadBudget double-count, DONE) — both reduce the cost of this scan; neither fixes the semantics.
 - **Category**: bug (in-session failure path)
 - **Planned at**: commit `2b4611c`, 2026-08-01
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/167
 
 ## Why this matters
 

@@ -18,6 +18,7 @@
   `E_INSTALL_SHADOW` only.
 - **Category**: direction / correctness (needs a design call)
 - **Planned at**: commit `2b4611c`, 2026-08-01
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/171
 
 ## Why this matters
 

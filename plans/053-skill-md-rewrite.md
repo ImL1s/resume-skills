@@ -17,6 +17,7 @@
 - **Depends on**: none, but **coordinate**: plan 051 makes a one-sentence edit to this file (bare-invocation default) and plan 052 may edit the lane B `cwd` bullet. Land those first, or fold their edits into this rewrite and say so.
 - **Category**: dx (in-session UX)
 - **Planned at**: commit `2b4611c`, 2026-08-01
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/170
 
 ## Why this matters
 

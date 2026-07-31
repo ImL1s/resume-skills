@@ -17,6 +17,7 @@
 - **Depends on**: none (composes with 046/047; order irrelevant)
 - **Category**: dx (handoff legibility)
 - **Planned at**: commit `2b4611c`, 2026-08-01
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/165
 
 ## Why this matters
 

@@ -17,6 +17,7 @@
 - **Depends on**: none
 - **Category**: bug / dx (in-session failure paths)
 - **Planned at**: commit `2b4611c`, 2026-08-01
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/168
 
 ## Why this matters
 

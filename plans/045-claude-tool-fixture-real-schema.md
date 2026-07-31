@@ -17,6 +17,7 @@
 - **Depends on**: none — **this is the prerequisite for plans 046 and 047**
 - **Category**: tests
 - **Planned at**: commit `2b4611c`, 2026-08-01
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/162
 
 ## Why this matters
 

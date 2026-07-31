@@ -18,6 +18,7 @@
   first, fold the doc half into it and keep only the code decision here.
 - **Category**: bug (lane asymmetry) / docs
 - **Planned at**: commit `2b4611c`, 2026-08-01
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/169
 
 ## Why this matters
 
