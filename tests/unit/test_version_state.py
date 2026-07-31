@@ -22,6 +22,7 @@ def identity(
         "release_channel": channel,
         "commit_sha": commit,
         "dirty": dirty,
+        "build_inputs_sha256": "e" * 64 if commit is not None else None,
         "registry_sha256": registry,
         "source_sha256": source,
     }

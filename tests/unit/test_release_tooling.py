@@ -73,7 +73,31 @@ class ReleaseToolingTests(unittest.TestCase):
         self.assertIn("from portable_resume.registry import matrix_dimensions", release)
         self.assertIn('"packaging_cells": dimensions["cells"]', release)
         self.assertIn('"installed_runner_cells": dimensions["cells"]', release)
-        self.assertIn("identity = git_build_identity()", release)
+        self.assertIn("python scripts/prepare_build_identity.py", release)
+        self.assertIn("PORTABLE_RESUME_BUILD_IDENTITY_FILE", release)
+        self.assertIn("PORTABLE_RESUME_BUILD_IDENTITY_SHA256", release)
+        self.assertIn("python scripts/verify_artifact_identities.py", release)
+        self.assertIn("python scripts/smoke_distribution.py", release)
+        self.assertIn(
+            "--host-report release-assets/host-packages-build.json \\\n"
+            "            --output release-assets/artifact-identities.json \\\n"
+            "            dist/* release-assets/hosts/*.zip",
+            release,
+        )
+        for dependency in (
+            "needs: [validate, verify]",
+            "needs: [validate, build]",
+            "needs: [build, distribution-smoke]",
+            "needs: [validate, build, attest]",
+            "needs: [validate, draft-release]",
+            "needs: [validate, draft-release, publish-pypi]",
+        ):
+            self.assertIn(dependency, release)
+        self.assertIn("identity = load_identity_file(", release)
+        self.assertIn("current_identity = git_build_identity()", release)
+        self.assertIn("if current_identity != identity:", release)
+        self.assertIn("artifact build mutated the source package", release)
+        self.assertIn("poison-build-identity.json", release)
         self.assertIn('"build_identity": identity', release)
         self.assertIn("commit: ${{ steps.metadata.outputs.commit }}", release)
         self.assertEqual(
@@ -84,12 +108,47 @@ class ReleaseToolingTests(unittest.TestCase):
         self.assertEqual(release.count("ref: ${{ env.RELEASE_TAG }}"), 1)
         self.assertIn('identity.get("commit_sha") != expected_commit', release)
         self.assertIn('host_report.get("build_identity") != identity', release)
+        self.assertLess(
+            release.index("python scripts/prepare_build_identity.py"),
+            release.index("python -m build"),
+        )
+        self.assertLess(
+            release.index("python scripts/verify_artifact_identities.py"),
+            release.index("Generate release evidence"),
+        )
+        for asset in (
+            "release-assets/build-identity.json",
+            "release-assets/artifact-identities.json",
+        ):
+            self.assertGreaterEqual(release.count(asset), 5)
         self.assertNotIn('"packaging_cells": 64', release)
         self.assertNotIn('"installed_runner_cells": 64', release)
 
         ci = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("fetch-depth: 0", ci)
         self.assertIn("python scripts/self_verify.py --profile ci-quality", ci)
+        self.assertIn("python scripts/prepare_build_identity.py", ci)
+        self.assertIn("python scripts/verify_artifact_identities.py", ci)
+        self.assertIn("python scripts/smoke_distribution.py", ci)
+        self.assertIn(
+            "--host-report host-packages/host-packages.json \\\n"
+            "            --output package-evidence/artifact-identities.json \\\n"
+            "            dist/* host-packages/*.zip",
+            ci,
+        )
+        self.assertIn("python -m build --outdir dist-repro", ci)
+        self.assertIn(
+            '[[ "$(find dist -maxdepth 1 -type f | wc -l)" == "2" ]]',
+            ci,
+        )
+        self.assertIn('cmp "$artifact" "dist-repro/${artifact#dist/}"', ci)
+        self.assertIn("package-source-status.before", ci)
+        self.assertIn("package-source-status.after", ci)
+        self.assertIn("poison-build-identity.json", ci)
+        self.assertLess(
+            ci.index("python scripts/prepare_build_identity.py"),
+            ci.index("python -m build"),
+        )
 
     def test_release_checksum_manifest_uses_flat_asset_names(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

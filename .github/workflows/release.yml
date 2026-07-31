@@ -120,16 +120,43 @@ jobs:
       - name: Install isolated release tooling
         run: python -m pip install --disable-pip-version-check build==1.5.0 twine==6.2.0
 
+      - name: Pin one exact release identity
+        env:
+          EXPECTED_COMMIT: ${{ needs.validate.outputs.commit }}
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          python scripts/prepare_build_identity.py \
+            --output release-assets/build-identity.json \
+            --expected-commit "$EXPECTED_COMMIT" \
+            --require-release \
+            --json > "$RUNNER_TEMP/build-identity-pin.json"
+          identity_sha="$(python -c \
+            'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["sha256"])' \
+            "$RUNNER_TEMP/build-identity-pin.json")"
+          {
+            echo "PORTABLE_RESUME_BUILD_IDENTITY_FILE=$GITHUB_WORKSPACE/release-assets/build-identity.json"
+            echo "PORTABLE_RESUME_BUILD_IDENTITY_SHA256=$identity_sha"
+            echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$EXPECTED_COMMIT")"
+          } >> "$GITHUB_ENV"
+
       - name: Build Python and host artifacts
         env:
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
           python -m build
           python -m twine check dist/*
-          mkdir -p release-assets
           python scripts/build_host_packages.py \
             --output-dir release-assets/hosts \
+            --identity-file "$PORTABLE_RESUME_BUILD_IDENTITY_FILE" \
+            --identity-sha256 "$PORTABLE_RESUME_BUILD_IDENTITY_SHA256" \
             --json > release-assets/host-packages-build.json
+          python scripts/verify_artifact_identities.py \
+            --identity-file "$PORTABLE_RESUME_BUILD_IDENTITY_FILE" \
+            --identity-sha256 "$PORTABLE_RESUME_BUILD_IDENTITY_SHA256" \
+            --host-report release-assets/host-packages-build.json \
+            --output release-assets/artifact-identities.json \
+            dist/* release-assets/hosts/*.zip
 
       - name: Generate release evidence
         env:
@@ -145,6 +172,7 @@ jobs:
           from pathlib import Path
 
           from portable_resume.registry import matrix_dimensions
+          from portable_resume.build_identity import load_identity_file
           from scripts.git_build_identity import git_build_identity
 
           dimensions = matrix_dimensions()
@@ -153,13 +181,20 @@ jobs:
                   *Path("dist").glob("*"),
                   *Path("release-assets/hosts").glob("*"),
                   Path("release-assets/host-packages-build.json"),
+                  Path("release-assets/build-identity.json"),
+                  Path("release-assets/artifact-identities.json"),
               ]
           )
           expected_commit = os.environ["RELEASE_COMMIT"]
           actual_commit = subprocess.check_output(
               ["git", "rev-parse", "HEAD"], text=True
           ).strip()
-          identity = git_build_identity()
+          identity = load_identity_file(
+              Path("release-assets/build-identity.json"),
+              expected_sha256=os.environ[
+                  "PORTABLE_RESUME_BUILD_IDENTITY_SHA256"
+              ],
+          )
           host_report = json.loads(
               Path("release-assets/host-packages-build.json").read_text(
                   encoding="utf-8"
@@ -167,6 +202,11 @@ jobs:
           )
           if actual_commit != expected_commit:
               raise RuntimeError("build checkout differs from validated commit")
+          current_identity = git_build_identity()
+          if current_identity != identity:
+              raise RuntimeError("build checkout changed after identity pinning")
+          if Path("src/portable_resume/resources/build-identity.json").exists():
+              raise RuntimeError("artifact build mutated the source package")
           if (
               identity.get("release_channel") != "release"
               or identity.get("commit_sha") != expected_commit
@@ -182,6 +222,9 @@ jobs:
               "version": os.environ["RELEASE_VERSION"],
               "commit_sha": expected_commit,
               "build_identity": identity,
+              "build_identity_sha256": os.environ[
+                  "PORTABLE_RESUME_BUILD_IDENTITY_SHA256"
+              ],
               "actions_run": (
                   f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/"
                   f"runs/{os.environ['GITHUB_RUN_ID']}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}"
@@ -219,6 +262,8 @@ jobs:
             --output release-assets/SHA256SUMS \
             dist/* \
             release-assets/hosts/* \
+            release-assets/build-identity.json \
+            release-assets/artifact-identities.json \
             release-assets/host-packages-build.json \
             release-assets/release-evidence.json
 
@@ -262,16 +307,25 @@ jobs:
           path: .
 
       - name: Install and smoke wheel and sdist
-        run: >-
-          python scripts/smoke_distribution.py
-          --dist-dir dist
-          --version "${{ needs.validate.outputs.version }}"
+        shell: bash
+        run: |
+          identity_sha="$(python -c \
+            'import json; print(json.load(open("release-assets/artifact-identities.json", encoding="utf-8"))["build_identity_sha256"])')"
+          PORTABLE_RESUME_BUILD_IDENTITY_FILE="$RUNNER_TEMP/poison-build-identity.json" \
+          PORTABLE_RESUME_BUILD_IDENTITY_SHA256="$(printf '0%.0s' {1..64})" \
+          python scripts/smoke_distribution.py \
+            --dist-dir dist \
+            --version "${{ needs.validate.outputs.version }}" \
+            --identity-file release-assets/build-identity.json \
+            --identity-sha256 "$identity_sha"
 
       - name: Verify flattened GitHub Release checksums
         shell: bash
         run: |
           mkdir flat-release
           cp dist/* release-assets/hosts/* \
+            release-assets/build-identity.json \
+            release-assets/artifact-identities.json \
             release-assets/host-packages-build.json \
             release-assets/release-evidence.json \
             release-assets/SHA256SUMS \
@@ -300,11 +354,14 @@ jobs:
           path: .
 
       - name: Create GitHub artifact attestations
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-path: |
             dist/*
             release-assets/hosts/*
+            release-assets/build-identity.json
+            release-assets/artifact-identities.json
+            release-assets/host-packages-build.json
             release-assets/SHA256SUMS
             release-assets/release-evidence.json
 
@@ -346,6 +403,7 @@ jobs:
             exit 1
           }
           files=(dist/* release-assets/hosts/* release-assets/SHA256SUMS \
+            release-assets/build-identity.json release-assets/artifact-identities.json \
             release-assets/release-evidence.json release-assets/host-packages-build.json)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"

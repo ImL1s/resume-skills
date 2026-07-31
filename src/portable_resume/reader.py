@@ -7,9 +7,9 @@ import importlib
 import json
 import os
 import sys
-from typing import Any, Sequence
+from typing import Any, Never, Sequence
 
-from .build_identity import build_identity, latest_release
+from .build_identity import latest_release, runtime_identity
 from .adapters.base import CAPABILITY_STATES, ResolvedRef, SourceAdapter
 from .bounds import DEFAULT_BOUNDS, ReadBudget
 from .contracts import validate_envelope
@@ -23,7 +23,7 @@ from .select import AmbiguousSelection, bounded_candidates, select_session, summ
 
 
 class DiagnosticArgumentParser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> Never:
         raise DiagnosticError.invalid()
 
 
@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s {build_identity()['version']}",
+        version=f"%(prog)s {runtime_identity()['version']}",
     )
     parser.add_argument(
         "source",
@@ -185,7 +185,7 @@ def self_check(*, stdout: Any = sys.stdout) -> int:
         validate_registries,
     )
 
-    identity = build_identity()
+    identity = runtime_identity()
     report: dict[str, Any] = {
         "schema_version": "portable-resume/self-check-v1",
         "ok": True,

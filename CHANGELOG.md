@@ -2,12 +2,40 @@
 
 - Release identity hardening (#118): advance post-`v0.3.4` development to
   `0.4.0.dev0`; add a dependency-free build identity (commit/dirty state,
-  registry digest, source digest), an immutable `v0.3.4` release baseline, and
+  registry digest, source digest, and non-package build-input digest), an
+  immutable `v0.3.4` release baseline, and
   a fail-closed version-state gate so changed source cannot continue claiming an
   already-published exact version. Release validation now rejects `.devN`, pins
   all byte-producing jobs to the validated commit SHA, and rechecks the remote
-  annotated tag before publish. Runtime Git provenance embedding remains a
-  follow-up within #118; identity lookup itself launches no child process.
+  annotated tag before publish. Artifact builds now pin one canonical identity
+  before producing bytes, embed the exact canonical JSON in wheel, sdist, 18
+  direct-host ZIPs, and seven native package ZIPs, then cross-verify every
+  artifact and installed runtime. Runtime lookup uses only the fixed embedded
+  resource, never build-pin environment variables or Git; source checkouts keep
+  an honest null-commit fallback. The runtime source digest is stable across
+  installation permission modes, while the Git-only build-input digest still
+  detects package mode drift before artifacts are produced. CI builds
+  wheel/sdist twice with one pin and
+  `SOURCE_DATE_EPOCH`, normalizes generated build permissions, requires
+  byte-identical output even when the second build starts under `umask 077`, and
+  proves the source tree was not mutated. Archive validation bounds compressed
+  bytes, member count, total expanded bytes, and manifest reads; encrypted or
+  unsupported-compression required members now produce validation failures
+  instead of escaping as exceptions. Corrupt DEFLATE, BZIP2, LZMA, and
+  Zstandard member payloads use the same bounded decoder-error boundary in
+  package and artifact validation;
+  unsupported ZIP metadata versions also return controlled failures before
+  member reads begin. Truncated or corrupt gzip sdists likewise normalize
+  decoder failures instead of emitting tracebacks. Offline package validation
+  requires the current v2 identity schema for newly verified artifacts while
+  legacy v1 identity loading remains available for runtime inspection. The host
+  report is checked against
+  registry-derived filenames, family paths, member counts, and canonical install
+  hints. The new `MANIFEST.in` path uses `setuptools==83.0.0`, outside
+  the affected range of
+  [GHSA-h35f-9h28-mq5c](https://github.com/advisories/GHSA-h35f-9h28-mq5c).
+  Repository-level immutable `v*` tag enforcement remains an external setup
+  gate; no new release is claimed.
 - GitHub Copilot CLI source (#44 Track B): `copilot-cli-events-jsonl-v1` reader for
   `$COPILOT_HOME/session-state/<id>/events.jsonl` (local authority; not session-store.db /
   Chronicle / cloud sync). Matrix is now **17×18=306**.

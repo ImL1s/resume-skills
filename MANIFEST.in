@@ -1,0 +1,2 @@
+include scripts/build_artifact_identity.py
+include scripts/git_build_identity.py
