@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import shutil
+import sqlite3
+import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
+from typing import Any, Mapping
+from unittest import mock
 
 from portable_resume.adapters.base import ResolvedRef
 from portable_resume.adapters.openclaw import ADAPTER, FORMAT_ID
-from portable_resume.bounds import ReadBudget
+from portable_resume.bounds import Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.model import Query
 from tests.helpers.core import tree_snapshot
@@ -30,6 +36,42 @@ def query(root: Path, ref: str | None = None, **kwargs: object) -> Query:
 
 
 class OpenClawAdapterTests(unittest.TestCase):
+    def _copy_fixture(self, temporary: str, case: str = "s-oc-01-basic") -> Path:
+        root = Path(temporary) / case
+        shutil.copytree(fixture_root(case), root)
+        return root
+
+    def _add_session_nodes(
+        self,
+        root: Path,
+        *,
+        count: int,
+        session_id: str | None = None,
+    ) -> None:
+        database = root / "agents/main/agent/openclaw-agent.sqlite"
+        with closing(sqlite3.connect(database)) as connection:
+            for index in range(count):
+                current_id = session_id or f"sess-extra-{index:04d}"
+                session_key = f"agent:main:direct:extra-{index:04d}"
+                connection.execute(
+                    """
+                    INSERT INTO session_nodes (
+                      session_key, current_session_id, entry_json, updated_at,
+                      created_at, created_via, display_name, last_interaction_at
+                    ) VALUES (?, ?, ?, ?, ?, 'operator', ?, ?)
+                    """,
+                    (
+                        session_key,
+                        current_id,
+                        '{"cwd":"/tmp/project","redacted":true}',
+                        1_700_000_100_000 + index,
+                        1_700_000_100_000 + index,
+                        f"Extra {index}",
+                        1_700_000_100_000 + index,
+                    ),
+                )
+            connection.commit()
+
     def test_list_and_show_basic_fixture(self) -> None:
         root = fixture_root("s-oc-01-basic")
         before = tree_snapshot(root)
@@ -113,6 +155,111 @@ class OpenClawAdapterTests(unittest.TestCase):
         self.assertEqual(report.state, "supported")
         self.assertEqual(report.format_id, FORMAT_ID)
 
+    def test_listing_fails_closed_at_caller_lowered_sql_scan_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._copy_fixture(temporary)
+            self._add_session_nodes(root, count=49)
+            before = tree_snapshot(root)
+            budget = ReadBudget(Bounds(scanned_records=5))
+
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.list(query(root), budget)
+
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+            self.assertEqual(tree_snapshot(root), before)
+
+    def test_list_debits_shared_record_and_byte_budget(self) -> None:
+        root = fixture_root("s-oc-01-basic")
+        budget = ReadBudget(Bounds(scanned_records=5, source_read_bytes=1024))
+
+        summaries = ADAPTER.list(query(root), budget)
+
+        self.assertEqual([item.session_id for item in summaries], ["main:sess-basic-0001"])
+        self.assertGreater(budget.records, 0)
+        self.assertGreater(budget.bytes_read, 0)
+
+    def test_exact_ref_is_bounded_and_debits_shared_budget(self) -> None:
+        root = fixture_root("s-oc-01-basic")
+        budget = ReadBudget(Bounds(scanned_records=5, source_read_bytes=1024))
+
+        summaries = ADAPTER.list(query(root, ref="main:sess-basic-0001"), budget)
+
+        self.assertEqual([item.session_id for item in summaries], ["main:sess-basic-0001"])
+        self.assertEqual(budget.records, 1)
+        self.assertGreater(budget.bytes_read, 0)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            crowded = self._copy_fixture(temporary)
+            self._add_session_nodes(crowded, count=5, session_id="sess-basic-0001")
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.list(
+                    query(crowded, ref="main:sess-basic-0001"),
+                    ReadBudget(Bounds(scanned_records=5)),
+                )
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_lowered_snapshot_limit_selects_query_only_live_connection(self) -> None:
+        from portable_resume.adapters import openclaw as oc
+
+        root = fixture_root("s-oc-01-basic")
+        database = root / "agents/main/agent/openclaw-agent.sqlite"
+        budget = ReadBudget(Bounds(sqlite_snapshot_bytes=0))
+        live_connection = object()
+        with (
+            mock.patch.object(oc, "query_only_live_sqlite", return_value=live_connection) as live,
+            mock.patch.object(oc, "private_sqlite_connection") as private,
+        ):
+            selected = oc._open_connection(str(database), str(root), budget)
+
+        self.assertIs(selected, live_connection)
+        live.assert_called_once_with(str(database), root=str(root), provider=FORMAT_ID)
+        private.assert_not_called()
+
+        snapshot_budget = ReadBudget()
+        private_connection = object()
+        with (
+            mock.patch.object(oc, "query_only_live_sqlite") as live,
+            mock.patch.object(
+                oc, "private_sqlite_connection", return_value=private_connection
+            ) as private,
+        ):
+            selected = oc._open_connection(str(database), str(root), snapshot_budget)
+
+        self.assertIs(selected, private_connection)
+        private.assert_called_once_with(
+            str(database),
+            root=str(root),
+            bounds=snapshot_budget.limits,
+            provider=FORMAT_ID,
+        )
+        live.assert_not_called()
+
+    def test_agent_directory_enumeration_honors_lowered_scan_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for index in range(6):
+                (root / "agents" / f"agent-{index}" / "agent").mkdir(parents=True)
+
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.list(query(root), ReadBudget(Bounds(scanned_records=5)))
+
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_show_debits_shared_transcript_and_byte_budget(self) -> None:
+        root = fixture_root("s-oc-01-basic")
+        database = root / "agents/main/agent/openclaw-agent.sqlite"
+        budget = ReadBudget(Bounds(transcript_records=5, source_read_bytes=1024))
+
+        session = ADAPTER.show(
+            ResolvedRef(session_id="main:sess-basic-0001", source_path=str(database)),
+            query(root, ref="main:sess-basic-0001"),
+            budget,
+        )
+
+        self.assertEqual(len(session.turns), 2)
+        self.assertEqual(budget.transcript_records_read, 2)
+        self.assertGreater(budget.bytes_read, 0)
+
     def test_nested_message_payload_and_compaction_retention(self) -> None:
         from portable_resume.adapters import openclaw as oc
 
@@ -125,7 +272,7 @@ class OpenClawAdapterTests(unittest.TestCase):
         self.assertEqual(oc._event_role(nested), "user")
         self.assertEqual(oc._message_text(nested), "nested user")
 
-        events = [
+        events: list[Mapping[str, Any]] = [
             {"type": "message", "id": "a", "parentId": None, "role": "user", "text": "old"},
             {"type": "message", "id": "b", "parentId": "a", "role": "assistant", "text": "replaced"},
             {
@@ -143,7 +290,7 @@ class OpenClawAdapterTests(unittest.TestCase):
         self.assertEqual(ids, ["a", "c", "d"])
         self.assertNotIn("b", ids)
 
-        with_branch = [
+        with_branch: list[Mapping[str, Any]] = [
             {"type": "message", "id": "a", "parentId": None, "role": "user", "text": "root"},
             {"type": "branch_summary", "id": "bs", "parentId": "a", "branch": "side"},
             {"type": "message", "id": "z", "parentId": "bs", "role": "assistant", "text": "leaf"},

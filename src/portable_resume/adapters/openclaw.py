@@ -17,7 +17,7 @@ import sqlite3
 import stat
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
@@ -181,18 +181,20 @@ def _cwd_from_entry(entry_json: str | None) -> str | None:
         return None
 
 
-def _agent_db_paths(root: str) -> list[tuple[str, str]]:
+def _agent_db_paths(root: str, budget: ReadBudget | None = None) -> list[tuple[str, str]]:
     """Return ``(agent_id, db_path)`` under ``agents/*/agent/openclaw-agent.sqlite``."""
 
+    limits = budget.limits if budget is not None else DEFAULT_BOUNDS
+    scan_limit = min(limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
     agents = os.path.join(root, "agents")
     if not _regular_dir(agents, root):
         return []
     values: list[tuple[str, str]] = []
     try:
         with os.scandir(agents) as entries:
-            names = []
+            names: list[str] = []
             for entry in entries:
-                if len(names) >= DEFAULT_BOUNDS.scanned_records:
+                if len(names) >= scan_limit:
                     raise DiagnosticError.limit_exceeded()
                 names.append(entry.name)
     except DiagnosticError:
@@ -212,7 +214,7 @@ def _agent_db_paths(root: str) -> list[tuple[str, str]]:
         database = os.path.join(agent_sub, DB_BASENAME)
         if _regular_db_file(database, root):
             values.append((name, database))
-            if len(values) > DEFAULT_BOUNDS.scanned_records:
+            if len(values) > scan_limit:
                 raise DiagnosticError.limit_exceeded()
     return values
 
@@ -225,7 +227,7 @@ def _open_connection(database: str, root: str, budget: ReadBudget | None = None)
         raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
     if size > limits.sqlite_snapshot_bytes:
         return query_only_live_sqlite(database, root=root, provider=FORMAT_ID)
-    return private_sqlite_connection(database, root=root, provider=FORMAT_ID)
+    return private_sqlite_connection(database, root=root, bounds=limits, provider=FORMAT_ID)
 
 
 def _require_schema(connection: sqlite3.Connection, *, expected_agent: str | None = None) -> str:
@@ -317,6 +319,16 @@ def _row_to_summary(
     )
 
 
+def _charge_entry_json(entry_json: object, budget: ReadBudget) -> None:
+    budget.consume_records()
+    if not isinstance(entry_json, str):
+        return
+    encoded = entry_json.encode("utf-8")
+    if len(encoded) > min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes):
+        raise DiagnosticError.limit_exceeded()
+    budget.consume_bytes(len(encoded))
+
+
 def _exact_session_summaries(
     connection: sqlite3.Connection,
     *,
@@ -324,10 +336,12 @@ def _exact_session_summaries(
     database: str,
     session_filter: str,
     query: Query,
+    budget: ReadBudget,
 ) -> list[SessionSummary]:
     """Resolve exact composite/native ids before the normal listing cap."""
 
     values: list[SessionSummary] = []
+    scan_limit = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
     nodes = connection.execute(
         """
         SELECT
@@ -335,16 +349,20 @@ def _exact_session_summaries(
           last_interaction_at, archived_at, created_via
         FROM session_nodes
         WHERE current_session_id = ?
-        LIMIT 4
+        LIMIT ?
         """,
-        (session_filter,),
+        (session_filter, scan_limit + 1),
     ).fetchall()
+    if len(nodes) > scan_limit:
+        raise DiagnosticError.limit_exceeded()
     for row in nodes:
+        entry_json = row[1]
+        _charge_entry_json(entry_json, budget)
         item = _row_to_summary(
             agent_id=agent_id,
             database=database,
             session_id=row[0],
-            entry_json=row[1],
+            entry_json=entry_json,
             updated_at=row[2],
             created_at=row[3],
             display_name=row[4],
@@ -369,16 +387,20 @@ def _exact_session_summaries(
         FROM session_windows w
         LEFT JOIN session_nodes n ON n.session_key = w.session_key
         WHERE w.session_id = ?
-        LIMIT 4
+        LIMIT ?
         """,
-        (session_filter,),
+        (session_filter, scan_limit + 1),
     ).fetchall()
+    if len(windows) > scan_limit:
+        raise DiagnosticError.limit_exceeded()
     for row in windows:
+        entry_json = row[1]
+        _charge_entry_json(entry_json, budget)
         item = _row_to_summary(
             agent_id=agent_id,
             database=database,
             session_id=row[0],
-            entry_json=row[1],
+            entry_json=entry_json,
             updated_at=row[2],
             created_at=row[3],
             display_name=row[4],
@@ -398,7 +420,12 @@ def _list_nodes(
     database: str,
     query: Query,
     include_internal: bool,
+    budget: ReadBudget,
 ) -> list[SessionSummary]:
+    scan_limit = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
+    list_limit = min(budget.limits.listed_sessions, DEFAULT_BOUNDS.listed_sessions)
+    if list_limit <= 0:
+        return []
     rows = connection.execute(
         """
         SELECT
@@ -413,9 +440,11 @@ def _list_nodes(
           last_interaction_at
         FROM session_nodes
         ORDER BY COALESCE(last_interaction_at, updated_at, created_at) DESC, current_session_id ASC
-        """
+        LIMIT ?
+        """,
+        (scan_limit + 1,),
     ).fetchall()
-    if len(rows) > DEFAULT_BOUNDS.scanned_records:
+    if len(rows) > scan_limit:
         raise DiagnosticError.limit_exceeded()
     values: list[SessionSummary] = []
     for row in rows:
@@ -430,6 +459,7 @@ def _list_nodes(
             archived_at,
             last_interaction_at,
         ) = row
+        _charge_entry_json(entry_json, budget)
         if archived_at is not None and not include_internal:
             continue
         if (
@@ -453,7 +483,7 @@ def _list_nodes(
         if item is None:
             continue
         values.append(item)
-        if len(values) >= DEFAULT_BOUNDS.listed_sessions:
+        if len(values) >= list_limit:
             break
     return values
 
@@ -652,7 +682,8 @@ def _show_session(
     if query.cwd is not None and (cwd is None or not same_cwd(cwd, query.cwd)):
         raise DiagnosticError("E_NO_MATCH", source="openclaw", provider=FORMAT_ID)
 
-    limit = budget.limits.transcript_records + 1
+    transcript_limit = min(budget.limits.transcript_records, DEFAULT_BOUNDS.transcript_records)
+    limit = transcript_limit + 1
     cursor = connection.execute(
         """
         SELECT seq, event_json, created_at
@@ -666,14 +697,14 @@ def _show_session(
     turns: list[Turn] = []
     warnings: list[str] = []
     seen_seq: set[int] = set()
-    total_bytes = 0
     decoded: list[Mapping[str, Any]] = []
     turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
     row_count = 0
     for seq, event_json, _created in cursor:
         row_count += 1
-        if row_count > budget.limits.transcript_records:
+        if row_count > transcript_limit:
             raise DiagnosticError.limit_exceeded()
+        budget.consume_transcript_records()
         if not isinstance(seq, int):
             raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
         if seq in seen_seq:
@@ -682,11 +713,9 @@ def _show_session(
         if not isinstance(event_json, str):
             raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
         encoded = event_json.encode("utf-8")
-        if len(encoded) > budget.limits.record_bytes:
+        if len(encoded) > min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes):
             raise DiagnosticError.limit_exceeded()
-        total_bytes += len(encoded)
-        if total_bytes > budget.limits.source_read_bytes:
-            raise DiagnosticError.limit_exceeded()
+        budget.consume_bytes(len(encoded))
         event = _decode_event(event_json)
         if event["type"] in {"custom", "session"}:
             continue
@@ -830,7 +859,9 @@ class OpenClawAdapter:
             )
         values: list[SessionSummary] = []
         any_supported = False
-        for agent_id, database in _agent_db_paths(root):
+        paths = _agent_db_paths(root, budget)
+        list_limit = min(budget.limits.listed_sessions, DEFAULT_BOUNDS.listed_sessions)
+        for agent_id, database in paths:
             if agent_filter is not None and agent_id != agent_filter:
                 continue
             try:
@@ -844,6 +875,7 @@ class OpenClawAdapter:
                             database=database,
                             session_filter=session_filter,
                             query=list_query,
+                            budget=budget,
                         )
                     else:
                         items = _list_nodes(
@@ -852,6 +884,7 @@ class OpenClawAdapter:
                             database=database,
                             query=list_query,
                             include_internal=include_internal,
+                            budget=budget,
                         )
                 any_supported = True
             except DiagnosticError as error:
@@ -860,8 +893,8 @@ class OpenClawAdapter:
                 raise
             # Bound per agent, but never stop scanning other agents before the
             # global timestamp sort (Codex P1 multi-agent latest).
-            values.extend(items[: DEFAULT_BOUNDS.listed_sessions])
-        if not values and not any_supported and _agent_db_paths(root):
+            values.extend(items[:list_limit])
+        if not values and not any_supported and paths:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
         # Newest first; ascending session_id tie-break (stable sort).
         values.sort(key=lambda item: item.session_id)
@@ -873,7 +906,7 @@ class OpenClawAdapter:
         values.sort(key=lambda item: item.updated_at is None)
         if session_filter is not None:
             return values
-        return values[: DEFAULT_BOUNDS.listed_sessions]
+        return values[:list_limit]
 
     def show(self, ref: ResolvedRef, query: Query, budget: ReadBudget) -> Session:
         root = _existing_root(query)
