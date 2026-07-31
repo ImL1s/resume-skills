@@ -31,7 +31,7 @@ Plans 045–047 fix that chain.
 | 049 | `pi` extension banners must not become the user request | P2 | S | — | **DONE** |
 | 050 | Unmatched `--cwd` yields an empty listing, not `E_LIMIT_EXCEEDED` | P1 | M | — | DONE |
 | 051 | Runner hardening: bare invocation lists; missing runtime diagnoses | P1 | S | — | TODO |
-| 052 | `cwd` parity between argv and request-file lanes | P1 | S–M | — | TODO |
+| 052 | `cwd` parity between argv and request-file lanes | P1 | S–M | — | **DONE** |
 | 053 | `SKILL.md` rewrite for agent legibility | P1 | M | prefer after 051, 052 | TODO |
 | 054 | Runtime drift detection for stale/foreign skill copies | P2 | M | — | **DONE** |
 | 055 | Trigger-first skill `description` | P2 | S | — (wording call) | TODO |

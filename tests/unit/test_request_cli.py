@@ -77,12 +77,31 @@ class RequestAndCliTests(unittest.TestCase):
                 self.assertEqual(request.resume_ref, ref)
                 self.assertNotIn(ref, ["python3", "portable-resume", "--request-file"])
 
+    def test_request_symlinked_cwd_matches_argv_lane(self) -> None:
+        alias = self.root / "project-alias"
+        alias.symlink_to(self.cwd, target_is_directory=True)
+        request = self.write_request({**self.valid(), "cwd": str(alias)})
+        outputs = []
+        with mock.patch("portable_resume.reader._load_adapter", return_value=FakeAdapter()):
+            for arguments in (
+                ["claude", "show", "latest", "--cwd", str(alias), "--format", "json"],
+                ["--request-file", str(request), "--expected-source", "claude", "--format", "json"],
+            ):
+                stdout, stderr = io.StringIO(), io.StringIO()
+                self.assertEqual(run(arguments, stdout=stdout, stderr=stderr), 0, stderr.getvalue())
+                payload = json.loads(stdout.getvalue())
+                payload["generated_at"] = "CLOCK"
+                outputs.append(payload)
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertEqual(outputs[0]["query"]["cwd"], str(self.cwd))
+
     def test_u032_nul_control_oversize_relative_cwd_extra_and_duplicate_rejected(self) -> None:
         cases: list[tuple[str, Path]] = []
         nul = self.valid("bad\x00ref")
         cases.append(("nul", self.write_request(nul)))
         for name, payload in (
             ("relative", {**self.valid(), "cwd": "relative/path"}),
+            ("non-nfc", {**self.valid(), "cwd": str(self.root / "cafe\u0301")}),
             ("extra", {**self.valid(), "extra": 1}),
         ):
             path = self.root / f"{name}.json"
