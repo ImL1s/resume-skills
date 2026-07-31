@@ -195,12 +195,58 @@ def _footer() -> list[str]:
     return ["", "## Required current checks (unchecked)", *CHECKLIST]
 
 
+def _turn_label(turn: Turn) -> str:
+    return f"[{turn.ordinal} {_value(turn.role)}{'/' + _value(turn.tool_name) if turn.tool_name else ''}]"
+
+
 def _turn_block(turn: Turn) -> list[str]:
-    label = f"[{turn.ordinal} {_value(turn.role)}{'/' + _value(turn.tool_name) if turn.tool_name else ''}]"
+    label = _turn_label(turn)
     lines = [f"> **{label}**", *_quote(turn.content)]
     if turn.truncated:
         lines.append("> `[W_TRUNCATED]`")
     return lines
+
+
+def _latest_recorded_action(turns: tuple[Turn, ...]) -> Turn | None:
+    return next(
+        (turn for turn in reversed(turns) if turn.role in {"assistant", "tool"}),
+        None,
+    )
+
+
+def _turn_block_budgeted(
+    turn: Turn | None,
+    *,
+    maximum_bytes: int,
+) -> list[str]:
+    """Render one prominent action without escaping the handoff byte ceiling."""
+
+    if turn is None:
+        return _quote_budgeted(None, maximum_bytes=maximum_bytes)
+
+    full = _turn_block(turn)
+    if _utf8_size("\n".join(full)) <= maximum_bytes:
+        return full
+
+    label = f"> **{_turn_label(turn)}**"
+    label_bytes = _utf8_size(label)
+    if label_bytes > maximum_bytes:
+        marker = "> `[W_TRUNCATED]`"
+        return [marker] if _utf8_size(marker) <= maximum_bytes else []
+
+    content_budget = max(0, maximum_bytes - label_bytes - 1)
+    lines = [label, *_quote_budgeted(turn.content, maximum_bytes=content_budget)]
+    marker = "> `[W_TRUNCATED]`"
+    marker_cost = _utf8_size(marker) + 1
+    if _utf8_size("\n".join(lines)) + marker_cost <= maximum_bytes:
+        lines.append(marker)
+    return lines
+
+
+def _minimal_action_lines(turn: Turn | None) -> list[str]:
+    if turn is None:
+        return _quote(None)
+    return [f"> **{_turn_label(turn)}**", "> `[W_TRUNCATED]`"]
 
 
 def _assemble(
@@ -213,16 +259,29 @@ def _assemble(
     body_truncated: bool,
     user_lines: list[str] | None = None,
     assistant_lines: list[str] | None = None,
+    action_lines: list[str] | None = None,
 ) -> str:
+    latest_action = _latest_recorded_action(session.turns)
     lines = _header(session)
     lines.append("")
     lines.append("### Latest explicit user request")
     lines.extend(user_lines if user_lines is not None else _quote(user_text))
     lines.append("")
-    lines.append("### Latest assistant action")
+    lines.append("### Latest assistant message")
     lines.extend(assistant_lines if assistant_lines is not None else _quote(assistant_text))
+    lines.append("")
+    lines.append("### Latest recorded action")
+    lines.extend(
+        action_lines
+        if action_lines is not None
+        else (_turn_block(latest_action) if latest_action is not None else _quote(None))
+    )
     dropped_turns = max(0, len(session.turns) - len(turns))
-    body_truncated = body_truncated or any(turn.truncated for turn in turns)
+    body_truncated = (
+        body_truncated
+        or any(turn.truncated for turn in turns)
+        or bool(latest_action and latest_action.truncated)
+    )
     warnings = tuple(session.warnings) + tuple(envelope_warnings)
     lines.extend(
         _warning_block(
@@ -258,6 +317,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
     """
 
     maximum = DEFAULT_BOUNDS.handoff_output_bytes
+    latest_action = _latest_recorded_action(session.turns)
     # Materialize once: generators would be exhausted on the first assemble pass.
     env_warnings = tuple(envelope_warnings)
     full = _assemble(
@@ -315,7 +375,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
     if _utf8_size(empty_turns) <= maximum:
         return empty_turns
 
-    # Shrink user/assistant quoted bodies while keeping section structure.
+    # Shrink the three prominent recovered bodies while keeping section structure.
     structure = _assemble(
         session,
         envelope_warnings=env_warnings,
@@ -325,6 +385,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
         body_truncated=True,
         user_lines=[],
         assistant_lines=[],
+        action_lines=[],
     )
     structure_size = _utf8_size(structure)
     if structure_size > maximum:
@@ -337,20 +398,30 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
             body_truncated=True,
             user_lines=["> `[W_TRUNCATED]`"],
             assistant_lines=["> `[W_TRUNCATED]`"],
+            action_lines=_minimal_action_lines(latest_action),
         )
         if _utf8_size(minimal) > maximum:
             raise DiagnosticError.limit_exceeded()
         return minimal
 
     remaining = maximum - structure_size
-    user_budget = max(0, remaining // 2)
+    user_budget = max(0, remaining // 3)
     user_lines = _quote_budgeted(session.last_user_request, maximum_bytes=user_budget)
     if not user_lines:
         user_lines = ["> `[W_TRUNCATED]`"]
-    assistant_budget = max(0, remaining - _utf8_size("\n".join(user_lines)))
+    user_size = _utf8_size("\n".join(user_lines))
+    assistant_budget = max(0, (remaining - user_size) // 2)
     assistant_lines = _quote_budgeted(session.last_assistant_action, maximum_bytes=assistant_budget)
     if not assistant_lines:
         assistant_lines = ["> `[W_TRUNCATED]`"]
+    assistant_size = _utf8_size("\n".join(assistant_lines))
+    action_budget = max(0, remaining - user_size - assistant_size)
+    action_lines = _turn_block_budgeted(
+        latest_action,
+        maximum_bytes=action_budget,
+    )
+    if not action_lines:
+        action_lines = ["> `[W_TRUNCATED]`"]
 
     document = _assemble(
         session,
@@ -361,6 +432,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
         body_truncated=True,
         user_lines=user_lines,
         assistant_lines=assistant_lines,
+        action_lines=action_lines,
     )
     if _utf8_size(document) > maximum:
         document = _assemble(
@@ -372,6 +444,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
             body_truncated=True,
             user_lines=["> `[W_TRUNCATED]`"],
             assistant_lines=["> `[W_TRUNCATED]`"],
+            action_lines=_minimal_action_lines(latest_action),
         )
         if _utf8_size(document) > maximum:
             raise DiagnosticError.limit_exceeded()

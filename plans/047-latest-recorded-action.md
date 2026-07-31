@@ -11,6 +11,10 @@
 
 ## Status
 
+- **Implementation status**: **DONE**
+- **Implementation decision**: **Option A** — keep the public envelope field
+  unchanged, render it as "Latest assistant message", and derive a separate
+  "Latest recorded action" from the newest assistant/tool turn.
 - **Priority**: P1
 - **Effort**: S
 - **Risk**: LOW–MED (`last_assistant_action` is a public envelope field)
@@ -18,6 +22,19 @@
 - **Category**: bug (handoff content)
 - **Planned at**: commit `2b4611c`, 2026-08-01
 - **Issue**: https://github.com/ImL1s/resume-skills/issues/164
+
+### Implementation audit
+
+- The prerequisite grep finds `tool_use` in Claude's handled record branch,
+  not in its discard set; Plan 046 is present at this branch's base.
+- The reversed assistant-only legacy derivation appears at **20** sites across
+  the adapters. Option A intentionally leaves all 20 public-envelope
+  derivations unchanged and computes the new presentation from
+  `Session.turns` in the handoff renderer.
+- Existing adapters that normalize tool evidence continue to retain those
+  tool turns in `Session.turns`; adapters without a normalized tool-turn
+  surface are not made to invent one here. No adapter restructuring or schema
+  change was required.
 
 ## Why this matters
 
@@ -92,7 +109,7 @@ grep -rn 'role == "assistant"' src/portable_resume/adapters/ | grep -n "reversed
 
 | Purpose | Command | Expected on success |
 |---------|---------|---------------------|
-| Render 045's fixture | `PYTHONPATH=src python3 scripts/portable-resume claude show latest --cwd /workspace/project --source-root tests/fixtures/claude/<045-fixture>/root --format handoff` | exit 0; action field reflects the tool call |
+| Render 045's fixture | `PYTHONPATH=src python3 scripts/portable-resume claude show latest --cwd /workspace/project --source-root tests/fixtures/claude/s-cla-08-tool-use-result/root --format handoff` | exit 0; action field reflects the tool call |
 | Contract tests | `PYTHONPATH=src python3 -m unittest tests.unit.test_contract_equivalence -v` | pass |
 | Full suite | `PYTHONPATH=src python3 -m unittest discover -s tests -q` | OK |
 | Gates | `python3 scripts/self_verify.py && python3 scripts/check_secrets.py` | exit 0 |
@@ -196,11 +213,11 @@ adapter and handle it, or report if the list is long.
 
 ## Done criteria
 
-- [ ] Rendered handoff distinguishes "latest assistant message" from "latest recorded action"
-- [ ] An interrupted-mid-tool-loop fixture proves the action line reflects the tool turn
-- [ ] No envelope/schema field added or renamed (`git diff` on `resources/portable-resume-v1.schema.json` is empty)
-- [ ] Full suite + smoke matrix + gates green
-- [ ] `plans/README.md` updated
+- [x] Rendered handoff distinguishes "latest assistant message" from "latest recorded action"
+- [x] An interrupted-mid-tool-loop fixture proves the action line reflects the tool turn
+- [x] No envelope/schema field added or renamed (`git diff` on `resources/portable-resume-v1.schema.json` is empty)
+- [x] Full suite + smoke matrix + gates green
+- [x] `plans/README.md` updated
 
 ## STOP conditions
 

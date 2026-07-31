@@ -245,6 +245,18 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("pytest -x", handoff)
         self.assertIn("missing tool result", handoff)
 
+        message_start = handoff.index("### Latest assistant message")
+        action_start = handoff.index("### Latest recorded action")
+        warnings_start = handoff.index("## Warnings")
+        message_section = handoff[message_start:action_start]
+        action_section = handoff[action_start:warnings_start]
+        self.assertIn("I will inspect the synthetic file first.", message_section)
+        self.assertNotIn("pytest -x", message_section)
+        self.assertIn("[3 tool/Bash]", action_section)
+        self.assertIn("pytest -x", action_section)
+        self.assertIn("missing tool result", action_section)
+        self.assertNotIn("I will inspect the synthetic file first.", action_section)
+
     def test_tool_input_is_bounded_without_evicting_correlated_result(self) -> None:
         session_id = str(uuid.uuid4())
         user_id, call_id, result_id = (str(uuid.uuid4()) for _ in range(3))
