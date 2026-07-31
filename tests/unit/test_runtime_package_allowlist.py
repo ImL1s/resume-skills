@@ -35,6 +35,7 @@ class RuntimePackageAllowlistTests(unittest.TestCase):
             "adapters/kimi.py",
             "adapters/goose.py",
             "adapters/crush.py",
+            "adapters/cline.py",
             "adapters/opencode.py",
             "adapters/openclaw.py",
             "adapters/pi.py",

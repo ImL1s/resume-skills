@@ -126,6 +126,15 @@ FIXTURES: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
             "synthetic crush assistant reply",
         ),
     ),
+    "cline": (
+        "tests/fixtures/cline/s-cl-01-user-basic",
+        "/tmp/project",
+        "cl000101-0101-4101-8101-010101010101",
+        (
+            "synthetic cline user prompt",
+            "synthetic cline assistant reply",
+        ),
+    ),
 }
 
 

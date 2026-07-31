@@ -100,3 +100,4 @@ current 81-cell) is not substitute evidence for a host picker, a public catalog,
 or a vendor-curated directory.
 
 | crush | not-run | filesystem install only; native picker not-run |
+| cline | not-run | filesystem install only; native picker not-run |
