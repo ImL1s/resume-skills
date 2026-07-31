@@ -352,10 +352,12 @@ def _exact_session_summaries(
         LIMIT ?
         """,
         (session_filter, scan_limit + 1),
-    ).fetchall()
-    if len(nodes) > scan_limit:
-        raise DiagnosticError.limit_exceeded()
+    )
+    node_count = 0
     for row in nodes:
+        node_count += 1
+        if node_count > scan_limit:
+            raise DiagnosticError.limit_exceeded()
         entry_json = row[1]
         _charge_entry_json(entry_json, budget)
         item = _row_to_summary(
@@ -390,10 +392,12 @@ def _exact_session_summaries(
         LIMIT ?
         """,
         (session_filter, scan_limit + 1),
-    ).fetchall()
-    if len(windows) > scan_limit:
-        raise DiagnosticError.limit_exceeded()
+    )
+    window_count = 0
     for row in windows:
+        window_count += 1
+        if window_count > scan_limit:
+            raise DiagnosticError.limit_exceeded()
         entry_json = row[1]
         _charge_entry_json(entry_json, budget)
         item = _row_to_summary(
@@ -443,11 +447,13 @@ def _list_nodes(
         LIMIT ?
         """,
         (scan_limit + 1,),
-    ).fetchall()
-    if len(rows) > scan_limit:
-        raise DiagnosticError.limit_exceeded()
+    )
     values: list[SessionSummary] = []
+    row_count = 0
     for row in rows:
+        row_count += 1
+        if row_count > scan_limit:
+            raise DiagnosticError.limit_exceeded()
         (
             _session_key,
             session_id,
@@ -460,6 +466,8 @@ def _list_nodes(
             last_interaction_at,
         ) = row
         _charge_entry_json(entry_json, budget)
+        if len(values) >= list_limit:
+            continue
         if archived_at is not None and not include_internal:
             continue
         if (
@@ -483,8 +491,6 @@ def _list_nodes(
         if item is None:
             continue
         values.append(item)
-        if len(values) >= list_limit:
-            break
     return values
 
 

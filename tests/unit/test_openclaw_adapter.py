@@ -4,6 +4,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+from collections.abc import Iterator, Sequence
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Mapping
@@ -18,6 +19,17 @@ from tests.helpers.core import tree_snapshot
 
 FIXTURES = Path("tests/fixtures/openclaw")
 CWD = "/tmp/project"
+
+
+class _NoFetchAllCursor:
+    def __init__(self, rows: Sequence[tuple[object, ...]]) -> None:
+        self._rows = tuple(rows)
+
+    def __iter__(self) -> Iterator[tuple[object, ...]]:
+        return iter(self._rows)
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        raise AssertionError("bounded OpenClaw queries must stream rows")
 
 
 def fixture_root(case: str) -> Path:
@@ -177,6 +189,65 @@ class OpenClawAdapterTests(unittest.TestCase):
         self.assertEqual([item.session_id for item in summaries], ["main:sess-basic-0001"])
         self.assertGreater(budget.records, 0)
         self.assertGreater(budget.bytes_read, 0)
+
+    def test_listing_streams_and_charges_rows_past_output_cap(self) -> None:
+        from portable_resume.adapters import openclaw as oc
+
+        small_entry = '{"cwd":"/tmp/project"}'
+        oversized_entry = "x" * 129
+        rows = [
+            ("key-1", "session-1", small_entry, 1, 1, "operator", "one", None, 1),
+            ("key-2", "session-2", oversized_entry, 0, 0, "operator", "two", None, 0),
+        ]
+        connection = mock.Mock()
+        connection.execute.return_value = _NoFetchAllCursor(rows)
+        budget = ReadBudget(
+            Bounds(
+                listed_sessions=1,
+                scanned_records=5,
+                record_bytes=128,
+                source_read_bytes=1024,
+            )
+        )
+
+        with self.assertRaises(DiagnosticError) as caught:
+            oc._list_nodes(
+                connection,
+                agent_id="main",
+                database="synthetic.sqlite",
+                query=query(fixture_root("s-oc-01-basic")),
+                include_internal=False,
+                budget=budget,
+            )
+
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+        self.assertEqual(budget.records, 2)
+
+    def test_exact_ref_streams_before_enforcing_byte_budget(self) -> None:
+        from portable_resume.adapters import openclaw as oc
+
+        rows = [
+            ("session-1", '{"cwd":"/tmp/project"}', 1, 1, "one", 1, None, "operator"),
+            ("session-1", "x" * 129, 0, 0, "two", 0, None, "operator"),
+        ]
+        connection = mock.Mock()
+        connection.execute.return_value = _NoFetchAllCursor(rows)
+        budget = ReadBudget(
+            Bounds(scanned_records=5, record_bytes=128, source_read_bytes=1024)
+        )
+
+        with self.assertRaises(DiagnosticError) as caught:
+            oc._exact_session_summaries(
+                connection,
+                agent_id="main",
+                database="synthetic.sqlite",
+                session_filter="session-1",
+                query=query(fixture_root("s-oc-01-basic")),
+                budget=budget,
+            )
+
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+        self.assertEqual(budget.records, 2)
 
     def test_exact_ref_is_bounded_and_debits_shared_budget(self) -> None:
         root = fixture_root("s-oc-01-basic")
