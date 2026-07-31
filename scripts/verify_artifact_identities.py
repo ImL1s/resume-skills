@@ -36,6 +36,7 @@ from portable_resume.install.package_contracts import (  # noqa: E402
     RUNTIME_IDENTITY_RELATIVE,
     contract_for_package_type,
     contracts_report,
+    open_zip_archive,
     read_bounded_zip_info,
 )
 from portable_resume.registry import (  # noqa: E402
@@ -254,7 +255,7 @@ def _zip_identity(path: Path, *, wheel: bool) -> tuple[str, bytes, str, int]:
             subject="artifact",
         ) as (artifact, artifact_sha256):
             declared_entries = _preflight_zip_archive(artifact)
-            with zipfile.ZipFile(artifact) as archive:
+            with open_zip_archive(artifact) as archive:
                 infos = archive.infolist()
                 if len(infos) != declared_entries:
                     raise ValueError("artifact ZIP member count is inconsistent")

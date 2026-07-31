@@ -274,6 +274,41 @@ class OfflineValidationTests(unittest.TestCase):
                     report["failures"],
                 )
 
+    def test_reports_unsupported_zip_metadata_version(self) -> None:
+        identity = runtime_identity()
+        files = {
+            f"skills/{name}": value
+            for name, value in materialize_plan(
+                "antigravity",
+                identity=identity,
+            ).items()
+        }
+        files["plugin.json"] = b'{"name":"portable-resume"}\n'
+        data = bytearray(self._zip(files))
+        baseline = validate_archive_bytes(
+            bytes(data),
+            package_type="antigravity-plugin",
+            expected_identity=identity,
+        )
+        self.assertTrue(baseline["ok"], baseline["failures"])
+        _, central_offset = self._member_header_offsets(data, "plugin.json")
+        struct.pack_into("<H", data, central_offset + 6, 100)
+
+        report = validate_archive_bytes(
+            bytes(data),
+            package_type="antigravity-plugin",
+            expected_identity=identity,
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any(
+                "unreadable zip metadata" in failure
+                for failure in report["failures"]
+            ),
+            report["failures"],
+        )
+
     def test_rejects_archive_member_count_over_bound(self) -> None:
         data = self._zip({"one": b"1", "two": b"2"})
 

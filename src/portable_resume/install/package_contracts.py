@@ -46,11 +46,16 @@ _ZIP64_LOCATOR_SIGNATURE = b"PK\x06\x07"
 _ZIP_EOCD_SIZE = 22
 _ZIP_MAX_COMMENT_BYTES = 0xFFFF
 
+_ZIP_METADATA_ERRORS: tuple[type[Exception], ...] = (
+    RuntimeError,
+    NotImplementedError,
+    struct.error,
+    zipfile.LargeZipFile,
+)
 _ZIP_MEMBER_READ_ERRORS: tuple[type[Exception], ...] = (
     EOFError,
     OSError,
-    RuntimeError,
-    NotImplementedError,
+    *_ZIP_METADATA_ERRORS,
 )
 for _codec_name, _error_name in (
     ("zlib", "error"),
@@ -158,6 +163,17 @@ def _preflight_zip_archive(handle: BinaryIO) -> int:
         raise ValueError("archive central directory is out of bounds")
     handle.seek(0)
     return int(entries_total)
+
+
+def open_zip_archive(handle: BinaryIO) -> zipfile.ZipFile:
+    """Open an untrusted ZIP while normalizing central-directory failures."""
+
+    try:
+        return zipfile.ZipFile(handle)
+    except zipfile.BadZipFile as error:
+        raise ValueError("archive is not a valid zip") from error
+    except _ZIP_METADATA_ERRORS as error:
+        raise ValueError(f"unreadable zip metadata: {error}") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -632,7 +648,7 @@ def validate_archive_bytes(
             raise ValueError("archive exceeds the compressed size bound")
         archive_stream = io.BytesIO(data)
         declared_entries = _preflight_zip_archive(archive_stream)
-        with zipfile.ZipFile(archive_stream) as archive:
+        with open_zip_archive(archive_stream) as archive:
             infos = archive.infolist()
             if len(infos) != declared_entries:
                 raise ValueError("archive ZIP member count is inconsistent")

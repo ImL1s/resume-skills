@@ -62,6 +62,13 @@ class ArtifactIdentityVerifierTests(unittest.TestCase):
         corrupted[payload_offset] = 0xFF
         path.write_bytes(corrupted)
 
+    def _set_unsupported_zip_metadata_version(self, path: Path) -> None:
+        data = bytearray(path.read_bytes())
+        central_offset = data.find(b"PK\x01\x02")
+        self.assertGreaterEqual(central_offset, 0)
+        struct.pack_into("<H", data, central_offset + 6, 100)
+        path.write_bytes(data)
+
     def _corruptible_compressions(self) -> tuple[int, ...]:
         methods = [zipfile.ZIP_DEFLATED]
         zstandard = getattr(zipfile, "ZIP_ZSTANDARD", None)
@@ -830,6 +837,45 @@ class ArtifactIdentityVerifierTests(unittest.TestCase):
                         stderr.getvalue(),
                         "ARTIFACT_IDENTITY_VERIFY FAIL ValueError\n",
                     )
+
+    def test_cli_reports_unsupported_zip_metadata_without_traceback(self) -> None:
+        identity = runtime_identity()
+        encoded = identity_json_bytes(identity)
+        digest = hashlib.sha256(encoded).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pin = root / "identity.json"
+            pin.write_bytes(encoded)
+            wheel = root / "portable_resume-0-py3-none-any.whl"
+            self._zip(
+                wheel,
+                "portable_resume/resources/build-identity.json",
+                encoded,
+            )
+            baseline = verify_artifact_identities(
+                identity_file=pin,
+                expected_sha256=digest,
+                artifacts=(wheel,),
+            )
+            self.assertTrue(baseline["ok"])
+            self._set_unsupported_zip_metadata_version(wheel)
+            stderr = io.StringIO()
+
+            with redirect_stderr(stderr):
+                result = verifier_main(
+                    [
+                        "--identity-file",
+                        str(pin),
+                        "--identity-sha256",
+                        digest,
+                        str(wheel),
+                    ]
+                )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(
+            stderr.getvalue(), "ARTIFACT_IDENTITY_VERIFY FAIL ValueError\n"
+        )
 
     @unittest.skipIf(os.name == "nt", "symlink semantics differ on Windows")
     def test_rejects_symlink_artifact_path(self) -> None:
