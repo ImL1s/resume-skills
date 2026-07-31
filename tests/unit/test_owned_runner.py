@@ -24,19 +24,23 @@ def _load_force(source: str = "codex") -> types.ModuleType:
     key = f"resume-{source}/scripts/run_reader.py"
     text = body[key].decode("utf-8")
     with tempfile.TemporaryDirectory() as temporary:
-        path = Path(temporary) / "run_reader.py"
+        root = Path(temporary)
+        path = root / f"resume-{source}" / "scripts" / "run_reader.py"
+        path.parent.mkdir(parents=True)
         path.write_text(text, encoding="utf-8")
+        package = root / ".portable-resume" / "runtime" / "portable_resume"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "reader.py").write_text(
+            "def main(argv=None):\n    return 0\n", encoding="utf-8"
+        )
+        (package / "model.py").write_text(
+            f"SOURCE_KEYS = {tuple(SOURCE_KEYS)!r}\n", encoding="utf-8"
+        )
         spec = importlib.util.spec_from_file_location(f"owned_runner_{source}", path)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
-        import portable_resume.reader as reader_mod
-
-        original_main = reader_mod.main
-        reader_mod.main = lambda argv=None: 0
-        try:
-            spec.loader.exec_module(module)
-        finally:
-            reader_mod.main = original_main
+        spec.loader.exec_module(module)
         return module
 
 
@@ -146,9 +150,14 @@ class OwnedRunnerRuntimeFailureTests(unittest.TestCase):
         runner.write_bytes(rendered)
         return runner
 
-    def _run(self, runner: Path) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self, runner: Path, *, pythonpath: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
-        env.pop("PYTHONPATH", None)
+        if pythonpath is None:
+            env.pop("PYTHONPATH", None)
+        else:
+            env["PYTHONPATH"] = str(pythonpath)
         return subprocess.run(
             [sys.executable, str(runner), "list", "--cwd", "/tmp"],
             check=False,
@@ -158,21 +167,79 @@ class OwnedRunnerRuntimeFailureTests(unittest.TestCase):
             cwd=str(runner.parents[2]),
         )
 
-    def test_missing_runtime_emits_stable_diagnostic(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            completed = self._run(self._write_runner(Path(temporary)))
+    def _write_hostile_package(self, root: Path, marker: Path) -> Path:
+        package = root / "portable_resume"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text(
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('imported')\n",
+            encoding="utf-8",
+        )
+        (package / "reader.py").write_text(
+            "def main(argv=None):\n    return 0\n", encoding="utf-8"
+        )
+        (package / "model.py").write_text("SOURCE_KEYS = ('claude',)\n", encoding="utf-8")
+        return package
 
+    def _assert_missing_runtime_diagnostic(
+        self, completed: subprocess.CompletedProcess[str]
+    ) -> None:
         self.assertEqual(completed.returncode, 5)
         self.assertEqual(completed.stdout, "")
         self.assertEqual(
             completed.stderr,
             DiagnosticError("E_CAPABILITY_UNAVAILABLE").to_json() + "\n",
         )
+
+    def test_missing_runtime_emits_stable_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            completed = self._run(self._write_runner(Path(temporary)))
+
+        self._assert_missing_runtime_diagnostic(completed)
         payload = json.loads(completed.stderr)
         self.assertEqual(payload["schema_version"], "portable-resume/diagnostic-v1")
         self.assertEqual(payload["code"], "E_CAPABILITY_UNAVAILABLE")
         self.assertEqual(payload["exit_code"], 5)
         self.assertNotIn("Traceback", completed.stderr)
+
+    def test_missing_owned_package_rejects_later_pythonpath_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            marker = root / "foreign-imported"
+            foreign = root / "foreign"
+            self._write_hostile_package(foreign, marker)
+            completed = self._run(runner, pythonpath=foreign)
+            self.assertFalse(marker.exists())
+
+        self._assert_missing_runtime_diagnostic(completed)
+
+    def test_namespace_owned_package_rejects_later_pythonpath_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            owned_package = root / ".portable-resume" / "runtime" / "portable_resume"
+            owned_package.mkdir(parents=True)
+            marker = root / "foreign-imported"
+            foreign = root / "foreign"
+            self._write_hostile_package(foreign, marker)
+            completed = self._run(runner, pythonpath=foreign)
+            self.assertFalse(marker.exists())
+
+        self._assert_missing_runtime_diagnostic(completed)
+
+    def test_owned_package_symlink_outside_runtime_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            marker = root / "foreign-imported"
+            foreign_package = self._write_hostile_package(root / "foreign", marker)
+            owned_package = root / ".portable-resume" / "runtime" / "portable_resume"
+            owned_package.parent.mkdir(parents=True)
+            owned_package.symlink_to(foreign_package, target_is_directory=True)
+            completed = self._run(runner)
+            self.assertFalse(marker.exists())
+
+        self._assert_missing_runtime_diagnostic(completed)
 
     def test_present_runtime_missing_reader_is_not_swallowed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

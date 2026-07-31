@@ -12,6 +12,42 @@ import sys
 _SKILL_PACKAGE = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 _ROOT = os.path.dirname(_SKILL_PACKAGE)
 _RUNTIME = os.path.join(_ROOT, ".portable-resume", "runtime")
+_OWNED_PACKAGE = os.path.join(_RUNTIME, "portable_resume")
+_OWNED_INIT = os.path.join(_OWNED_PACKAGE, "__init__.py")
+
+
+def _runtime_unavailable() -> None:
+    sys.stderr.write(
+        '{"attempts":null,"code":"E_CAPABILITY_UNAVAILABLE","exit_code":5,'
+        '"family":[],"message":"The requested source capability is unavailable.",'
+        '"provider":null,"schema_version":"portable-resume/diagnostic-v1","source":null}\n'
+    )
+    raise SystemExit(5)
+
+
+def _is_contained(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath((root, path)) == root
+    except ValueError:
+        return False
+
+
+def _owned_runtime_package_available() -> bool:
+    root = os.path.realpath(_ROOT)
+    runtime = os.path.realpath(_RUNTIME)
+    package = os.path.realpath(_OWNED_PACKAGE)
+    package_init = os.path.realpath(_OWNED_INIT)
+    return (
+        _is_contained(runtime, root)
+        and _is_contained(package, runtime)
+        and _is_contained(package_init, package)
+        and os.path.isdir(_OWNED_PACKAGE)
+        and os.path.isfile(_OWNED_INIT)
+    )
+
+
+if not _owned_runtime_package_available():
+    _runtime_unavailable()
 if _RUNTIME not in sys.path:
     sys.path.insert(0, _RUNTIME)
 
@@ -21,12 +57,7 @@ try:
 except ModuleNotFoundError as error:
     if error.name != "portable_resume":
         raise
-    sys.stderr.write(
-        '{"attempts":null,"code":"E_CAPABILITY_UNAVAILABLE","exit_code":5,'
-        '"family":[],"message":"The requested source capability is unavailable.",'
-        '"provider":null,"schema_version":"portable-resume/diagnostic-v1","source":null}\n'
-    )
-    raise SystemExit(5)
+    _runtime_unavailable()
 
 _BOUND_SOURCE = "${source_key}"
 _KNOWN_SOURCES = frozenset(SOURCE_KEYS)
