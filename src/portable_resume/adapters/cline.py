@@ -438,7 +438,8 @@ def _list_messages_soft_ok(
 
     Path already binds ``session_id`` via ``{id}/{id}.messages.json``. Windows only
     reject clear envelope mismatches (wrong version / wrong sessionId). Public
-    roles may live in the unsampled middle — show validates turns fully.
+    roles may live in the unsampled middle — show validates turns fully. Unsafe,
+    busy, exhausted-budget, and unknown diagnostics always propagate.
     """
 
     head_limit = min(_LIST_ELIGIBILITY_BYTES, 4 * 1024 * 1024)
@@ -453,9 +454,12 @@ def _list_messages_soft_ok(
             budget=budget,
             require_size_within_max=False,
         )
-    except DiagnosticError:
-        # Path + size already accepted; IO glitch during soft check → skip.
-        return False
+    except DiagnosticError as error:
+        if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY", "E_LIMIT_EXCEEDED"}:
+            raise
+        if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
+            return False
+        raise
     text = _window_text(windows.head)
     if windows.tail and windows.tail != windows.head:
         text = text + "\n" + _window_text(windows.tail)

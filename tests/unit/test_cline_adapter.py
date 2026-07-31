@@ -33,6 +33,68 @@ def query(root: Path, ref: str | None = None, **kwargs: object) -> Query:
 
 
 class ClineAdapterTests(unittest.TestCase):
+    def _assert_soft_listing_diagnostic(
+        self,
+        error: DiagnosticError,
+        *,
+        propagates: bool,
+    ) -> None:
+        import tempfile
+
+        from portable_resume.adapters import cline as cline_mod
+        from tests.fixtures.cline import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            sessions_dir = Path(temporary) / "sessions"
+            messages_path = bf._write_session_files(
+                sessions_dir,
+                session_id=BASIC_ID,
+                messages=[{"id": "u", "role": "user", "content": "placeholder"}],
+            )
+            messages_path.write_bytes(b"x" * (cline_mod._LIST_ELIGIBILITY_BYTES + 1))
+            current = Query(
+                source="cline",
+                cwd=None,
+                source_root=str(sessions_dir),
+                within_min=0,
+            )
+
+            with mock.patch(
+                "portable_resume.adapters.cline.stable_read_windows",
+                side_effect=error,
+            ):
+                if propagates:
+                    with self.assertRaises(DiagnosticError) as caught:
+                        ADAPTER.list(current, ReadBudget())
+                    self.assertEqual(caught.exception.code, error.code)
+                else:
+                    self.assertEqual(ADAPTER.list(current, ReadBudget()), [])
+
+    def test_soft_listing_propagates_unsafe_path(self) -> None:
+        self._assert_soft_listing_diagnostic(
+            DiagnosticError.unsafe_path(), propagates=True
+        )
+
+    def test_soft_listing_propagates_source_busy(self) -> None:
+        self._assert_soft_listing_diagnostic(
+            DiagnosticError.source_busy(), propagates=True
+        )
+
+    def test_soft_listing_propagates_budget_exhaustion(self) -> None:
+        self._assert_soft_listing_diagnostic(
+            DiagnosticError.limit_exceeded(), propagates=True
+        )
+
+    def test_soft_listing_propagates_unknown_diagnostic(self) -> None:
+        self._assert_soft_listing_diagnostic(
+            DiagnosticError("E_INVARIANT"), propagates=True
+        )
+
+    def test_soft_listing_skips_corrupt_candidate(self) -> None:
+        self._assert_soft_listing_diagnostic(
+            DiagnosticError("E_CORRUPT_RECORD"), propagates=False
+        )
+
     def test_exact_indexless_selection_propagates_unsafe_messages_read(self) -> None:
         root = fixture_root("s-cl-01-user-basic")
         sessions_only = root / "data" / "sessions"
