@@ -99,6 +99,72 @@ def _regular_file(path: str, root: str) -> bool:
         return False
 
 
+_OPTIONAL_MANIFEST_DIAGNOSTICS = frozenset(
+    {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}
+)
+
+
+def _optional_manifest_present(path: str, root: str) -> bool:
+    """Distinguish an absent optional manifest from unsafe or busy state."""
+
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+        raise DiagnosticError.unsafe_path()
+    try:
+        contained = is_within(path, root)
+    except DiagnosticError:
+        raise
+    except OSError as error:
+        raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
+    if not contained:
+        raise DiagnosticError.unsafe_path()
+    return True
+
+
+def _load_optional_manifest(
+    path: str,
+    root: str,
+    budget: ReadBudget,
+) -> Mapping[str, Any] | None:
+    """Load optional metadata while propagating every non-format diagnostic."""
+
+    if not _optional_manifest_present(path, root):
+        return None
+    try:
+        read = stable_read_bytes(
+            path,
+            root=root,
+            max_bytes=min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes),
+            budget=budget,
+        )
+    except DiagnosticError as error:
+        if error.code in _OPTIONAL_MANIFEST_DIAGNOSTICS:
+            return None
+        if error.code == "E_UNSAFE_PATH":
+            try:
+                os.lstat(path)
+            except OSError as race:
+                raise DiagnosticError.source_busy(provider=FORMAT_ID) from race
+        raise
+    except OSError as error:
+        raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
+    try:
+        manifest = json.loads(read.data.decode("utf-8"), object_pairs_hook=_object)
+    except (
+        json.JSONDecodeError,
+        _DuplicateKey,
+        RecursionError,
+        UnicodeDecodeError,
+    ):
+        return None
+    return manifest if isinstance(manifest, Mapping) else None
+
+
 def _regular_dir(path: str) -> bool:
     try:
         mode = os.lstat(path).st_mode
@@ -639,39 +705,25 @@ def _list_from_sessions_dir(
         started_at = None
         updated_at = None
         manifest_path = os.path.join(sessions_dir, session_id, f"{session_id}.json")
-        if _regular_file(manifest_path, root):
-            try:
-                read = stable_read_bytes(
-                    manifest_path,
-                    root=root,
-                    max_bytes=min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes),
-                    budget=budget,
-                )
-                manifest = json.loads(read.data.decode("utf-8"), object_pairs_hook=_object)
-                if isinstance(manifest, Mapping):
-                    mid = manifest.get("session_id")
-                    if isinstance(mid, str) and mid and mid != session_id:
-                        # Stale/copied manifest: ignore metadata, keep messages authority.
-                        pass
-                    else:
-                        prompt = manifest.get("prompt")
-                        cwd_value = manifest.get("cwd")
-                        workspace_root = manifest.get("workspace_root")
-                        started_at = manifest.get("started_at")
-                        updated_at = manifest.get("updated_at") or manifest.get("started_at")
-                        parent = manifest.get("parent_session_id")
-                        is_sub = manifest.get("is_subagent")
-                        if exact_id is None and (
-                            (isinstance(parent, str) and parent.strip())
-                            or is_sub in (1, True)
-                        ):
-                            continue
-            except DiagnosticError as error:
-                if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY", "E_LIMIT_EXCEEDED"}:
-                    raise
-                # Corrupt/unsupported manifest metadata is optional.
-            except (json.JSONDecodeError, _DuplicateKey, UnicodeDecodeError):
+        manifest = _load_optional_manifest(manifest_path, root, budget)
+        if manifest is not None:
+            mid = manifest.get("session_id")
+            if isinstance(mid, str) and mid and mid != session_id:
+                # Stale/copied manifest: ignore metadata, keep messages authority.
                 pass
+            else:
+                prompt = manifest.get("prompt")
+                cwd_value = manifest.get("cwd")
+                workspace_root = manifest.get("workspace_root")
+                started_at = manifest.get("started_at")
+                updated_at = manifest.get("updated_at") or manifest.get("started_at")
+                parent = manifest.get("parent_session_id")
+                is_sub = manifest.get("is_subagent")
+                if exact_id is None and (
+                    (isinstance(parent, str) and parent.strip())
+                    or is_sub in (1, True)
+                ):
+                    continue
         item = _row_summary(
             session_id=session_id,
             source_path=msg_path,
@@ -1036,35 +1088,17 @@ class ClineAdapter:
             and workspace_root is None
         ):
             manifest_path = os.path.join(sessions_dir, session_id, f"{session_id}.json")
-            if _regular_file(manifest_path, root):
-                try:
-                    read = stable_read_bytes(
-                        manifest_path,
-                        root=root,
-                        max_bytes=min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes),
-                        budget=budget,
-                    )
-                    manifest = json.loads(
-                        read.data.decode("utf-8"), object_pairs_hook=_object
-                    )
-                    if isinstance(manifest, Mapping):
-                        prompt = prompt or manifest.get("prompt")
-                        cwd_value = manifest.get("cwd")
-                        workspace_root = manifest.get("workspace_root")
-                        started_at = started_at or manifest.get("started_at")
-                        updated_at = updated_at or manifest.get("updated_at") or manifest.get(
-                            "started_at"
-                        )
-                except DiagnosticError as error:
-                    if error.code in {
-                        "E_UNSAFE_PATH",
-                        "E_SOURCE_BUSY",
-                        "E_LIMIT_EXCEEDED",
-                    }:
-                        raise
-                    # Corrupt/unsupported manifest metadata is optional.
-                except (json.JSONDecodeError, _DuplicateKey, UnicodeDecodeError):
-                    pass
+            manifest = _load_optional_manifest(manifest_path, root, budget)
+            if manifest is not None:
+                prompt = prompt or manifest.get("prompt")
+                cwd_value = manifest.get("cwd")
+                workspace_root = manifest.get("workspace_root")
+                started_at = started_at or manifest.get("started_at")
+                updated_at = (
+                    updated_at
+                    or manifest.get("updated_at")
+                    or manifest.get("started_at")
+                )
 
         msg_path = _messages_path_for(
             session_id=session_id,

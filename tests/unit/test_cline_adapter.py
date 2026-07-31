@@ -227,6 +227,289 @@ class ClineAdapterTests(unittest.TestCase):
         self.assertEqual([item.session_id for item in summaries], [BASIC_ID])
         self.assertIsNone(summaries[0].title)
 
+    def test_list_and_show_skip_absent_optional_manifest(self) -> None:
+        import tempfile
+
+        from tests.fixtures.cline import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            sessions_dir = Path(temporary) / "sessions"
+            messages_path = bf._write_session_files(
+                sessions_dir,
+                session_id=BASIC_ID,
+                messages=[
+                    {"id": "u", "role": "user", "content": "kept user"},
+                    {"id": "a", "role": "assistant", "content": "kept reply"},
+                ],
+            )
+            (sessions_dir / BASIC_ID / f"{BASIC_ID}.json").unlink()
+            current = Query(
+                source="cline",
+                ref=BASIC_ID,
+                cwd=None,
+                source_root=str(sessions_dir),
+                within_min=0,
+            )
+
+            summaries = ADAPTER.list(current, ReadBudget())
+            session = ADAPTER.show(
+                ResolvedRef(session_id=BASIC_ID, source_path=str(messages_path)),
+                current,
+                ReadBudget(),
+            )
+
+        self.assertEqual([item.session_id for item in summaries], [BASIC_ID])
+        self.assertEqual([turn.content for turn in session.turns], ["kept user", "kept reply"])
+
+    def test_list_and_show_reject_static_symlink_manifest(self) -> None:
+        import tempfile
+
+        from tests.fixtures.cline import build_fixtures as bf
+
+        for operation in ("list", "show"):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                sessions_dir = root / "sessions"
+                messages_path = bf._write_session_files(
+                    sessions_dir,
+                    session_id=BASIC_ID,
+                    messages=[{"id": "u", "role": "user", "content": "kept"}],
+                )
+                manifest_path = sessions_dir / BASIC_ID / f"{BASIC_ID}.json"
+                outside = root / "outside.json"
+                outside.write_text("{}", encoding="utf-8")
+                manifest_path.unlink()
+                manifest_path.symlink_to(outside)
+                current = Query(
+                    source="cline",
+                    ref=BASIC_ID,
+                    cwd=None,
+                    source_root=str(sessions_dir),
+                    within_min=0,
+                )
+
+                with self.assertRaises(DiagnosticError) as caught:
+                    if operation == "list":
+                        ADAPTER.list(current, ReadBudget())
+                    else:
+                        ADAPTER.show(
+                            ResolvedRef(
+                                session_id=BASIC_ID,
+                                source_path=str(messages_path),
+                            ),
+                            current,
+                            ReadBudget(),
+                        )
+
+                self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+    def test_optional_manifest_nonregular_and_outside_root_are_unsafe(self) -> None:
+        import tempfile
+
+        from portable_resume.adapters import cline as cline_mod
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "root"
+            root.mkdir()
+            nonregular = root / "manifest.json"
+            nonregular.mkdir()
+            outside = Path(temporary) / "outside.json"
+            outside.write_text("{}", encoding="utf-8")
+
+            for path in (nonregular, outside):
+                with self.subTest(path=path), self.assertRaises(
+                    DiagnosticError
+                ) as caught:
+                    cline_mod._optional_manifest_present(str(path), str(root))
+                self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+    def test_list_and_show_propagate_manifest_stat_race_as_busy(self) -> None:
+        import tempfile
+
+        from portable_resume.adapters import cline as cline_mod
+        from tests.fixtures.cline import build_fixtures as bf
+
+        for operation in ("list", "show"):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as temporary:
+                sessions_dir = Path(temporary) / "sessions"
+                messages_path = bf._write_session_files(
+                    sessions_dir,
+                    session_id=BASIC_ID,
+                    messages=[{"id": "u", "role": "user", "content": "kept"}],
+                )
+                manifest_path = sessions_dir / BASIC_ID / f"{BASIC_ID}.json"
+                current = Query(
+                    source="cline",
+                    ref=BASIC_ID,
+                    cwd=None,
+                    source_root=str(sessions_dir),
+                    within_min=0,
+                )
+                original_read = cline_mod.stable_read_bytes
+
+                def remove_manifest(path: str, **kwargs: Any) -> Any:
+                    if path.endswith(f"/{BASIC_ID}.json"):
+                        manifest_path.unlink()
+                        raise DiagnosticError.unsafe_path()
+                    return original_read(path, **kwargs)
+
+                with mock.patch(
+                    "portable_resume.adapters.cline.stable_read_bytes",
+                    side_effect=remove_manifest,
+                ), self.assertRaises(DiagnosticError) as caught:
+                    if operation == "list":
+                        ADAPTER.list(current, ReadBudget())
+                    else:
+                        ADAPTER.show(
+                            ResolvedRef(
+                                session_id=BASIC_ID,
+                                source_path=str(messages_path),
+                            ),
+                            current,
+                            ReadBudget(),
+                        )
+
+                self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+
+    def test_list_and_show_propagate_unknown_manifest_diagnostic(self) -> None:
+        from portable_resume.adapters import cline as cline_mod
+
+        root = fixture_root("s-cl-01-user-basic")
+        sessions_only = root / "data" / "sessions"
+        manifest_suffix = f"/{BASIC_ID}.json"
+        current = Query(
+            source="cline",
+            ref=BASIC_ID,
+            cwd=None,
+            source_root=str(sessions_only),
+            within_min=0,
+        )
+        original_read = cline_mod.stable_read_bytes
+
+        def invariant_manifest(path: str, **kwargs: Any) -> Any:
+            if path.endswith(manifest_suffix):
+                raise DiagnosticError("E_INVARIANT")
+            return original_read(path, **kwargs)
+
+        for operation in ("list", "show"):
+            with self.subTest(operation=operation), mock.patch(
+                "portable_resume.adapters.cline.stable_read_bytes",
+                side_effect=invariant_manifest,
+            ), self.assertRaises(DiagnosticError) as caught:
+                if operation == "list":
+                    ADAPTER.list(current, ReadBudget())
+                else:
+                    ADAPTER.show(
+                        ResolvedRef(session_id=BASIC_ID, source_path=""),
+                        current,
+                        ReadBudget(),
+                    )
+
+            self.assertEqual(caught.exception.code, "E_INVARIANT")
+
+    def test_list_and_show_map_manifest_read_oserror_to_busy(self) -> None:
+        from portable_resume.adapters import cline as cline_mod
+
+        root = fixture_root("s-cl-01-user-basic")
+        sessions_only = root / "data" / "sessions"
+        manifest_suffix = f"/{BASIC_ID}.json"
+        current = Query(
+            source="cline",
+            ref=BASIC_ID,
+            cwd=None,
+            source_root=str(sessions_only),
+            within_min=0,
+        )
+        original_read = cline_mod.stable_read_bytes
+
+        def unreadable_manifest(path: str, **kwargs: Any) -> Any:
+            if path.endswith(manifest_suffix):
+                raise PermissionError(path)
+            return original_read(path, **kwargs)
+
+        for operation in ("list", "show"):
+            with self.subTest(operation=operation), mock.patch(
+                "portable_resume.adapters.cline.stable_read_bytes",
+                side_effect=unreadable_manifest,
+            ), self.assertRaises(DiagnosticError) as caught:
+                if operation == "list":
+                    ADAPTER.list(current, ReadBudget())
+                else:
+                    ADAPTER.show(
+                        ResolvedRef(session_id=BASIC_ID, source_path=""),
+                        current,
+                        ReadBudget(),
+                    )
+
+            self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+
+    def test_list_and_show_skip_allowlisted_manifest_diagnostics(self) -> None:
+        from portable_resume.adapters import cline as cline_mod
+
+        root = fixture_root("s-cl-01-user-basic")
+        sessions_only = root / "data" / "sessions"
+        manifest_suffix = f"/{BASIC_ID}.json"
+        current = Query(
+            source="cline",
+            ref=BASIC_ID,
+            cwd=None,
+            source_root=str(sessions_only),
+            within_min=0,
+        )
+        original_read = cline_mod.stable_read_bytes
+
+        for code in ("E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"):
+            def optional_failure(path: str, **kwargs: Any) -> Any:
+                if path.endswith(manifest_suffix):
+                    raise DiagnosticError(code)
+                return original_read(path, **kwargs)
+
+            with self.subTest(code=code), mock.patch(
+                "portable_resume.adapters.cline.stable_read_bytes",
+                side_effect=optional_failure,
+            ):
+                summaries = ADAPTER.list(current, ReadBudget())
+                session = ADAPTER.show(
+                    ResolvedRef(session_id=BASIC_ID, source_path=""),
+                    current,
+                    ReadBudget(),
+                )
+
+            self.assertEqual([item.session_id for item in summaries], [BASIC_ID])
+            self.assertEqual(session.session_id, BASIC_ID)
+
+    def test_list_and_show_skip_deeply_nested_bounded_manifest(self) -> None:
+        import tempfile
+
+        from tests.fixtures.cline import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            sessions_dir = Path(temporary) / "sessions"
+            messages_path = bf._write_session_files(
+                sessions_dir,
+                session_id=BASIC_ID,
+                messages=[{"id": "u", "role": "user", "content": "kept"}],
+            )
+            manifest_path = sessions_dir / BASIC_ID / f"{BASIC_ID}.json"
+            manifest_path.write_bytes(b'{"nested":' + b"[" * 1200 + b"0" + b"]" * 1200 + b"}")
+            current = Query(
+                source="cline",
+                ref=BASIC_ID,
+                cwd=None,
+                source_root=str(sessions_dir),
+                within_min=0,
+            )
+
+            summaries = ADAPTER.list(current, ReadBudget())
+            session = ADAPTER.show(
+                ResolvedRef(session_id=BASIC_ID, source_path=str(messages_path)),
+                current,
+                ReadBudget(),
+            )
+
+        self.assertEqual([item.session_id for item in summaries], [BASIC_ID])
+        self.assertEqual(session.session_id, BASIC_ID)
+
     def test_show_propagates_busy_manifest_read(self) -> None:
         from portable_resume.adapters import cline as cline_mod
 

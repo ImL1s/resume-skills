@@ -256,10 +256,10 @@ STOP.
 
 ## Done criteria
 
-- [ ] Handler excerpts above replaced; no blanket `return False` on unknown diagnostics in `_session_has_extractable`
-- [ ] The 4 new tests pass; full suite + gates green
-- [ ] Docstring matches behavior
-- [ ] `plans/README.md` updated
+- [x] Handler excerpts above replaced; no blanket `return False` on unknown diagnostics in `_session_has_extractable`
+- [x] The 4 new tests pass; full suite + gates green
+- [x] Docstring matches behavior
+- [x] `plans/README.md` updated
 
 ## STOP conditions
 
