@@ -7,6 +7,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.install.cli import run as install_cli_run
@@ -21,11 +22,19 @@ from portable_resume.install.discovery import (
     STATUS_PRECEDENCE_UNKNOWN,
     STATUS_SAME_PHYSICAL,
     STATUS_UNSAFE,
+    _read_regular_capped,
     discovery_roots_for_host,
+    inspect_skill_copy,
     require_no_blocking_shadow,
     scan_skill_duplicates,
 )
-from portable_resume.install.transaction import execute_install, plan_install, verify_root
+from portable_resume.install.render import materialize_plan, package_identity
+from portable_resume.install.transaction import (
+    execute_install,
+    manifest_path,
+    plan_install,
+    verify_root,
+)
 
 
 def _write_skill(root: Path, skill: str, body: bytes = b"---\nname: x\n---\nold\n") -> None:
@@ -280,6 +289,145 @@ class DuplicateScanTests(unittest.TestCase):
         self.assertEqual(report["aggregate_status"], STATUS_PRECEDENCE_UNKNOWN)
 
 
+class DiscoveryReaderSafetyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name) / "skills"
+        plan = plan_install(host="cursor", scope="project", root=str(self.root))
+        execute_install(plan)
+        self.expected_identity = package_identity(materialize_plan("cursor"))
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def inspect(self, *, expected: str | None = None) -> dict[str, object]:
+        return inspect_skill_copy(
+            str(self.root),
+            "resume-codex",
+            host="cursor",
+            expected_payload_digest=self.expected_identity if expected is None else expected,
+        )
+
+    def test_failed_nofollow_open_is_not_retried(self) -> None:
+        skill_md = self.root / "resume-codex" / "SKILL.md"
+        real_open = os.open
+        calls: list[int] = []
+
+        def fail_first_open(
+            path: str | bytes,
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            calls.append(flags)
+            if len(calls) == 1:
+                raise OSError("simulated no-follow race")
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+
+        with mock.patch("portable_resume.install.discovery.os.open", side_effect=fail_first_open):
+            self.assertIsNone(_read_regular_capped(str(skill_md), max_bytes=256 * 1024))
+        self.assertEqual(len(calls), 1)
+
+    def test_symlinked_skill_markdown_is_unsafe_and_never_verified(self) -> None:
+        skill_md = self.root / "resume-codex" / "SKILL.md"
+        target = self.root / "same-skill-markdown"
+        target.write_bytes(skill_md.read_bytes())
+        skill_md.unlink()
+        skill_md.symlink_to(target)
+
+        result = self.inspect()
+
+        self.assertTrue(result["unsafe"])
+        self.assertFalse(result["payload_verified"])
+        self.assertIsNone(result["skill_md_sha256"])
+
+    def test_matches_expected_uses_payload_bytes_not_manifest_metadata(self) -> None:
+        manifest = Path(manifest_path(str(self.root)))
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        document["package_identity"] = "0" * 64
+        manifest.write_text(json.dumps(document), encoding="utf-8")
+
+        result = self.inspect()
+
+        self.assertTrue(result["payload_verified"])
+        self.assertTrue(result["matches_expected"])
+        self.assertEqual(result["package_identity"], "0" * 64)
+
+    def test_matches_expected_is_independent_from_payload_verified(self) -> None:
+        result = self.inspect(expected="f" * 64)
+
+        self.assertTrue(result["payload_verified"])
+        self.assertFalse(result["matches_expected"])
+
+        runner = self.root / "resume-codex" / "scripts" / "run_reader.py"
+        runner.write_bytes(runner.read_bytes() + b"\n# modified\n")
+        modified = self.inspect()
+        self.assertFalse(modified["payload_verified"])
+        self.assertFalse(modified["matches_expected"])
+
+    def test_matches_expected_uses_actual_identity_for_same_size_mismatch(self) -> None:
+        rel = "resume-codex/scripts/run_reader.py"
+        runner = self.root / rel
+        original = runner.read_bytes()
+        replacement = bytes([original[0] ^ 1]) + original[1:]
+        self.assertEqual(len(replacement), len(original))
+        runner.write_bytes(replacement)
+        actual = materialize_plan("cursor")
+        actual[rel] = replacement
+
+        result = self.inspect(expected=package_identity(actual))
+
+        self.assertFalse(result["payload_verified"])
+        self.assertTrue(result["matches_expected"])
+
+    def test_capped_read_fails_closed_when_file_grows_during_read(self) -> None:
+        path = self.root / "growing"
+        original = b"bounded"
+        path.write_bytes(original)
+        real_read = os.read
+        grew = False
+
+        def grow_after_first_read(fd: int, size: int) -> bytes:
+            nonlocal grew
+            chunk = real_read(fd, size)
+            if not grew:
+                grew = True
+                with path.open("ab") as stream:
+                    stream.write(b"!")
+            return chunk
+
+        with mock.patch("portable_resume.install.discovery.os.read", side_effect=grow_after_first_read):
+            self.assertIsNone(_read_regular_capped(str(path), max_bytes=len(original)))
+
+    def test_capped_read_fails_closed_when_file_mutates_during_read(self) -> None:
+        path = self.root / "mutating"
+        original = b"stable"
+        path.write_bytes(original)
+        real_read = os.read
+        mutated = False
+
+        def mutate_after_first_read(fd: int, size: int) -> bytes:
+            nonlocal mutated
+            chunk = real_read(fd, size)
+            if not mutated:
+                mutated = True
+                path.write_bytes(b"change")
+            return chunk
+
+        with mock.patch("portable_resume.install.discovery.os.read", side_effect=mutate_after_first_read):
+            self.assertIsNone(_read_regular_capped(str(path), max_bytes=len(original)))
+
+    def test_unreadable_manifest_does_not_hide_matching_payload(self) -> None:
+        Path(manifest_path(str(self.root))).write_text("{not-json", encoding="utf-8")
+
+        result = self.inspect()
+
+        self.assertTrue(result["manifest_unreadable"])
+        self.assertFalse(result["payload_verified"])
+        self.assertTrue(result["matches_expected"])
+
+
 class CodexFollowupTests(unittest.TestCase):
     """Follow-ups from PR #102 Codex review on #34 HEAD."""
 
@@ -471,7 +619,7 @@ class CliAuditAndInstallGateTests(unittest.TestCase):
         self.assertIn("E_INSTALL_SHADOW", err.getvalue())
 
     def test_install_succeeds_without_shadow(self) -> None:
-        plan = plan_install(
+        plan_install(
             host="cursor",
             scope="project",
             root=str(self.project / ".cursor" / "skills"),

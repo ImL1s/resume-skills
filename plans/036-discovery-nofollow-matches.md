@@ -236,11 +236,11 @@ with temp skill roots.
 
 ## Done criteria
 
-- [ ] `_read_regular_capped` has no second `os.open`; symlinked SKILL.md test proves fail-closed
-- [ ] `matches_expected` compares the computed on-disk identity (never `manifest.package_identity`); the metadata-independence and divergent-expected tests prove the field is independent of both the manifest and `payload_verified`
-- [ ] `discovery-scan-v1` key set unchanged (same fields emitted)
-- [ ] Full suite, smoke matrix, `self_verify.py`, `check_secrets.py` all green
-- [ ] `plans/README.md` updated
+- [x] `_read_regular_capped` has no second `os.open`; symlinked SKILL.md test proves fail-closed
+- [x] `matches_expected` compares the computed on-disk identity (never `manifest.package_identity`); the metadata-independence and divergent-expected tests prove the field is independent of both the manifest and `payload_verified`
+- [x] `discovery-scan-v1` key set unchanged (same fields emitted)
+- [x] Full suite, smoke matrix, `self_verify.py`, `check_secrets.py` all green
+- [x] `plans/README.md` updated
 
 ## STOP conditions
 
