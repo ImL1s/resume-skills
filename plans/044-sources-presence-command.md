@@ -179,9 +179,14 @@ epilog from plan 029.
    still 0, other rows intact.
 3. Closed parser: unknown flag → exit 2.
 4. JSON schema shape: keys exactly as specced (sorted, compact).
-5. Security: the sweep run passes under the PATH-shim isolation harness —
-   extend nothing; just confirm `tests/security` still passes (the shims are
-   global; if plan 039 landed, the widened net covers this free).
+5. **Sweep-specific isolation test** (do not skip — the existing suites only
+   exercise the Claude reader path, so a probe that shells out could stay
+   green without this): copy the harness setup from
+   `tests/security/test_no_source_cli_exec.py` — temp `bin/` with marker-writing
+   shim executables named for every `SOURCE_KEYS` entry plus the common
+   launcher names, prepended to `PATH` via a patched environment — then invoke
+   the real `run(["sources"])` sweep (no adapter mocks) and assert exit 0 and
+   that the marker file was never created.
 
 **Verify**: new module passes; full suite + security suite OK.
 
@@ -204,7 +209,7 @@ As Step 3 (≥ 5 cases). Pattern: self-check's existing tests (find via
 
 - [ ] `sources` lists all enabled sources with per-source state; one broken adapter cannot abort the sweep (test-pinned)
 - [ ] Closed parser semantics (unknown args → exit 2 diagnostic)
-- [ ] No adapter files modified; no source CLI invoked (security suite green)
+- [ ] No adapter files modified; no source CLI invoked — proven by the new sweep-specific PATH-shim test, not only the pre-existing security suite
 - [ ] Schema `portable-resume/sources-v1` stable-sorted compact JSON
 - [ ] Full suite + gates green; `plans/README.md` updated
 

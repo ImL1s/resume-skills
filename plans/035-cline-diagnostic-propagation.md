@@ -108,6 +108,14 @@ pattern to copy.
   (Hermes re-raises the fail-closed set unconditionally during listing and
   skips only the rest.)
 
+- **Reachability note (from Codex PR review):** a *static* symlinked
+  `<id>.messages.json` never reaches this handler — path discovery goes
+  through `_regular_file`, which rejects symlinks earlier and yields "no
+  messages path". The handler fix therefore closes the TOCTOU window (file
+  replaced between discovery and read) plus the busy/budget paths; tests must
+  inject the diagnostic at the read layer rather than relying on a static
+  symlink fixture.
+
 - Semantics decision, already made by the codebase's conventions — implement
   exactly this:
   - `E_UNSAFE_PATH`, `E_SOURCE_BUSY`: **always** re-raise (both listing and
@@ -197,20 +205,24 @@ and raise on selection.
 
 Add to the cline test module (fixtures synthetic, per CONTRIBUTING rules):
 
-1. **Symlinked messages file, explicit show**: fixture whose
-   `<id>.messages.json` is a symlink → `show <id>` raises/exits
-   `E_UNSAFE_PATH` (was: `E_NO_MATCH`).
-2. **Symlinked messages file, listing**: `list` raises `E_UNSAFE_PATH`
-   (fail-closed listing) — assert the code, not just non-zero.
+1. **Unsafe-path propagation on show**: `unittest.mock.patch` the read layer
+   as imported by `cline.py` (`_load_messages_payload`, or the module's
+   `stable_read_bytes` binding) to raise `DiagnosticError("E_UNSAFE_PATH")`
+   → explicit `show <id>` exits `E_UNSAFE_PATH` (was: converted to
+   `E_NO_MATCH`). A static symlink fixture will NOT exercise this path (see
+   Reachability note) — the injection simulates the TOCTOU window.
+2. **Busy propagation during listing**: same injection point raising
+   `DiagnosticError.source_busy()` during `list` → `E_SOURCE_BUSY` propagates
+   (assert the code, not just non-zero).
 3. **Budget exhaustion mid-listing**: lowered `ReadBudget` that exhausts on
    the manifest reads → `E_LIMIT_EXCEEDED` propagates (was: silent partial
-   metadata).
+   metadata). Use a real lowered budget, no mocks.
 4. **Corrupt manifest still skips**: fixture with malformed `<id>.json`
    manifest → session still listed (metadata-less), exit 0 — pins the
    preserved behavior.
 
-Model the symlink fixtures on existing unsafe-path tests (find via
-`grep -rln "E_UNSAFE_PATH" tests/ | head`).
+Model the diagnostic-injection tests on existing mock-based unsafe-path tests
+(find via `grep -rln "E_UNSAFE_PATH" tests/ | head`).
 
 **Verify**: 4 new tests pass; full suite OK.
 

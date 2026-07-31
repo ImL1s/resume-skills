@@ -56,9 +56,10 @@ it exists.
   - `_format()` (around lines 120–136): default format is `handoff` for `show`
     and `table` for `list`; `show` rejects `table`; `--json` conflicts with an
     explicit non-json `--format`.
-  - `run()` (around lines 259–262): `--within-min` must be 0 < n ≤ 5256000
-    (ten years in minutes); `--max-tool-chars` must be within
-    `0..DEFAULT_BOUNDS.tool_output_chars`.
+  - `run()` (around lines 259–262): `--within-min` must be 0 ≤ n ≤ 5256000
+    (ten years in minutes; only negatives are rejected, and `<= 0` is defined
+    by `adapters/common.within_age` as disabling the age filter);
+    `--max-tool-chars` must be within `0..DEFAULT_BOUNDS.tool_output_chars`.
   - `--request-file` is mutually exclusive with positional
     `source`/`action`/`ref` and `--cwd`, and requires `--expected-source`
     (`_resolve_invocation`, lines 93–103).
@@ -122,7 +123,7 @@ In `build_parser()`, add a `help=` to each of the 8 undocumented options.
 Required content (wording may be tightened, facts may not be dropped):
 
 - `--cwd`: "project directory used for session matching (default: current directory)"
-- `--within-min`: "only consider sessions updated within this many minutes (1..5256000; default: adapter listing window)"
+- `--within-min`: "only consider sessions updated within this many minutes (0..5256000; 0 disables the age filter; default: adapter listing window)"
 - `--format`: "output format; default: handoff for show, table for list; show rejects table"
 - `--json`: "alias for --format json (conflicts with an explicit non-json --format)"
 - `--max-tool-chars`: f"per-tool-output character cap, 0..{DEFAULT_BOUNDS.tool_output_chars} (default: {DEFAULT_BOUNDS.tool_output_chars})"

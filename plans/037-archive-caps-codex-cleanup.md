@@ -163,14 +163,24 @@ with `MAX_MANIFEST_MEMBER_BYTES`.
 
 ### Step 2: Cap `validate_archive_path`
 
+Bound the read itself — a `stat` pre-check alone leaves a TOCTOU window (the
+file can grow or be replaced between check and open), and the existing
+unbounded `handle.read()` would still allocate past the ceiling. Replace the
+whole read:
+
 ```python
-    size = os.stat(path).st_size
-    if size > MAX_ARCHIVE_BYTES:
-        return {"ok": False, "failures": [f"archive exceeds size bound"], "path": path, ...}
+    with open(path, "rb") as handle:
+        data = handle.read(MAX_ARCHIVE_BYTES + 1)
+    if len(data) > MAX_ARCHIVE_BYTES:
+        return {"ok": False, "failures": ["archive exceeds size bound"], "path": path, ...}
+    report = validate_archive_bytes(data, package_type=package_type)
 ```
 
-Match the exact report shape `validate_archive_bytes` returns for failures
-(read it and mirror the keys) so consumers see a uniform document.
+(An optional `os.stat` fast-reject before opening is fine as an optimization,
+but the bounded `read(MAX_ARCHIVE_BYTES + 1)` on the opened descriptor is the
+enforcement.) Match the exact report shape `validate_archive_bytes` returns
+for failures (read it and mirror the keys) so consumers see a uniform
+document.
 
 **Verify**: builder command exits 0 (real archives are far under the cap).
 
