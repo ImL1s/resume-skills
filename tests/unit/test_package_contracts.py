@@ -6,6 +6,8 @@ import io
 import json
 import stat
 import struct
+import subprocess
+import sys
 import tempfile
 import zipfile
 import unittest
@@ -51,14 +53,82 @@ class PackageContractRegistryTests(unittest.TestCase):
             self.assertEqual(contract.package_type, key)
             self.assertIn(contract.native_evidence_status, {"not-run", "pass", "historical"})
 
+    def test_optional_zip_codecs_are_not_import_requirements(self) -> None:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("plugin.json", b"{}")
+            local_offset = archive.getinfo("plugin.json").header_offset
+        data = bytearray(buffer.getvalue())
+        central_offset = data.find(b"PK\x01\x02")
+        struct.pack_into("<H", data, local_offset + 8, zipfile.ZIP_DEFLATED)
+        struct.pack_into("<H", data, central_offset + 10, zipfile.ZIP_DEFLATED)
+        source_root = Path(__file__).resolve().parents[2] / "src"
+        script = """
+import builtins
+import sys
+
+real_import = builtins.__import__
+
+def blocked_import(name, *args, **kwargs):
+    if name in {"lzma", "zlib"}:
+        raise ImportError(f"blocked optional codec: {name}")
+    return real_import(name, *args, **kwargs)
+
+builtins.__import__ = blocked_import
+sys.path.insert(0, sys.argv[1])
+from portable_resume.install.package_contracts import validate_archive_bytes
+
+report = validate_archive_bytes(bytes.fromhex(sys.argv[2]), package_type="antigravity-plugin")
+assert not report["ok"]
+assert any("primary manifest unreadable" in item for item in report["failures"])
+print("OPTIONAL_CODEC_IMPORT PASS")
+"""
+
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(source_root), bytes(data).hex()],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, "OPTIONAL_CODEC_IMPORT PASS\n")
+
 
 class OfflineValidationTests(unittest.TestCase):
-    def _zip(self, files: dict[str, bytes]) -> bytes:
+    def _zip(
+        self,
+        files: dict[str, bytes],
+        *,
+        compression: int = zipfile.ZIP_STORED,
+    ) -> bytes:
         buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w") as archive:
+        with zipfile.ZipFile(buf, "w", compression=compression) as archive:
             for name, data in sorted(files.items()):
                 archive.writestr(name, data)
         return buf.getvalue()
+
+    def _corrupt_compressed_member(self, data: bytes, member: str) -> bytes:
+        corrupted = bytearray(data)
+        with zipfile.ZipFile(io.BytesIO(corrupted)) as archive:
+            info = archive.getinfo(member)
+            self.assertNotEqual(info.compress_type, zipfile.ZIP_STORED)
+            local_offset = info.header_offset
+        name_size = struct.unpack_from("<H", corrupted, local_offset + 26)[0]
+        extra_size = struct.unpack_from("<H", corrupted, local_offset + 28)[0]
+        payload_offset = local_offset + 30 + name_size + extra_size
+        corrupted[payload_offset] = 0xFF
+        return bytes(corrupted)
+
+    def _corruptible_compressions(self) -> tuple[int, ...]:
+        methods = [zipfile.ZIP_DEFLATED]
+        zstandard = getattr(zipfile, "ZIP_ZSTANDARD", None)
+        if getattr(zipfile, "zstd", None) is not None and isinstance(
+            zstandard,
+            int,
+        ):
+            methods.append(zstandard)
+        return tuple(methods)
 
     def _member_header_offsets(
         self,
@@ -168,6 +238,41 @@ class OfflineValidationTests(unittest.TestCase):
             ),
             report["failures"],
         )
+
+    def test_reports_corrupt_compressed_primary_manifest(self) -> None:
+        identity = runtime_identity()
+        files = {
+            f"skills/{name}": value
+            for name, value in materialize_plan(
+                "antigravity",
+                identity=identity,
+            ).items()
+        }
+        files["plugin.json"] = b'{"name":"portable-resume"}\n'
+        for compression in self._corruptible_compressions():
+            with self.subTest(compression=compression):
+                data = self._zip(files, compression=compression)
+                baseline = validate_archive_bytes(
+                    data,
+                    package_type="antigravity-plugin",
+                    expected_identity=identity,
+                )
+                self.assertTrue(baseline["ok"], baseline["failures"])
+
+                report = validate_archive_bytes(
+                    self._corrupt_compressed_member(data, "plugin.json"),
+                    package_type="antigravity-plugin",
+                    expected_identity=identity,
+                )
+
+                self.assertFalse(report["ok"])
+                self.assertTrue(
+                    any(
+                        "primary manifest unreadable" in failure
+                        for failure in report["failures"]
+                    ),
+                    report["failures"],
+                )
 
     def test_rejects_archive_member_count_over_bound(self) -> None:
         data = self._zip({"one": b"1", "two": b"2"})
@@ -386,6 +491,37 @@ class OfflineValidationTests(unittest.TestCase):
             report["failures"],
         )
 
+    def test_direct_contract_reports_corrupt_compressed_identity(self) -> None:
+        identity = runtime_identity()
+        member = (
+            ".portable-resume/runtime/portable_resume/resources/build-identity.json"
+        )
+        files = materialize_plan("claude", identity=identity)
+        for compression in self._corruptible_compressions():
+            with self.subTest(compression=compression):
+                data = self._zip(files, compression=compression)
+                baseline = validate_archive_bytes(
+                    data,
+                    package_type="direct-skills",
+                    expected_identity=identity,
+                )
+                self.assertTrue(baseline["ok"], baseline["failures"])
+
+                report = validate_archive_bytes(
+                    self._corrupt_compressed_member(data, member),
+                    package_type="direct-skills",
+                    expected_identity=identity,
+                )
+
+                self.assertFalse(report["ok"])
+                self.assertTrue(
+                    any(
+                        "embedded build identity is unreadable" in failure
+                        for failure in report["failures"]
+                    ),
+                    report["failures"],
+                )
+
     def test_direct_contract_rejects_non_identity_symlink_member(self) -> None:
         identity = runtime_identity()
         files = materialize_plan("claude", identity=identity)
@@ -477,6 +613,72 @@ class OfflineValidationTests(unittest.TestCase):
         blob = " ".join(report["failures"])
         self.assertIn("version", blob)
         self.assertIn("plugin root", blob)
+
+    def test_reports_corrupt_compressed_marketplace_manifest(self) -> None:
+        identity = runtime_identity()
+        files = {
+            f"plugins/portable-resume/skills/{name}": value
+            for name, value in materialize_plan(
+                "claude",
+                identity=identity,
+            ).items()
+        }
+        files["plugins/portable-resume/.claude-plugin/plugin.json"] = (
+            json.dumps(
+                {
+                    "name": "portable-resume",
+                    "version": __version__,
+                    "description": "x",
+                    "author": {"name": "x"},
+                    "license": "Apache-2.0",
+                    "homepage": "https://example.com",
+                    "repository": "https://example.com",
+                },
+                sort_keys=True,
+            ).encode()
+            + b"\n"
+        )
+        marketplace_member = ".claude-plugin/marketplace.json"
+        files[marketplace_member] = (
+            json.dumps(
+                {
+                    "name": "portable-resume",
+                    "plugins": [
+                        {
+                            "name": "portable-resume",
+                            "version": __version__,
+                            "source": "./plugins/portable-resume",
+                        }
+                    ],
+                },
+                sort_keys=True,
+            ).encode()
+            + b"\n"
+        )
+        for compression in self._corruptible_compressions():
+            with self.subTest(compression=compression):
+                data = self._zip(files, compression=compression)
+                baseline = validate_archive_bytes(
+                    data,
+                    package_type="claude-marketplace",
+                    expected_identity=identity,
+                )
+                self.assertTrue(baseline["ok"], baseline["failures"])
+
+                report = validate_archive_bytes(
+                    self._corrupt_compressed_member(data, marketplace_member),
+                    package_type="claude-marketplace",
+                    expected_identity=identity,
+                )
+
+                self.assertFalse(report["ok"])
+                self.assertTrue(
+                    any(
+                        "unreadable marketplace" in failure
+                        for failure in report["failures"]
+                    ),
+                    report["failures"],
+                )
 
 
 if __name__ == "__main__":

@@ -46,6 +46,21 @@ _ZIP64_LOCATOR_SIGNATURE = b"PK\x06\x07"
 _ZIP_EOCD_SIZE = 22
 _ZIP_MAX_COMMENT_BYTES = 0xFFFF
 
+_ZIP_MEMBER_READ_ERRORS: tuple[type[Exception], ...] = (
+    EOFError,
+    OSError,
+    RuntimeError,
+    NotImplementedError,
+)
+for _codec_name, _error_name in (
+    ("zlib", "error"),
+    ("lzma", "LZMAError"),
+    ("zstd", "ZstdError"),
+):
+    _codec_error = getattr(getattr(zipfile, _codec_name, None), _error_name, None)
+    if isinstance(_codec_error, type) and issubclass(_codec_error, Exception):
+        _ZIP_MEMBER_READ_ERRORS += (_codec_error,)
+
 # Shared forbidden path fragments inside any package archive (match root-relative
 # and nested spellings — do not require a leading slash).
 FORBIDDEN_PATH_SUBSTRINGS: tuple[str, ...] = (
@@ -449,21 +464,23 @@ def _read_bounded_member(
     max_bytes: int,
 ) -> bytes:
     info = archive.getinfo(name)
-    return _read_bounded_info(archive, info, max_bytes=max_bytes)
+    return read_bounded_zip_info(archive, info, max_bytes=max_bytes)
 
 
-def _read_bounded_info(
+def read_bounded_zip_info(
     archive: zipfile.ZipFile,
     info: zipfile.ZipInfo,
     *,
     max_bytes: int,
 ) -> bytes:
+    """Read one regular ZIP member through a bounded decoder-error boundary."""
+
     if not _zip_info_is_regular(info) or info.file_size > max_bytes:
         raise ValueError("archive member is not a bounded regular file")
     try:
         with archive.open(info) as handle:
             data = handle.read(max_bytes + 1)
-    except (RuntimeError, NotImplementedError) as error:
+    except _ZIP_MEMBER_READ_ERRORS as error:
         raise ValueError("archive member is unreadable") from error
     if len(data) > max_bytes:
         raise ValueError("archive member exceeds its decompressed size bound")
@@ -713,7 +730,7 @@ def validate_archive_bytes(
                     )
                 else:
                     try:
-                        raw_identity = _read_bounded_info(
+                        raw_identity = read_bounded_zip_info(
                             archive,
                             info,
                             max_bytes=MAX_BUILD_IDENTITY_BYTES,

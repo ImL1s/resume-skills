@@ -5,10 +5,12 @@ import hashlib
 import json
 import os
 import stat
+import struct
 import tarfile
 import tempfile
 import unittest
 import zipfile
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
@@ -29,13 +31,46 @@ from portable_resume.registry import (
     enabled_destination_keys,
     enabled_package_keys,
 )
-from scripts.verify_artifact_identities import _read_report, verify_artifact_identities
+from scripts.verify_artifact_identities import (
+    _read_report,
+    main as verifier_main,
+    verify_artifact_identities,
+)
 
 
 class ArtifactIdentityVerifierTests(unittest.TestCase):
-    def _zip(self, path: Path, member: str, data: bytes) -> None:
-        with zipfile.ZipFile(path, "w") as archive:
+    def _zip(
+        self,
+        path: Path,
+        member: str,
+        data: bytes,
+        *,
+        compression: int = zipfile.ZIP_STORED,
+    ) -> None:
+        with zipfile.ZipFile(path, "w", compression=compression) as archive:
             archive.writestr(member, data)
+
+    def _corrupt_compressed_member(self, path: Path, member: str) -> None:
+        corrupted = bytearray(path.read_bytes())
+        with zipfile.ZipFile(io.BytesIO(corrupted)) as archive:
+            info = archive.getinfo(member)
+            self.assertNotEqual(info.compress_type, zipfile.ZIP_STORED)
+            local_offset = info.header_offset
+        name_size = struct.unpack_from("<H", corrupted, local_offset + 26)[0]
+        extra_size = struct.unpack_from("<H", corrupted, local_offset + 28)[0]
+        payload_offset = local_offset + 30 + name_size + extra_size
+        corrupted[payload_offset] = 0xFF
+        path.write_bytes(corrupted)
+
+    def _corruptible_compressions(self) -> tuple[int, ...]:
+        methods = [zipfile.ZIP_DEFLATED]
+        zstandard = getattr(zipfile, "ZIP_ZSTANDARD", None)
+        if getattr(zipfile, "zstd", None) is not None and isinstance(
+            zstandard,
+            int,
+        ):
+            methods.append(zstandard)
+        return tuple(methods)
 
     def test_rejects_legacy_v1_identity_pin_before_artifact_reads(self) -> None:
         identity = runtime_identity()
@@ -751,6 +786,50 @@ class ArtifactIdentityVerifierTests(unittest.TestCase):
                     expected_sha256=digest,
                     artifacts=(wheel,),
                 )
+
+    def test_cli_reports_corrupt_compressed_identity_without_traceback(self) -> None:
+        identity = runtime_identity()
+        encoded = identity_json_bytes(identity)
+        digest = hashlib.sha256(encoded).hexdigest()
+        member = "portable_resume/resources/build-identity.json"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pin = root / "identity.json"
+            pin.write_bytes(encoded)
+            wheel = root / "portable_resume-0-py3-none-any.whl"
+            for compression in self._corruptible_compressions():
+                with self.subTest(compression=compression):
+                    self._zip(
+                        wheel,
+                        member,
+                        encoded,
+                        compression=compression,
+                    )
+                    baseline = verify_artifact_identities(
+                        identity_file=pin,
+                        expected_sha256=digest,
+                        artifacts=(wheel,),
+                    )
+                    self.assertTrue(baseline["ok"])
+                    self._corrupt_compressed_member(wheel, member)
+                    stderr = io.StringIO()
+
+                    with redirect_stderr(stderr):
+                        result = verifier_main(
+                            [
+                                "--identity-file",
+                                str(pin),
+                                "--identity-sha256",
+                                digest,
+                                str(wheel),
+                            ]
+                        )
+
+                    self.assertEqual(result, 1)
+                    self.assertEqual(
+                        stderr.getvalue(),
+                        "ARTIFACT_IDENTITY_VERIFY FAIL ValueError\n",
+                    )
 
     @unittest.skipIf(os.name == "nt", "symlink semantics differ on Windows")
     def test_rejects_symlink_artifact_path(self) -> None:

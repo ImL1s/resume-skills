@@ -20,7 +20,9 @@
   was not mutated. Archive validation bounds compressed bytes, member count,
   total expanded bytes, and manifest reads; encrypted or unsupported-compression
   required members now produce validation failures instead of escaping as
-  exceptions. The host report is checked against
+  exceptions. Corrupt DEFLATE, BZIP2, LZMA, and Zstandard member payloads use
+  the same bounded decoder-error boundary in package and artifact validation.
+  The host report is checked against
   registry-derived filenames, family paths, member counts, and canonical install
   hints. The new `MANIFEST.in` path uses `setuptools==83.0.0`, outside
   the affected range of

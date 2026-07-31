@@ -36,6 +36,7 @@ from portable_resume.install.package_contracts import (  # noqa: E402
     RUNTIME_IDENTITY_RELATIVE,
     contract_for_package_type,
     contracts_report,
+    read_bounded_zip_info,
 )
 from portable_resume.registry import (  # noqa: E402
     PACKAGE_SURFACES,
@@ -161,11 +162,6 @@ def _open_stable_file(
                 raise ValueError(f"{subject} changed after read")
 
 
-def _zip_info_is_regular(info: zipfile.ZipInfo) -> bool:
-    unix_type = stat.S_IFMT((info.external_attr >> 16) & 0xFFFF)
-    return not info.is_dir() and unix_type in {0, stat.S_IFREG}
-
-
 def _read_exact_at(handle: BinaryIO, offset: int, size: int) -> bytes:
     if offset < 0 or size < 0:
         raise ValueError("artifact is not a valid zip archive")
@@ -283,17 +279,18 @@ def _zip_identity(path: Path, *, wheel: bool) -> tuple[str, bytes, str, int]:
                         f"found {len(matches)} exact and {len(candidates)} total"
                     )
                 info = matches[0]
-                if (
-                    not _zip_info_is_regular(info)
-                    or info.file_size > MAX_BUILD_IDENTITY_BYTES
-                ):
-                    raise ValueError("archive build identity is not a bounded regular file")
-                with archive.open(info) as handle:
-                    data = handle.read(MAX_BUILD_IDENTITY_BYTES + 1)
+                try:
+                    data = read_bounded_zip_info(
+                        archive,
+                        info,
+                        max_bytes=MAX_BUILD_IDENTITY_BYTES,
+                    )
+                except ValueError as error:
+                    raise ValueError(
+                        f"archive build identity is unreadable: {error}"
+                    ) from error
     except zipfile.BadZipFile as error:
         raise ValueError("artifact is not a valid zip archive") from error
-    if len(data) > MAX_BUILD_IDENTITY_BYTES:
-        raise ValueError("archive build identity is oversized")
     load_identity_bytes(data)
     return info.filename, data, artifact_sha256, len(infos)
 
