@@ -169,6 +169,90 @@ class ClineAdapterTests(unittest.TestCase):
             ["synthetic cline user prompt", "synthetic cline assistant reply"],
         )
 
+    def test_data_db_directory_source_root_can_show(self) -> None:
+        """source_root=.../data/db must contain under data so sessions/ is readable (Codex P1)."""
+        root = fixture_root("s-cl-01-user-basic")
+        db_dir = root / "data" / "db"
+        current = Query(
+            source="cline",
+            cwd=CWD,
+            source_root=str(db_dir),
+            within_min=0,
+        )
+        report = ADAPTER.probe(current)
+        self.assertEqual(report.state, "supported")
+        summaries = ADAPTER.list(current, ReadBudget())
+        self.assertEqual(len(summaries), 1)
+        session = ADAPTER.show(ResolvedRef.from_summary(summaries[0]), current, ReadBudget())
+        self.assertEqual(session.session_id, BASIC_ID)
+        self.assertTrue(session.turns)
+
+    def test_list_skips_corrupt_newer_and_keeps_older_valid(self) -> None:
+        """Default list must skip corrupt/unsupported candidates for latest (Codex P1)."""
+        import tempfile
+        from tests.fixtures.cline import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data = root / "data"
+            db_path = data / "db" / "sessions.db"
+            sessions_dir = data / "sessions"
+            conn = bf._connect(db_path)
+            corrupt_id = "cl000188-0101-4101-8101-010101010188"
+            good_id = "cl000177-0101-4101-8101-010101010177"
+            corrupt_dir = sessions_dir / corrupt_id
+            corrupt_dir.mkdir(parents=True)
+            (corrupt_dir / f"{corrupt_id}.messages.json").write_text(
+                "{not-json",
+                encoding="utf-8",
+            )
+            bf._insert_session(
+                conn,
+                session_id=corrupt_id,
+                prompt="newer corrupt",
+                messages_path="",
+                updated_at="2024-06-02T12:00:00.000000Z",
+            )
+            path = bf._write_session_files(
+                sessions_dir,
+                session_id=good_id,
+                messages=[
+                    {"id": "u", "role": "user", "content": "older good user"},
+                    {"id": "a", "role": "assistant", "content": "older good asst"},
+                ],
+            )
+            bf._insert_session(
+                conn,
+                session_id=good_id,
+                prompt="older good user",
+                messages_path="",
+                updated_at="2024-06-01T12:00:00.000000Z",
+            )
+            conn.commit()
+            conn.close()
+            current = Query(
+                source="cline",
+                cwd=CWD,
+                source_root=str(root),
+                within_min=0,
+            )
+            summaries = ADAPTER.list(current, ReadBudget())
+            self.assertEqual([item.session_id for item in summaries], [good_id])
+            session = ADAPTER.show(
+                ResolvedRef.from_summary(summaries[0]), current, ReadBudget()
+            )
+            self.assertEqual(session.session_id, good_id)
+
+    def test_list_summaries_use_messages_source_path(self) -> None:
+        """Indexed list should expose messages path for exact-path selection (Codex P2)."""
+        root = fixture_root("s-cl-01-user-basic")
+        summaries = ADAPTER.list(query(root), ReadBudget())
+        self.assertEqual(len(summaries), 1)
+        self.assertTrue(
+            summaries[0].source_path.endswith(f"{BASIC_ID}.messages.json"),
+            summaries[0].source_path,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

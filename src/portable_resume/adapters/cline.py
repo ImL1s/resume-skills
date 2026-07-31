@@ -33,6 +33,7 @@ from ..snapshot import (
     private_sqlite_connection,
     query_only_live_sqlite,
     stable_read_bytes,
+    stable_read_windows,
 )
 from .base import CapabilityReport, ResolvedRef
 from .common import within_age
@@ -40,6 +41,8 @@ from .common import within_age
 FORMAT_ID = "cline-session-json-v1"
 INDEX_PROVIDER = "cline-session-index-sqlite-v1"
 MESSAGES_VERSION = 1
+# List eligibility must not full-decode multi-MB transcripts (Codex P1).
+_LIST_ELIGIBILITY_BYTES = 256 * 1024
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
 _REQUIRED_SESSION_COLUMNS = frozenset(
     {
@@ -173,11 +176,20 @@ def _layout_from_root(candidate: str) -> tuple[str | None, str | None, str] | No
             root,
         )
 
-    # ~/.cline/data/db
-    db = os.path.join(root, "sessions.db")
-    if _regular_file(db, root):
-        sessions = os.path.join(os.path.dirname(root), "sessions")
-        return db, sessions if _regular_dir(sessions) else None, root
+    # ~/.cline/data/db — contain under parent data dir so sibling sessions/ is allowed.
+    if os.path.basename(root.rstrip(os.sep)) == "db":
+        try:
+            data_root = canonical_root(os.path.dirname(root))
+        except DiagnosticError:
+            return None
+        db_path = os.path.join(data_root, "db", "sessions.db")
+        sessions = os.path.join(data_root, "sessions")
+        if _regular_file(db_path, data_root) or _regular_dir(sessions):
+            return (
+                db_path if _regular_file(db_path, data_root) else None,
+                sessions if _regular_dir(sessions) else None,
+                data_root,
+            )
 
     # ~/.cline/data/sessions
     if any(
@@ -353,12 +365,17 @@ def _load_messages_payload(
     budget: ReadBudget,
     *,
     expected_session_id: str | None = None,
+    max_bytes: int | None = None,
 ) -> list[Mapping[str, Any]]:
+    ceiling = min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes)
+    limit = ceiling if max_bytes is None else min(max_bytes, ceiling)
+    # stable_read_bytes rejects max_bytes above sqlite_snapshot_bytes.
+    limit = min(limit, DEFAULT_BOUNDS.sqlite_snapshot_bytes)
     try:
         read = stable_read_bytes(
             path,
             root=root,
-            max_bytes=min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes),
+            max_bytes=limit,
             budget=budget,
         )
     except DiagnosticError:
@@ -394,24 +411,110 @@ def _load_messages_payload(
     return [m for m in messages if isinstance(m, Mapping)]
 
 
+def _list_messages_head_ok(
+    path: str,
+    root: str,
+    budget: ReadBudget,
+    *,
+    expected_session_id: str,
+) -> bool:
+    """Bounded structural check for oversized list candidates (no full decode)."""
+
+    head_limit = min(_LIST_ELIGIBILITY_BYTES, 4 * 1024 * 1024)
+    try:
+        windows = stable_read_windows(
+            path,
+            root=root,
+            head_bytes=head_limit,
+            tail_bytes=0,
+            max_bytes=min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes),
+            budget=budget,
+            require_size_within_max=False,
+        )
+    except DiagnosticError:
+        return False
+    head = windows.head
+    if not head:
+        return False
+    try:
+        text = head.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    # Envelope fields appear near the start of the written messages file.
+    if not re.search(r'"version"\s*:\s*1\b', text):
+        return False
+    if f'"sessionId":"{expected_session_id}"' not in text.replace(" ", ""):
+        # Allow spaced JSON: "sessionId" : "id"
+        if not re.search(
+            rf'"sessionId"\s*:\s*"{re.escape(expected_session_id)}"',
+            text,
+        ):
+            return False
+    if not re.search(r'"messages"\s*:\s*\[', text):
+        return False
+    # Prefer evidence of at least one public role in the head window.
+    if not re.search(r'"role"\s*:\s*"(?:user|assistant|tool)"', text):
+        return False
+    budget.consume_records()
+    return True
+
+
 def _session_has_extractable(
     *,
     session_id: str,
     messages_path: str | None,
     root: str,
     budget: ReadBudget,
+    raise_on_bad: bool = False,
 ) -> bool:
-    """Require a safe authoritative messages payload (prompt alone is insufficient)."""
+    """Require a safe authoritative messages payload (prompt alone is insufficient).
+
+    During ordinary listing (``raise_on_bad=False``):
+    - corrupt / unsupported candidates are skipped so older valid rows can win
+    - multi-MB files use a bounded head check instead of full JSON decode
+    Explicit selection / show still full-loads and raises.
+    """
 
     if messages_path is None:
         return False
     try:
+        size = os.lstat(messages_path).st_size
+    except OSError:
+        return False
+    if size <= 0:
+        return False
+    source_cap = min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes)
+    if size > source_cap:
+        if raise_on_bad:
+            raise DiagnosticError.limit_exceeded()
+        return False
+    list_cap = min(
+        budget.limits.record_bytes,
+        DEFAULT_BOUNDS.record_bytes,
+        _LIST_ELIGIBILITY_BYTES,
+    )
+    if not raise_on_bad and size > list_cap:
+        return _list_messages_head_ok(
+            messages_path,
+            root,
+            budget,
+            expected_session_id=session_id,
+        )
+    try:
         messages = _load_messages_payload(
-            messages_path, root, budget, expected_session_id=session_id
+            messages_path,
+            root,
+            budget,
+            expected_session_id=session_id,
+            max_bytes=list_cap if not raise_on_bad else None,
         )
     except DiagnosticError as error:
         if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
-            raise
+            if raise_on_bad:
+                raise
+            return False
+        if error.code == "E_LIMIT_EXCEEDED" and not raise_on_bad:
+            return False
         return False
     for message in messages[: min(64, budget.limits.transcript_records or 64)]:
         budget.consume_records()
@@ -500,17 +603,13 @@ def _list_from_sessions_dir(
         )
         if msg_path is None:
             continue
-        try:
-            if not _session_has_extractable(
-                session_id=session_id,
-                messages_path=msg_path,
-                root=root,
-                budget=budget,
-            ):
-                continue
-        except DiagnosticError as error:
-            if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
-                raise
+        if not _session_has_extractable(
+            session_id=session_id,
+            messages_path=msg_path,
+            root=root,
+            budget=budget,
+            raise_on_bad=exact_id is not None,
+        ):
             continue
         # Optional manifest for metadata only.
         prompt = None
@@ -638,32 +737,30 @@ def _list_from_index(
             started_at,
             updated_at,
         ) = row
+        msg_path = _messages_path_for(
+            session_id=str(session_id),
+            messages_path=messages_path,
+            sessions_dir=sessions_dir,
+            root=root,
+        )
         if exact_id is None:
             if isinstance(parent_session_id, str) and parent_session_id.strip():
                 continue
             if is_subagent in (1, True):
                 continue
-            msg_path = _messages_path_for(
+            if not _session_has_extractable(
                 session_id=str(session_id),
-                messages_path=messages_path,
-                sessions_dir=sessions_dir,
+                messages_path=msg_path,
                 root=root,
-            )
-            try:
-                if not _session_has_extractable(
-                    session_id=str(session_id),
-                    messages_path=msg_path,
-                    root=root,
-                    budget=budget,
-                ):
-                    continue
-            except DiagnosticError as error:
-                if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
-                    raise
+                budget=budget,
+                raise_on_bad=False,
+            ):
                 continue
+        # Prefer authoritative messages path so exact-path selection works (Codex P2).
+        summary_path = msg_path if msg_path is not None else database
         item = _row_summary(
             session_id=str(session_id),
-            source_path=database,
+            source_path=summary_path,
             prompt=prompt,
             cwd_value=cwd_value,
             workspace_root=workspace_root,
