@@ -122,10 +122,16 @@ def _safe_listdir(path: str) -> list[str]:
 def _default_conversations_dir() -> str:
     env_conv = os.environ.get("OPENHANDS_CONVERSATIONS_DIR")
     if env_conv and env_conv.strip():
-        return env_conv.strip()
+        path = env_conv.strip()
+        if not os.path.isabs(path):
+            raise DiagnosticError("E_UNSAFE_PATH", source="openhands", provider=FORMAT_ID)
+        return path
     env_persist = os.environ.get("OPENHANDS_PERSISTENCE_DIR")
     if env_persist and env_persist.strip():
-        return os.path.join(env_persist.strip(), "conversations")
+        path = env_persist.strip()
+        if not os.path.isabs(path):
+            raise DiagnosticError("E_UNSAFE_PATH", source="openhands", provider=FORMAT_ID)
+        return os.path.join(path, "conversations")
     return os.path.expanduser("~/.openhands/conversations")
 
 
@@ -428,9 +434,8 @@ def _has_public_turn(
             payload = _load_event_json(path, root, budget)
             turn = _handle_event(payload, strict_unknown=True)
         except DiagnosticError as error:
-            if error.code == "E_LIMIT_EXCEEDED":
-                # Propagate exhausted budgets — do not skip remaining candidates
-                # as if they were corrupt (Codex P1).
+            if error.code in {"E_LIMIT_EXCEEDED", "E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
+                # Propagate hard failures — do not skip as if corrupt (Codex P1).
                 raise
             if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
                 if raise_on_bad:
@@ -533,7 +538,7 @@ class OpenHandsAdapter:
                 ):
                     continue
             except DiagnosticError as error:
-                if error.code == "E_LIMIT_EXCEEDED":
+                if error.code in {"E_LIMIT_EXCEEDED", "E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
                     raise
                 if exact is not None:
                     raise
@@ -545,7 +550,7 @@ class OpenHandsAdapter:
                     events_dir, root, budget
                 )
             except DiagnosticError as error:
-                if error.code == "E_LIMIT_EXCEEDED":
+                if error.code in {"E_LIMIT_EXCEEDED", "E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
                     raise
                 if exact is not None:
                     raise
