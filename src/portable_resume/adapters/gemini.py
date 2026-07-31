@@ -117,37 +117,48 @@ def _default_gemini_home() -> str:
 
 
 def _layout_from_root(candidate: str) -> tuple[str, str] | None:
-    """Return (gemini_home_or_chats_root, containment_root)."""
+    """Return (layout_root, containment_root).
+
+    *layout_root* may be a gemini home, project hash dir, chats dir, or an
+    exact session ``.jsonl`` file path (file paths stay single-candidate).
+    """
 
     try:
         if os.path.isfile(candidate):
             path = os.path.abspath(candidate)
             base = os.path.basename(path)
-            if not (base.endswith(".jsonl") and base.startswith("session-") or base.endswith(".jsonl")):
-                if not base.endswith(".jsonl"):
-                    return None
+            if not base.endswith(".jsonl"):
+                return None
             parent = os.path.dirname(path)
-            # .../chats/session-*.jsonl or .../chats/<parent>/<sub>.jsonl
+            # Exact file source-root: never widen discovery to sibling sessions.
             if os.path.basename(parent) == "chats":
-                root = canonical_root(os.path.dirname(os.path.dirname(parent)))  # tmp's parent = .gemini
+                project = os.path.dirname(parent)  # .../tmp/<hash>
+                try:
+                    root = canonical_root(project)
+                except DiagnosticError:
+                    root = canonical_root(parent)
                 if not _regular_file(path, root):
-                    # try chats as root
-                    try:
-                        root = canonical_root(parent)
-                    except DiagnosticError:
-                        return None
-                    if not _regular_file(path, root):
-                        return None
-                return parent, root
+                    return None
+                return path, root
             if os.path.basename(os.path.dirname(parent)) == "chats":
+                # .../chats/<parentSession>/<subagent>.jsonl
                 chats = os.path.dirname(parent)
-                root = canonical_root(os.path.dirname(os.path.dirname(chats)))
-                if not _regular_file(path, root):
+                project = os.path.dirname(chats)
+                try:
+                    root = canonical_root(project)
+                except DiagnosticError:
                     root = canonical_root(chats)
-                    if not _regular_file(path, root):
-                        return None
-                return chats, root
-            return None
+                if not _regular_file(path, root):
+                    return None
+                return path, root
+            # Bare file: contain under its parent directory.
+            try:
+                root = canonical_root(parent)
+            except DiagnosticError:
+                return None
+            if not _regular_file(path, root):
+                return None
+            return path, root
         if not os.path.isdir(candidate):
             return None
         root = canonical_root(candidate)
@@ -210,12 +221,29 @@ def _exact_ref(value: str | None) -> str | None:
 
 
 def _ids_match(left: str, right: str) -> bool:
-    if left == right:
+    """Equality or prefix match, case-folded (UUID vs filename short id)."""
+
+    a = left.lower()
+    b = right.lower()
+    if a == b:
         return True
-    if left.lower() == right.lower():
+    return a.startswith(b) or b.startswith(a)
+
+
+def _path_looks_like_exact(path: str, exact: str) -> bool:
+    """True when basename / short id can match *exact* without opening the file."""
+
+    base = os.path.basename(path)
+    match = _SESSION_FILE_RE.fullmatch(base)
+    if match and _ids_match(match.group(1), exact):
         return True
-    if left.startswith(right) or right.startswith(left):
-        return True
+    if base.endswith(".jsonl"):
+        stem = base[: -len(".jsonl")]
+        if _ids_match(stem, exact):
+            return True
+        # session-<ts>-<short8> already handled; also bare short stem
+        if len(stem) >= 8 and _ids_match(stem[-8:], exact):
+            return True
     return False
 
 
@@ -355,6 +383,14 @@ def _discover_session_files(
     project_hashes: frozenset[str] | None = None,
 ) -> list[str]:
     """Bounded discovery of session JSONL paths under gemini home or chats."""
+
+    # Exact file source-root: sole candidate.
+    if os.path.isfile(layout_root) or (
+        layout_root.endswith(".jsonl") and _regular_file(layout_root, containment)
+    ):
+        if _regular_file(layout_root, containment):
+            return [layout_root]
+        return []
 
     paths: list[str] = []
     # If layout_root is chats dir
@@ -546,28 +582,41 @@ def _parse_jsonl_conversation(
     return meta, [messages[i] for i in order if i in messages]
 
 
-def _message_turn(msg: Mapping[str, Any]) -> tuple[str, str] | None:
+def _message_turn(
+    msg: Mapping[str, Any],
+    *,
+    strict_unknown: bool = False,
+) -> tuple[str, str] | None:
     kind = msg.get("type")
-    if kind not in _PUBLIC_TYPES:
+    if kind in _PUBLIC_TYPES:
+        text = _part_text(msg.get("content"))
+        if text is None and kind == "gemini":
+            # tool-only gemini row: use tool names as bounded tool turn
+            tools = msg.get("toolCalls")
+            if isinstance(tools, list):
+                names = []
+                for tc in tools[:8]:
+                    if isinstance(tc, Mapping):
+                        name = tc.get("name")
+                        if isinstance(name, str) and name.strip():
+                            names.append(name.strip())
+                if names:
+                    return "tool", ", ".join(names)
+            return None
+        if text is None:
+            return None
+        role = "user" if kind == "user" else "assistant"
+        return role, text
+    if kind in _OMIT_TYPES or kind is None:
         return None
+    # Unknown type: omit empty control rows; fail closed when content-bearing.
     text = _part_text(msg.get("content"))
-    if text is None and kind == "gemini":
-        # tool-only gemini row: use tool names as bounded tool turn
-        tools = msg.get("toolCalls")
-        if isinstance(tools, list):
-            names = []
-            for tc in tools[:8]:
-                if isinstance(tc, Mapping):
-                    name = tc.get("name")
-                    if isinstance(name, str) and name.strip():
-                        names.append(name.strip())
-            if names:
-                return "tool", ", ".join(names)
-        return None
-    if text is None:
-        return None
-    role = "user" if kind == "user" else "assistant"
-    return role, text
+    has_tools = isinstance(msg.get("toolCalls"), list) and bool(msg.get("toolCalls"))
+    if strict_unknown and (text is not None or has_tools):
+        raise DiagnosticError(
+            "E_UNSUPPORTED_FORMAT", source="gemini", provider=FORMAT_ID
+        )
+    return None
 
 
 def _session_summary_from_file(
@@ -599,11 +648,14 @@ def _session_summary_from_file(
             session_id = m.group(1)
         else:
             return None
-    # Require a public user turn
+    # Require a public user turn (list path: non-strict unknown types).
     has_user = False
     title = None
     for msg in messages:
-        turn = _message_turn(msg)
+        try:
+            turn = _message_turn(msg, strict_unknown=False)
+        except DiagnosticError:
+            return None
         if turn is None:
             continue
         if turn[0] == "user":
@@ -665,24 +717,32 @@ class GeminiAdapter:
                 return CapabilityReport(
                     self.key, FORMAT_ID, "partial", root=root, evidence=(FORMAT_ID,)
                 )
-            # Spot-check first file has session metadata or message line
+            # Spot-check a bounded prefix until one file looks supported.
             budget = ReadBudget()
-            try:
-                meta, _msgs = _parse_jsonl_conversation(
-                    files[0], root, budget, metadata_only=True
-                )
-            except DiagnosticError as error:
-                if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"}:
-                    return CapabilityReport(self.key, FORMAT_ID, "unsafe", root=root)
-                return CapabilityReport(self.key, FORMAT_ID, "unsupported", root=root)
-            if not meta.get("sessionId") and not meta.get("projectHash"):
-                # still may be valid if messages-only; treat partial
+            saw_partial = False
+            probe_limit = min(8, len(files))
+            for path in files[:probe_limit]:
+                try:
+                    meta, _msgs = _parse_jsonl_conversation(
+                        path, root, budget, metadata_only=True
+                    )
+                except DiagnosticError as error:
+                    if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"}:
+                        return CapabilityReport(self.key, FORMAT_ID, "unsafe", root=root)
+                    if error.code == "E_LIMIT_EXCEEDED":
+                        raise
+                    # Corrupt first files: try the next candidate.
+                    continue
+                if meta.get("sessionId") or meta.get("projectHash"):
+                    return CapabilityReport(
+                        self.key, FORMAT_ID, "supported", root=root, evidence=(FORMAT_ID,)
+                    )
+                saw_partial = True
+            if saw_partial:
                 return CapabilityReport(
                     self.key, FORMAT_ID, "partial", root=root, evidence=(FORMAT_ID,)
                 )
-            return CapabilityReport(
-                self.key, FORMAT_ID, "supported", root=root, evidence=(FORMAT_ID,)
-            )
+            return CapabilityReport(self.key, FORMAT_ID, "unsupported", root=root)
         except DiagnosticError as error:
             state = (
                 "unsafe"
@@ -713,25 +773,10 @@ class GeminiAdapter:
             project_hashes=project_hashes,
         )
         if exact is not None:
-            # Prefer paths whose metadata sessionId matches
-            matched: list[str] = []
-            for path in files:
-                try:
-                    meta, _ = _parse_jsonl_conversation(
-                        path, root, budget, metadata_only=True
-                    )
-                except DiagnosticError as error:
-                    if error.code in {
-                        "E_LIMIT_EXCEEDED",
-                        "E_SOURCE_BUSY",
-                        "E_UNSAFE_PATH",
-                    }:
-                        raise
-                    continue
-                sid = meta.get("sessionId")
-                if isinstance(sid, str) and _ids_match(sid, exact):
-                    matched.append(path)
-            files = matched if matched else files
+            # Path/name prefilter only — do not full-scan JSONL here (avoids
+            # double transcript charge before _session_summary_from_file).
+            path_matched = [path for path in files if _path_looks_like_exact(path, exact)]
+            files = path_matched if path_matched else files
 
         values: list[SessionSummary] = []
         for path in files:
@@ -774,8 +819,14 @@ class GeminiAdapter:
         session_id = ref.session_id
         project_hashes = _project_hashes_for_cwd(query.cwd)
         path = ref.source_path if ref.source_path else None
+        target: str | None = None
+        meta: dict[str, Any] = {}
+        messages: list[Mapping[str, Any]] = []
         if path and _regular_file(path, root):
             target = path
+            meta, messages = _parse_jsonl_conversation(
+                target, root, budget, metadata_only=False
+            )
         else:
             files = _discover_session_files(
                 base,
@@ -786,11 +837,13 @@ class GeminiAdapter:
                 include_subagents=True,
                 project_hashes=project_hashes,
             )
-            target = None
-            for candidate in files:
+            # Prefer basename match; always full-parse once (no metadata+full double charge).
+            path_hits = [c for c in files if _path_looks_like_exact(c, session_id)]
+            candidates = path_hits if path_hits else files
+            for candidate in candidates:
                 try:
-                    meta, _ = _parse_jsonl_conversation(
-                        candidate, root, budget, metadata_only=True
+                    cand_meta, cand_messages = _parse_jsonl_conversation(
+                        candidate, root, budget, metadata_only=False
                     )
                 except DiagnosticError as error:
                     if error.code in {
@@ -801,19 +854,17 @@ class GeminiAdapter:
                         raise
                     continue
                 if not _matches_project(
-                    path=candidate, meta=meta, project_hashes=project_hashes
+                    path=candidate, meta=cand_meta, project_hashes=project_hashes
                 ):
                     continue
-                sid = meta.get("sessionId")
+                sid = cand_meta.get("sessionId")
                 if isinstance(sid, str) and _ids_match(sid, session_id):
                     target = candidate
+                    meta, messages = cand_meta, cand_messages
                     break
             if target is None:
                 raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
 
-        meta, messages = _parse_jsonl_conversation(
-            target, root, budget, metadata_only=False
-        )
         if not _matches_project(path=target, meta=meta, project_hashes=project_hashes):
             raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
         turns: list[Turn] = []
@@ -821,7 +872,7 @@ class GeminiAdapter:
         turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
         title = None
         for msg in messages:
-            parsed = _message_turn(msg)
+            parsed = _message_turn(msg, strict_unknown=True)
             if parsed is None:
                 continue
             role, text = parsed

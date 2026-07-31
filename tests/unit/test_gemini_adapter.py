@@ -221,6 +221,83 @@ class GeminiAdapterTests(unittest.TestCase):
         listed = ADAPTER.list(query(root, ref=upper), ReadBudget())
         self.assertEqual([item.session_id for item in listed], [BASIC_ID])
 
+    def test_exact_short_id_case_fold_prefix(self) -> None:
+        root = fixture_root("s-gm-01-user-basic")
+        # Filename short id is a1b2c3d4; uppercase must still match full UUID.
+        listed = ADAPTER.list(query(root, ref="A1B2C3D4"), ReadBudget())
+        self.assertEqual([item.session_id for item in listed], [BASIC_ID])
+
+    def test_exact_file_source_root_stays_on_that_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_hash, _other = self._write_two_project_store(root)
+            other_session = (
+                root
+                / "tmp"
+                / _project_hash(OTHER_CWD)
+                / "chats"
+                / f"session-2024-01-01T12-00-{OTHER_ID[:8]}.jsonl"
+            )
+            # Point source-root at the older project file; must not pick the newer other project.
+            project_file = (
+                root
+                / "tmp"
+                / project_hash
+                / "chats"
+                / f"session-2024-01-01T12-00-{BASIC_ID[:8]}.jsonl"
+            )
+            listed = ADAPTER.list(
+                Query(
+                    source="gemini",
+                    ref=None,
+                    cwd=None,
+                    source_root=str(project_file),
+                    within_min=0,
+                ),
+                ReadBudget(),
+            )
+            self.assertEqual([item.session_id for item in listed], [BASIC_ID])
+            self.assertTrue(other_session.is_file())
+
+    def test_show_rejects_unknown_content_bearing_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = _project_hash(CWD)
+            chats = root / "tmp" / project / "chats"
+            chats.mkdir(parents=True)
+            path = chats / "session-2024-01-01T12-00-a1b2c3d4.jsonl"
+            lines = [
+                {
+                    "sessionId": BASIC_ID,
+                    "projectHash": project,
+                    "startTime": "2024-01-01T12:00:00.000Z",
+                    "lastUpdated": "2024-01-01T12:00:00.000Z",
+                    "kind": "main",
+                },
+                {
+                    "id": "msg-u1",
+                    "timestamp": "2024-01-01T12:00:00.000Z",
+                    "type": "user",
+                    "content": [{"text": "hello"}],
+                },
+                {
+                    "id": "msg-x1",
+                    "timestamp": "2024-01-01T12:00:01.000Z",
+                    "type": "model_reply",
+                    "content": [{"text": "unknown type with content"}],
+                },
+            ]
+            path.write_text(
+                "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8"
+            )
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.show(
+                    ResolvedRef(session_id=BASIC_ID, source_path=str(path)),
+                    query(root, ref=BASIC_ID),
+                    ReadBudget(),
+                )
+            self.assertEqual(caught.exception.code, "E_UNSUPPORTED_FORMAT")
+
 
 if __name__ == "__main__":
     unittest.main()
