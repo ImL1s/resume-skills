@@ -49,6 +49,15 @@ class HostPackageBuilderTests(unittest.TestCase):
                 set(enabled_package_keys()),
             )
             self.assertEqual(report["schema_version"], "portable-resume/host-packages-v2")
+            self.assertEqual(report["version"], __version__)
+            self.assertEqual(
+                report["build_identity"]["base_version"],
+                __version__,
+            )
+            self.assertEqual(
+                report["artifact_version"],
+                report["build_identity"]["version"],
+            )
             self.assertEqual(report["live_host_installation"], "not-run")
             self.assertEqual(report["native_package_activation"], "not-run")
             self.assertIn("package_contracts_schema", report)
@@ -58,6 +67,7 @@ class HostPackageBuilderTests(unittest.TestCase):
                 {item["file"]: item["sha256"] for item in repeated["artifacts"]},
             )
             for item in report["artifacts"]:
+                self.assertIn(report["artifact_version"], item["file"])
                 self.assertIn("contract_id", item)
                 self.assertEqual(item["offline_validation"], "pass")
                 self.assertEqual(item["native_evidence_status"], "not-run")

@@ -81,7 +81,10 @@ Windows remains weaker: exclusive locking and full dirfd semantics are residual 
 
 ## Supported versions
 
-Security fixes target the `main` branch of this repository.
+Security fixes currently target the `main` branch of this repository. Published
+`v0.3.4` predates the complete installer control/payload hardening merged for
+#21/#31; those fixes are therefore **main-only / unreleased** until a later exact
+release is published. Do not infer their presence from the `0.3.4` package.
 
 ## Reporting a vulnerability
 

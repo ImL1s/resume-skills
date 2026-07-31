@@ -32,7 +32,7 @@ class SelfVerifyProfileTests(unittest.TestCase):
         # Docs/secrets are not re-run in every matrix cell.
         self.assertNotIn("docs", compat)
         self.assertNotIn("secrets", compat)
-        self.assertEqual(quality, {"docs", "secrets"})
+        self.assertEqual(quality, {"version_state", "docs", "secrets"})
         # Compat still carries the expensive suite exactly once per cell.
         self.assertIn("unit", compat)
         self.assertIn("compile", compat)

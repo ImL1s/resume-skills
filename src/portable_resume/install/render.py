@@ -26,6 +26,7 @@ _RUNTIME_SRC = _PACKAGE_ROOT
 _RUNTIME_MODULES = (
     "__init__.py",
     "bounds.py",
+    "build_identity.py",
     "contracts.py",
     "diagnostics.py",
     "handoff.py",
@@ -35,6 +36,7 @@ _RUNTIME_MODULES = (
     "registry.py",
     "request.py",
     "resources/portable-resume-v1.schema.json",
+    "resources/latest-release.json",
     "sanitize.py",
     "select.py",
     "snapshot.py",

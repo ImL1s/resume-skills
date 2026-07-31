@@ -30,6 +30,7 @@ from portable_resume.registry import (  # noqa: E402
     enabled_destination_keys,
     enabled_package_keys,
 )
+from git_build_identity import git_build_identity  # noqa: E402
 
 DESCRIPTION = "Offline, inert context migration across supported coding agents"
 AUTHOR = {"name": "portable-resume-skills contributors"}
@@ -285,9 +286,11 @@ def build(output: Path) -> dict[str, Any]:
         raise ValueError("output directory must be empty")
     hosts = tuple(sorted(enabled_destination_keys()))
     package_keys = tuple(sorted(enabled_package_keys()))
+    identity = git_build_identity(repo_root=REPO, package_root=SRC / "portable_resume")
+    artifact_version = str(identity["version"])
     artifacts: list[dict[str, Any]] = []
     for host in hosts:
-        direct_name = f"portable-resume-{__version__}-{host}-skills.zip"
+        direct_name = f"portable-resume-{artifact_version}-{host}-skills.zip"
         direct_path = output / direct_name
         direct_files = materialize_plan(host)
         digest, meta = _validated_zip(
@@ -314,7 +317,7 @@ def build(output: Path) -> dict[str, Any]:
             raise ValueError(
                 f"package surface kind mismatch: registry={surface.key} builder={kind}"
             )
-        name = f"portable-resume-{__version__}-{kind}.zip"
+        name = f"portable-resume-{artifact_version}-{kind}.zip"
         path = output / name
         digest, meta = _validated_zip(path, files, package_type=kind)
         artifacts.append(
@@ -332,6 +335,8 @@ def build(output: Path) -> dict[str, Any]:
     report = {
         "schema_version": "portable-resume/host-packages-v2",
         "version": __version__,
+        "artifact_version": artifact_version,
+        "build_identity": identity,
         "package_contracts_schema": PACKAGE_CONTRACTS_SCHEMA,
         "host_count": len(hosts),
         "direct_package_count": len(hosts),

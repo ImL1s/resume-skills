@@ -22,6 +22,7 @@ REPO = Path(__file__).resolve().parents[1]
 # Closed allowlist of stage names (unknown names fail closed).
 STAGE_NAMES = (
     "compile",
+    "version_state",
     "docs",
     "secrets",
     "unit",
@@ -42,7 +43,7 @@ PROFILES: dict[str, tuple[str, ...]] = {
         "fixture_list_show",
     ),
     # Once per push/PR: version-independent quality gates.
-    "ci-quality": ("docs", "secrets"),
+    "ci-quality": ("version_state", "docs", "secrets"),
 }
 
 
@@ -60,6 +61,18 @@ def run(argv: list[str], env: dict[str, str] | None = None) -> subprocess.Comple
 def _stage_compile() -> tuple[int, str]:
     completed = run([sys.executable, "-m", "compileall", "-q", "src", "scripts", "tests"])
     return completed.returncode, (completed.stderr or completed.stdout or "")[-400:]
+
+
+def _stage_version_state() -> tuple[int, str]:
+    completed = run(
+        [
+            sys.executable,
+            str(REPO / "scripts" / "check_version_state.py"),
+            "--require-git",
+            "--json",
+        ]
+    )
+    return completed.returncode, (completed.stdout or completed.stderr or "").strip()
 
 
 def _stage_docs() -> tuple[int, str]:
@@ -151,6 +164,7 @@ def _stage_fixture_list_show() -> tuple[int, str]:
 
 STAGE_RUNNERS: dict[str, Callable[[], tuple[int, str]]] = {
     "compile": _stage_compile,
+    "version_state": _stage_version_state,
     "docs": _stage_docs,
     "secrets": _stage_secrets,
     "unit": _stage_unit,
@@ -225,7 +239,10 @@ def main(argv: list[str] | None = None) -> int:
                 "detail": detail[:2000],
             }
         )
-        if name == "docs":
+        if name == "version_state":
+            print(detail)
+            print("version-state", code)
+        elif name == "docs":
             print(detail)
             print("docs", code)
         elif name == "unit":

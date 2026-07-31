@@ -1,5 +1,13 @@
 ## Unreleased
 
+- Release identity hardening (#118): advance post-`v0.3.4` development to
+  `0.4.0.dev0`; add a dependency-free build identity (commit/dirty state,
+  registry digest, source digest), an immutable `v0.3.4` release baseline, and
+  a fail-closed version-state gate so changed source cannot continue claiming an
+  already-published exact version. Release validation now rejects `.devN`, pins
+  all byte-producing jobs to the validated commit SHA, and rechecks the remote
+  annotated tag before publish. Runtime Git provenance embedding remains a
+  follow-up within #118; identity lookup itself launches no child process.
 - GitHub Copilot CLI source (#44 Track B): `copilot-cli-events-jsonl-v1` reader for
   `$COPILOT_HOME/session-state/<id>/events.jsonl` (local authority; not session-store.db /
   Chronicle / cloud sync). Matrix is now **17×18=306**.

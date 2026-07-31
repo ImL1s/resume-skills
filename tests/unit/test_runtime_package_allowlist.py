@@ -10,6 +10,7 @@ class RuntimePackageAllowlistTests(unittest.TestCase):
         expected = {
             "__init__.py",
             "bounds.py",
+            "build_identity.py",
             "contracts.py",
             "diagnostics.py",
             "handoff.py",
@@ -19,6 +20,7 @@ class RuntimePackageAllowlistTests(unittest.TestCase):
             "registry.py",
             "request.py",
             "resources/portable-resume-v1.schema.json",
+            "resources/latest-release.json",
             "sanitize.py",
             "select.py",
             "snapshot.py",

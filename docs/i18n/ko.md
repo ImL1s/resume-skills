@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: ko v0.3.4 -->
+<!-- portable-resume-i18n: ko v0.4.0.dev0 -->
 # Portable Resume — 한국어 빠른 시작
 
 **현재 공개 릴리스:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)

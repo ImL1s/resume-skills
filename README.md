@@ -16,6 +16,13 @@ Clean-room-oriented Agent Skills for migrating bounded local coding-agent contex
 · [PyPI](https://pypi.org/project/portable-resume/0.3.4/) · **306/306** packaging and
 installed-runner cells on current `main` (17 sources × 18 destinations, including
 Pi + OpenClaw + goose + Crush + Cline + OpenHands + Hermes + GitHub Copilot CLI (destination) + Gemini CLI (compat) filesystem install; published `0.3.4` remains historical 81).
+
+**Current `main` development version:** `0.4.0.dev0`. Explicit build/release
+reports add `+g<commit>[.dirty]` while package metadata keeps the PEP 440 base.
+Ordinary reader/installer runtime never invokes Git and currently reports the
+deterministic base/null-commit fallback; exact wheel/sdist embedded provenance
+remains open under #118. Every identity binds the enabled capability registry
+and runtime source digests without exposing local paths.
 Separate **v0.3.2-era** host evidence records 7/7 exact native local
 plugin/extension installs, 8/8 host-native headless Skill invocations, and 6/6
 compatible public marketplace installs, including Cursor and Kimi marketplace
@@ -93,6 +100,7 @@ roots, verification, and uninstall:
 # Inspect capabilities and the registry-derived matrix (currently 17×18)
 PYTHONPATH=src python3 scripts/portable-resume --version
 PYTHONPATH=src python3 scripts/install-resume-skills --version
+python3 scripts/check_version_state.py --require-git --json
 PYTHONPATH=src python3 scripts/portable-resume self-check --json
 PYTHONPATH=src python3 scripts/install-resume-skills matrix
 PYTHONPATH=src python3 scripts/install-resume-skills hosts --json
@@ -118,7 +126,11 @@ Full roots, activation grammar, direct archives, and marketplace/plugin routes a
 python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
-Release archives include nine direct-skill ZIPs (including Pi) plus supported Claude, Codex, Cursor, Antigravity, Grok, Qwen, and Kimi plugin/marketplace bundles. OpenCode remains a direct Skill install because its plugin surface is executable JavaScript/TypeScript rather than a Skill bundle.
+Published `v0.3.4` archives include nine direct-skill ZIPs (including Pi) plus
+supported Claude, Codex, Cursor, Antigravity, Grok, Qwen, and Kimi
+plugin/marketplace bundles. Current `main` development builds derive direct ZIPs
+from all 18 enabled destinations. OpenCode remains a direct Skill install because
+its plugin surface is executable JavaScript/TypeScript rather than a Skill bundle.
 
 ## Skill contract
 
@@ -151,6 +163,12 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
 `.github/workflows/ci.yml` runs those gates across Ubuntu/macOS and Python 3.11–3.14, then builds and smoke-installs the exact wheel and sdist. `.github/workflows/release.yml` accepts only annotated `vMAJOR.MINOR.PATCH` tags reachable from `main`, re-runs dual-OS gates, builds release bytes once, tests those exact bytes, creates SHA-256 checksums and GitHub attestations, stages a GitHub Release, and publishes through PyPI Trusted Publishing.
+
+`src/portable_resume/resources/latest-release.json` records the immutable latest
+published identity. Normal CI fetches release tags and fails if changed source
+reuses a published stable version. The protected release path rejects
+development versions; after every release, `main` advances immediately to the
+next `.dev0` line.
 
 Published release `v0.3.4` also verifies the GitHub Release layout itself:
 every `SHA256SUMS` entry is a flat asset basename, and both Ubuntu and macOS

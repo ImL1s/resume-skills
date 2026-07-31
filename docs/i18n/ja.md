@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: ja v0.3.4 -->
+<!-- portable-resume-i18n: ja v0.4.0.dev0 -->
 # Portable Resume — 日本語クイックスタート
 
 **現在の公開版：** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)

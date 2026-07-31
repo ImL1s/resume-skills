@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 import portable_resume
+from portable_resume.build_identity import build_identity
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -26,7 +27,7 @@ class ReaderCliVersionTests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 self.assertEqual(
                     completed.stdout.strip(),
-                    f"{command} {portable_resume.__version__}",
+                    f"{command} {build_identity()['version']}",
                 )
                 self.assertEqual(completed.stderr, "")
 

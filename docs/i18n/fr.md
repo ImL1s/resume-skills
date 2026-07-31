@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: fr v0.3.4 -->
+<!-- portable-resume-i18n: fr v0.4.0.dev0 -->
 # Portable Resume — démarrage rapide en français
 
 **Version publiée actuelle :** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)

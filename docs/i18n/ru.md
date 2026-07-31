@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: ru v0.3.4 -->
+<!-- portable-resume-i18n: ru v0.4.0.dev0 -->
 # Portable Resume — краткое руководство на русском
 
 **Текущий опубликованный выпуск:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
