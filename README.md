@@ -39,6 +39,7 @@ UI** remain separate **not-run** claims.
 | `resume-goose` | goose sessions.db SQLite (`sessions/sessions.db`, schema v15) |
 | `resume-crush` | Crush project SQLite (`crush.db`, goose_db_version 7) |
 | `resume-cline` | Cline sessions index + messages JSON (`~/.cline/data`) |
+| `resume-openhands` | OpenHands CLI conversation events (`~/.openhands/conversations`) |
 
 Destination profiles: Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI, Pi agent, OpenClaw, goose, Crush, and Cline.
 

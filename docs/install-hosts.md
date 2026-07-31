@@ -149,6 +149,7 @@ Use `--scope global` for the user root or `--root <path>` for an explicit root. 
 | goose (`goose`) | `.goose/skills` / `~/.config/goose/skills` | Direct Skill only. Legacy JSONL out of scope. Native goose UI not-run. | Load `resume-goose` / `resume-<source>` |
 | Crush (`crush`) | `.crush/skills` / `~/.config/crush/skills` | Direct Skill only. Per-project crush.db. Native Crush UI not-run. | Load `resume-crush` / `resume-<source>` |
 | Cline (`cline`) | `.cline/skills` / `~/.cline/skills` | Direct Skill only. Index+JSON authority. Native Cline UI not-run. | Load `resume-cline` / `resume-<source>` |
+| OpenHands (`openhands`) | `.agents/skills` / `~/.openhands/skills` | Direct Skill only. Local CLI events. Native OpenHands UI not-run. | Load `resume-openhands` / `resume-<source>` |
 
 For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, `resume-crush`, `resume-goose`, `resume-openclaw`, `resume-pi`, and `resume-qwen`.
 

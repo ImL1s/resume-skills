@@ -141,3 +141,13 @@ Do not copy real transcripts, credentials, developer home paths, or `~/.grok/bun
 - **Roots:** `CLINE_DIR` / `~/.cline`, or `--source-root` as cline/data/db/sessions layout
 - **Out of scope:** Cline hub/CLI/SDK, team merge, connectors, cloud fetch
 
+## openhands-cli-events-v1
+
+- **Store:** `~/.openhands/conversations/<id>/events/event-*.json` (OpenHands CLI LocalFileStore)
+- **Authority:** ordered event JSON files; no SQLite transcript
+- **Public turns:** `MessageEvent` with `source` user/agent and `llm_message.content` text
+- **Omit:** system prompts, tools/actions/observations, condensations, token/stream/control events
+- **Fail closed:** unknown content-bearing `kind` values
+- **Roots:** `OPENHANDS_CONVERSATIONS_DIR` / `OPENHANDS_PERSISTENCE_DIR/conversations` / `~/.openhands/conversations`
+- **Out of scope:** Cloud, GUI, ACP, SDK tool registration, organization skills
+

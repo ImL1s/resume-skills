@@ -1,0 +1,10 @@
+{
+  "case": "s-oh-02-unsupported-kind",
+  "expected_code": 5,
+  "expected_operation": "error",
+  "expected_warnings": [],
+  "format_id": "openhands-cli-events-v1",
+  "provenance_ref": "docs/source-formats.md#openhands-cli-events-v1",
+  "source": "openhands",
+  "synthetic": true
+}

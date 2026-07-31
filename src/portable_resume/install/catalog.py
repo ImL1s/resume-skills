@@ -671,6 +671,48 @@ HOST_PROFILES: dict[str, HostProfile] = {
         ),
         evidence_level="verified-filesystem",
     ),
+    "openhands": HostProfile(
+        key="openhands",
+        profile_id="openhands-v1",
+        project_rel=".agents/skills",
+        global_rel=".openhands/skills",
+        display_name="OpenHands",
+        official_docs=(
+            "https://docs.openhands.dev/overview/skills",
+            "https://docs.openhands.dev/overview/skills/adding",
+        ),
+        project_layout="<project>/.agents/skills/<name>/SKILL.md",
+        global_layout="~/.openhands/skills/<name>/SKILL.md",
+        alternate_project_roots=(),
+        alternate_global_roots=(),
+        install_methods=(
+            "This installer: install-resume-skills install --host openhands --scope project|global",
+            "Manual: copy each resume-*/ folder into .agents/skills/ or ~/.openhands/skills/",
+        ),
+        activation_help=(
+            "Load resume-<source> from the OpenHands skills tree. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-openhands with ref latest",
+            "Use skill resume-openhands with a conversation id",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (native conversation id or latest). "
+            "Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
+        ),
+        caveats=(
+            "Local CLI event-file store only; does not query OpenHands Cloud or ACP.",
+            "Does not invoke openhands CLI/SDK, register default tools, or load org skills.",
+            "Native OpenHands UI / picker activation evidence remains not-run.",
+        ),
+        evidence_notes=(
+            "OpenHands CLI LocalFileStore event-*.json fixtures + Skills docs "
+            "(checked 2026-07-31). Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+    ),
 }
 
 SOURCE_TITLES = {
@@ -686,6 +728,7 @@ SOURCE_TITLES = {
     "goose": "goose",
     "crush": "Crush",
     "cline": "Cline",
+    "openhands": "OpenHands",
     "qwen": "Qwen Code",
 }
 

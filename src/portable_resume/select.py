@@ -64,7 +64,13 @@ def select_session(
     values = list(summaries)
     if len(values) > DEFAULT_BOUNDS.scanned_records:
         raise DiagnosticError.limit_exceeded()
-    eligible = [value for value in values if cwd is None or (value.cwd is not None and same_cwd(value.cwd, cwd))]
+    # Sessions without a durable cwd stay eligible: the store cannot prove a
+    # workspace mismatch (OpenHands event files have no cwd field).
+    eligible = [
+        value
+        for value in values
+        if cwd is None or value.cwd is None or same_cwd(value.cwd, cwd)
+    ]
     normalized_ref = "latest" if ref is None or not ref.strip() else ref.strip()
 
     if normalized_ref == "latest":

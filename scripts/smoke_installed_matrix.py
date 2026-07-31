@@ -135,6 +135,15 @@ FIXTURES: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
             "synthetic cline assistant reply",
         ),
     ),
+    "openhands": (
+        "tests/fixtures/openhands/s-oh-01-user-basic",
+        "/tmp/project",
+        "oh000101010141018101010101010101",
+        (
+            "synthetic openhands user prompt",
+            "synthetic openhands assistant reply",
+        ),
+    ),
 }
 
 

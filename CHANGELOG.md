@@ -1,5 +1,9 @@
 ## Unreleased
 
+- OpenHands source + destination (#42): `openhands-cli-events-v1` reader for
+  `~/.openhands/conversations/<id>/events/event-*.json` (local CLI only; no SDK
+  import / cloud / ACP). Destination install to `.agents/skills` and
+  `~/.openhands/skills`. Matrix is now **14×14=196**.
 - Cline source + destination (#41): `cline-session-json-v1` reader for
   `~/.cline/data` (SQLite `sessions.db` index + authoritative
   `<id>.messages.json` v1); default list hides subagent/child sessions;

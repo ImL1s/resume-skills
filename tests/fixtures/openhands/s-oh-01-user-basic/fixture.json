@@ -1,0 +1,10 @@
+{
+  "case": "s-oh-01-user-basic",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "openhands-cli-events-v1",
+  "provenance_ref": "docs/source-formats.md#openhands-cli-events-v1",
+  "source": "openhands",
+  "synthetic": true
+}

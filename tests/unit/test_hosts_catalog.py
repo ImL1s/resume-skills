@@ -51,6 +51,7 @@ class HostsCatalogTests(unittest.TestCase):
             "goose": (".goose/skills", ".config/goose/skills"),
             "crush": (".crush/skills", ".config/crush/skills"),
             "cline": (".cline/skills", ".cline/skills"),
+            "openhands": (".agents/skills", ".openhands/skills"),
         }
         for host, (project, global_rel) in expected.items():
             self.assertEqual(HOST_PROFILES[host].project_rel, project)
