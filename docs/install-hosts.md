@@ -11,7 +11,7 @@ python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
 The package builder creates thirteen `*-<host>-skills.zip` archives (one per
-enabled destination, including Pi, OpenClaw, goose, Crush, Cline, and OpenHands), seven supported
+enabled destination, including Pi, OpenClaw, goose, Crush, Cline, OpenHands, and Hermes), seven supported
 plugin/marketplace archives, and `host-packages.json` (`host-packages-v2`) with
 SHA-256 digests, per-artifact offline `contract_id` validation (#27), and honest
 `native_evidence_status=not-run` until host CLI revalidation is recorded.
@@ -150,6 +150,7 @@ Use `--scope global` for the user root or `--root <path>` for an explicit root. 
 | Crush (`crush`) | `.crush/skills` / `~/.config/crush/skills` | Direct Skill only. Per-project crush.db. Native Crush UI not-run. | Load `resume-crush` / `resume-<source>` |
 | Cline (`cline`) | `.cline/skills` / `~/.cline/skills` | Direct Skill only. Index+JSON authority. Native Cline UI not-run. | Load `resume-cline` / `resume-<source>` |
 | OpenHands (`openhands`) | `.agents/skills` / `~/.openhands/skills` | Direct Skill only. Local CLI events. Native OpenHands UI not-run. | Load `resume-openhands` / `resume-<source>` |
+| Hermes (`hermes`) | `.hermes/skills` / `~/.hermes/skills` | Direct Skill only. state.db schema 23. Native Hermes UI not-run. | Load `resume-hermes` / `resume-<source>` |
 
 For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, `resume-crush`, `resume-goose`, `resume-openclaw`, `resume-pi`, and `resume-qwen`.
 

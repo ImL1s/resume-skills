@@ -23,7 +23,7 @@ from portable_resume.registry import (
 
 
 class RegistryInvariantTests(unittest.TestCase):
-    def test_current_fourteen_sources_and_fourteen_destinations(self) -> None:
+    def test_current_fifteen_sources_and_fifteen_destinations(self) -> None:
         self.assertEqual(
             enabled_source_keys(),
             frozenset(
@@ -33,6 +33,7 @@ class RegistryInvariantTests(unittest.TestCase):
                     "codex",
                     "cline",
                     "openhands",
+                    "hermes",
                     "crush",
                     "cursor",
                     "goose",
@@ -54,6 +55,7 @@ class RegistryInvariantTests(unittest.TestCase):
                     "codex",
                     "cline",
                     "openhands",
+                    "hermes",
                     "crush",
                     "cursor",
                     "goose",
@@ -67,9 +69,9 @@ class RegistryInvariantTests(unittest.TestCase):
             ),
         )
         dims = matrix_dimensions()
-        self.assertEqual(dims["sources"], 14)
-        self.assertEqual(dims["destinations"], 14)
-        self.assertEqual(dims["cells"], 196)
+        self.assertEqual(dims["sources"], 15)
+        self.assertEqual(dims["destinations"], 15)
+        self.assertEqual(dims["cells"], 225)
 
     def test_source_and_destination_sets_are_independent_types(self) -> None:
         # Adding a destination-only key must not invent a source.
@@ -173,6 +175,7 @@ class RegistryInvariantTests(unittest.TestCase):
         self.assertIsNone(DESTINATION_PROFILES["crush"].native_package_profile)
         self.assertIsNone(DESTINATION_PROFILES["cline"].native_package_profile)
         self.assertIsNone(DESTINATION_PROFILES["openhands"].native_package_profile)
+        self.assertIsNone(DESTINATION_PROFILES["hermes"].native_package_profile)
         for key, dest in DESTINATION_PROFILES.items():
             if dest.native_package_profile is None:
                 continue
@@ -198,6 +201,7 @@ class RegistryInvariantTests(unittest.TestCase):
             self.assertIn("crush", enum_values)
             self.assertIn("cline", enum_values)
             self.assertIn("openhands", enum_values)
+            self.assertIn("hermes", enum_values)
 
     def test_planned_profiles_excluded_from_enabled_sets(self) -> None:
         for profile in SOURCE_PROFILES.values():
@@ -247,7 +251,7 @@ class DynamicMatrixTests(unittest.TestCase):
         cells = matrix_cells()
         dims = matrix_dimensions()
         self.assertEqual(len(cells), dims["cells"])
-        self.assertEqual(len(cells), 196)
+        self.assertEqual(len(cells), 225)
 
     def test_destination_only_expands_rectangle(self) -> None:
         from portable_resume.registry import rectangular_cells

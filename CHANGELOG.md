@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Hermes source + destination (#43): `hermes-state-sqlite-v1` reader for
+  `~/.hermes/state.db` (schema version 23; root sessions; hide child/subagent).
+  Destination install to `.hermes/skills` / `~/.hermes/skills`. Matrix is now
+  **15×15=225**.
 - OpenHands source + destination (#42): `openhands-cli-events-v1` reader for
   `~/.openhands/conversations/<id>/events/event-*.json` (local CLI only; no SDK
   import / cloud / ACP). Destination install to `.agents/skills` and

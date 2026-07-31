@@ -1,0 +1,10 @@
+{
+  "case": "s-hm-01-user-basic",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "hermes-state-sqlite-v1",
+  "provenance_ref": "docs/source-formats.md#hermes-state-sqlite-v1",
+  "source": "hermes",
+  "synthetic": true
+}

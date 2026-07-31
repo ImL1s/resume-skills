@@ -55,6 +55,7 @@ _DESTINATION_PAYLOAD_PROFILES: dict[str, str] = {
     "crush": "crush-v1",
     "cline": "cline-v1",
     "openhands": "openhands-v1",
+    "hermes": "hermes-v1",
 }
 
 _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
@@ -72,6 +73,7 @@ _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
     "crush": (".crush/skills", ".config/crush/skills"),
     "cline": (".cline/skills", ".cline/skills"),
     "openhands": (".agents/skills", ".openhands/skills"),
+    "hermes": (".hermes/skills", ".hermes/skills"),
 }
 
 
@@ -168,6 +170,14 @@ SOURCE_PROFILES["openhands"] = SourceProfile(
     fixture_profile="openhands-cli-events-v1",
 )
 
+SOURCE_PROFILES["hermes"] = SourceProfile(
+    key="hermes",
+    adapter_module="portable_resume.adapters.hermes",
+    format_ids=("hermes-state-sqlite-v1",),
+    status="supported",
+    fixture_profile="hermes-state-sqlite-v1",
+)
+
 # Native package surface key per destination (independent of direct Skills).
 # Hosts with only direct-skill install leave this unset (opencode, pi, …).
 _NATIVE_PACKAGE_BY_DESTINATION: dict[str, str] = {
@@ -250,6 +260,16 @@ DESTINATION_PROFILES["openhands"] = DestinationProfile(
     direct_skill=True,
     project_rel=".agents/skills",
     global_rel=".openhands/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["hermes"] = DestinationProfile(
+    key="hermes",
+    payload_profile="hermes-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".hermes/skills",
+    global_rel=".hermes/skills",
     native_package_profile=None,
 )
 

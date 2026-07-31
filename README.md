@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <em>Offline, local-only context migration · 14 sources × 14 hosts (derived from registries) · inert handoff, not live restore</em>
+  <em>Offline, local-only context migration · 15 sources × 15 hosts (derived from registries) · inert handoff, not live restore</em>
 </p>
 
 [English](docs/i18n/en.md) · [繁體中文](docs/i18n/zh-TW.md) · [简体中文](docs/i18n/zh-CN.md) · [日本語](docs/i18n/ja.md) · [한국어](docs/i18n/ko.md) · [Español](docs/i18n/es.md) · [Português](docs/i18n/pt-BR.md) · [Français](docs/i18n/fr.md) · [Deutsch](docs/i18n/de.md) · [Русский](docs/i18n/ru.md) · [العربية](docs/i18n/ar.md) · [हिन्दी](docs/i18n/hi.md) · [All languages](docs/i18n/README.md)
@@ -13,9 +13,9 @@
 Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
 **Current release:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
-· [PyPI](https://pypi.org/project/portable-resume/0.3.4/) · **196/196** packaging and
-installed-runner cells on current `main` (14 sources × 14 destinations, including
-Pi + OpenClaw + goose + Crush + Cline + OpenHands filesystem install; published `0.3.4` remains historical 81).
+· [PyPI](https://pypi.org/project/portable-resume/0.3.4/) · **225/225** packaging and
+installed-runner cells on current `main` (15 sources × 15 destinations, including
+Pi + OpenClaw + goose + Crush + Cline + OpenHands + Hermes filesystem install; published `0.3.4` remains historical 81).
 Separate **v0.3.2-era** host evidence records 7/7 exact native local
 plugin/extension installs, 8/8 host-native headless Skill invocations, and 6/6
 compatible public marketplace installs, including Cursor and Kimi marketplace
@@ -40,8 +40,9 @@ UI** remain separate **not-run** claims.
 | `resume-crush` | Crush project SQLite (`crush.db`, goose_db_version 7) |
 | `resume-cline` | Cline sessions index + messages JSON (`~/.cline/data`) |
 | `resume-openhands` | OpenHands CLI conversation events (`~/.openhands/conversations`) |
+| `resume-hermes` | Hermes Agent state.db sessions (`~/.hermes/state.db`) |
 
-Destination profiles: Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI, Pi agent, OpenClaw, goose, Crush, Cline, and OpenHands.
+Destination profiles: Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI, Pi agent, OpenClaw, goose, Crush, Cline, OpenHands, and Hermes Agent.
 
 ## Requirements
 
@@ -87,7 +88,7 @@ The lower-level transactional command remains available for previews, custom
 roots, verification, and uninstall:
 
 ```bash
-# Inspect capabilities and the registry-derived matrix (currently 14×14)
+# Inspect capabilities and the registry-derived matrix (currently 15×15)
 PYTHONPATH=src python3 scripts/portable-resume --version
 PYTHONPATH=src python3 scripts/install-resume-skills --version
 PYTHONPATH=src python3 scripts/portable-resume self-check --json

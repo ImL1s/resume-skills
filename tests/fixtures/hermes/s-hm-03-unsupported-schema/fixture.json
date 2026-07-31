@@ -1,0 +1,10 @@
+{
+  "case": "s-hm-03-unsupported-schema",
+  "expected_code": 5,
+  "expected_operation": "error",
+  "expected_warnings": [],
+  "format_id": "hermes-state-sqlite-v1",
+  "provenance_ref": "docs/source-formats.md#hermes-state-sqlite-v1",
+  "source": "hermes",
+  "synthetic": true
+}
