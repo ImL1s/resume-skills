@@ -44,9 +44,15 @@ _SESSION_FILE_RE = re.compile(
 _SUBAGENT_FILE_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.jsonl$"
 )
+# Structural id acceptance (metadata / show path tokens).
 _SESSION_ID_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$"
 )
+# Exact list ref: UUID or filename short id only — not one-word title tokens.
+_EXACT_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_EXACT_SHORT_ID_RE = re.compile(r"^[A-Za-z0-9]{8}$")
 _HASH_RE = re.compile(r"^[a-f0-9]{16,64}$")
 _PUBLIC_TYPES = frozenset({"user", "gemini"})
 _OMIT_TYPES = frozenset({"info", "error", "warning"})
@@ -162,23 +168,16 @@ def _layout_from_root(candidate: str) -> tuple[str, str] | None:
             home = root
         return home if _regular_dir(root, home) else root, home
 
-    # ~/.gemini/tmp/<hash>
+    # ~/.gemini/tmp/<hash> — keep both layout and containment on this project
+    # bucket so --source-root cannot leak into sibling hashes under .gemini.
     chats = os.path.join(root, "chats")
     if _regular_dir(chats, root) or any(
         name.startswith("session-") and name.endswith(".jsonl")
         for name in _safe_listdir(root)
     ):
-        # containment: prefer parent tmp's parent
-        parent = os.path.dirname(root)
-        try:
-            if os.path.basename(parent) == "tmp":
-                home = canonical_root(os.path.dirname(parent))
-                return home, home
-        except DiagnosticError:
-            pass
         return root, root
 
-    # .../chats
+    # .../chats — stay on chats (or its project parent) without widening to home
     if os.path.basename(root.rstrip(os.sep)) == "chats":
         return root, root
 
@@ -205,9 +204,19 @@ def _exact_ref(value: str | None) -> str | None:
     text = value.strip()
     if not text or text == "latest":
         return None
-    if _SESSION_ID_RE.fullmatch(text):
+    if _EXACT_UUID_RE.fullmatch(text) or _EXACT_SHORT_ID_RE.fullmatch(text):
         return text
     return None
+
+
+def _ids_match(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    if left.lower() == right.lower():
+        return True
+    if left.startswith(right) or right.startswith(left):
+        return True
+    return False
 
 
 def _sha256_hex(text: str) -> str:
@@ -439,21 +448,20 @@ def _parse_jsonl_conversation(
     limit = min(budget.limits.transcript_records, DEFAULT_BOUNDS.transcript_records)
     meta_limit = min(64, limit)
 
+    # Full JSONL scans charge transcript_records (50k), not discovery scanned_records
+    # (2k). stable_scan_lines already charges the whole verified file once.
     for line in stable_scan_lines(
         path,
         root=root,
         max_line_bytes=min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes),
         budget=budget,
+        charge_transcript=True,
     ):
         count += 1
         if metadata_only and count > meta_limit:
             break
         if not metadata_only and count > limit:
             raise DiagnosticError.limit_exceeded()
-        if not metadata_only:
-            budget.consume_transcript_records()
-        else:
-            budget.consume_records()
         text = line.text.strip()
         if not text:
             continue
@@ -721,9 +729,7 @@ class GeminiAdapter:
                         raise
                     continue
                 sid = meta.get("sessionId")
-                if isinstance(sid, str) and (
-                    sid == exact or sid.lower() == exact.lower() or sid.startswith(exact)
-                ):
+                if isinstance(sid, str) and _ids_match(sid, exact):
                     matched.append(path)
             files = matched if matched else files
 
@@ -744,11 +750,8 @@ class GeminiAdapter:
                 continue
             if item is None:
                 continue
-            if exact is not None:
-                if item.session_id != exact and not item.session_id.startswith(exact):
-                    # short id prefix from filename
-                    if exact not in item.session_id and item.session_id not in exact:
-                        continue
+            if exact is not None and not _ids_match(item.session_id, exact):
+                continue
             values.append(item)
             budget.consume_records()
             if exact is None and len(values) >= scan_limit:
@@ -802,12 +805,7 @@ class GeminiAdapter:
                 ):
                     continue
                 sid = meta.get("sessionId")
-                if isinstance(sid, str) and (
-                    sid == session_id
-                    or sid.lower() == session_id.lower()
-                    or sid.startswith(session_id)
-                    or session_id.startswith(sid[:8])
-                ):
+                if isinstance(sid, str) and _ids_match(sid, session_id):
                     target = candidate
                     break
             if target is None:

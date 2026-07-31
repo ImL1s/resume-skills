@@ -94,57 +94,60 @@ class GeminiAdapterTests(unittest.TestCase):
         self.assertEqual(ADAPTER.key, "gemini")
         self.assertNotEqual(FORMAT_ID, "antigravity-transcript-jsonl-v1")
 
-    def test_cwd_filters_to_matching_project_hash(self) -> None:
-        """latest must not return a newer session from another projectHash."""
-
+    def _write_two_project_store(self, root: Path) -> tuple[str, str]:
         project_hash = _project_hash(CWD)
         other_hash = _project_hash(OTHER_CWD)
         self.assertNotEqual(project_hash, other_hash)
+        for project, session_id, stamp, prompt in (
+            (
+                project_hash,
+                BASIC_ID,
+                "2024-01-01T12:00:00.000Z",
+                "project user prompt",
+            ),
+            (
+                other_hash,
+                OTHER_ID,
+                "2024-01-02T12:00:00.000Z",
+                "other project newer session",
+            ),
+        ):
+            chats = root / "tmp" / project / "chats"
+            chats.mkdir(parents=True)
+            path = chats / f"session-2024-01-01T12-00-{session_id[:8]}.jsonl"
+            lines = [
+                {
+                    "sessionId": session_id,
+                    "projectHash": project,
+                    "startTime": stamp,
+                    "lastUpdated": stamp,
+                    "kind": "main",
+                },
+                {
+                    "id": "msg-u1",
+                    "timestamp": stamp,
+                    "type": "user",
+                    "content": [{"text": prompt}],
+                },
+                {
+                    "id": "msg-a1",
+                    "timestamp": stamp,
+                    "type": "gemini",
+                    "content": [{"text": "reply"}],
+                },
+            ]
+            path.write_text(
+                "".join(json.dumps(line) + "\n" for line in lines),
+                encoding="utf-8",
+            )
+        return project_hash, other_hash
+
+    def test_cwd_filters_to_matching_project_hash(self) -> None:
+        """latest must not return a newer session from another projectHash."""
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for project, session_id, stamp, prompt in (
-                (
-                    project_hash,
-                    BASIC_ID,
-                    "2024-01-01T12:00:00.000Z",
-                    "project user prompt",
-                ),
-                (
-                    other_hash,
-                    OTHER_ID,
-                    "2024-01-02T12:00:00.000Z",
-                    "other project newer session",
-                ),
-            ):
-                chats = root / "tmp" / project / "chats"
-                chats.mkdir(parents=True)
-                path = chats / f"session-2024-01-01T12-00-{session_id[:8]}.jsonl"
-                lines = [
-                    {
-                        "sessionId": session_id,
-                        "projectHash": project,
-                        "startTime": stamp,
-                        "lastUpdated": stamp,
-                        "kind": "main",
-                    },
-                    {
-                        "id": "msg-u1",
-                        "timestamp": stamp,
-                        "type": "user",
-                        "content": [{"text": prompt}],
-                    },
-                    {
-                        "id": "msg-a1",
-                        "timestamp": stamp,
-                        "type": "gemini",
-                        "content": [{"text": "reply"}],
-                    },
-                ]
-                path.write_text(
-                    "".join(json.dumps(line) + "\n" for line in lines),
-                    encoding="utf-8",
-                )
+            self._write_two_project_store(root)
 
             listed = ADAPTER.list(query(root), ReadBudget())
             self.assertEqual([item.session_id for item in listed], [BASIC_ID])
@@ -177,6 +180,46 @@ class GeminiAdapterTests(unittest.TestCase):
                 sorted(item.session_id for item in unscoped),
                 sorted([BASIC_ID, OTHER_ID]),
             )
+
+    def test_source_root_project_hash_stays_contained(self) -> None:
+        """--source-root on tmp/<hash> must not widen to sibling projects."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_hash, _other = self._write_two_project_store(root)
+            scoped = root / "tmp" / project_hash
+            listed = ADAPTER.list(
+                Query(
+                    source="gemini",
+                    ref=None,
+                    cwd=None,
+                    source_root=str(scoped),
+                    within_min=0,
+                ),
+                ReadBudget(),
+            )
+            self.assertEqual([item.session_id for item in listed], [BASIC_ID])
+
+    def test_text_ref_is_not_treated_as_exact_session_id(self) -> None:
+        root = fixture_root("s-gm-01-user-basic")
+        listed = ADAPTER.list(
+            Query(
+                source="gemini",
+                ref="authentication",
+                cwd=CWD,
+                source_root=str(root),
+                within_min=0,
+            ),
+            ReadBudget(),
+        )
+        # Text refs fall through to normal list (not empty prefilter by id).
+        self.assertEqual([item.session_id for item in listed], [BASIC_ID])
+
+    def test_exact_ref_case_insensitive_uuid(self) -> None:
+        root = fixture_root("s-gm-01-user-basic")
+        upper = BASIC_ID.upper()
+        listed = ADAPTER.list(query(root, ref=upper), ReadBudget())
+        self.assertEqual([item.session_id for item in listed], [BASIC_ID])
 
 
 if __name__ == "__main__":
