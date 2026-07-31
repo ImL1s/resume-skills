@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from portable_resume.adapters.github_copilot import ADAPTER, FORMAT_ID
 from portable_resume.bounds import ReadBudget
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.model import Query
+from portable_resume.reader import run
 from tests.helpers.core import tree_snapshot
 
 FIXTURES = Path("tests/fixtures/github-copilot")
@@ -206,6 +208,33 @@ class GitHubCopilotAdapterTests(unittest.TestCase):
                 ReadBudget(),
             )
             self.assertEqual([item.session_id for item in listed], [BASIC_ID])
+
+    def test_cli_exact_file_source_root(self) -> None:
+        """Public CLI must accept --source-root=events.jsonl (reader file-or-dir)."""
+        root = fixture_root("s-gcp-01-user-basic")
+        events = root / "session-state" / BASIC_ID / "events.jsonl"
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        code = run(
+            [
+                "github-copilot",
+                "list",
+                "--cwd",
+                CWD,
+                "--source-root",
+                str(events),
+                "--within-min",
+                "0",
+                "--format",
+                "json",
+            ],
+            stdout=stdout,
+            stderr=stderr,
+        )
+        self.assertEqual(code, 0, stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        ids = [item["session_id"] for item in payload["sessions"]]
+        self.assertEqual(ids, [BASIC_ID])
 
 
 if __name__ == "__main__":

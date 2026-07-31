@@ -169,6 +169,7 @@ Do not copy real transcripts, credentials, developer home paths, or `~/.grok/bun
 - **Public turns:** `user.message` / `assistant.message` string `data.content`; `tool.execution_start` tool names only
 - **Omit:** `reasoningText`, tool args/results, hooks, subagent payloads, system/compaction/control events
 - **cwd:** from `session.start` / `session.context_changed` context; filter when query.cwd set
+- **Roots:** `COPILOT_HOME`, `~/.copilot`, `session-state/`, exact session dir, or exact `events.jsonl` (CLI `--source-root` accepts file or directory)
 - **Destination:** supported as `github-copilot` (`.github/skills`, `$COPILOT_HOME/skills`)
 - **Out of scope:** copilot CLI process, Chronicle reindex, cloud session sync, plugins
 

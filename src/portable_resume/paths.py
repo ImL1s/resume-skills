@@ -55,6 +55,24 @@ def canonical_root(root: str | os.PathLike[str]) -> str:
     return path
 
 
+def canonical_source_root(root: str | os.PathLike[str]) -> str:
+    """Approve CLI ``--source-root`` as either a directory or a regular file.
+
+    Adapters that pin exact store files (``events.jsonl``, ``crush.db``,
+    ``state.db``, …) must receive the file path unchanged. Directory-only
+    ``canonical_root`` rejects those spellings with ``E_UNSAFE_PATH``.
+    """
+
+    path = canonicalize_cwd(root)
+    try:
+        mode = os.stat(path, follow_symlinks=False).st_mode
+    except OSError as error:
+        raise DiagnosticError.unsafe_path() from error
+    if stat.S_ISDIR(mode) or stat.S_ISREG(mode):
+        return path
+    raise DiagnosticError.unsafe_path()
+
+
 def is_within(path: str | os.PathLike[str], root: str | os.PathLike[str]) -> bool:
     canonical = canonicalize_cwd(path)
     canonical_base = canonicalize_cwd(root)
