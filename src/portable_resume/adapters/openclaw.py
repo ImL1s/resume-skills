@@ -329,6 +329,37 @@ def _charge_entry_json(entry_json: object, budget: ReadBudget) -> None:
     budget.consume_bytes(len(encoded))
 
 
+def _decode_bounded_entry_json(
+    storage_type: object,
+    byte_length: object,
+    prefix: object,
+    budget: ReadBudget,
+    *,
+    already_charged: bool = False,
+) -> str:
+    """Validate and decode a SQL-bounded ``entry_json`` projection."""
+
+    if not already_charged:
+        budget.consume_records()
+    if storage_type != "text":
+        raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
+    if type(byte_length) is not int or not isinstance(prefix, bytes):
+        raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
+    record_limit = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
+    if byte_length < 0 or byte_length > record_limit:
+        raise DiagnosticError.limit_exceeded()
+    if len(prefix) != byte_length:
+        raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
+    if not already_charged:
+        budget.consume_bytes(byte_length)
+    try:
+        return prefix.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise DiagnosticError(
+            "E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID
+        ) from error
+
+
 def _exact_session_summaries(
     connection: sqlite3.Connection,
     *,
@@ -635,16 +666,20 @@ def _show_session(
     database: str,
     query: Query,
     budget: ReadBudget,
+    entry_already_charged: bool = False,
 ) -> Session:
+    entry_prefix_bytes = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes) + 1
     node = connection.execute(
         """
-        SELECT session_key, current_session_id, entry_json, updated_at, created_at,
-               display_name, last_interaction_at
+        SELECT session_key, current_session_id,
+               typeof(entry_json), length(CAST(entry_json AS BLOB)),
+               substr(CAST(entry_json AS BLOB), 1, ?),
+               updated_at, created_at, display_name, last_interaction_at
         FROM session_nodes
         WHERE current_session_id = ?
         LIMIT 2
         """,
-        (session_id,),
+        (entry_prefix_bytes, session_id),
     ).fetchall()
     if len(node) != 1:
         # Historical window reached by exact id (not current): allow window-only show.
@@ -660,13 +695,28 @@ def _show_session(
         if len(window) != 1:
             raise DiagnosticError("E_NO_MATCH", source="openclaw", provider=FORMAT_ID)
         session_id_w, session_key, display_name, created_at, updated_at = window[0]
-        entry_json = None
         parent = connection.execute(
-            "SELECT entry_json, last_interaction_at FROM session_nodes WHERE session_key = ? LIMIT 1",
-            (session_key,),
+            """
+            SELECT typeof(entry_json), length(CAST(entry_json AS BLOB)),
+                   substr(CAST(entry_json AS BLOB), 1, ?), last_interaction_at
+            FROM session_nodes
+            WHERE session_key = ?
+            LIMIT 1
+            """,
+            (entry_prefix_bytes, session_key),
         ).fetchone()
-        last_interaction_at = parent[1] if parent else None
-        entry_json = parent[0] if parent else None
+        last_interaction_at = parent[3] if parent else None
+        entry_json = (
+            _decode_bounded_entry_json(
+                parent[0],
+                parent[1],
+                parent[2],
+                budget,
+                already_charged=entry_already_charged,
+            )
+            if parent
+            else None
+        )
         title = display_name if isinstance(display_name, str) else None
         stamp = _ms_stamp(last_interaction_at if last_interaction_at is not None else updated_at)
         created = _ms_stamp(created_at)
@@ -674,12 +724,21 @@ def _show_session(
         (
             _session_key,
             session_id_w,
-            entry_json,
+            entry_storage_type,
+            entry_byte_length,
+            entry_prefix,
             updated_at,
             created_at,
             display_name,
             last_interaction_at,
         ) = node[0]
+        entry_json = _decode_bounded_entry_json(
+            entry_storage_type,
+            entry_byte_length,
+            entry_prefix,
+            budget,
+            already_charged=entry_already_charged,
+        )
         title = display_name if isinstance(display_name, str) else None
         stamp = _ms_stamp(last_interaction_at if last_interaction_at is not None else updated_at)
         created = _ms_stamp(created_at)
@@ -926,6 +985,7 @@ class OpenClawAdapter:
             # Composite missing — try treating whole id as native session id.
             agent_id, session_id = None, ref.session_id
         database = ref.source_path
+        entry_already_charged = False
         if database is None:
             matches = self.list(
                 Query(
@@ -942,6 +1002,7 @@ class OpenClawAdapter:
                 raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
             database = matches[0].source_path
             agent_id, session_id = _parse_ref(matches[0].session_id)
+            entry_already_charged = True
         if database is None or not _regular_db_file(database, root):
             raise DiagnosticError.unsafe_path()
         # Resolve agent from path when composite was incomplete.
@@ -964,6 +1025,7 @@ class OpenClawAdapter:
                 database=database,
                 query=query,
                 budget=budget,
+                entry_already_charged=entry_already_charged,
             )
 
 

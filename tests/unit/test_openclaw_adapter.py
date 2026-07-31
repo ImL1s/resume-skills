@@ -389,6 +389,121 @@ class OpenClawAdapterTests(unittest.TestCase):
         self.assertEqual(budget.transcript_records_read, 2)
         self.assertGreater(budget.bytes_read, 0)
 
+    def test_direct_show_rejects_oversized_entry_before_loading_full_cell(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._copy_fixture(temporary)
+            database = root / "agents/main/agent/openclaw-agent.sqlite"
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute(
+                    "UPDATE session_nodes SET entry_json = ? WHERE current_session_id = ?",
+                    ('{"cwd":"/tmp/project","padding":"' + ("x" * 256) + '"}', "sess-basic-0001"),
+                )
+                connection.commit()
+            budget = ReadBudget(Bounds(record_bytes=64, source_read_bytes=1024))
+
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.show(
+                    ResolvedRef(
+                        session_id="main:sess-basic-0001", source_path=str(database)
+                    ),
+                    query(root),
+                    budget,
+                )
+
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+            self.assertEqual(budget.records, 1)
+            self.assertEqual(budget.bytes_read, 0)
+
+    def test_direct_show_rejects_blob_entry_json(self) -> None:
+        from portable_resume.adapters import openclaw as oc
+
+        node_cursor = mock.Mock()
+        node_cursor.fetchall.return_value = [
+            (
+                "agent:main:direct:basic",
+                "sess-basic-0001",
+                "blob",
+                22,
+                b'{"cwd":"/tmp/project"}',
+                1,
+                1,
+                "basic",
+                1,
+            )
+        ]
+        connection = mock.Mock()
+        connection.execute.return_value = node_cursor
+        budget = ReadBudget(Bounds(record_bytes=64, source_read_bytes=1024))
+
+        with self.assertRaises(DiagnosticError) as caught:
+            oc._show_session(
+                connection,
+                agent_id="main",
+                session_id="sess-basic-0001",
+                database="synthetic.sqlite",
+                query=query(fixture_root("s-oc-01-basic")),
+                budget=budget,
+            )
+
+        self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+        self.assertEqual(budget.records, 1)
+        self.assertEqual(budget.bytes_read, 0)
+
+    def test_historical_show_applies_caller_lowered_entry_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._copy_fixture(temporary, case="s-oc-03-compaction-reset")
+            database = root / "agents/main/agent/openclaw-agent.sqlite"
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute(
+                    "UPDATE session_nodes SET entry_json = ?",
+                    ('{"cwd":"/tmp/project","padding":"' + ("x" * 256) + '"}',),
+                )
+                connection.commit()
+            budget = ReadBudget(Bounds(record_bytes=64, source_read_bytes=1024))
+
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.show(
+                    ResolvedRef(
+                        session_id="main:sess-compact-initial", source_path=str(database)
+                    ),
+                    query(root),
+                    budget,
+                )
+
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+            self.assertEqual(budget.records, 1)
+            self.assertEqual(budget.bytes_read, 0)
+
+    def test_show_without_source_path_does_not_double_charge_exact_entry(self) -> None:
+        root = fixture_root("s-oc-01-basic")
+        database = root / "agents/main/agent/openclaw-agent.sqlite"
+        with closing(sqlite3.connect(database)) as connection:
+            entry_bytes = connection.execute(
+                "SELECT length(CAST(entry_json AS BLOB)) FROM session_nodes"
+            ).fetchone()[0]
+            event_bytes = connection.execute(
+                "SELECT COALESCE(sum(length(CAST(event_json AS BLOB))), 0) "
+                "FROM transcript_events"
+            ).fetchone()[0]
+        admitted_bytes = int(entry_bytes) + int(event_bytes)
+        budget = ReadBudget(
+            Bounds(
+                scanned_records=5,
+                transcript_records=5,
+                source_read_bytes=admitted_bytes,
+            )
+        )
+
+        session = ADAPTER.show(
+            ResolvedRef(session_id="main:sess-basic-0001"),
+            query(root),
+            budget,
+        )
+
+        self.assertEqual(session.session_id, "main:sess-basic-0001")
+        self.assertEqual(budget.records, 1)
+        self.assertEqual(budget.bytes_read, admitted_bytes)
+
     def test_nested_message_payload_and_compaction_retention(self) -> None:
         from portable_resume.adapters import openclaw as oc
 
