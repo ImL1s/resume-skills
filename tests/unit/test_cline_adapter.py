@@ -253,6 +253,103 @@ class ClineAdapterTests(unittest.TestCase):
             summaries[0].source_path,
         )
 
+    def test_exact_id_missing_from_stale_index_recovers_json(self) -> None:
+        """Exact id not in sessions.db still recovers sessions/<id> messages (Codex P1)."""
+        import tempfile
+        from tests.fixtures.cline import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data = root / "data"
+            db_path = data / "db" / "sessions.db"
+            sessions_dir = data / "sessions"
+            conn = bf._connect(db_path)
+            # Index has an unrelated session only.
+            other = "cl000155-0101-4101-8101-010101010155"
+            bf._write_session_files(
+                sessions_dir,
+                session_id=other,
+                messages=[
+                    {"id": "u", "role": "user", "content": "indexed only"},
+                    {"id": "a", "role": "assistant", "content": "indexed reply"},
+                ],
+            )
+            bf._insert_session(
+                conn,
+                session_id=other,
+                prompt="indexed only",
+                messages_path="",
+            )
+            # Target exists only as messages JSON (stale index gap).
+            missing = "cl000166-0101-4101-8101-010101010166"
+            bf._write_session_files(
+                sessions_dir,
+                session_id=missing,
+                messages=[
+                    {"id": "u", "role": "user", "content": "json-only exact"},
+                    {"id": "a", "role": "assistant", "content": "json-only reply"},
+                ],
+            )
+            conn.commit()
+            conn.close()
+            current = Query(
+                source="cline",
+                cwd=CWD,
+                source_root=str(root),
+                ref=missing,
+                within_min=0,
+            )
+            summaries = ADAPTER.list(current, ReadBudget())
+            self.assertEqual([item.session_id for item in summaries], [missing])
+            session = ADAPTER.show(
+                ResolvedRef.from_summary(summaries[0]), current, ReadBudget()
+            )
+            self.assertEqual(session.session_id, missing)
+            self.assertIn("json-only exact", session.turns[0].content)
+
+    def test_indexless_scan_does_not_prefer_early_id_over_newer(self) -> None:
+        """Indexless list must not truncate alphabetically before recency sort (Codex P1)."""
+        import tempfile
+        from tests.fixtures.cline import build_fixtures as bf
+        from portable_resume.bounds import Bounds, ReadBudget
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sessions_dir = root / "data" / "sessions"
+            # Early ID (alphabetically first), older stamp.
+            early = "cl000001-0101-4101-8101-010101010001"
+            late = "cl000999-0101-4101-8101-010101010999"
+            for session_id, stamp, prompt in (
+                (early, "2024-01-01T12:00:00.000000Z", "older early id"),
+                (late, "2024-06-01T12:00:00.000000Z", "newer late id"),
+            ):
+                path = bf._write_session_files(
+                    sessions_dir,
+                    session_id=session_id,
+                    messages=[
+                        {"id": "u", "role": "user", "content": prompt},
+                        {"id": "a", "role": "assistant", "content": "reply"},
+                    ],
+                )
+                # Patch manifest timestamps for recency.
+                manifest = sessions_dir / session_id / f"{session_id}.json"
+                import json
+
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                data["started_at"] = stamp
+                data["updated_at"] = stamp
+                manifest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            current = Query(
+                source="cline",
+                cwd=CWD,
+                source_root=str(sessions_dir),
+                within_min=0,
+            )
+            # listed_sessions=1 would wrongly pick early id if truncated pre-sort.
+            budget = ReadBudget(limits=Bounds(listed_sessions=1))
+            summaries = ADAPTER.list(current, budget)
+            self.assertEqual([item.session_id for item in summaries], [late])
+
 
 if __name__ == "__main__":
     unittest.main()

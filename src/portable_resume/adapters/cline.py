@@ -611,7 +611,7 @@ def _list_from_sessions_dir(
             raise_on_bad=exact_id is not None,
         ):
             continue
-        # Optional manifest for metadata only.
+        # Optional manifest for metadata only (identity must match directory id).
         prompt = None
         cwd_value = None
         workspace_root = None
@@ -628,18 +628,23 @@ def _list_from_sessions_dir(
                 )
                 manifest = json.loads(read.data.decode("utf-8"), object_pairs_hook=_object)
                 if isinstance(manifest, Mapping):
-                    prompt = manifest.get("prompt")
-                    cwd_value = manifest.get("cwd")
-                    workspace_root = manifest.get("workspace_root")
-                    started_at = manifest.get("started_at")
-                    updated_at = manifest.get("updated_at") or manifest.get("started_at")
-                    parent = manifest.get("parent_session_id")
-                    is_sub = manifest.get("is_subagent")
-                    if exact_id is None and (
-                        (isinstance(parent, str) and parent.strip())
-                        or is_sub in (1, True)
-                    ):
-                        continue
+                    mid = manifest.get("session_id")
+                    if isinstance(mid, str) and mid and mid != session_id:
+                        # Stale/copied manifest: ignore metadata, keep messages authority.
+                        pass
+                    else:
+                        prompt = manifest.get("prompt")
+                        cwd_value = manifest.get("cwd")
+                        workspace_root = manifest.get("workspace_root")
+                        started_at = manifest.get("started_at")
+                        updated_at = manifest.get("updated_at") or manifest.get("started_at")
+                        parent = manifest.get("parent_session_id")
+                        is_sub = manifest.get("is_subagent")
+                        if exact_id is None and (
+                            (isinstance(parent, str) and parent.strip())
+                            or is_sub in (1, True)
+                        ):
+                            continue
             except (DiagnosticError, json.JSONDecodeError, _DuplicateKey, UnicodeDecodeError):
                 pass
         item = _row_summary(
@@ -654,11 +659,11 @@ def _list_from_sessions_dir(
             require_age=require_age,
         )
         if item is not None:
-            if exact_id is None and len(values) >= list_limit:
-                break
+            # Do not truncate here: candidates are ID-sorted, not recency-sorted.
+            # Outer list() sorts by updated_at then applies listed_sessions (Codex P1).
             values.append(item)
             budget.consume_records()
-            if exact_id is None and len(values) >= list_limit:
+            if exact_id is None and len(values) >= scan_limit:
                 break
     return values
 
@@ -691,22 +696,17 @@ def _list_from_index(
         ).fetchall()
         require_age = False
         if not rows:
-            rows = connection.execute(
-                """
-                SELECT session_id, parent_session_id, is_subagent, prompt, cwd, workspace_root,
-                       messages_path, started_at, updated_at
-                FROM sessions
-                WHERE (parent_session_id IS NULL OR parent_session_id = '')
-                  AND COALESCE(is_subagent, 0) = 0
-                ORDER BY updated_at DESC, started_at DESC, session_id ASC
-                LIMIT ?
-                """,
-                (scan_limit if scan_limit > 0 else 0,),
-            ).fetchall()
-            require_age = True
-            exact_id = None
-            if list_limit <= 0:
-                return []
+            # Stale/lagging index: recover authoritative messages JSON by exact id
+            # before abandoning exact mode (Codex P1).
+            if sessions_dir is not None:
+                return _list_from_sessions_dir(
+                    sessions_dir=sessions_dir,
+                    root=root,
+                    query=query,
+                    exact_id=exact_id,
+                    budget=budget,
+                )
+            return []
     else:
         if scan_limit <= 0:
             return []
