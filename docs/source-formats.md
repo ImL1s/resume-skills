@@ -27,6 +27,9 @@ Synthetic contract data used to test the reusable fixture-manifest validator; no
 ### claude-claude-jsonl-v1
 
 Claude Code projects JSONL. Synthetic fixtures: `tests/fixtures/claude/`.
+Tool-call coverage uses assistant `tool_use` blocks with `caller`, `id`,
+`input`, `name`, and `type`, paired to user `tool_result` blocks by
+`tool_use_id`; real transcript content is not included.
 
 ### codex-codex-state-sqlite-v1
 

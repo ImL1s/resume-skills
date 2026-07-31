@@ -24,7 +24,7 @@ Plans 045–047 fix that chain.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 045 | Real-schema Claude tool fixture (prerequisite) | P1 | S | — | TODO |
+| 045 | Real-schema Claude tool fixture (prerequisite) | P1 | S | — | **DONE** |
 | 046 | Render tool calls with name + bounded input | P1 | M | 045 | TODO |
 | 047 | "Latest recorded action" includes tool turns | P1 | S | 045, **046 (hard)** | TODO |
 | 048 | Truncation count at the cut point; warnings explained and hoisted | P2 | S | — | **DONE** |
