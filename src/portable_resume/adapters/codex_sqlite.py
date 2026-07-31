@@ -29,10 +29,12 @@ _rollout_id = _codex._rollout_id
 def _table_signature(connection: sqlite3.Connection) -> tuple[bool, str | None]:
     """Accept pinned column *supersets* (live Codex adds optional columns).
 
-    Required: id, rollout_path, source, cwd, archived, plus one of updated_at_ms
-    / updated_at. Optional title/first_user_message/git_branch may be absent
-    (SQL SELECT still names them — missing optional columns fail later; require
-    the optional trio when present or use COALESCE-compatible fixed SELECT).
+    Presence is required for id, rollout_path, source, cwd, and archived, but
+    their declared type affinity is not checked because SQLite affinity is loose
+    in live stores. One of updated_at_ms / updated_at must have integer affinity.
+    Optional title/first_user_message/git_branch may be absent (SQL SELECT still
+    names them — missing optional columns fail later; require the optional trio
+    when present or use COALESCE-compatible fixed SELECT).
     """
     try:
         rows = connection.execute("PRAGMA table_info(threads)").fetchall()
@@ -53,13 +55,6 @@ def _table_signature(connection: sqlite3.Connection) -> tuple[bool, str | None]:
         updated = "updated_at"
     else:
         return False, None
-    for name in ("id", "rollout_path", "source", "cwd"):
-        if columns.get(name) not in {"TEXT", "VARCHAR", "CHAR", "NVARCHAR", "CLOB"}:
-            # SQLite type affinity is loose; allow empty declared types.
-            if columns.get(name) not in {"", "ANY"}:
-                # Still accept common live TEXT-ish declarations only when present.
-                if not str(columns.get(name, "")).startswith("TEXT"):
-                    pass  # do not hard-fail on affinity; Grok only checks presence
     return True, updated
 
 
