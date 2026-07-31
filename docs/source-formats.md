@@ -162,3 +162,11 @@ Do not copy real transcripts, credentials, developer home paths, or `~/.grok/bun
 - **Roots:** `HERMES_HOME` (absolute), `~/.hermes`, exact `state.db`, or `--source-root`
 - **Out of scope:** Hermes CLI/gateway, Skill hub/taps, messaging retrieval, FTS search, migrations
 
+## github-copilot (research — not enabled)
+
+- **Status:** research / not in enabled sources (#44 Track B)
+- **Store (documented):** `$COPILOT_HOME/session-state/<id>/events.jsonl` + `session-store.db` index
+- **Blocker:** public event discriminators / rewind / subagent / sync authority not fixture-pinned
+- **Destination:** supported as `github-copilot` (`.github/skills`, `$COPILOT_HOME/skills`)
+- **Out of scope until qualification:** source probe/list/show, Chronicle, cloud session sync
+

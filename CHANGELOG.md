@@ -1,5 +1,9 @@
 ## Unreleased
 
+- GitHub Copilot CLI destination (#44 Track A): install `resume-*` Skills into
+  `.github/skills` and `$COPILOT_HOME/skills` (default `~/.copilot/skills`).
+  Source adapter remains **research** until `events.jsonl` schema is pinned.
+  Matrix is now **15×16=240** (destination without source).
 - Hermes source + destination (#43): `hermes-state-sqlite-v1` reader for
   `~/.hermes/state.db` (schema version 23; root sessions; hide child/subagent).
   Destination install to `.hermes/skills` / `~/.hermes/skills`. Matrix is now

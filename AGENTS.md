@@ -2,7 +2,7 @@
 
 ## Product
 
-Offline, local-only **context migration** across enabled source adapters × enabled destination hosts (currently **15×15=225** cells, **derived from registries** — not a fixed product constant).
+Offline, local-only **context migration** across enabled source adapters × enabled destination hosts (currently **15×16=240** cells, **derived from registries** — not a fixed product constant).
 
 - Emit **inert, untrusted handoff** for a **fresh** session.
 - **Not** live process / session restore.

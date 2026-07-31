@@ -757,6 +757,53 @@ HOST_PROFILES: dict[str, HostProfile] = {
         global_home_env="HERMES_HOME",
         global_env_rel="skills",
     ),
+    "github-copilot": HostProfile(
+        key="github-copilot",
+        profile_id="github-copilot-v1",
+        project_rel=".github/skills",
+        global_rel=".copilot/skills",
+        display_name="GitHub Copilot CLI",
+        official_docs=(
+            "https://docs.github.com/en/copilot/concepts/agents/about-agent-skills",
+            "https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills",
+            "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference",
+        ),
+        project_layout="<project>/.github/skills/<name>/SKILL.md",
+        global_layout="$COPILOT_HOME/skills/<name>/SKILL.md (default ~/.copilot/skills/)",
+        alternate_project_roots=(".agents/skills", ".claude/skills"),
+        alternate_global_roots=("~/.agents/skills",),
+        install_methods=(
+            "This installer: install-resume-skills install --host github-copilot --scope project|global",
+            "Manual: copy each resume-*/ folder into .github/skills/ or $COPILOT_HOME/skills/",
+            "Also: copilot plugins install --skill <local-dir> (native route; not-run here)",
+        ),
+        activation_help=(
+            "Load resume-<source> from the Copilot CLI skills tree via slash name / skills list. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-claude with ref latest",
+            "/skills list",
+            "/skills reload",
+        ),
+        arguments_note=(
+            "Pass the session <ref> for a *supported* source skill (resume-<source>). "
+            "GitHub Copilot is destination-only in this release; no copilot source adapter yet."
+        ),
+        caveats=(
+            "Destination-only: no github-copilot source adapter until events.jsonl schema is pinned (#44 Track B).",
+            "Does not invoke copilot CLI, plugins network install, Chronicle, or GitHub session sync.",
+            "Native copilot plugins install / picker activation evidence remains not-run.",
+            "Global installs honor COPILOT_HOME when set (absolute path).",
+        ),
+        evidence_notes=(
+            "GitHub Agent Skills docs: project .github/skills + personal $COPILOT_HOME/skills "
+            "(checked 2026-07-31). Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+        global_home_env="COPILOT_HOME",
+        global_env_rel="skills",
+    ),
 }
 
 SOURCE_TITLES = {

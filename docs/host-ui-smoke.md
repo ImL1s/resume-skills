@@ -103,3 +103,4 @@ or a vendor-curated directory.
 | cline | not-run | filesystem install only; native picker not-run |
 | openhands | not-run | filesystem install only; native picker not-run |
 | hermes | not-run | filesystem install only; native picker not-run |
+| github-copilot | not-run | destination-only filesystem install; native plugins/picker not-run |

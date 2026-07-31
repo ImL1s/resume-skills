@@ -23,7 +23,7 @@ from portable_resume.registry import (
 
 
 class RegistryInvariantTests(unittest.TestCase):
-    def test_current_fifteen_sources_and_fifteen_destinations(self) -> None:
+    def test_current_fifteen_sources_and_sixteen_destinations(self) -> None:
         self.assertEqual(
             enabled_source_keys(),
             frozenset(
@@ -56,6 +56,7 @@ class RegistryInvariantTests(unittest.TestCase):
                     "cline",
                     "openhands",
                     "hermes",
+                    "github-copilot",
                     "crush",
                     "cursor",
                     "goose",
@@ -70,8 +71,8 @@ class RegistryInvariantTests(unittest.TestCase):
         )
         dims = matrix_dimensions()
         self.assertEqual(dims["sources"], 15)
-        self.assertEqual(dims["destinations"], 15)
-        self.assertEqual(dims["cells"], 225)
+        self.assertEqual(dims["destinations"], 16)
+        self.assertEqual(dims["cells"], 240)
 
     def test_source_and_destination_sets_are_independent_types(self) -> None:
         # Adding a destination-only key must not invent a source.
@@ -244,6 +245,22 @@ class RegistryInvariantTests(unittest.TestCase):
             self.assertEqual(dest.payload_profile, host.profile_id, msg=key)
 
 
+    def test_github_copilot_destination_without_enabled_source(self) -> None:
+        """#44: destination-only host expands matrix without enabling a source."""
+        self.assertIn("github-copilot", enabled_destination_keys())
+        self.assertNotIn("github-copilot", enabled_source_keys())
+        self.assertEqual(SOURCE_PROFILES["github-copilot"].status, "research")
+        dims = matrix_dimensions()
+        self.assertEqual(dims["sources"], 15)
+        self.assertEqual(dims["destinations"], 16)
+        self.assertEqual(dims["cells"], 240)
+
+    def test_research_source_has_no_format_ids(self) -> None:
+        profile = SOURCE_PROFILES["github-copilot"]
+        self.assertEqual(profile.format_ids, ())
+        self.assertNotIn("github-copilot", enabled_source_keys())
+
+
 class DynamicMatrixTests(unittest.TestCase):
     def test_matrix_cells_match_dimensions(self) -> None:
         from portable_resume.install.catalog import matrix_cells
@@ -251,7 +268,7 @@ class DynamicMatrixTests(unittest.TestCase):
         cells = matrix_cells()
         dims = matrix_dimensions()
         self.assertEqual(len(cells), dims["cells"])
-        self.assertEqual(len(cells), 225)
+        self.assertEqual(len(cells), 240)
 
     def test_destination_only_expands_rectangle(self) -> None:
         from portable_resume.registry import rectangular_cells
