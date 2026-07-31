@@ -808,6 +808,27 @@ class CodexAdapterTests(unittest.TestCase):
             "feature/db",
         )
 
+    def test_table_signature_requires_text_column_presence_not_affinity(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        connection.execute(
+            """
+            CREATE TABLE threads (
+                id BLOB,
+                rollout_path REAL,
+                updated_at_ms INTEGER,
+                source NUMERIC,
+                cwd ANY,
+                archived INTEGER
+            )
+            """
+        )
+
+        self.assertEqual(
+            codex_sqlite._table_signature(connection),
+            (True, "updated_at_ms"),
+        )
+
     def test_s_cod_01_02_highest_supported_db_and_cli_vscode_rows(self) -> None:
         first, first_path = self.rollout()
         second, second_path = self.rollout()
