@@ -14,12 +14,11 @@ from unittest import mock
 
 from portable_resume.diagnostics import SOURCE_KEYS
 from portable_resume.reader import run
+from tests.security.test_source_immutability import FIXTURES
 
 
 class NoSourceCliExecTests(unittest.TestCase):
     def test_path_shim_binaries_never_run_during_list_show(self) -> None:
-        fixture = Path("tests/fixtures/claude/s-cla-01-ordered-parent-chain/root")
-        self.assertTrue(fixture.is_dir())
         with tempfile.TemporaryDirectory() as temporary:
             bin_dir = Path(temporary) / "bin"
             bin_dir.mkdir()
@@ -44,26 +43,35 @@ class NoSourceCliExecTests(unittest.TestCase):
                     path.write_text(f"#!/bin/sh\necho {name} >> '{marker}'\nexit 99\n", encoding="utf-8")
                     path.chmod(0o755)
             env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
-            stdout, stderr = io.StringIO(), io.StringIO()
             with mock.patch.dict(os.environ, env, clear=False):
-                code = run(
-                    [
-                        "claude",
-                        "list",
-                        "--cwd",
-                        "/workspace/project",
-                        "--source-root",
-                        str(fixture.resolve()),
-                        "--json",
-                    ],
-                    stdout=stdout,
-                    stderr=stderr,
-                )
-            self.assertEqual(code, 0, stderr.getvalue())
-            self.assertFalse(marker.exists(), "source CLI shim was executed")
-            payload = json.loads(stdout.getvalue())
-            self.assertEqual(payload["schema_version"], "portable-resume/v1")
-            self.assertTrue(payload["inert"])
+                for source, (root_s, cwd) in sorted(FIXTURES.items()):
+                    fixture = Path(root_s).resolve()
+                    resolved_cwd = str(fixture) if cwd is None else cwd
+                    self.assertTrue(fixture.is_dir(), fixture)
+                    for action in (
+                        ["list", "--within-min", "0", "--json"],
+                        ["show", "latest", "--within-min", "0", "--format", "handoff"],
+                    ):
+                        with self.subTest(source=source, action=action[0]):
+                            stdout, stderr = io.StringIO(), io.StringIO()
+                            code = run(
+                                [
+                                    source,
+                                    *action,
+                                    "--cwd",
+                                    resolved_cwd,
+                                    "--source-root",
+                                    str(fixture),
+                                ],
+                                stdout=stdout,
+                                stderr=stderr,
+                            )
+                            self.assertEqual(code, 0, stderr.getvalue())
+                            self.assertFalse(marker.exists(), "source CLI shim was executed")
+                            if action[0] == "list":
+                                payload = json.loads(stdout.getvalue())
+                                self.assertEqual(payload["schema_version"], "portable-resume/v1")
+                                self.assertTrue(payload["inert"])
 
     def test_reader_show_blocks_process_and_network_apis(self) -> None:
         fixture = Path("tests/fixtures/claude/s-cla-01-ordered-parent-chain/root")
