@@ -15,6 +15,7 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
+<!-- portable-resume-current-registry:begin -->
 من checkout على `main` الحالي استخدم `pipx install .`. لتثبيت جميع host 18 في مسارات المستخدم العامة:
 
 ```bash
@@ -27,7 +28,10 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-الوجهات المفعّلة على `main` هي Antigravity / agy وClaude Code وCline وCodex CLI / IDE وCrush وCursor Agent وGemini CLI وGitHub Copilot CLI وgoose وGrok Build وHermes Agent وKilo CLI وKimi Code CLI وOpenClaw وOpenCode وOpenHands وPi agent وQwen Code. إصدار `0.3.4` المنشور يشمل تسع وجهات مع Pi (تثبيت ملفات؛ الواجهة الأصلية not-run). راجع [دليل التثبيت](../install-hosts.md) لأوامر Skill وextension وplugin وmarketplace الدقيقة. افحص أي plugin وتحقق من SHA-256 الخاص بالـ release قبل منحه الثقة.
+الوجهات المفعّلة على `main` هي Antigravity / agy وClaude Code وCline وCodex CLI / IDE وCrush وCursor Agent وGemini CLI وGitHub Copilot CLI وgoose وGrok Build وHermes Agent وKilo CLI وKimi Code CLI وOpenClaw وOpenCode وOpenHands وPi agent وQwen Code.
+<!-- portable-resume-current-registry:end -->
+
+إصدار `0.3.4` المنشور يشمل تسع وجهات مع Pi (تثبيت ملفات؛ الواجهة الأصلية not-run). راجع [دليل التثبيت](../install-hosts.md) لأوامر Skill وextension وplugin وmarketplace الدقيقة. افحص أي plugin وتحقق من SHA-256 الخاص بالـ release قبل منحه الثقة.
 
 ## Marketplace عام
 

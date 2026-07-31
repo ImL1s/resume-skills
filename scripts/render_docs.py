@@ -14,7 +14,7 @@ SRC = REPO / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from portable_resume.install.catalog import hosts_report  # noqa: E402
+from portable_resume.install.catalog import host_catalog_snapshot  # noqa: E402
 from portable_resume.registry import matrix_dimensions  # noqa: E402
 
 REGION_FILES = {
@@ -35,7 +35,7 @@ def _markdown(value: object) -> str:
 
 
 def _hosts() -> list[dict[str, object]]:
-    return sorted(hosts_report()["hosts"], key=lambda host: str(host["host"]))
+    return list(host_catalog_snapshot()["hosts"])
 
 
 def _matrix_summary() -> str:

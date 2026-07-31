@@ -15,6 +15,7 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
+<!-- portable-resume-current-registry:begin -->
 현재 `main` checkout에서는 `pipx install .`을 사용할 수 있습니다. 18개 대상 host를 사용자 전역 경로에 한 번에 설치:
 
 ```bash
@@ -27,7 +28,10 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-`main`에서 활성화된 대상은 Antigravity / agy, Claude Code, Cline, Codex CLI / IDE, Crush, Cursor Agent, Gemini CLI, GitHub Copilot CLI, goose, Grok Build, Hermes Agent, Kilo CLI, Kimi Code CLI, OpenClaw, OpenCode, OpenHands, Pi agent, 그리고 Qwen Code입니다. 게시된 `0.3.4`은 Pi(파일시스템 설치)를 포함한 9개 대상입니다(네이티브 UI는 not-run). host별 직접 Skill, extension, plugin, marketplace 명령은 [설치 가이드](../install-hosts.md)를 확인하세요. plugin을 신뢰하기 전에 내용과 release SHA-256을 검증해야 합니다.
+`main`에서 활성화된 대상은 Antigravity / agy, Claude Code, Cline, Codex CLI / IDE, Crush, Cursor Agent, Gemini CLI, GitHub Copilot CLI, goose, Grok Build, Hermes Agent, Kilo CLI, Kimi Code CLI, OpenClaw, OpenCode, OpenHands, Pi agent, 그리고 Qwen Code입니다.
+<!-- portable-resume-current-registry:end -->
+
+게시된 `0.3.4`은 Pi(파일시스템 설치)를 포함한 9개 대상입니다(네이티브 UI는 not-run). host별 직접 Skill, extension, plugin, marketplace 명령은 [설치 가이드](../install-hosts.md)를 확인하세요. plugin을 신뢰하기 전에 내용과 release SHA-256을 검증해야 합니다.
 
 ## 공개 marketplace
 

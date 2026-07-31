@@ -15,6 +15,7 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
+<!-- portable-resume-current-registry:begin -->
 वर्तमान `main` checkout से `pipx install .` उपयोग करें। सभी 18 destination host को user-global paths में स्थापित करने के लिए:
 
 ```bash
@@ -27,7 +28,10 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-`main` पर सक्षम destination हैं Antigravity / agy, Claude Code, Cline, Codex CLI / IDE, Crush, Cursor Agent, Gemini CLI, GitHub Copilot CLI, goose, Grok Build, Hermes Agent, Kilo CLI, Kimi Code CLI, OpenClaw, OpenCode, OpenHands, Pi agent और Qwen Code। प्रकाशित `0.3.4` में Pi (filesystem install; native UI not-run) सहित नौ destinations हैं। सही direct Skill, extension, plugin और marketplace commands के लिए [installation guide](../install-hosts.md) देखें। किसी plugin पर भरोसा करने से पहले उसकी सामग्री और release SHA-256 जाँचें।
+`main` पर सक्षम destination हैं Antigravity / agy, Claude Code, Cline, Codex CLI / IDE, Crush, Cursor Agent, Gemini CLI, GitHub Copilot CLI, goose, Grok Build, Hermes Agent, Kilo CLI, Kimi Code CLI, OpenClaw, OpenCode, OpenHands, Pi agent और Qwen Code।
+<!-- portable-resume-current-registry:end -->
+
+प्रकाशित `0.3.4` में Pi (filesystem install; native UI not-run) सहित नौ destinations हैं। सही direct Skill, extension, plugin और marketplace commands के लिए [installation guide](../install-hosts.md) देखें। किसी plugin पर भरोसा करने से पहले उसकी सामग्री और release SHA-256 जाँचें।
 
 ## सार्वजनिक marketplace
 

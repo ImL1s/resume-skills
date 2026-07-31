@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,21 @@ class RenderDocsTests(unittest.TestCase):
         completed = subprocess.run(
             [sys.executable, str(REPO / "scripts" / "render_docs.py"), "--check"],
             cwd=REPO,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_check_ignores_host_runtime_environment(self) -> None:
+        env = os.environ.copy()
+        env["KIMI_CODE_HOME"] = "relative-host-home"
+
+        completed = subprocess.run(
+            [sys.executable, str(REPO / "scripts" / "render_docs.py"), "--check"],
+            cwd=REPO,
+            env=env,
             text=True,
             capture_output=True,
             check=False,

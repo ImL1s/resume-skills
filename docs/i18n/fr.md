@@ -15,6 +15,7 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
+<!-- portable-resume-current-registry:begin -->
 Depuis un checkout de `main` actuel, utilisez `pipx install .`. Pour installer les 18 host de destination dans les emplacements utilisateur :
 
 ```bash
@@ -27,7 +28,10 @@ Pour installer Qwen uniquement dans le projet courant :
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-Les destinations activées sur `main` sont Antigravity / agy, Claude Code, Cline, Codex CLI / IDE, Crush, Cursor Agent, Gemini CLI, GitHub Copilot CLI, goose, Grok Build, Hermes Agent, Kilo CLI, Kimi Code CLI, OpenClaw, OpenCode, OpenHands, Pi agent et Qwen Code. Le `0.3.4` publié inclut neuf destinations avec Pi (installation fichiers ; UI native not-run). Le [guide d’installation](../install-hosts.md) donne les commandes exactes pour Skill, extension, plugin et marketplace. Inspectez tout plugin et vérifiez le SHA-256 du release avant de lui faire confiance.
+Les destinations activées sur `main` sont Antigravity / agy, Claude Code, Cline, Codex CLI / IDE, Crush, Cursor Agent, Gemini CLI, GitHub Copilot CLI, goose, Grok Build, Hermes Agent, Kilo CLI, Kimi Code CLI, OpenClaw, OpenCode, OpenHands, Pi agent et Qwen Code.
+<!-- portable-resume-current-registry:end -->
+
+Le `0.3.4` publié inclut neuf destinations avec Pi (installation fichiers ; UI native not-run). Le [guide d’installation](../install-hosts.md) donne les commandes exactes pour Skill, extension, plugin et marketplace. Inspectez tout plugin et vérifiez le SHA-256 du release avant de lui faire confiance.
 
 ## Marketplace public
 

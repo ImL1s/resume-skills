@@ -101,6 +101,28 @@ class DocumentationI18nTests(unittest.TestCase):
             failures,
         )
 
+    def test_docs_check_rejects_stale_visible_current_locale_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copy2(REPO / "README.md", root / "README.md")
+            shutil.copy2(REPO / "CHANGELOG.md", root / "CHANGELOG.md")
+            shutil.copytree(REPO / "docs", root / "docs")
+            locale_path = root / "docs" / "i18n" / "en.md"
+            locale = locale_path.read_text(encoding="utf-8").replace(
+                "Install all 18 destination profiles",
+                "Install all nine destination profiles",
+                1,
+            )
+            locale_path.write_text(locale, encoding="utf-8")
+
+            with mock.patch.object(check_docs, "REPO", root):
+                report = check_docs.check()
+
+        self.assertIn(
+            "docs/i18n/en.md: current registry facts must mention destination count 18",
+            report["failures"],
+        )
+
     def test_context7_is_not_a_product_feature(self) -> None:
         product_docs = [
             REPO / "README.md",

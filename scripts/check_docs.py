@@ -15,7 +15,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from portable_resume import __version__  # noqa: E402
-from portable_resume.install.catalog import hosts_report  # noqa: E402
+from portable_resume.install.catalog import host_catalog_snapshot  # noqa: E402
 from portable_resume.registry import (  # noqa: E402
     enabled_destination_keys,
     enabled_source_keys,
@@ -80,10 +80,31 @@ _COUNT_TOKEN = re.compile(
 _COUNTS_MARKER = re.compile(
     r"<!-- portable-resume-counts: sources=(\d+) destinations=(\d+) -->"
 )
+_CURRENT_REGISTRY_BEGIN = "<!-- portable-resume-current-registry:begin -->"
+_CURRENT_REGISTRY_END = "<!-- portable-resume-current-registry:end -->"
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
 def _host_names() -> tuple[str, ...]:
-    return tuple(host["display_name"] for host in hosts_report()["hosts"])
+    return tuple(host["display_name"] for host in host_catalog_snapshot()["hosts"])
+
+
+def _current_registry_facts(text: str) -> str | None:
+    if (
+        text.count(_CURRENT_REGISTRY_BEGIN) != 1
+        or text.count(_CURRENT_REGISTRY_END) != 1
+    ):
+        return None
+    pattern = re.compile(
+        re.escape(_CURRENT_REGISTRY_BEGIN)
+        + r"(.*?)"
+        + re.escape(_CURRENT_REGISTRY_END),
+        re.DOTALL,
+    )
+    matches = pattern.findall(text)
+    if len(matches) != 1:
+        return None
+    return _HTML_COMMENT.sub("", matches[0])
 
 
 def _check_root_docs(failures: list[str], root_readme: str) -> None:
@@ -184,6 +205,24 @@ def check() -> dict[str, object]:
                 f"{path.relative_to(REPO)}: counts marker must be "
                 f"sources={source_count} destinations={destination_count}"
             )
+        current_facts = _current_registry_facts(text)
+        if current_facts is None:
+            failures.append(
+                f"{path.relative_to(REPO)}: expected exactly one current registry facts region"
+            )
+        else:
+            if re.search(
+                rf"(?<!\d){destination_count}(?!\d)", current_facts
+            ) is None:
+                failures.append(
+                    f"{path.relative_to(REPO)}: current registry facts must mention "
+                    f"destination count {destination_count}"
+                )
+            for host in host_names:
+                if host not in current_facts:
+                    failures.append(
+                        f"{path.relative_to(REPO)}: current registry facts missing host {host}"
+                    )
         for command in REQUIRED_COMMANDS:
             if command not in text:
                 failures.append(f"{path.relative_to(REPO)}: missing command {command!r}")
@@ -199,9 +238,6 @@ def check() -> dict[str, object]:
             failures.append(
                 f"{path.relative_to(REPO)}: missing version-scoped host evidence marker"
             )
-        for host in host_names:
-            if host not in text:
-                failures.append(f"{path.relative_to(REPO)}: missing host {host}")
 
     for failure in render_docs.check(REPO):
         failures.append(f"generated docs drift:\n{failure}")

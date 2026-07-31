@@ -15,6 +15,7 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
+<!-- portable-resume-current-registry:begin -->
 現在の `main` checkout からは `pipx install .` を使えます。18 個の宛先 host をユーザー領域へまとめて導入：
 
 ```bash
@@ -27,7 +28,10 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-`main` で有効な宛先は Antigravity / agy、Claude Code、Cline、Codex CLI / IDE、Crush、Cursor Agent、Gemini CLI、GitHub Copilot CLI、goose、Grok Build、Hermes Agent、Kilo CLI、Kimi Code CLI、OpenClaw、OpenCode、OpenHands、Pi agent、および Qwen Code です。公開済み `0.3.4` は Pi（ファイルシステム導入）を含む 9 宛先です（ネイティブ UI は not-run）。各 host の直接 Skill、extension、plugin、marketplace の正確な手順は[インストールガイド](../install-hosts.md)を参照してください。plugin を信頼する前に内容と release SHA-256 を確認します。
+`main` で有効な宛先は Antigravity / agy、Claude Code、Cline、Codex CLI / IDE、Crush、Cursor Agent、Gemini CLI、GitHub Copilot CLI、goose、Grok Build、Hermes Agent、Kilo CLI、Kimi Code CLI、OpenClaw、OpenCode、OpenHands、Pi agent、および Qwen Code です。
+<!-- portable-resume-current-registry:end -->
+
+公開済み `0.3.4` は Pi（ファイルシステム導入）を含む 9 宛先です（ネイティブ UI は not-run）。各 host の直接 Skill、extension、plugin、marketplace の正確な手順は[インストールガイド](../install-hosts.md)を参照してください。plugin を信頼する前に内容と release SHA-256 を確認します。
 
 ## 公開 marketplace
 
