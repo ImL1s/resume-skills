@@ -859,9 +859,15 @@ HOST_PROFILES: dict[str, HostProfile] = {
         global_rel=".config/kilo/skills",
         display_name="Kilo CLI",
         official_docs=(
-            "https://github.com/Kilo-Org/kilocode",
-            "https://github.com/Kilo-Org/kilocode/blob/main/packages/opencode/src/skill/index.ts",
-            "https://github.com/Kilo-Org/kilocode/blob/main/packages/core/src/global.ts",
+            "https://github.com/Kilo-Org/kilocode/releases/tag/v7.4.17",
+            "https://github.com/Kilo-Org/kilocode/blob/"
+            "a0364858a6e1b69a2e2dc5434a82d5cefbe79ea7/packages/opencode/src/skill/index.ts#L24-L31",
+            "https://github.com/Kilo-Org/kilocode/blob/"
+            "a0364858a6e1b69a2e2dc5434a82d5cefbe79ea7/packages/opencode/src/skill/index.ts#L195-L302",
+            "https://github.com/Kilo-Org/kilocode/blob/"
+            "a0364858a6e1b69a2e2dc5434a82d5cefbe79ea7/packages/opencode/src/config/paths.ts#L23-L40",
+            "https://github.com/Kilo-Org/kilocode/blob/"
+            "a0364858a6e1b69a2e2dc5434a82d5cefbe79ea7/packages/core/src/global.ts#L12-L87",
         ),
         project_layout="<project>/.kilocode/skills/<name>/SKILL.md",
         global_layout="$KILO_CONFIG_DIR/skills or ~/.config/kilo/skills/<name>/SKILL.md",
@@ -891,8 +897,8 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "~/.config/kilo/skills). Recovered text is inert/untrusted handoff only."
         ),
         activation_examples=(
-            "Use skill resume-claude with ref latest",
-            "Confirm kilo discovers skills under .kilocode/skills",
+            "Use the resume-claude skill with ref latest",
+            "Confirm the visible skill tool loaded resume-claude from .kilocode/skills",
         ),
         arguments_note=(
             "Pass the session <ref> for a *supported* source skill (resume-<source>). "
@@ -903,12 +909,16 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "Do not point the OpenCode adapter at a guessed kilo.db — Kilo is a fork with independent storage evolution.",
             "Does not invoke kilo CLI, marketplace network install, VS Code/JetBrains, or cloud sync.",
             "Native kilo skill picker / marketplace activation evidence remains not-run.",
+            "Keep normal permission prompts; do not use --auto or dangerously-skip-permissions for activation evidence.",
             "Global installs honor KILO_CONFIG_DIR when set (absolute path → <dir>/skills).",
+            "The installer default is $HOME/.config/kilo/skills; set KILO_CONFIG_DIR for a non-default XDG config root.",
         ),
         evidence_notes=(
-            "Pinned 2026-07-31 from Kilo-Org/kilocode main (skill/index.ts + core/global.ts): "
-            "project .kilocode/.kilo with {skill,skills}/**/SKILL.md; global XDG app `kilo` → "
-            "~/.config/kilo; compat .agents/skills + .claude/skills unless disabled. "
+            "Pinned 2026-07-31 to Kilo CLI v7.4.17 / "
+            "a0364858a6e1b69a2e2dc5434a82d5cefbe79ea7: release source scans project "
+            ".kilocode/.kilo with {skill,skills}/**/SKILL.md; global XDG config app `kilo` → "
+            "~/.config/kilo plus home .kilocode/.kilo; compat .agents/skills + .claude/skills unless disabled. "
+            "The installer itself uses $HOME/.config/kilo/skills unless KILO_CONFIG_DIR is set; it does not resolve XDG_CONFIG_HOME. "
             "Primary installer root remains plural skills/; singular skill/ is discovery/shadow only. "
             "Filesystem install only in this release."
         ),

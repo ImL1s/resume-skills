@@ -3,6 +3,10 @@
 - GitHub Copilot CLI source (#44 Track B): `copilot-cli-events-jsonl-v1` reader for
   `$COPILOT_HOME/session-state/<id>/events.jsonl` (local authority; not session-store.db /
   Chronicle / cloud sync). Matrix is now **17×18=306**.
+- Kilo CLI source qualification (#46 Track B PR 1): pin `@kilocode/cli` v7.4.17 at
+  `a0364858a6e1b69a2e2dc5434a82d5cefbe79ea7`; source enablement remains **NO-GO**
+  until synthetic exact-schema fixtures prove `session_message`/event/projector authority,
+  migration/cloud provenance, and Kilo↔OpenCode wrong-adapter rejection. Counts stay 17×18=306.
 - Kilo CLI destination-only (#46 Track A): install into `.kilocode/skills` and
   `~/.config/kilo/skills` (`KILO_CONFIG_DIR` override). Source remains research —
   do not alias OpenCode storage. Matrix became **16×18=288**.
