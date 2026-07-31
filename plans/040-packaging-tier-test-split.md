@@ -18,6 +18,7 @@
 - **Depends on**: none
 - **Category**: perf (developer/CI feedback loop)
 - **Planned at**: commit `a4dc4d6`, 2026-07-31
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/140
 
 ## Why this matters
 

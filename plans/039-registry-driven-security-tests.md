@@ -19,6 +19,7 @@
   acceptable.
 - **Category**: tests (core safety guarantees)
 - **Planned at**: commit `a4dc4d6`, 2026-07-31
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/139
 
 ## Why this matters
 

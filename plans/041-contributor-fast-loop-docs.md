@@ -17,6 +17,7 @@
 - **Depends on**: none
 - **Category**: dx
 - **Planned at**: commit `a4dc4d6`, 2026-07-31
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/141
 
 ## Why this matters
 

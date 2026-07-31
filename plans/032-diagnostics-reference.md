@@ -17,6 +17,7 @@
 - **Depends on**: none (if plan 031 lands first, include its `hint` field in the documented shape)
 - **Category**: docs
 - **Planned at**: commit `a4dc4d6`, 2026-07-31
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/136
 
 ## Why this matters
 

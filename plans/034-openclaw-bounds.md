@@ -17,6 +17,7 @@
 - **Depends on**: none (plan 039 adds openclaw to the immutability suite; either order works)
 - **Category**: security (bounded-read invariant)
 - **Planned at**: commit `a4dc4d6`, 2026-07-31
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/145
 
 ## Why this matters
 

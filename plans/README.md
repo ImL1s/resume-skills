@@ -31,6 +31,25 @@ only), i18n translation quality beyond counts, live host CLI activation.
 | 043 | `list --match` free-text filter | P2 | S | 029 | TODO |
 | 044 | `portable-resume sources` presence command | P2 | M | 029; pairs with 043 | TODO |
 
+### Published issues (2026-07-31 run)
+
+029 [#133](https://github.com/ImL1s/resume-skills/issues/133) ·
+030 [#134](https://github.com/ImL1s/resume-skills/issues/134) ·
+031 [#135](https://github.com/ImL1s/resume-skills/issues/135) ·
+032 [#136](https://github.com/ImL1s/resume-skills/issues/136) ·
+033 [#137](https://github.com/ImL1s/resume-skills/issues/137) ·
+034 [#145](https://github.com/ImL1s/resume-skills/issues/145) ·
+035 [#146](https://github.com/ImL1s/resume-skills/issues/146) ·
+036 [#147](https://github.com/ImL1s/resume-skills/issues/147) ·
+037 [#148](https://github.com/ImL1s/resume-skills/issues/148) ·
+038 [#138](https://github.com/ImL1s/resume-skills/issues/138) ·
+039 [#139](https://github.com/ImL1s/resume-skills/issues/139) ·
+040 [#140](https://github.com/ImL1s/resume-skills/issues/140) ·
+041 [#141](https://github.com/ImL1s/resume-skills/issues/141) ·
+042 [#142](https://github.com/ImL1s/resume-skills/issues/142) ·
+043 [#143](https://github.com/ImL1s/resume-skills/issues/143) ·
+044 [#144](https://github.com/ImL1s/resume-skills/issues/144)
+
 ### Dependency notes (2026-07-31)
 
 - 030 → 031: same file (`install/cli.py`) and 031 hints at flows 030 fixes.

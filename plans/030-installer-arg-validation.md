@@ -21,6 +21,7 @@
 - **Depends on**: none
 - **Category**: bug (CLI UX / error contract)
 - **Planned at**: commit `a4dc4d6`, 2026-07-31
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/134
 
 ## Why this matters
 

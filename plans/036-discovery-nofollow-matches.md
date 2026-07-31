@@ -17,6 +17,7 @@
 - **Depends on**: none
 - **Category**: security (part A), correctness (part B)
 - **Planned at**: commit `a4dc4d6`, 2026-07-31
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/147
 
 ## Why this matters
 

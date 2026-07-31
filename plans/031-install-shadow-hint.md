@@ -18,6 +18,7 @@
 - **Depends on**: plans/030-installer-arg-validation.md (same files; land 030 first to avoid conflicts)
 - **Category**: dx (CLI UX)
 - **Planned at**: commit `a4dc4d6`, 2026-07-31
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/135
 
 ## Why this matters
 

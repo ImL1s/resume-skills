@@ -16,6 +16,7 @@
 - **Depends on**: plans/029-reader-cli-help.md (same file; land 029 first)
 - **Category**: direction (DIRECTION-03)
 - **Planned at**: commit `a4dc4d6`, 2026-07-31
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/143
 
 ## Why this matters
 

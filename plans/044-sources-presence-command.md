@@ -17,6 +17,7 @@
   Pairs with plans/043-list-match.md as one product story.
 - **Category**: direction (DIRECTION-02 / UX-09)
 - **Planned at**: commit `a4dc4d6`, 2026-07-31
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/144
 
 ## Why this matters
 

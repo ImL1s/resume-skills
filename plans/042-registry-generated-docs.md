@@ -19,6 +19,7 @@
   fixed simply becomes generated/checked here.
 - **Category**: direction / docs infrastructure
 - **Planned at**: commit `a4dc4d6`, 2026-07-31
+- **Issue**: https://github.com/ImL1s/resume-skills/issues/142
 
 ## Why this matters
 
