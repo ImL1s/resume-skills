@@ -256,14 +256,14 @@ in-process.
 
 ## Done criteria
 
-- [ ] Options written up with measured cost; decision recorded
-- [ ] A **relocated** copy produces a warning through an existing channel (test-pinned)
-- [ ] An intact tree at its recorded root produces no warning, even when older than another install elsewhere (negative control, test-pinned)
-- [ ] Exit codes and stdout content are unchanged by the check (test-pinned)
-- [ ] Missing manifest is silent (test-pinned)
-- [ ] `--version` reports the **actual loaded runtime root** plus a recorded-root agreement flag (not just payload identity and the copied manifest's root, which are identical across an exact relocated copy), and diffing the two outputs identifies which tree ran (test-pinned)
-- [ ] Runtime still does not import `install/**` (allowlist test green)
-- [ ] Full suite + smoke matrix + gates green; `plans/README.md` updated
+- [x] Options written up with measured cost; decision recorded
+- [x] A **relocated** copy produces a warning through an existing channel (test-pinned)
+- [x] An intact tree at its recorded root produces no warning, even when older than another install elsewhere (negative control, test-pinned)
+- [x] Exit codes and stdout content are unchanged by the check (test-pinned)
+- [x] Missing manifest is silent (test-pinned)
+- [x] `--version` reports the **actual loaded runtime root** plus a recorded-root agreement flag (not just payload identity and the copied manifest's root, which are identical across an exact relocated copy), and diffing the two outputs identifies which tree ran (test-pinned)
+- [x] Runtime still does not import `install/**` (allowlist test green)
+- [x] Full suite + smoke matrix + gates green; `plans/README.md` updated
 
 ## STOP conditions
 

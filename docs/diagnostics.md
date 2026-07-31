@@ -93,6 +93,7 @@ The ordinary list/show warnings below are not stderr diagnostics. They ride insi
 - `W_MISSING_BLOB`
 - `W_OPTIONAL_ZSTD_UNAVAILABLE`
 - `W_PARTIAL_TAIL`
+- `W_RUNTIME_IDENTITY_DRIFT`
 - `W_SKILL_DUPLICATE`
 - `W_SKILL_SHADOW`
 - `W_STALE_INDEX`
