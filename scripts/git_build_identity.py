@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from typing import Protocol
 
 REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / "src"
@@ -34,6 +35,10 @@ _ROOT_BUILD_INPUTS = (
 _GENERATED_IDENTITY = Path("resources/build-identity.json")
 MAX_BUILD_INPUT_FILE_BYTES = 64 * 1024 * 1024
 MAX_BUILD_INPUT_TOTAL_BYTES = 256 * 1024 * 1024
+
+
+class _Digest(Protocol):
+    def update(self, data: bytes, /) -> None: ...
 
 
 def _git(repo_root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -74,8 +79,54 @@ def _relevant_other_files(
     return tuple(relevant)
 
 
-def build_inputs_sha256(repo_root: Path) -> str:
-    """Hash all non-package inputs that can affect produced artifact bytes."""
+def _hash_package_modes(
+    digest: _Digest,
+    *,
+    repository: Path,
+    package_root: Path,
+) -> None:
+    """Bind checkout-only package layout and modes without affecting installs."""
+    package = package_root.resolve()
+    try:
+        package_relative = package.relative_to(repository)
+    except ValueError as error:
+        raise ValueError("package root is outside the repository") from error
+    if not package.is_dir():
+        raise ValueError("package root is not a directory")
+
+    digest.update(b"package-layout\0")
+    paths = [package, *sorted(package.rglob("*"), key=lambda item: item.as_posix())]
+    for path in paths:
+        relative = path.relative_to(package)
+        if "__pycache__" in relative.parts or relative == _GENERATED_IDENTITY:
+            continue
+        try:
+            metadata = path.lstat()
+        except OSError as error:
+            raise ValueError("package build input is unreadable") from error
+        if stat.S_ISDIR(metadata.st_mode):
+            kind = b"directory"
+        elif stat.S_ISREG(metadata.st_mode):
+            if relative.suffix in {".pyc", ".pyo"}:
+                continue
+            kind = b"file"
+        else:
+            raise ValueError("package build input is not a regular file or directory")
+        checkout_relative = package_relative / relative
+        digest.update(checkout_relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(kind)
+        digest.update(b"\0")
+        digest.update(stat.S_IMODE(metadata.st_mode).to_bytes(4, "big"))
+        digest.update(b"\0")
+
+
+def build_inputs_sha256(
+    repo_root: Path,
+    *,
+    package_root: Path,
+) -> str:
+    """Hash artifact inputs and checkout-only package path modes."""
     repository = repo_root.resolve()
     digest = hashlib.sha256()
     total_bytes = 0
@@ -107,6 +158,11 @@ def build_inputs_sha256(repo_root: Path) -> str:
         digest.update(b"\0")
         digest.update(data)
         digest.update(b"\0")
+    _hash_package_modes(
+        digest,
+        repository=repository,
+        package_root=package_root,
+    )
     return digest.hexdigest()
 
 
@@ -174,7 +230,10 @@ def git_facts(
         and tag_commit.returncode == 0
         and tag_commit.stdout.strip() == commit_sha
     )
-    return commit_sha, dirty, exact_tag, build_inputs_sha256(repository)
+    return commit_sha, dirty, exact_tag, build_inputs_sha256(
+        repository,
+        package_root=package,
+    )
 
 
 def git_build_identity(

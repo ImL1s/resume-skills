@@ -222,7 +222,7 @@ def _read_stable_regular_file(
 
 
 def source_sha256(package_root: Path) -> str:
-    """Hash runtime package sources, excluding generated/cached identity bytes."""
+    """Hash deployment-stable package paths, types, and source bytes."""
     root = package_root.resolve()
     if not root.is_dir():
         raise ValueError("package root is not a directory")
@@ -238,12 +238,9 @@ def source_sha256(package_root: Path) -> str:
         except OSError as error:
             raise ValueError("package source is unreadable") from error
         name = relative.as_posix().encode("utf-8")
-        mode = stat.S_IMODE(metadata.st_mode).to_bytes(4, "big")
         if stat.S_ISDIR(metadata.st_mode):
             digest.update(name)
             digest.update(b"\0directory\0")
-            digest.update(mode)
-            digest.update(b"\0")
             continue
         if not stat.S_ISREG(metadata.st_mode):
             raise ValueError("package source contains a non-regular file")
@@ -260,8 +257,6 @@ def source_sha256(package_root: Path) -> str:
             raise ValueError("package source exceeds the aggregate bound")
         digest.update(name)
         digest.update(b"\0file\0")
-        digest.update(mode)
-        digest.update(b"\0")
         digest.update(data)
         digest.update(b"\0")
         found = True

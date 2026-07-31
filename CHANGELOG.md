@@ -12,10 +12,15 @@
   direct-host ZIPs, and seven native package ZIPs, then cross-verify every
   artifact and installed runtime. Runtime lookup uses only the fixed embedded
   resource, never build-pin environment variables or Git; source checkouts keep
-  an honest null-commit fallback. CI builds wheel/sdist twice with one pin and
+  an honest null-commit fallback. The runtime source digest is stable across
+  installation permission modes, while the Git-only build-input digest still
+  detects package mode drift before artifacts are produced. CI builds
+  wheel/sdist twice with one pin and
   `SOURCE_DATE_EPOCH`, requires byte-identical output, and proves the source tree
   was not mutated. Archive validation bounds compressed bytes, member count,
-  total expanded bytes, and manifest reads; the host report is checked against
+  total expanded bytes, and manifest reads; encrypted or unsupported-compression
+  required members now produce validation failures instead of escaping as
+  exceptions. The host report is checked against
   registry-derived filenames, family paths, member counts, and canonical install
   hints. The new `MANIFEST.in` path uses `setuptools==83.0.0`, outside
   the affected range of

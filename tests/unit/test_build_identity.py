@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -14,6 +15,7 @@ from unittest import mock
 from portable_resume.build_identity import (
     BUILD_IDENTITY_SCHEMA,
     BUILD_IDENTITY_SCHEMA_V1,
+    assert_identity_matches_package,
     build_identity,
     identity_json_bytes,
     load_embedded_identity,
@@ -91,6 +93,24 @@ class BuildIdentityDigestTests(unittest.TestCase):
 
             self.assertNotEqual(source_sha256(package_root), baseline)
 
+    @unittest.skipIf(os.name == "nt", "POSIX mode semantics required")
+    def test_source_digest_is_stable_across_installation_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            package_root = Path(temporary) / "portable_resume"
+            resources = package_root / "resources"
+            resources.mkdir(parents=True)
+            source = package_root / "module.py"
+            source.write_text("VALUE = 1\n", encoding="utf-8")
+            baseline = source_sha256(package_root)
+            identity = build_identity(package_root=package_root)
+
+            package_root.chmod(stat.S_IMODE(package_root.stat().st_mode) ^ 0o010)
+            resources.chmod(stat.S_IMODE(resources.stat().st_mode) ^ 0o010)
+            source.chmod(stat.S_IMODE(source.stat().st_mode) ^ 0o100)
+
+            self.assertEqual(source_sha256(package_root), baseline)
+            assert_identity_matches_package(identity, package_root=package_root)
+
     def test_source_digest_enforces_per_file_and_aggregate_bounds(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             package_root = Path(temporary) / "portable_resume"
@@ -135,6 +155,9 @@ class BuildIdentityDigestTests(unittest.TestCase):
     def test_build_inputs_digest_enforces_per_file_and_aggregate_bounds(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            package_root = root / "src" / "portable_resume"
+            package_root.mkdir(parents=True)
+            (package_root / "__init__.py").write_text("", encoding="utf-8")
             (root / "README.md").write_bytes(b"abc")
 
             with mock.patch(
@@ -142,7 +165,7 @@ class BuildIdentityDigestTests(unittest.TestCase):
                 2,
             ):
                 with self.assertRaisesRegex(ValueError, "bounded stable regular"):
-                    build_inputs_sha256(root)
+                    build_inputs_sha256(root, package_root=package_root)
 
             (root / "README.md").write_bytes(b"ab")
             (root / "LICENSE").write_bytes(b"cd")
@@ -157,18 +180,61 @@ class BuildIdentityDigestTests(unittest.TestCase):
                 ),
             ):
                 with self.assertRaisesRegex(ValueError, "aggregate bound"):
-                    build_inputs_sha256(root)
+                    build_inputs_sha256(root, package_root=package_root)
 
     @unittest.skipIf(os.name == "nt", "symlink semantics differ on Windows")
     def test_build_inputs_digest_rejects_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            package_root = root / "src" / "portable_resume"
+            package_root.mkdir(parents=True)
+            (package_root / "__init__.py").write_text("", encoding="utf-8")
             target = root / "outside.md"
             target.write_text("outside\n", encoding="utf-8")
             (root / "README.md").symlink_to(target)
 
             with self.assertRaisesRegex(ValueError, "bounded stable regular"):
-                build_inputs_sha256(root)
+                build_inputs_sha256(root, package_root=package_root)
+
+    @unittest.skipIf(os.name == "nt", "POSIX mode semantics required")
+    def test_build_inputs_digest_tracks_package_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package_root = root / "src" / "portable_resume"
+            resources = package_root / "resources"
+            resources.mkdir(parents=True)
+            source = package_root / "module.py"
+            source.write_text("VALUE = 1\n", encoding="utf-8")
+            for path in (package_root, resources, source):
+                with self.subTest(path=path.relative_to(root)):
+                    baseline = build_inputs_sha256(root, package_root=package_root)
+                    is_directory = path.is_dir()
+                    original_mode = stat.S_IMODE(path.stat().st_mode)
+                    path.chmod(original_mode ^ (0o010 if is_directory else 0o100))
+                    self.assertNotEqual(
+                        build_inputs_sha256(root, package_root=package_root),
+                        baseline,
+                    )
+                    path.chmod(original_mode)
+
+    @unittest.skipIf(os.name == "nt", "POSIX mode semantics required")
+    def test_build_inputs_digest_tracks_pyc_named_directory_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package_root = root / "src" / "portable_resume"
+            unusual_directory = package_root / "cache.pyc"
+            unusual_directory.mkdir(parents=True)
+            (package_root / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+            baseline = build_inputs_sha256(root, package_root=package_root)
+
+            unusual_directory.chmod(
+                stat.S_IMODE(unusual_directory.stat().st_mode) ^ 0o010
+            )
+
+            self.assertNotEqual(
+                build_inputs_sha256(root, package_root=package_root),
+                baseline,
+            )
 
 
 @unittest.skipUnless(shutil.which("git"), "git is required for identity tests")

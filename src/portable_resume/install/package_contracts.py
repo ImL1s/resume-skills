@@ -449,10 +449,22 @@ def _read_bounded_member(
     max_bytes: int,
 ) -> bytes:
     info = archive.getinfo(name)
+    return _read_bounded_info(archive, info, max_bytes=max_bytes)
+
+
+def _read_bounded_info(
+    archive: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    *,
+    max_bytes: int,
+) -> bytes:
     if not _zip_info_is_regular(info) or info.file_size > max_bytes:
         raise ValueError("archive member is not a bounded regular file")
-    with archive.open(info) as handle:
-        data = handle.read(max_bytes + 1)
+    try:
+        with archive.open(info) as handle:
+            data = handle.read(max_bytes + 1)
+    except (RuntimeError, NotImplementedError) as error:
+        raise ValueError("archive member is unreadable") from error
     if len(data) > max_bytes:
         raise ValueError("archive member exceeds its decompressed size bound")
     return data
@@ -700,34 +712,45 @@ def validate_archive_bytes(
                         "embedded build identity is not a bounded regular file"
                     )
                 else:
-                    with archive.open(info) as member_handle:
-                        raw_identity = member_handle.read(MAX_BUILD_IDENTITY_BYTES + 1)
-                    if len(raw_identity) > MAX_BUILD_IDENTITY_BYTES:
-                        failures.append("embedded build identity is oversized")
-                        raw_identity = b""
                     try:
-                        embedded_identity = load_identity_bytes(raw_identity)
+                        raw_identity = _read_bounded_info(
+                            archive,
+                            info,
+                            max_bytes=MAX_BUILD_IDENTITY_BYTES,
+                        )
                     except ValueError as error:
-                        failures.append(f"embedded build identity is invalid: {error}")
+                        failures.append(
+                            f"embedded build identity is unreadable: {error}"
+                        )
                     else:
-                        if embedded_identity.get("base_version") != BUNDLE_VERSION:
+                        try:
+                            embedded_identity = load_identity_bytes(raw_identity)
+                        except ValueError as error:
                             failures.append(
-                                "embedded build identity base version differs from bundle"
+                                f"embedded build identity is invalid: {error}"
                             )
-                        if embedded_identity.get("registry_sha256") != registry_sha256():
-                            failures.append(
-                                "embedded build identity registry differs from bundle"
-                            )
-                        if (
-                            expected_identity_bytes is not None
-                            and raw_identity != expected_identity_bytes
-                        ):
-                            failures.append(
-                                "embedded build identity differs from expected identity"
-                            )
-                        build_identity_sha256 = hashlib.sha256(
-                            raw_identity
-                        ).hexdigest()
+                        else:
+                            if embedded_identity.get("base_version") != BUNDLE_VERSION:
+                                failures.append(
+                                    "embedded build identity base version differs from bundle"
+                                )
+                            if (
+                                embedded_identity.get("registry_sha256")
+                                != registry_sha256()
+                            ):
+                                failures.append(
+                                    "embedded build identity registry differs from bundle"
+                                )
+                            if (
+                                expected_identity_bytes is not None
+                                and raw_identity != expected_identity_bytes
+                            ):
+                                failures.append(
+                                    "embedded build identity differs from expected identity"
+                                )
+                            build_identity_sha256 = hashlib.sha256(
+                                raw_identity
+                            ).hexdigest()
     except ValueError as error:
         failures.append(str(error))
     except zipfile.BadZipFile as error:

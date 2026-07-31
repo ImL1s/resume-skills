@@ -372,7 +372,7 @@ class ArtifactIdentityTests(unittest.TestCase):
             digest = write_external_identity(pin, identity)
             module.chmod(0o755)
 
-            with self.assertRaisesRegex(ValueError, "source digest differs"):
+            with self.assertRaisesRegex(ValueError, "checkout changed"):
                 resolve_build_identity(
                     repo_root=repository,
                     package_root=package,

@@ -60,6 +60,27 @@ class OfflineValidationTests(unittest.TestCase):
                 archive.writestr(name, data)
         return buf.getvalue()
 
+    def _member_header_offsets(
+        self,
+        data: bytearray,
+        member: str,
+    ) -> tuple[int, int]:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            local_offset = archive.getinfo(member).header_offset
+        central_offset = data.find(b"PK\x01\x02")
+        while central_offset >= 0:
+            name_size = struct.unpack_from("<H", data, central_offset + 28)[0]
+            extra_size = struct.unpack_from("<H", data, central_offset + 30)[0]
+            comment_size = struct.unpack_from("<H", data, central_offset + 32)[0]
+            name = bytes(data[central_offset + 46 : central_offset + 46 + name_size])
+            if name.decode("utf-8") == member:
+                return local_offset, central_offset
+            central_offset = data.find(
+                b"PK\x01\x02",
+                central_offset + 46 + name_size + extra_size + comment_size,
+            )
+        self.fail(f"missing central-directory entry for {member}")
+
     def test_rejects_parent_escape_and_install_runtime(self) -> None:
         failures = validate_member_paths(
             [
@@ -123,6 +144,29 @@ class OfflineValidationTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertTrue(
             any("bounded regular file" in failure for failure in report["failures"])
+        )
+
+    def test_reports_unsupported_primary_manifest_compression(self) -> None:
+        data = bytearray(self._zip({"plugin.json": b"{}"}))
+        local_offset, central_offset = self._member_header_offsets(
+            data,
+            "plugin.json",
+        )
+        struct.pack_into("<H", data, local_offset + 8, 99)
+        struct.pack_into("<H", data, central_offset + 10, 99)
+
+        report = validate_archive_bytes(
+            bytes(data),
+            package_type="antigravity-plugin",
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any(
+                "primary manifest unreadable" in failure
+                for failure in report["failures"]
+            ),
+            report["failures"],
         )
 
     def test_rejects_archive_member_count_over_bound(self) -> None:
@@ -292,6 +336,54 @@ class OfflineValidationTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertTrue(
             any("bounded regular file" in failure for failure in report["failures"])
+        )
+
+    def test_direct_contract_reports_unsupported_identity_compression(self) -> None:
+        identity = runtime_identity()
+        member = ".portable-resume/runtime/portable_resume/resources/build-identity.json"
+        data = bytearray(self._zip(materialize_plan("claude", identity=identity)))
+        local_offset, central_offset = self._member_header_offsets(data, member)
+        struct.pack_into("<H", data, local_offset + 8, 99)
+        struct.pack_into("<H", data, central_offset + 10, 99)
+
+        report = validate_archive_bytes(
+            bytes(data),
+            package_type="direct-skills",
+            expected_identity=identity,
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any(
+                "embedded build identity is unreadable" in failure
+                for failure in report["failures"]
+            ),
+            report["failures"],
+        )
+
+    def test_direct_contract_reports_encrypted_identity_member(self) -> None:
+        identity = runtime_identity()
+        member = ".portable-resume/runtime/portable_resume/resources/build-identity.json"
+        data = bytearray(self._zip(materialize_plan("claude", identity=identity)))
+        local_offset, central_offset = self._member_header_offsets(data, member)
+        local_flags = struct.unpack_from("<H", data, local_offset + 6)[0]
+        central_flags = struct.unpack_from("<H", data, central_offset + 8)[0]
+        struct.pack_into("<H", data, local_offset + 6, local_flags | 1)
+        struct.pack_into("<H", data, central_offset + 8, central_flags | 1)
+
+        report = validate_archive_bytes(
+            bytes(data),
+            package_type="direct-skills",
+            expected_identity=identity,
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any(
+                "embedded build identity is unreadable" in failure
+                for failure in report["failures"]
+            ),
+            report["failures"],
         )
 
     def test_direct_contract_rejects_non_identity_symlink_member(self) -> None:
