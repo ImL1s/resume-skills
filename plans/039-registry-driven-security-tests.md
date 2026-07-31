@@ -157,9 +157,14 @@ green):
    structure): under the PATH-shim harness, for EVERY source in the
    `FIXTURES` map from Step 1, run a real fixture-backed `list` and a `show`
    (reuse each adapter test's known-good `--source-root`/`--cwd`/ref the same
-   way Step 1 does) via `portable_resume.reader.run([...])`, assert the
-   invocation succeeds (exit 0 or the fixture's documented exit) and the
-   marker file was never created. This is what actually proves "no source
+   way Step 1 does) via `portable_resume.reader.run([...])`, and assert
+   **exit 0 for BOTH calls** plus the marker file never created. A nonzero
+   exit is a test failure, not an allowance — if the invocation fails before
+   reaching `adapter.list()`/`adapter.show()`, the marker stays absent
+   vacuously and the source's code path was never exercised (Codex round-4).
+   If a source genuinely has no fixture that yields a successful `show`, do
+   NOT downgrade the assertion: treat it like the missing-fixture STOP
+   condition and report the source. This is what actually proves "no source
    CLI is invoked" per adapter code path, not just per shim name.
 
 **Verify**: `PYTHONPATH=src python3 -m unittest tests.security.test_isolation tests.security.test_no_source_cli_exec -v` → pass; the new test reports one subtest per source (17).
@@ -178,7 +183,7 @@ under the shim harness. The completeness assertion is the permanent guard.
 
 - [ ] `FIXTURES` keys == `SOURCE_KEYS` (asserted by a test)
 - [ ] Immutability runs a fingerprint case per source; isolation shims cover every source key
-- [ ] Every source runs a real fixture-backed list + show under the PATH-shim harness with no marker created (17 subtests)
+- [ ] Every source runs a real fixture-backed list + show under the PATH-shim harness, both exiting 0, with no marker created (17 subtests)
 - [ ] Full suite green — or documented STOP report of real violations
 - [ ] No `src/` changes; `plans/README.md` updated
 

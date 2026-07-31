@@ -94,6 +94,10 @@ known residual (issue #36).
   (e.g. "18") — digits are locale-neutral; do not touch surrounding wording.
 - Evidence claims / STATUS / host-ui-smoke — human-recorded; only their
   *checking* stays as-is.
+- **Historical release records**: sentences describing published releases
+  (0.3.x archives, their nine-destination/9×9 dimensions) are accurate
+  history — never "fix" them to current counts; the count gates must exempt
+  them.
 - `src/portable_resume/**` — read-only truth.
 
 ## Git workflow
@@ -197,8 +201,8 @@ message in the completion report.
 ## Done criteria
 
 - [ ] `render_docs.py --check` exists, deterministic, wired into `check_docs.py`
-- [ ] `docs/host-support.md` shows 17×18=306-consistent content inside generated regions; no "9×9" remains (`grep -rn "9×9\|81 cells" docs/` → none)
-- [ ] All 12 locales carry a registry-checked counts marker; no "nine/nove/девять/九/तेरह…"-style destination-count claim remains (`grep` per locale for its number word — list the greps run)
+- [ ] `docs/host-support.md` shows 17×18=306-consistent content inside generated regions; no stale dimension claim remains in any **current-status** sentence or generated region. Historical release records legitimately keep their dimensions (e.g. `docs/install-hosts.md:217` "Published `0.3.4` … remains historical **9×9=81**", and evidence docs) — the check is scoped to current-status text, NOT a repo-wide grep purge (Codex round-4). Concretely: every remaining `9×9`/`81`-cells occurrence under `docs/` sits in a sentence explicitly marked historical/published-release (list them in the completion report)
+- [ ] All 12 locales carry a registry-checked counts marker; no "nine/nove/девять/九/तेरह…"-style destination-count claim remains in **current-status** sentences (`grep` per locale for its number word — list the greps run). Sentences describing published releases (e.g. "Published `0.3.4` ships nine destinations") are historical evidence and stay untouched, same exemption as above
 - [ ] `check_docs.py` derives host names from the catalog (no hardcoded host tuple)
 - [ ] Evidence markers ("8/8" etc.) untouched
 - [ ] All gates green; `plans/README.md` updated
