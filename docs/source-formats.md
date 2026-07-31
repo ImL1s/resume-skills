@@ -173,10 +173,11 @@ Do not copy real transcripts, credentials, developer home paths, or `~/.grok/bun
 ## gemini-cli-session-jsonl-v1
 
 - **Store:** `~/.gemini/tmp/<projectHash>/chats/session-*.jsonl` (or `$GEMINI_CLI_HOME/.gemini/tmp/...`)
+- **projectHash:** legacy pin is `sha256(projectRoot)` (hex); when `cwd` is provided, list/show restrict to matching hash(es) so `latest` cannot pick another project's session
 - **Authority:** JSONL session log (chatRecordingService); metadata line + MessageRecord lines; `$set` / `$rewindTo` control
 - **Public turns:** `type=user` and `type=gemini` text parts; tool names only when content empty
 - **Omit:** `info`/`error`/`warning`, nested `thoughts`, account/OAuth files, Antigravity roots
-- **List:** main sessions only (`kind!=subagent`); require a public user turn
+- **List:** main sessions only (`kind!=subagent`); require a public user turn; cwd→hash filter when cwd set
 - **Distinct from:** `antigravity-transcript-jsonl-v1` — never aliased
 - **Lifecycle note:** consumer Login-with-Google for Gemini CLI ended 2026-06-18; Standard/Enterprise/API remain
 - **Out of scope:** gemini CLI process, Google APIs, MCP, Antigravity stores

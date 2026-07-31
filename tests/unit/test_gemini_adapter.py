@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -12,8 +15,10 @@ from tests.helpers.core import tree_snapshot
 
 FIXTURES = Path("tests/fixtures/gemini")
 CWD = "/tmp/project"
+OTHER_CWD = "/tmp/other"
 BASIC_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 SUB_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+OTHER_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 
 
 def fixture_root(case: str) -> Path:
@@ -29,6 +34,10 @@ def query(root: Path, ref: str | None = None, **kwargs: object) -> Query:
         within_min=0,
         **kwargs,
     )
+
+
+def _project_hash(cwd: str) -> str:
+    return hashlib.sha256(cwd.encode("utf-8")).hexdigest()
 
 
 class GeminiAdapterTests(unittest.TestCase):
@@ -84,6 +93,90 @@ class GeminiAdapterTests(unittest.TestCase):
     def test_not_antigravity_key(self) -> None:
         self.assertEqual(ADAPTER.key, "gemini")
         self.assertNotEqual(FORMAT_ID, "antigravity-transcript-jsonl-v1")
+
+    def test_cwd_filters_to_matching_project_hash(self) -> None:
+        """latest must not return a newer session from another projectHash."""
+
+        project_hash = _project_hash(CWD)
+        other_hash = _project_hash(OTHER_CWD)
+        self.assertNotEqual(project_hash, other_hash)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for project, session_id, stamp, prompt in (
+                (
+                    project_hash,
+                    BASIC_ID,
+                    "2024-01-01T12:00:00.000Z",
+                    "project user prompt",
+                ),
+                (
+                    other_hash,
+                    OTHER_ID,
+                    "2024-01-02T12:00:00.000Z",
+                    "other project newer session",
+                ),
+            ):
+                chats = root / "tmp" / project / "chats"
+                chats.mkdir(parents=True)
+                path = chats / f"session-2024-01-01T12-00-{session_id[:8]}.jsonl"
+                lines = [
+                    {
+                        "sessionId": session_id,
+                        "projectHash": project,
+                        "startTime": stamp,
+                        "lastUpdated": stamp,
+                        "kind": "main",
+                    },
+                    {
+                        "id": "msg-u1",
+                        "timestamp": stamp,
+                        "type": "user",
+                        "content": [{"text": prompt}],
+                    },
+                    {
+                        "id": "msg-a1",
+                        "timestamp": stamp,
+                        "type": "gemini",
+                        "content": [{"text": "reply"}],
+                    },
+                ]
+                path.write_text(
+                    "".join(json.dumps(line) + "\n" for line in lines),
+                    encoding="utf-8",
+                )
+
+            listed = ADAPTER.list(query(root), ReadBudget())
+            self.assertEqual([item.session_id for item in listed], [BASIC_ID])
+            self.assertEqual(listed[0].cwd, CWD)
+
+            other_listed = ADAPTER.list(
+                Query(
+                    source="gemini",
+                    ref=None,
+                    cwd=OTHER_CWD,
+                    source_root=str(root),
+                    within_min=0,
+                ),
+                ReadBudget(),
+            )
+            self.assertEqual([item.session_id for item in other_listed], [OTHER_ID])
+
+            # Unscoped list may see both projects (no cwd filter).
+            unscoped = ADAPTER.list(
+                Query(
+                    source="gemini",
+                    ref=None,
+                    cwd=None,
+                    source_root=str(root),
+                    within_min=0,
+                ),
+                ReadBudget(),
+            )
+            self.assertEqual(
+                sorted(item.session_id for item in unscoped),
+                sorted([BASIC_ID, OTHER_ID]),
+            )
 
 
 if __name__ == "__main__":

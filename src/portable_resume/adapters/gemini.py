@@ -19,6 +19,7 @@ JSONL records: session metadata, MessageRecord lines, optional ``$set`` /
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -30,7 +31,7 @@ from typing import Any, Mapping
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
-from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
+from ..paths import canonical_root, canonicalize_cwd, is_within
 from ..sanitize import sanitize_turn_record
 from ..snapshot import stable_scan_lines
 from .base import CapabilityReport, ResolvedRef
@@ -209,6 +210,98 @@ def _exact_ref(value: str | None) -> str | None:
     return None
 
 
+def _sha256_hex(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _macos_path_aliases(path: str) -> list[str]:
+    """Return macOS public/private path spellings for hash candidates.
+
+    Gemini hashes the project-root *string* as given at session creation. Reader
+    may canonicalize ``/tmp/...`` → ``/private/tmp/...`` before the adapter sees
+    it; include both so fixtures and live stores still match.
+    """
+
+    aliases = [path]
+    pairs = (
+        ("/private/tmp", "/tmp"),
+        ("/private/var", "/var"),
+        ("/tmp", "/private/tmp"),
+        ("/var", "/private/var"),
+    )
+    for source_prefix, dest_prefix in pairs:
+        if path == source_prefix:
+            aliases.append(dest_prefix)
+        elif path.startswith(source_prefix + "/"):
+            aliases.append(dest_prefix + path[len(source_prefix) :])
+    return aliases
+
+
+def _project_hashes_for_cwd(cwd: str | None) -> frozenset[str] | None:
+    """Gemini stores project roots under tmp/<sha256(projectRoot)> (legacy).
+
+    When *cwd* is set, return candidate hashes for that path. Includes trailing-
+    slash variants, macOS path aliases, and a best-effort realpath spelling.
+    Returns None when cwd is unset so discovery remains store-wide.
+    """
+
+    if not cwd or not isinstance(cwd, str):
+        return None
+    text = cwd.strip()
+    if not text:
+        return None
+    spellings: list[str] = []
+    for base in _macos_path_aliases(text):
+        spellings.append(base)
+        stripped = base.rstrip("/\\")
+        if stripped and stripped != base:
+            spellings.append(stripped)
+        elif not base.endswith(("/", "\\")):
+            spellings.append(base + "/")
+    try:
+        real = canonicalize_cwd(text)
+        for base in _macos_path_aliases(real):
+            spellings.append(base)
+    except DiagnosticError:
+        pass
+    return frozenset(_sha256_hex(item) for item in dict.fromkeys(spellings))
+
+
+def _path_project_hash(path: str) -> str | None:
+    """Extract ``tmp/<hash>`` segment from a session path when present."""
+
+    parts = path.replace("\\", "/").split("/")
+    for index, part in enumerate(parts):
+        if part == "tmp" and index + 1 < len(parts):
+            candidate = parts[index + 1]
+            if _HASH_RE.fullmatch(candidate):
+                return candidate
+    return None
+
+
+def _matches_project(
+    *,
+    path: str,
+    meta: Mapping[str, Any],
+    project_hashes: frozenset[str] | None,
+) -> bool:
+    """True when the session belongs to *project_hashes*, or mapping is unknown.
+
+    Unknown mapping (no path hash, no meta projectHash) is an intentional
+    fallback so bare ``chats/`` roots remain listable.
+    """
+
+    if project_hashes is None:
+        return True
+    meta_hash = meta.get("projectHash")
+    path_hash = _path_project_hash(path)
+    if isinstance(meta_hash, str) and meta_hash:
+        return meta_hash in project_hashes
+    if path_hash is not None:
+        return path_hash in project_hashes
+    return True
+
+
 def _stamp_iso(value: object) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -250,18 +343,37 @@ def _discover_session_files(
     *,
     scan_limit: int,
     include_subagents: bool,
+    project_hashes: frozenset[str] | None = None,
 ) -> list[str]:
     """Bounded discovery of session JSONL paths under gemini home or chats."""
 
     paths: list[str] = []
     # If layout_root is chats dir
     if os.path.basename(layout_root.rstrip(os.sep)) == "chats":
+        path_hash = _path_project_hash(layout_root)
+        if (
+            project_hashes is not None
+            and path_hash is not None
+            and path_hash not in project_hashes
+        ):
+            return []
         chats_dirs = [layout_root]
     else:
         tmp = os.path.join(layout_root, "tmp")
         if not _regular_dir(tmp, containment):
             # layout_root may itself be tmp or project hash dir
             if _regular_dir(os.path.join(layout_root, "chats"), containment):
+                path_hash = _path_project_hash(layout_root) or (
+                    os.path.basename(layout_root.rstrip(os.sep))
+                    if _HASH_RE.fullmatch(os.path.basename(layout_root.rstrip(os.sep)))
+                    else None
+                )
+                if (
+                    project_hashes is not None
+                    and path_hash is not None
+                    and path_hash not in project_hashes
+                ):
+                    return []
                 chats_dirs = [os.path.join(layout_root, "chats")]
             elif any(
                 n.endswith(".jsonl") for n in _safe_listdir(layout_root)
@@ -275,9 +387,11 @@ def _discover_session_files(
                 raise DiagnosticError.limit_exceeded()
             chats_dirs = []
             for name in sorted(names):
-                if not _HASH_RE.fullmatch(name) and not name:
-                    # still allow non-hash folder names from migrations
-                    pass
+                if project_hashes is not None and name not in project_hashes:
+                    # Skip other projects when cwd→hash filter is active.
+                    # Non-hash migration slugs also miss the set → excluded
+                    # (hash is the durable cross-store key for this adapter).
+                    continue
                 proj = os.path.join(tmp, name)
                 chats = os.path.join(proj, "chats")
                 if _regular_dir(chats, containment):
@@ -491,11 +605,10 @@ def _session_summary_from_file(
             break
     if not has_user:
         return None
-    # cwd: Gemini stores projectHash, not always cwd — optional directories unused
-    cwd = None
-    if query.cwd is not None:
-        # Without durable cwd, stay eligible (same policy as openhands)
-        pass
+    # Durable project key is projectHash (sha256 of project root), not a path.
+    project_hashes = _project_hashes_for_cwd(query.cwd)
+    if not _matches_project(path=path, meta=meta, project_hashes=project_hashes):
+        return None
     stamp = _stamp_iso(meta.get("lastUpdated")) or _stamp_iso(meta.get("startTime"))
     if require_age and not within_age(
         stamp, query.within_min, default_minutes=DEFAULT_BOUNDS.listing_age_minutes
@@ -503,6 +616,8 @@ def _session_summary_from_file(
         return None
     if isinstance(meta.get("summary"), str) and meta["summary"].strip() and title is None:
         title = meta["summary"].strip()[: DEFAULT_BOUNDS.title_chars]
+    # Surface requested cwd when the session maps to it (path/meta hash match).
+    cwd = query.cwd if project_hashes is not None else None
     return SessionSummary(
         source="gemini",
         session_id=session_id,
@@ -530,8 +645,13 @@ class GeminiAdapter:
             if layout is None:
                 return CapabilityReport(self.key, FORMAT_ID, "unavailable")
             base, root = layout
+            project_hashes = _project_hashes_for_cwd(query.cwd)
             files = _discover_session_files(
-                base, root, scan_limit=min(DEFAULT_BOUNDS.scanned_records, 64), include_subagents=False
+                base,
+                root,
+                scan_limit=min(DEFAULT_BOUNDS.scanned_records, 64),
+                include_subagents=False,
+                project_hashes=project_hashes,
             )
             if not files:
                 return CapabilityReport(
@@ -571,6 +691,7 @@ class GeminiAdapter:
             )
         base, root = layout
         exact = _exact_ref(query.ref)
+        project_hashes = _project_hashes_for_cwd(query.cwd)
         scan_limit = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
         list_limit = min(budget.limits.listed_sessions, DEFAULT_BOUNDS.listed_sessions)
         if exact is None and list_limit <= 0:
@@ -581,6 +702,7 @@ class GeminiAdapter:
             root,
             scan_limit=scan_limit,
             include_subagents=exact is not None,
+            project_hashes=project_hashes,
         )
         if exact is not None:
             # Prefer paths whose metadata sessionId matches
@@ -647,12 +769,19 @@ class GeminiAdapter:
             )
         base, root = layout
         session_id = ref.session_id
+        project_hashes = _project_hashes_for_cwd(query.cwd)
         path = ref.source_path if ref.source_path else None
         if path and _regular_file(path, root):
             target = path
         else:
             files = _discover_session_files(
-                base, root, scan_limit=min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records), include_subagents=True
+                base,
+                root,
+                scan_limit=min(
+                    budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records
+                ),
+                include_subagents=True,
+                project_hashes=project_hashes,
             )
             target = None
             for candidate in files:
@@ -660,7 +789,17 @@ class GeminiAdapter:
                     meta, _ = _parse_jsonl_conversation(
                         candidate, root, budget, metadata_only=True
                     )
-                except DiagnosticError:
+                except DiagnosticError as error:
+                    if error.code in {
+                        "E_LIMIT_EXCEEDED",
+                        "E_SOURCE_BUSY",
+                        "E_UNSAFE_PATH",
+                    }:
+                        raise
+                    continue
+                if not _matches_project(
+                    path=candidate, meta=meta, project_hashes=project_hashes
+                ):
                     continue
                 sid = meta.get("sessionId")
                 if isinstance(sid, str) and (
@@ -677,6 +816,8 @@ class GeminiAdapter:
         meta, messages = _parse_jsonl_conversation(
             target, root, budget, metadata_only=False
         )
+        if not _matches_project(path=target, meta=meta, project_hashes=project_hashes):
+            raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
         turns: list[Turn] = []
         warnings: list[str] = []
         turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
@@ -714,7 +855,7 @@ class GeminiAdapter:
                 if isinstance(meta.get("summary"), str)
                 else None
             ),
-            cwd=None,
+            cwd=query.cwd if project_hashes is not None else None,
             branch=None,
             created_at=_stamp_iso(meta.get("startTime")),
             updated_at=_stamp_iso(meta.get("lastUpdated"))
