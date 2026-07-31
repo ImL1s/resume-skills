@@ -85,6 +85,70 @@ class ClineAdapterTests(unittest.TestCase):
         )
         self.assertEqual(ADAPTER.list(other, ReadBudget()), [])
 
+    def test_sessions_dir_only_lists_without_index(self) -> None:
+        root = fixture_root("s-cl-01-user-basic")
+        sessions_only = root / "data" / "sessions"
+        current = Query(
+            source="cline",
+            cwd=CWD,
+            source_root=str(sessions_only),
+            within_min=0,
+        )
+        report = ADAPTER.probe(current)
+        self.assertIn(report.state, {"partial", "supported"})
+        summaries = ADAPTER.list(current, ReadBudget())
+        self.assertEqual(len(summaries), 1)
+        session = ADAPTER.show(ResolvedRef.from_summary(summaries[0]), current, ReadBudget())
+        self.assertEqual(session.session_id, BASIC_ID)
+        self.assertTrue(session.turns)
+
+    def test_prompt_only_without_messages_not_listed(self) -> None:
+        import tempfile
+        import sqlite3
+        from tests.fixtures.cline import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data = root / "data"
+            db_path = data / "db" / "sessions.db"
+            sessions_dir = data / "sessions"
+            conn = bf._connect(db_path)
+            # Index has prompt but no messages file on disk.
+            bf._insert_session(
+                conn,
+                session_id=BASIC_ID,
+                prompt="stale prompt only",
+                messages_path="",
+                updated_at="2024-06-01T12:00:00.000000Z",
+            )
+            # Older valid session should win latest.
+            other = "cl000199-0101-4101-8101-010101010199"
+            path = bf._write_session_files(
+                sessions_dir,
+                session_id=other,
+                messages=[
+                    {"id": "u", "role": "user", "content": "older valid user"},
+                    {"id": "a", "role": "assistant", "content": "older valid asst"},
+                ],
+            )
+            bf._insert_session(
+                conn,
+                session_id=other,
+                prompt="older valid user",
+                messages_path="",
+                updated_at="2024-01-01T12:00:00.000000Z",
+            )
+            conn.commit()
+            conn.close()
+            current = Query(
+                source="cline",
+                cwd=CWD,
+                source_root=str(root),
+                within_min=0,
+            )
+            summaries = ADAPTER.list(current, ReadBudget())
+            self.assertEqual([item.session_id for item in summaries], [other])
+
     def test_exact_sessions_db_source_root_can_show(self) -> None:
         """Direct sessions.db path must still reach sibling messages JSON (Codex P2)."""
         root = fixture_root("s-cl-01-user-basic")

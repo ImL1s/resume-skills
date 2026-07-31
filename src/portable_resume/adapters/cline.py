@@ -277,14 +277,22 @@ def _messages_path_for(
     sessions_dir: str | None,
     root: str,
 ) -> str | None:
+    # Prefer the closed layout path; only accept explicit paths that stay under root
+    # and whose basename matches the selected session (prevents cross-session swaps).
+    if sessions_dir is not None:
+        candidate = os.path.join(sessions_dir, session_id, f"{session_id}.messages.json")
+        if _regular_file(candidate, root):
+            return candidate
     if isinstance(messages_path, str) and messages_path.strip():
         path = messages_path.strip()
-        if _regular_file(path, root):
+        if not os.path.isabs(path) and sessions_dir is not None:
+            path = os.path.join(sessions_dir, session_id, path)
+        if (
+            _regular_file(path, root)
+            and os.path.basename(path) == f"{session_id}.messages.json"
+        ):
             return path
-    if sessions_dir is None:
-        return None
-    candidate = os.path.join(sessions_dir, session_id, f"{session_id}.messages.json")
-    return candidate if _regular_file(candidate, root) else None
+    return None
 
 
 def _content_chunks(content: object) -> list[str]:
@@ -340,7 +348,11 @@ def _turn_from_message(message: Mapping[str, Any]) -> tuple[str, str] | None:
 
 
 def _load_messages_payload(
-    path: str, root: str, budget: ReadBudget
+    path: str,
+    root: str,
+    budget: ReadBudget,
+    *,
+    expected_session_id: str | None = None,
 ) -> list[Mapping[str, Any]]:
     try:
         read = stable_read_bytes(
@@ -372,6 +384,10 @@ def _load_messages_payload(
         raise DiagnosticError(
             "E_UNSUPPORTED_FORMAT", source="cline", provider=FORMAT_ID
         )
+    if expected_session_id is not None:
+        payload_id = payload.get("sessionId")
+        if not isinstance(payload_id, str) or payload_id != expected_session_id:
+            raise DiagnosticError("E_CORRUPT_RECORD", source="cline", provider=FORMAT_ID)
     messages = payload.get("messages")
     if not isinstance(messages, list):
         raise DiagnosticError("E_CORRUPT_RECORD", source="cline", provider=FORMAT_ID)
@@ -380,17 +396,19 @@ def _load_messages_payload(
 
 def _session_has_extractable(
     *,
-    prompt: object,
+    session_id: str,
     messages_path: str | None,
     root: str,
     budget: ReadBudget,
 ) -> bool:
-    if isinstance(prompt, str) and prompt.strip():
-        return True
+    """Require a safe authoritative messages payload (prompt alone is insufficient)."""
+
     if messages_path is None:
         return False
     try:
-        messages = _load_messages_payload(messages_path, root, budget)
+        messages = _load_messages_payload(
+            messages_path, root, budget, expected_session_id=session_id
+        )
     except DiagnosticError as error:
         if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
             raise
@@ -447,6 +465,103 @@ def _row_summary(
         provider=FORMAT_ID,
         warnings=(),
     )
+
+
+def _list_from_sessions_dir(
+    *,
+    sessions_dir: str,
+    root: str,
+    query: Query,
+    exact_id: str | None,
+    budget: ReadBudget,
+) -> list[SessionSummary]:
+    """Bounded JSON discovery when the SQLite index is absent (Codex P1)."""
+
+    scan_limit = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
+    list_limit = min(budget.limits.listed_sessions, DEFAULT_BOUNDS.listed_sessions)
+    if exact_id is None and list_limit <= 0:
+        return []
+    require_age = exact_id is None
+    candidates: list[str]
+    if exact_id is not None:
+        candidates = [exact_id]
+    else:
+        names = sorted(_safe_listdir(sessions_dir))
+        if len(names) > scan_limit:
+            raise DiagnosticError.limit_exceeded()
+        candidates = [name for name in names if _SESSION_ID_RE.fullmatch(name)]
+    values: list[SessionSummary] = []
+    for session_id in candidates:
+        msg_path = _messages_path_for(
+            session_id=session_id,
+            messages_path=None,
+            sessions_dir=sessions_dir,
+            root=root,
+        )
+        if msg_path is None:
+            continue
+        try:
+            if not _session_has_extractable(
+                session_id=session_id,
+                messages_path=msg_path,
+                root=root,
+                budget=budget,
+            ):
+                continue
+        except DiagnosticError as error:
+            if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
+                raise
+            continue
+        # Optional manifest for metadata only.
+        prompt = None
+        cwd_value = None
+        workspace_root = None
+        started_at = None
+        updated_at = None
+        manifest_path = os.path.join(sessions_dir, session_id, f"{session_id}.json")
+        if _regular_file(manifest_path, root):
+            try:
+                read = stable_read_bytes(
+                    manifest_path,
+                    root=root,
+                    max_bytes=min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes),
+                    budget=budget,
+                )
+                manifest = json.loads(read.data.decode("utf-8"), object_pairs_hook=_object)
+                if isinstance(manifest, Mapping):
+                    prompt = manifest.get("prompt")
+                    cwd_value = manifest.get("cwd")
+                    workspace_root = manifest.get("workspace_root")
+                    started_at = manifest.get("started_at")
+                    updated_at = manifest.get("updated_at") or manifest.get("started_at")
+                    parent = manifest.get("parent_session_id")
+                    is_sub = manifest.get("is_subagent")
+                    if exact_id is None and (
+                        (isinstance(parent, str) and parent.strip())
+                        or is_sub in (1, True)
+                    ):
+                        continue
+            except (DiagnosticError, json.JSONDecodeError, _DuplicateKey, UnicodeDecodeError):
+                pass
+        item = _row_summary(
+            session_id=session_id,
+            source_path=msg_path,
+            prompt=prompt,
+            cwd_value=cwd_value,
+            workspace_root=workspace_root,
+            started_at=started_at,
+            updated_at=updated_at,
+            query=query,
+            require_age=require_age,
+        )
+        if item is not None:
+            if exact_id is None and len(values) >= list_limit:
+                break
+            values.append(item)
+            budget.consume_records()
+            if exact_id is None and len(values) >= list_limit:
+                break
+    return values
 
 
 def _list_from_index(
@@ -536,14 +651,14 @@ def _list_from_index(
             )
             try:
                 if not _session_has_extractable(
-                    prompt=prompt,
+                    session_id=str(session_id),
                     messages_path=msg_path,
                     root=root,
                     budget=budget,
                 ):
                     continue
             except DiagnosticError as error:
-                if error.code == "E_CORRUPT_RECORD":
+                if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
                     raise
                 continue
         item = _row_summary(
@@ -582,7 +697,9 @@ def _show_from_messages(
 ) -> Session:
     if query.cwd is not None and (cwd is None or not same_cwd(cwd, query.cwd)):
         raise DiagnosticError("E_NO_MATCH", source="cline", provider=FORMAT_ID)
-    messages = _load_messages_payload(messages_path, root, budget)
+    messages = _load_messages_payload(
+        messages_path, root, budget, expected_session_id=session_id
+    )
     turns: list[Turn] = []
     warnings: list[str] = []
     turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
@@ -683,10 +800,6 @@ class ClineAdapter:
                 "E_CAPABILITY_UNAVAILABLE", source=self.key, provider=FORMAT_ID
             )
         database, sessions_dir, root = layout
-        if database is None:
-            raise DiagnosticError(
-                "E_CAPABILITY_UNAVAILABLE", source=self.key, provider=FORMAT_ID
-            )
         exact = _exact_ref(query.ref)
         list_query = query
         if exact is not None and query.within_min is None:
@@ -698,16 +811,30 @@ class ClineAdapter:
                 source_root=query.source_root,
                 max_tool_chars=query.max_tool_chars,
             )
-        with _open_connection(database, root, budget) as connection:
-            _require_index_schema(connection)
-            values = _list_from_index(
-                connection,
-                database=database,
+        values: list[SessionSummary] = []
+        if database is not None:
+            with _open_connection(database, root, budget) as connection:
+                _require_index_schema(connection)
+                values = _list_from_index(
+                    connection,
+                    database=database,
+                    sessions_dir=sessions_dir,
+                    root=root,
+                    query=list_query,
+                    exact_id=exact,
+                    budget=budget,
+                )
+        elif sessions_dir is not None:
+            values = _list_from_sessions_dir(
                 sessions_dir=sessions_dir,
                 root=root,
                 query=list_query,
                 exact_id=exact,
                 budget=budget,
+            )
+        else:
+            raise DiagnosticError(
+                "E_CAPABILITY_UNAVAILABLE", source=self.key, provider=FORMAT_ID
             )
         values.sort(key=lambda item: item.session_id)
         values.sort(key=lambda item: item.updated_at or "", reverse=True)
@@ -757,6 +884,40 @@ class ClineAdapter:
                         updated_at,
                     ) = rows[0]
                     source_path = database
+
+        # Index-absent path: recover metadata from the session manifest when present.
+        if (
+            sessions_dir is not None
+            and cwd_value is None
+            and workspace_root is None
+        ):
+            manifest_path = os.path.join(sessions_dir, session_id, f"{session_id}.json")
+            if _regular_file(manifest_path, root):
+                try:
+                    read = stable_read_bytes(
+                        manifest_path,
+                        root=root,
+                        max_bytes=min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes),
+                        budget=budget,
+                    )
+                    manifest = json.loads(
+                        read.data.decode("utf-8"), object_pairs_hook=_object
+                    )
+                    if isinstance(manifest, Mapping):
+                        prompt = prompt or manifest.get("prompt")
+                        cwd_value = manifest.get("cwd")
+                        workspace_root = manifest.get("workspace_root")
+                        started_at = started_at or manifest.get("started_at")
+                        updated_at = updated_at or manifest.get("updated_at") or manifest.get(
+                            "started_at"
+                        )
+                except (
+                    DiagnosticError,
+                    json.JSONDecodeError,
+                    _DuplicateKey,
+                    UnicodeDecodeError,
+                ):
+                    pass
 
         msg_path = _messages_path_for(
             session_id=session_id,
