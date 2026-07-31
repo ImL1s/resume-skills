@@ -1,0 +1,10 @@
+{
+  "case": "s-gm-02-main-and-subagent",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "gemini-cli-session-jsonl-v1",
+  "provenance_ref": "docs/source-formats.md#gemini-cli-session-jsonl-v1",
+  "source": "gemini",
+  "synthetic": true
+}

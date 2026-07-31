@@ -804,6 +804,54 @@ HOST_PROFILES: dict[str, HostProfile] = {
         global_home_env="COPILOT_HOME",
         global_env_rel="skills",
     ),
+    "gemini": HostProfile(
+        key="gemini",
+        profile_id="gemini-v1",
+        project_rel=".gemini/skills",
+        global_rel=".gemini/skills",
+        display_name="Gemini CLI",
+        official_docs=(
+            "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/session-management.md",
+            "https://developers.google.com/gemini-code-assist/docs/deprecations/code-assist-individuals",
+        ),
+        project_layout="<project>/.gemini/skills/<name>/SKILL.md",
+        global_layout="$GEMINI_CLI_HOME/.gemini/skills or ~/.gemini/skills/<name>/SKILL.md",
+        alternate_project_roots=(".agents/skills",),
+        alternate_global_roots=("~/.agents/skills",),
+        install_methods=(
+            "This installer: install-resume-skills install --host gemini --scope project|global",
+            "Manual: copy each resume-*/ folder into .gemini/skills/ or ~/.gemini/skills/",
+            "Also: gemini skills install <local-path> (native route; not-run here)",
+        ),
+        activation_help=(
+            "Load resume-<source> from the Gemini CLI skills tree. "
+            "Recovered text is inert/untrusted handoff only. "
+            "Independent of Antigravity (agy) profile."
+        ),
+        activation_examples=(
+            "Use skill resume-gemini with ref latest",
+            "Use skill resume-gemini with a session id",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (native session UUID or latest). "
+            "Consumer Login-with-Google for Gemini CLI ended 2026-06-18; "
+            "Standard/Enterprise/API environments remain in scope."
+        ),
+        caveats=(
+            "Compatibility profile — not a replacement for antigravity/agy.",
+            "Session store is ~/.gemini/tmp/<projectHash>/chats/session-*.jsonl (JSONL).",
+            "Does not invoke gemini CLI, Google APIs, auth, MCP, or Antigravity.",
+            "Native gemini skills install / picker activation evidence remains not-run.",
+            "Global installs honor GEMINI_CLI_HOME when set (absolute path).",
+        ),
+        evidence_notes=(
+            "Gemini CLI session-management docs + chatRecordingTypes JSONL fixtures "
+            "(checked 2026-07-31). Filesystem install only."
+        ),
+        evidence_level="verified-filesystem",
+        global_home_env="GEMINI_CLI_HOME",
+        global_env_rel=".gemini/skills",
+    ),
 }
 
 SOURCE_TITLES = {
@@ -821,6 +869,7 @@ SOURCE_TITLES = {
     "cline": "Cline",
     "openhands": "OpenHands",
     "hermes": "Hermes Agent",
+    "gemini": "Gemini CLI",
     "qwen": "Qwen Code",
 }
 

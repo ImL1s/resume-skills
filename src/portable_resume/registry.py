@@ -57,6 +57,7 @@ _DESTINATION_PAYLOAD_PROFILES: dict[str, str] = {
     "openhands": "openhands-v1",
     "hermes": "hermes-v1",
     "github-copilot": "github-copilot-v1",
+    "gemini": "gemini-v1",
 }
 
 _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
@@ -76,6 +77,7 @@ _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
     "openhands": (".agents/skills", ".openhands/skills"),
     "hermes": (".hermes/skills", ".hermes/skills"),
     "github-copilot": (".github/skills", ".copilot/skills"),
+    "gemini": (".gemini/skills", ".gemini/skills"),
 }
 
 
@@ -189,6 +191,14 @@ SOURCE_PROFILES["github-copilot"] = SourceProfile(
     fixture_profile=None,
 )
 
+SOURCE_PROFILES["gemini"] = SourceProfile(
+    key="gemini",
+    adapter_module="portable_resume.adapters.gemini",
+    format_ids=("gemini-cli-session-jsonl-v1",),
+    status="supported",
+    fixture_profile="gemini-cli-session-jsonl-v1",
+)
+
 # Native package surface key per destination (independent of direct Skills).
 # Hosts with only direct-skill install leave this unset (opencode, pi, …).
 _NATIVE_PACKAGE_BY_DESTINATION: dict[str, str] = {
@@ -291,6 +301,16 @@ DESTINATION_PROFILES["github-copilot"] = DestinationProfile(
     direct_skill=True,
     project_rel=".github/skills",
     global_rel=".copilot/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["gemini"] = DestinationProfile(
+    key="gemini",
+    payload_profile="gemini-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".gemini/skills",
+    global_rel=".gemini/skills",
     native_package_profile=None,
 )
 

@@ -153,6 +153,15 @@ FIXTURES: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
             "synthetic hermes assistant reply",
         ),
     ),
+    "gemini": (
+        "tests/fixtures/gemini/s-gm-01-user-basic",
+        "/tmp/project",
+        "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        (
+            "synthetic gemini user prompt",
+            "synthetic gemini assistant reply",
+        ),
+    ),
 }
 
 

@@ -1,5 +1,8 @@
 ## Unreleased
 
+- Gemini CLI compatibility source + destination (#45): `gemini-cli-session-jsonl-v1`
+  for `~/.gemini/tmp/<projectHash>/chats/session-*.jsonl` (independent of Antigravity).
+  Destination `.gemini/skills` / `~/.gemini/skills`. Matrix is now **16×17=272**.
 - GitHub Copilot CLI destination (#44 Track A): install `resume-*` Skills into
   `.github/skills` and `$COPILOT_HOME/skills` (default `~/.copilot/skills`).
   Source adapter remains **research** until `events.jsonl` schema is pinned.

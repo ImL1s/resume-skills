@@ -11,7 +11,7 @@ python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
 The package builder creates thirteen `*-<host>-skills.zip` archives (one per
-enabled destination, including Pi, OpenClaw, goose, Crush, Cline, OpenHands, Hermes, and GitHub Copilot CLI), seven supported
+enabled destination, including Pi, OpenClaw, goose, Crush, Cline, OpenHands, Hermes, GitHub Copilot CLI, and Gemini CLI), seven supported
 plugin/marketplace archives, and `host-packages.json` (`host-packages-v2`) with
 SHA-256 digests, per-artifact offline `contract_id` validation (#27), and honest
 `native_evidence_status=not-run` until host CLI revalidation is recorded.
@@ -152,6 +152,7 @@ Use `--scope global` for the user root or `--root <path>` for an explicit root. 
 | OpenHands (`openhands`) | `.agents/skills` / `~/.openhands/skills` | Direct Skill only. Local CLI events. Native OpenHands UI not-run. | Load `resume-openhands` / `resume-<source>` |
 | Hermes (`hermes`) | `.hermes/skills` / `~/.hermes/skills` | Direct Skill only. state.db schema 23. Native Hermes UI not-run. | Load `resume-hermes` / `resume-<source>` |
 | GitHub Copilot CLI (`github-copilot`) | `.github/skills` / `$COPILOT_HOME/skills` | **Destination-only**. Compat `.agents`/`.claude` skills. No copilot source adapter yet. Native CLI install not-run. | Load installed `resume-<source>` skills |
+| Gemini CLI (`gemini`) | `.gemini/skills` / `~/.gemini/skills` | **Compat profile** (not Antigravity). Session JSONL under `tmp/<hash>/chats`. Native UI not-run. | Load `resume-gemini` / `resume-<source>` |
 
 For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, `resume-crush`, `resume-goose`, `resume-openclaw`, `resume-pi`, and `resume-qwen`.
 
