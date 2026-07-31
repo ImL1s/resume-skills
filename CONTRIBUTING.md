@@ -15,6 +15,41 @@ PYTHONPATH=src python3 -m unittest discover -s tests -q
 PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
+### Fast iteration during development
+
+The full gate above takes several minutes. While iterating, run only what your
+change touches; the full gate remains mandatory before opening the pull request.
+
+```bash
+# Stage-scoped verification (same stages CI uses; see --help for the list)
+python3 scripts/self_verify.py --only unit          # just the unittest stage
+python3 scripts/self_verify.py --only docs          # after doc edits
+python3 scripts/self_verify.py --profile ci-compat  # what one CI matrix cell runs
+
+# One test module / one test
+PYTHONPATH=src python3 -m unittest tests.unit.test_self_verify_profiles -v
+PYTHONPATH=src python3 -m unittest tests.unit.test_self_verify_profiles.SelfVerifyProfileTests.test_resolve_only_preserves_canonical_order
+```
+
+### Editable install (drops the `PYTHONPATH` prefix)
+
+```bash
+pip install -e .
+portable-resume self-check
+install-resume-skills hosts
+```
+
+### pytest (optional local convenience)
+
+The authoritative runner is unittest (what CI runs). If you have pytest
+installed, the suite collects cleanly and gives you `-k` filtering and `-x`:
+
+```bash
+PYTHONPATH=src python3 -m pytest tests -q -k cline -x
+```
+
+Do not add pytest-only constructs (fixtures, markers) to the tests.
+
 For packaging/release changes, also build wheel/sdist, run `scripts/smoke_distribution.py`, and build host archives with `scripts/build_host_packages.py` in a temporary output directory.
 
 Run `python3 scripts/check_docs.py` after changing installation, version, host,
