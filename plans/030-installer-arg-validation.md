@@ -241,12 +241,12 @@ In the new/extended test module (unittest):
 
 ## Done criteria
 
-- [ ] The three repro commands exit 2 with `E_INVALID_INPUT` (was 8 / `E_INVARIANT`)
-- [ ] `--host` typos on install/verify/uninstall/audit-host list valid keys via argparse and exit 2
-- [ ] `family` in `E_INSTALL_SHADOW` is deduplicated (test proves a second root survives the cap)
-- [ ] Full suite + smoke matrix + self_verify + check_secrets all pass
-- [ ] No files outside the in-scope list modified
-- [ ] `plans/README.md` status row updated
+- [x] The three repro commands exit 2 with `E_INVALID_INPUT` (was 8 / `E_INVARIANT`)
+- [x] `--host` typos on install/verify/uninstall/audit-host list valid keys via argparse and exit 2
+- [x] `family` in `E_INSTALL_SHADOW` is deduplicated (test proves a second root survives the cap)
+- [x] Full suite + smoke matrix + self_verify + check_secrets all pass
+- [x] No files outside the in-scope list modified
+- [x] `plans/README.md` status row updated
 
 ## STOP conditions
 
