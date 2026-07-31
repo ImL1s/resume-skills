@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
+from unittest.mock import patch
 
 from portable_resume.bounds import DEFAULT_BOUNDS
-from portable_resume.handoff import CHECKLIST, UNTRUSTED_BANNER, render_handoff, render_session
+from portable_resume import handoff
+from portable_resume.handoff import (
+    CHECKLIST,
+    UNTRUSTED_BANNER,
+    render_handoff,
+    render_session,
+)
+from portable_resume.diagnostics import WARNING_CODES
 from portable_resume.model import Envelope, Query, Session, Turn
 
 
@@ -96,6 +105,62 @@ class HandoffOutputBudgetTests(unittest.TestCase):
         rendered = render_session(session)
         self.assertIn("LATEST_USER_MARKER", rendered)
         self.assertIn(UNTRUSTED_BANNER, rendered)
+
+    def test_dropped_turn_count_is_announced_at_evidence_cut_point(self) -> None:
+        turns = tuple(
+            Turn(ordinal=i, role="user", content=f"turn-{i}-" + ("z" * 600))
+            for i in range(8)
+        )
+        session = self._session(
+            user="LATEST_USER", assistant="LATEST_ASSISTANT", turns=turns
+        )
+        bounds = replace(DEFAULT_BOUNDS, handoff_output_bytes=3_500)
+
+        with patch("portable_resume.handoff.DEFAULT_BOUNDS", bounds):
+            rendered = render_session(session)
+
+        kept_ordinals = [i for i in range(8) if f"> **[{i} user]**" in rendered]
+        self.assertGreater(len(kept_ordinals), 0)
+        self.assertLess(len(kept_ordinals), len(turns))
+        omitted = len(turns) - len(kept_ordinals)
+        cut_notice = f"> _({omitted} earlier turns omitted to fit the output budget; newest turns kept)_"
+        evidence = rendered.index("### Bounded transcript evidence")
+        first_turn = rendered.index(f"> **[{kept_ordinals[0]} user]**")
+        self.assertIn(cut_notice, rendered[evidence:first_turn])
+        self.assertIn(
+            "`[W_TRUNCATED]` earlier transcript turns were omitted to fit the output budget.",
+            rendered,
+        )
+
+    def test_turn_body_truncation_has_distinct_warning_notice(self) -> None:
+        session = self._session(
+            user="LATEST_USER_" + ("U" * 20_000),
+            assistant="LATEST_ASSISTANT_" + ("A" * 20_000),
+        )
+        bounds = replace(DEFAULT_BOUNDS, handoff_output_bytes=3_500)
+
+        with patch("portable_resume.handoff.DEFAULT_BOUNDS", bounds):
+            rendered = render_session(session)
+
+        self.assertIn(
+            "`[W_TRUNCATED]` one or more recovered text bodies were shortened before display.",
+            rendered,
+        )
+        self.assertNotIn("earlier transcript turns were omitted", rendered)
+        self.assertLessEqual(len(rendered.encode("utf-8")), bounds.handoff_output_bytes)
+
+    def test_every_handoff_warning_has_a_static_explanation(self) -> None:
+        install_only = {
+            "W_HOST_DISCOVERY_UNPROVEN",
+            "W_LIVE_SMOKE_NOT_RUN",
+            "W_SKILL_DUPLICATE",
+            "W_SKILL_SHADOW",
+        }
+        explanations = getattr(handoff, "HANDOFF_WARNING_EXPLANATIONS", {})
+        self.assertEqual(set(WARNING_CODES) - install_only, set(explanations))
+        self.assertTrue(
+            all(value and "\n" not in value for value in explanations.values())
+        )
 
     def test_many_turns_fit_without_quadratic_stall(self) -> None:
         # Codex P1: one-turn-at-a-time rebuild stalled on ~2k newline-heavy turns.

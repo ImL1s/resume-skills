@@ -27,7 +27,7 @@ Plans 045–047 fix that chain.
 | 045 | Real-schema Claude tool fixture (prerequisite) | P1 | S | — | TODO |
 | 046 | Render tool calls with name + bounded input | P1 | M | 045 | TODO |
 | 047 | "Latest recorded action" includes tool turns | P1 | S | 045, **046 (hard)** | TODO |
-| 048 | Truncation count at the cut point; warnings explained and hoisted | P2 | S | — | TODO |
+| 048 | Truncation count at the cut point; warnings explained and hoisted | P2 | S | — | **DONE** |
 | 049 | `pi` extension banners must not become the user request | P2 | S | — | TODO |
 | 050 | Unmatched `--cwd` yields an empty listing, not `E_LIMIT_EXCEEDED` | P1 | M | — | TODO |
 | 051 | Runner hardening: bare invocation lists; missing runtime diagnoses | P1 | S | — | TODO |
