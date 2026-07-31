@@ -9,7 +9,7 @@ import os
 import sys
 from typing import Any, Sequence
 
-from . import __version__
+from .build_identity import build_identity, latest_release
 from .adapters.base import CAPABILITY_STATES, ResolvedRef, SourceAdapter
 from .bounds import DEFAULT_BOUNDS, ReadBudget
 from .contracts import validate_envelope
@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s {__version__}",
+        version=f"%(prog)s {build_identity()['version']}",
     )
     parser.add_argument(
         "source",
@@ -185,9 +185,12 @@ def self_check(*, stdout: Any = sys.stdout) -> int:
         validate_registries,
     )
 
+    identity = build_identity()
     report: dict[str, Any] = {
         "schema_version": "portable-resume/self-check-v1",
         "ok": True,
+        "build_identity": identity,
+        "latest_release": latest_release(),
         "sources": sorted(enabled_source_keys()),
         "destinations": sorted(enabled_destination_keys()),
         "package_surfaces": sorted(enabled_package_keys()),

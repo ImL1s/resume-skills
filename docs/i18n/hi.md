@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: hi v0.3.4 -->
+<!-- portable-resume-i18n: hi v0.4.0.dev0 -->
 # Portable Resume — हिन्दी त्वरित शुरुआत
 
 **वर्तमान प्रकाशित संस्करण:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)

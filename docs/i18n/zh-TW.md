@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: zh-TW v0.3.4 -->
+<!-- portable-resume-i18n: zh-TW v0.4.0.dev0 -->
 # Portable Resume — 繁體中文快速指南
 
 **目前已發布版本：** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)

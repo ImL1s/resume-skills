@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from portable_resume import __version__
+from portable_resume.build_identity import latest_release
 from portable_resume.diagnostics import ExitCode
 from portable_resume.reader import run
 
@@ -21,6 +23,11 @@ class SelfCheckArgvTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertTrue(payload["ok"])
         self.assertIn("package_surfaces", payload)
+        self.assertEqual(payload["build_identity"]["base_version"], __version__)
+        self.assertEqual(
+            payload["latest_release"]["version"],
+            latest_release()["version"],
+        )
 
     def test_self_check_rejects_unknown_option(self) -> None:
         stdout = io.StringIO()

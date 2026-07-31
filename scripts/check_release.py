@@ -16,6 +16,7 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[1]
 SEMVER_TAG = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 VERSION_ASSIGNMENT = re.compile(r'^__version__\s*=\s*"([^"]+)"\s*$', re.MULTILINE)
+DEVELOPMENT_VERSION = re.compile(r"\.dev\d+(?:\+|$)")
 
 
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
@@ -58,6 +59,8 @@ def validate_release(
 
     if metadata_version != source_version:
         errors.append("pyproject and source versions differ")
+    if source_version and DEVELOPMENT_VERSION.search(source_version):
+        errors.append("development versions cannot be released")
     expected_tag = f"v{source_version}" if source_version else ""
     if tag != expected_tag:
         errors.append("tag does not match package version")
@@ -99,6 +102,23 @@ def validate_release(
         if status.returncode != 0 or status.stdout.strip():
             errors.append("tracked checkout must be clean")
 
+    identity: dict[str, Any] | None = None
+    try:
+        src = str(REPO / "src")
+        if src not in sys.path:
+            sys.path.insert(0, src)
+        from git_build_identity import git_build_identity
+
+        identity = git_build_identity(
+            repo_root=REPO,
+            package_root=REPO / "src" / "portable_resume",
+            base_version=source_version,
+        )
+        if require_git and identity["release_channel"] != "release":
+            errors.append("release checkout does not have a clean exact-tag identity")
+    except (ImportError, OSError, ValueError):
+        errors.append("build identity is unreadable")
+
     return {
         "schema_version": "portable-resume/release-check-v1",
         "ok": not errors,
@@ -107,6 +127,7 @@ def validate_release(
         "metadata_version": metadata_version,
         "changelog": "present" if not any("CHANGELOG" in item for item in errors) else "missing",
         "git": git_evidence,
+        "build_identity": identity,
         "errors": errors,
     }
 

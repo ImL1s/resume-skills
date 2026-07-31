@@ -6,7 +6,8 @@ archived run and immutable commit.
 
 ## One-time repository setup
 
-1. Protect `main`; require the `ci` workflow before merge.
+1. Protect `main`; require the `ci` workflow before merge. Add an immutable tag
+   ruleset for `v*` that blocks updates and deletion after tag creation.
 2. Create a GitHub environment named **`pypi`** and add appropriate reviewer/protection rules.
 3. In PyPI, create a Trusted Publisher for this repository, workflow file `release.yml`, environment `pypi`, and project `portable-resume`.
 4. Keep Actions permissions restricted; the workflow grants write/OIDC permissions only to the jobs that need them.
@@ -19,6 +20,21 @@ No long-lived PyPI token is required or expected.
 
 ## Pre-release
 
+The version lifecycle is fail-closed:
+
+1. After publishing `vX.Y.Z`, immediately advance `main` to the next intended
+   `X.Y.Z.dev0` or minor-development version.
+2. Development builds retain that PEP 440 base. Explicit build/release reports
+   expose commit/dirty/registry provenance through
+   `portable-resume/build-identity-v1`; runtime identity lookup never invokes
+   Git or another child process and uses the documented null-commit fallback
+   until embedded artifact identity is completed under #118. This does not
+   change the separate optional trusted-zstd reader boundary.
+3. Prepare a release by replacing the development base with exact `X.Y.Z`,
+   merging green CI, and only then creating the annotated matching tag.
+4. The release workflow rejects `.devN`; after publication, repeat step 1 before
+   any further product change.
+
 ```bash
 python3 scripts/self_verify.py
 python3 scripts/check_docs.py
@@ -26,9 +42,13 @@ python3 scripts/check_secrets.py
 PYTHONPATH=src python3 -m unittest discover -s tests -q
 PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 python3 scripts/check_release.py --tag vX.Y.Z --json
+python3 scripts/check_version_state.py --require-git --json
 ```
 
-Update `portable_resume.__version__`, `pyproject.toml`, README, and CHANGELOG together. Commit a clean tree, merge to `main`, then create an **annotated** tag:
+Update `portable_resume.__version__`, `pyproject.toml`, README, and CHANGELOG
+together. The release candidate uses an exact stable version; `.devN` is never a
+publishable tag. Commit a clean tree, merge to `main`, then create an
+**annotated** tag:
 
 ```bash
 git tag -a vX.Y.Z -m "release vX.Y.Z"
@@ -37,18 +57,26 @@ git push origin vX.Y.Z
 
 ## Automated release order
 
-1. Check out the requested tag with full history.
-2. Require strict `vMAJOR.MINOR.PATCH`, matching source/package versions, CHANGELOG entry, clean tree, annotated tag, and reachability from `origin/main`.
+1. Check out the requested tag with full history, validate it, and export its
+   peeled 40-character commit SHA.
+2. Require strict `vMAJOR.MINOR.PATCH`, matching source/package versions,
+   CHANGELOG entry, clean tree, annotated tag, and reachability from
+   `origin/main`; pin every downstream checkout to the validated commit SHA.
 3. Run the four canonical gates plus multilingual-document consistency on Ubuntu/macOS × Python 3.11/3.14.
-4. Build wheel, sdist, one direct host archive per enabled destination (currently nine, including Pi), and seven plugin/marketplace archives once.
+4. Build wheel, sdist, one direct host archive per enabled destination
+   (currently 18), and seven plugin/marketplace archives once.
 5. Smoke-install the exact wheel and sdist outside the checkout on both OSes.
 6. Generate artifact digests, `release-evidence.json`, and a `SHA256SUMS` that
    uses the flat basenames delivered by GitHub Releases.
 7. Recreate that flat download layout and verify every checksum on Ubuntu and
    macOS.
 8. Create GitHub artifact attestations and a **draft** Release containing those exact bytes.
-9. Publish the same Python artifacts through PyPI Trusted Publishing.
-10. Publish the staged GitHub Release only after PyPI succeeds. A manual dispatch may deliberately skip PyPI.
+9. Reassert that the remote annotated tag still peels to the validated SHA,
+   then publish the same Python artifacts through PyPI Trusted Publishing.
+10. Reassert the remote tag again and publish the staged GitHub Release only
+    after PyPI succeeds. A manual dispatch may deliberately skip PyPI. Protect
+    `v*` tags with an immutable repository ruleset because workflow checks
+    cannot make a mutable Git ref atomic.
 11. Synchronize the public marketplace and verify its release:
 
     ```bash

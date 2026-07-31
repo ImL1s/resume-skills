@@ -115,11 +115,13 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
                 "-c",
                 (
                     "import json,portable_resume;"
+                    "from portable_resume.build_identity import build_identity;"
                     "from importlib.metadata import metadata,version;"
                     "m=metadata('portable-resume');"
                     "print(json.dumps({'module':portable_resume.__file__,"
                     "'source_version':portable_resume.__version__,"
                     "'metadata_version':version('portable-resume'),"
+                    "'build_identity':build_identity(),"
                     "'project_urls':m.get_all('Project-URL') or []}))"
                 ),
             ],
@@ -129,6 +131,13 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
         identity = _json_stdout(probe, "package identity")
         if identity.get("source_version") != version or identity.get("metadata_version") != version:
             raise RuntimeError("installed version does not match release version")
+        build = identity.get("build_identity") or {}
+        if (
+            build.get("base_version") != version
+            or build.get("registry_sha256") is None
+            or build.get("source_sha256") is None
+        ):
+            raise RuntimeError("installed build identity does not match package version")
         module_path = str(identity.get("module", ""))
         if str(REPO) in module_path:
             raise RuntimeError("installed import leaked to source checkout")
@@ -165,6 +174,7 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
         if (
             not self_check.get("ok")
             or self_check.get("matrix", {}).get("cell_count") != EXPECTED_MATRIX_CELLS
+            or self_check.get("build_identity") != build
         ):
             raise RuntimeError(
                 f"installed self-check did not prove the {EXPECTED_MATRIX_CELLS}-cell matrix"
@@ -234,6 +244,7 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
             "artifact": artifact.name,
             "kind": "wheel" if artifact.suffix == ".whl" else "sdist",
             "version": version,
+            "build_identity": build,
             "matrix_cells": matrix["cell_count"],
             "quick_install_verified": True,
             "module_outside_checkout": True,

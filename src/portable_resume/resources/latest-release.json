@@ -1,0 +1,22 @@
+{
+  "artifact_classes": [
+    "direct-skills",
+    "native-package",
+    "sdist",
+    "wheel"
+  ],
+  "commit_sha": "fa1344bf62eb26332baea7b7ef4540a1a37acba8",
+  "github_release": "https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4",
+  "matrix_dimensions": {
+    "cells": 81,
+    "destinations": 9,
+    "sources": 9
+  },
+  "published_at": "2026-07-27T13:24:18Z",
+  "pypi": "https://pypi.org/project/portable-resume/0.3.4/",
+  "registry_sha256": "13a515c6c0a1af5e4bea037d5396242e14aba326afb5abd437a99abdf093d407",
+  "schema": "portable-resume/latest-release-v1",
+  "source_sha256": "154d52a28cdcb479af7ed52b07aa0a64e203b7d6bb41b604a035a37aa05d6630",
+  "tag": "v0.3.4",
+  "version": "0.3.4"
+}

@@ -31,13 +31,18 @@ class ReleaseToolingTests(unittest.TestCase):
             check=False,
         )
 
-    def test_metadata_only_release_check_matches_current_version(self) -> None:
+    def test_metadata_only_release_check_rejects_current_development_version(self) -> None:
         result = self.run_check(f"v{portable_resume.__version__}")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 1, result.stderr)
         payload = json.loads(result.stdout)
-        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["ok"])
         self.assertEqual(payload["version"], portable_resume.__version__)
         self.assertFalse(payload["git"]["checked"])
+        self.assertIn("development versions cannot be released", payload["errors"])
+        self.assertEqual(
+            payload["build_identity"]["base_version"],
+            portable_resume.__version__,
+        )
 
     def test_release_check_rejects_mismatched_or_non_semver_tag(self) -> None:
         for tag in ("v999.0.0", "latest", "v01.2.3"):
@@ -68,8 +73,23 @@ class ReleaseToolingTests(unittest.TestCase):
         self.assertIn("from portable_resume.registry import matrix_dimensions", release)
         self.assertIn('"packaging_cells": dimensions["cells"]', release)
         self.assertIn('"installed_runner_cells": dimensions["cells"]', release)
+        self.assertIn("identity = git_build_identity()", release)
+        self.assertIn('"build_identity": identity', release)
+        self.assertIn("commit: ${{ steps.metadata.outputs.commit }}", release)
+        self.assertEqual(
+            release.count("ref: ${{ needs.validate.outputs.commit }}"),
+            3,
+        )
+        self.assertEqual(release.count("release tag moved after validation"), 3)
+        self.assertEqual(release.count("ref: ${{ env.RELEASE_TAG }}"), 1)
+        self.assertIn('identity.get("commit_sha") != expected_commit', release)
+        self.assertIn('host_report.get("build_identity") != identity', release)
         self.assertNotIn('"packaging_cells": 64', release)
         self.assertNotIn('"installed_runner_cells": 64', release)
+
+        ci = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("fetch-depth: 0", ci)
+        self.assertIn("python scripts/self_verify.py --profile ci-quality", ci)
 
     def test_release_checksum_manifest_uses_flat_asset_names(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

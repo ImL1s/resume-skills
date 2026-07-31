@@ -17,7 +17,7 @@ import os
 import sys
 from typing import Any, Sequence
 
-from .. import __version__
+from ..build_identity import build_identity
 from ..diagnostics import DiagnosticError, SOURCE_KEYS, emit_diagnostic
 from .catalog import HOST_KEYS, hosts_report, resolve_skill_root
 from .discovery import audit_host_report, require_no_blocking_shadow, scan_skill_duplicates
@@ -41,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s {__version__}",
+        version=f"%(prog)s {build_identity()['version']}",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

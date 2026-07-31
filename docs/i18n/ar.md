@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: ar v0.3.4 -->
+<!-- portable-resume-i18n: ar v0.4.0.dev0 -->
 # Portable Resume — دليل البدء السريع بالعربية
 
 **الإصدار الحالي المنشور:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
