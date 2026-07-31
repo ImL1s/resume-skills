@@ -18,6 +18,13 @@ archived run and immutable commit.
 
 No long-lived PyPI token is required or expected.
 
+Current repository-policy evidence (2026-08-01): active
+[ruleset `20148806`](https://github.com/ImL1s/resume-skills/rules/20148806)
+targets `refs/tags/v*`, blocks updates and deletion, and reports an empty bypass
+actor list through the repository rulesets API. This satisfies the one-time tag
+policy setup; changing or removing the ruleset is a separate administrative
+action and must never be presented as an allowed tag mutation path.
+
 ## Pre-release
 
 The version lifecycle is fail-closed:
@@ -114,6 +121,12 @@ separate and require their own rows in
 
 ### Current state
 
+- Unreleased `main` release-integrity work from #118 is complete at merge
+  `ff119f16f2af76468e848a828bde51433d968754`: one embedded v2 identity is
+  cross-verified across artifact families, and repository ruleset
+  [`20148806`](https://github.com/ImL1s/resume-skills/rules/20148806) actively
+  blocks `v*` updates/deletion with no bypass actors. This is pre-release
+  evidence only; `0.4.0` is not published.
 - `v0.3.4`: **published** from annotated tag object
   `f952856476dbf7742d16c0f42638497c0a930b28` at commit
   `fa1344bf62eb26332baea7b7ef4540a1a37acba8`.

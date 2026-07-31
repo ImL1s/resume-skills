@@ -34,8 +34,11 @@
   hints. The new `MANIFEST.in` path uses `setuptools==83.0.0`, outside
   the affected range of
   [GHSA-h35f-9h28-mq5c](https://github.com/advisories/GHSA-h35f-9h28-mq5c).
-  Repository-level immutable `v*` tag enforcement remains an external setup
-  gate; no new release is claimed.
+  Repository-level immutable `v*` tag enforcement is active and verified by
+  API readback as
+  [ruleset `20148806`](https://github.com/ImL1s/resume-skills/rules/20148806):
+  target `tag`, condition `refs/tags/v*`, update and deletion restrictions, and
+  no bypass actors. No new release is claimed.
 - GitHub Copilot CLI source (#44 Track B): `copilot-cli-events-jsonl-v1` reader for
   `$COPILOT_HOME/session-state/<id>/events.jsonl` (local authority; not session-store.db /
   Chronicle / cloud sync). Matrix is now **17×18=306**.

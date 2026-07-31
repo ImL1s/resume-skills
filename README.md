@@ -31,8 +31,11 @@ resource—never an environment-selected path and never Git—while an unpackage
 source checkout retains the deterministic base/null-commit fallback. Every
 identity binds the enabled capability registry, runtime source, and
 artifact-producing build-input digests without exposing local paths.
-Repository-level immutable `v*` tag enforcement
-remains a separate external setup gate under #118; no `0.4.0` release is claimed.
+Repository-level immutable `v*` tag enforcement is active and independently
+read back as [ruleset `20148806`](https://github.com/ImL1s/resume-skills/rules/20148806):
+it targets `refs/tags/v*`, blocks updates and deletion, and has no bypass
+actors. This completes the repository-policy gate from #118; no `0.4.0`
+release is claimed.
 
 ## Sources and destinations
 
