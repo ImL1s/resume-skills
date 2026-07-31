@@ -319,14 +319,15 @@ def _row_to_summary(
     )
 
 
-def _charge_entry_json(entry_json: object, budget: ReadBudget) -> None:
-    budget.consume_records()
-    if not isinstance(entry_json, str):
-        raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
-    encoded = entry_json.encode("utf-8")
-    if len(encoded) > min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes):
-        raise DiagnosticError.limit_exceeded()
-    budget.consume_bytes(len(encoded))
+def _entry_prefix_bytes(budget: ReadBudget) -> int:
+    """Return a sentinel-inclusive prefix cap for the remaining read budget."""
+
+    record_limit = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
+    source_limit = min(
+        budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes
+    )
+    remaining = max(0, source_limit - budget.bytes_read)
+    return min(record_limit, remaining) + 1
 
 
 def _decode_bounded_entry_json(
@@ -334,24 +335,24 @@ def _decode_bounded_entry_json(
     byte_length: object,
     prefix: object,
     budget: ReadBudget,
-    *,
-    already_charged: bool = False,
 ) -> str:
     """Validate and decode a SQL-bounded ``entry_json`` projection."""
 
-    if not already_charged:
-        budget.consume_records()
+    budget.consume_records()
     if storage_type != "text":
         raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
     if type(byte_length) is not int or not isinstance(prefix, bytes):
         raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
     record_limit = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
-    if byte_length < 0 or byte_length > record_limit:
+    source_limit = min(
+        budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes
+    )
+    remaining = max(0, source_limit - budget.bytes_read)
+    if byte_length < 0 or byte_length > record_limit or byte_length > remaining:
         raise DiagnosticError.limit_exceeded()
     if len(prefix) != byte_length:
         raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
-    if not already_charged:
-        budget.consume_bytes(byte_length)
+    budget.consume_bytes(byte_length)
     try:
         return prefix.decode("utf-8")
     except UnicodeDecodeError as error:
@@ -373,33 +374,36 @@ def _exact_session_summaries(
 
     values: list[SessionSummary] = []
     scan_limit = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
+    entry_prefix_bytes = _entry_prefix_bytes(budget)
     nodes = connection.execute(
         """
         SELECT
-          current_session_id, entry_json, updated_at, created_at, display_name,
+          current_session_id,
+          typeof(entry_json), length(CAST(entry_json AS BLOB)),
+          substr(CAST(entry_json AS BLOB), 1, ?),
+          updated_at, created_at, display_name,
           last_interaction_at, archived_at, created_via
         FROM session_nodes
         WHERE current_session_id = ?
         LIMIT ?
         """,
-        (session_filter, scan_limit + 1),
+        (entry_prefix_bytes, session_filter, scan_limit + 1),
     )
     node_count = 0
     for row in nodes:
         node_count += 1
         if node_count > scan_limit:
             raise DiagnosticError.limit_exceeded()
-        entry_json = row[1]
-        _charge_entry_json(entry_json, budget)
+        entry_json = _decode_bounded_entry_json(row[1], row[2], row[3], budget)
         item = _row_to_summary(
             agent_id=agent_id,
             database=database,
             session_id=row[0],
             entry_json=entry_json,
-            updated_at=row[2],
-            created_at=row[3],
-            display_name=row[4],
-            last_interaction_at=row[5],
+            updated_at=row[4],
+            created_at=row[5],
+            display_name=row[6],
+            last_interaction_at=row[7],
             query=query,
             require_age=False,
         )
@@ -412,7 +416,8 @@ def _exact_session_summaries(
         """
         SELECT
           w.session_id,
-          n.entry_json,
+          typeof(n.entry_json), length(CAST(n.entry_json AS BLOB)),
+          substr(CAST(n.entry_json AS BLOB), 1, ?),
           w.updated_at,
           w.created_at,
           COALESCE(w.display_name, n.display_name),
@@ -422,24 +427,23 @@ def _exact_session_summaries(
         WHERE w.session_id = ?
         LIMIT ?
         """,
-        (session_filter, scan_limit + 1),
+        (_entry_prefix_bytes(budget), session_filter, scan_limit + 1),
     )
     window_count = 0
     for row in windows:
         window_count += 1
         if window_count > scan_limit:
             raise DiagnosticError.limit_exceeded()
-        entry_json = row[1]
-        _charge_entry_json(entry_json, budget)
+        entry_json = _decode_bounded_entry_json(row[1], row[2], row[3], budget)
         item = _row_to_summary(
             agent_id=agent_id,
             database=database,
             session_id=row[0],
             entry_json=entry_json,
-            updated_at=row[2],
-            created_at=row[3],
-            display_name=row[4],
-            last_interaction_at=row[5],
+            updated_at=row[4],
+            created_at=row[5],
+            display_name=row[6],
+            last_interaction_at=row[7],
             query=query,
             require_age=False,
         )
@@ -466,7 +470,8 @@ def _list_nodes(
         SELECT
           session_key,
           current_session_id,
-          entry_json,
+          typeof(entry_json), length(CAST(entry_json AS BLOB)),
+          substr(CAST(entry_json AS BLOB), 1, ?),
           updated_at,
           created_at,
           created_via,
@@ -477,7 +482,7 @@ def _list_nodes(
         ORDER BY COALESCE(last_interaction_at, updated_at, created_at) DESC, current_session_id ASC
         LIMIT ?
         """,
-        (scan_limit + 1,),
+        (_entry_prefix_bytes(budget), scan_limit + 1),
     )
     values: list[SessionSummary] = []
     row_count = 0
@@ -488,7 +493,9 @@ def _list_nodes(
         (
             _session_key,
             session_id,
-            entry_json,
+            entry_storage_type,
+            entry_byte_length,
+            entry_prefix,
             updated_at,
             created_at,
             created_via,
@@ -496,7 +503,9 @@ def _list_nodes(
             archived_at,
             last_interaction_at,
         ) = row
-        _charge_entry_json(entry_json, budget)
+        entry_json = _decode_bounded_entry_json(
+            entry_storage_type, entry_byte_length, entry_prefix, budget
+        )
         if len(values) >= list_limit:
             continue
         if archived_at is not None and not include_internal:
@@ -666,9 +675,8 @@ def _show_session(
     database: str,
     query: Query,
     budget: ReadBudget,
-    entry_already_charged: bool = False,
 ) -> Session:
-    entry_prefix_bytes = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes) + 1
+    entry_prefix_bytes = _entry_prefix_bytes(budget)
     node = connection.execute(
         """
         SELECT session_key, current_session_id,
@@ -712,7 +720,6 @@ def _show_session(
                 parent[1],
                 parent[2],
                 budget,
-                already_charged=entry_already_charged,
             )
             if parent
             else None
@@ -737,7 +744,6 @@ def _show_session(
             entry_byte_length,
             entry_prefix,
             budget,
-            already_charged=entry_already_charged,
         )
         title = display_name if isinstance(display_name, str) else None
         stamp = _ms_stamp(last_interaction_at if last_interaction_at is not None else updated_at)
@@ -985,24 +991,33 @@ class OpenClawAdapter:
             # Composite missing — try treating whole id as native session id.
             agent_id, session_id = None, ref.session_id
         database = ref.source_path
-        entry_already_charged = False
         if database is None:
-            matches = self.list(
-                Query(
-                    source=query.source,
-                    ref=ref.session_id,
-                    cwd=query.cwd,
-                    within_min=0,
-                    source_root=query.source_root,
-                    max_tool_chars=query.max_tool_chars,
-                ),
-                budget,
-            )
+            matches: list[Session] = []
+            for candidate_agent, candidate_database in _agent_db_paths(root, budget):
+                if agent_id is not None and candidate_agent != agent_id:
+                    continue
+                try:
+                    with _open_connection(candidate_database, root, budget) as connection:
+                        _require_schema(connection, expected_agent=candidate_agent)
+                        matches.append(
+                            _show_session(
+                                connection,
+                                agent_id=candidate_agent,
+                                session_id=session_id,
+                                database=candidate_database,
+                                query=query,
+                                budget=budget,
+                            )
+                        )
+                except DiagnosticError as error:
+                    if error.code in {"E_NO_MATCH", "E_UNSUPPORTED_FORMAT"}:
+                        continue
+                    raise
+                if agent_id is not None:
+                    return matches[0]
             if len(matches) != 1:
                 raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
-            database = matches[0].source_path
-            agent_id, session_id = _parse_ref(matches[0].session_id)
-            entry_already_charged = True
+            return matches[0]
         if database is None or not _regular_db_file(database, root):
             raise DiagnosticError.unsafe_path()
         # Resolve agent from path when composite was incomplete.
@@ -1025,7 +1040,6 @@ class OpenClawAdapter:
                 database=database,
                 query=query,
                 budget=budget,
-                entry_already_charged=entry_already_charged,
             )
 
 

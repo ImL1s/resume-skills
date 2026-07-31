@@ -36,7 +36,7 @@ def fixture_root(case: str) -> Path:
     return (FIXTURES / case).resolve()
 
 
-def query(root: Path, ref: str | None = None, **kwargs: object) -> Query:
+def query(root: Path, ref: str | None = None, **kwargs: Any) -> Query:
     return Query(
         source="openclaw",
         ref=ref,
@@ -193,11 +193,17 @@ class OpenClawAdapterTests(unittest.TestCase):
     def test_listing_streams_and_charges_rows_past_output_cap(self) -> None:
         from portable_resume.adapters import openclaw as oc
 
-        small_entry = '{"cwd":"/tmp/project"}'
-        oversized_entry = "x" * 129
+        small_entry = b'{"cwd":"/tmp/project"}'
+        oversized_entry = b"x" * 129
         rows = [
-            ("key-1", "session-1", small_entry, 1, 1, "operator", "one", None, 1),
-            ("key-2", "session-2", oversized_entry, 0, 0, "operator", "two", None, 0),
+            (
+                "key-1", "session-1", "text", len(small_entry), small_entry,
+                1, 1, "operator", "one", None, 1,
+            ),
+            (
+                "key-2", "session-2", "text", len(oversized_entry), oversized_entry,
+                0, 0, "operator", "two", None, 0,
+            ),
         ]
         connection = mock.Mock()
         connection.execute.return_value = _NoFetchAllCursor(rows)
@@ -222,12 +228,16 @@ class OpenClawAdapterTests(unittest.TestCase):
 
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
         self.assertEqual(budget.records, 2)
+        sql, parameters = connection.execute.call_args.args
+        self.assertIn("substr(CAST(entry_json AS BLOB), 1, ?)", sql)
+        self.assertNotIn("current_session_id,\n          entry_json,", sql)
+        self.assertEqual(parameters[0], 129)
 
     def test_listing_rejects_blob_entry_json(self) -> None:
         from portable_resume.adapters import openclaw as oc
 
         rows = [
-            ("key-1", "session-1", b"{}", 1, 1, "operator", "one", None, 1),
+            ("key-1", "session-1", "blob", 2, b"{}", 1, 1, "operator", "one", None, 1),
         ]
         connection = mock.Mock()
         connection.execute.return_value = _NoFetchAllCursor(rows)
@@ -254,9 +264,17 @@ class OpenClawAdapterTests(unittest.TestCase):
     def test_exact_ref_streams_before_enforcing_byte_budget(self) -> None:
         from portable_resume.adapters import openclaw as oc
 
+        small_entry = b'{"cwd":"/tmp/project"}'
+        oversized_entry = b"x" * 129
         rows = [
-            ("session-1", '{"cwd":"/tmp/project"}', 1, 1, "one", 1, None, "operator"),
-            ("session-1", "x" * 129, 0, 0, "two", 0, None, "operator"),
+            (
+                "session-1", "text", len(small_entry), small_entry,
+                1, 1, "one", 1, None, "operator",
+            ),
+            (
+                "session-1", "text", len(oversized_entry), oversized_entry,
+                0, 0, "two", 0, None, "operator",
+            ),
         ]
         connection = mock.Mock()
         connection.execute.return_value = _NoFetchAllCursor(rows)
@@ -276,6 +294,10 @@ class OpenClawAdapterTests(unittest.TestCase):
 
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
         self.assertEqual(budget.records, 2)
+        sql, parameters = connection.execute.call_args.args
+        self.assertIn("substr(CAST(entry_json AS BLOB), 1, ?)", sql)
+        self.assertNotIn("current_session_id, entry_json", sql)
+        self.assertEqual(parameters[0], 129)
 
     def test_exact_ref_is_bounded_and_debits_shared_budget(self) -> None:
         root = fixture_root("s-oc-01-basic")
@@ -503,6 +525,61 @@ class OpenClawAdapterTests(unittest.TestCase):
         self.assertEqual(session.session_id, "main:sess-basic-0001")
         self.assertEqual(budget.records, 1)
         self.assertEqual(budget.bytes_read, admitted_bytes)
+
+    def test_entry_prefix_is_capped_by_remaining_aggregate_budget(self) -> None:
+        from portable_resume.adapters import openclaw as oc
+
+        node_cursor = mock.Mock()
+        node_cursor.fetchall.return_value = [
+            (
+                "agent:main:direct:basic",
+                "sess-basic-0001",
+                "text",
+                22,
+                b'{"cwd":"/tmp/pro',
+                1,
+                1,
+                "basic",
+                1,
+            )
+        ]
+        connection = mock.Mock()
+        connection.execute.return_value = node_cursor
+        budget = ReadBudget(Bounds(record_bytes=64, source_read_bytes=16))
+
+        with self.assertRaises(DiagnosticError) as caught:
+            oc._show_session(
+                connection,
+                agent_id="main",
+                session_id="sess-basic-0001",
+                database="synthetic.sqlite",
+                query=query(fixture_root("s-oc-01-basic")),
+                budget=budget,
+            )
+
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+        self.assertEqual(budget.records, 1)
+        self.assertEqual(budget.bytes_read, 0)
+        _sql, parameters = connection.execute.call_args.args
+        self.assertEqual(parameters[0], 17)
+
+    def test_show_without_source_path_does_not_use_list_then_reopen(self) -> None:
+        root = fixture_root("s-oc-01-basic")
+        budget = ReadBudget(Bounds(source_read_bytes=1024))
+
+        with mock.patch.object(
+            ADAPTER,
+            "list",
+            side_effect=AssertionError("source-less show must not cross snapshots"),
+        ) as listing:
+            session = ADAPTER.show(
+                ResolvedRef(session_id="main:sess-basic-0001"),
+                query(root),
+                budget,
+            )
+
+        self.assertEqual(session.session_id, "main:sess-basic-0001")
+        listing.assert_not_called()
 
     def test_nested_message_payload_and_compaction_retention(self) -> None:
         from portable_resume.adapters import openclaw as oc
