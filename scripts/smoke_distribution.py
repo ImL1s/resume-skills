@@ -80,6 +80,28 @@ def _install_result_payload(doc: dict[str, Any]) -> dict[str, Any]:
     return doc
 
 
+def _valid_version_output(command: str, output: str, version: str) -> bool:
+    lines = output.strip().splitlines()
+    expected = f"{command} {version}"
+    if command != "portable-resume":
+        return lines == [expected]
+    if not lines or lines[0] != expected:
+        return False
+    expected_fields = (
+        "runtime-root",
+        "recorded-root",
+        "recorded-root-match",
+        "package-identity",
+    )
+    if len(lines) != len(expected_fields) + 1:
+        return False
+    for line, field in zip(lines[1:], expected_fields, strict=True):
+        name, separator, value = line.partition(": ")
+        if not separator or name != field or not value:
+            return False
+    return True
+
+
 def smoke_artifact(
     artifact: Path,
     *,
@@ -162,8 +184,11 @@ def smoke_artifact(
             )
             if (
                 version_output.returncode != 0
-                or version_output.stdout.strip()
-                != f"{command} {expected_identity['version']}"
+                or not _valid_version_output(
+                    command,
+                    version_output.stdout,
+                    str(expected_identity["version"]),
+                )
                 or version_output.stderr
             ):
                 raise RuntimeError(f"installed {command} version output is invalid")
