@@ -604,6 +604,64 @@ class GitHubCopilotAdapterTests(unittest.TestCase):
             report = ADAPTER.probe(query(root))
             self.assertEqual(report.state, "supported")
 
+    def test_list_sees_context_changed_after_line_64_when_file_fits_head(self) -> None:
+        """Full-file head must not stop at 64 lines before a late context_changed."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sid = BASIC_ID
+            sess = root / "session-state" / sid
+            sess.mkdir(parents=True)
+            old = "/tmp/old-project"
+            lines: list[dict[str, object]] = [
+                {
+                    "type": "session.start",
+                    "id": "e1",
+                    "parentId": None,
+                    "timestamp": "2024-01-01T12:00:00.000Z",
+                    "data": {
+                        "sessionId": sid,
+                        "startTime": "2024-01-01T12:00:00.000Z",
+                        "context": {"cwd": old},
+                    },
+                },
+                {
+                    "type": "user.message",
+                    "id": "e2",
+                    "parentId": "e1",
+                    "timestamp": "2024-01-01T12:00:01.000Z",
+                    "data": {"content": "start"},
+                },
+            ]
+            parent = "e2"
+            for index in range(63):
+                eid = f"p{index}"
+                lines.append(
+                    {
+                        "type": "assistant.message",
+                        "id": eid,
+                        "parentId": parent,
+                        "timestamp": "2024-01-01T12:00:02.000Z",
+                        "data": {"content": f"pad {index}"},
+                    }
+                )
+                parent = eid
+            lines.append(
+                {
+                    "type": "session.context_changed",
+                    "id": "ecx",
+                    "parentId": parent,
+                    "timestamp": "2024-01-01T12:00:03.000Z",
+                    "data": {"cwd": CWD},
+                }
+            )
+            (sess / "events.jsonl").write_text(
+                "".join(json.dumps(line) + "\n" for line in lines),
+                encoding="utf-8",
+            )
+            listed = ADAPTER.list(query(root), ReadBudget())
+            self.assertEqual([item.session_id for item in listed], [sid])
+            self.assertEqual(listed[0].cwd, CWD)
+
     def test_exact_file_source_root_rejects_sibling_path_ref(self) -> None:
         """Pinned events.jsonl containment must not accept sibling path refs."""
         with tempfile.TemporaryDirectory() as temporary:

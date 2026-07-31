@@ -547,9 +547,16 @@ def _scan_session_metadata(
     meta: dict[str, Any] = {}
     created_at: str | None = None
     updated_at: str | None = None
+    # Whole file inside the head window: parse every complete line (budget-capped).
+    # Partial head: first N lines only; tail window supplies late context_changed.
+    head_cap = (
+        min(len(head_lines), remaining)
+        if full_in_head
+        else min(line_cap, len(head_lines))
+    )
     lines_seen = 0
     for raw in head_lines:
-        if lines_seen >= line_cap:
+        if lines_seen >= head_cap:
             break
         lines_seen += 1
         created_at, updated_at = _parse_metadata_line(
