@@ -384,7 +384,13 @@ def _list_title_and_stamp(
         try:
             payload = _load_event_json(path, root, budget)
         except DiagnosticError as error:
-            if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
+            if error.code in {
+                "E_CORRUPT_RECORD",
+                "E_UNSUPPORTED_FORMAT",
+                "E_LIMIT_EXCEEDED",
+                "E_SOURCE_BUSY",
+                "E_UNSAFE_PATH",
+            }:
                 raise
             continue
         budget.consume_records()
@@ -403,11 +409,19 @@ def _list_title_and_stamp(
         if _regular_file(path, root):
             try:
                 payload = _load_event_json(path, root, budget)
+            except DiagnosticError as error:
+                if error.code in {
+                    "E_LIMIT_EXCEEDED",
+                    "E_SOURCE_BUSY",
+                    "E_UNSAFE_PATH",
+                    "E_CORRUPT_RECORD",
+                    "E_UNSUPPORTED_FORMAT",
+                }:
+                    raise
+            else:
                 stamp = _stamp_iso(payload.get("timestamp"))
                 if stamp is not None:
                     last_stamp = stamp
-            except DiagnosticError:
-                pass
     return title, first_stamp, last_stamp or first_stamp
 
 
