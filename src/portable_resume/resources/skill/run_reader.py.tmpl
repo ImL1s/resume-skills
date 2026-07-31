@@ -15,8 +15,18 @@ _RUNTIME = os.path.join(_ROOT, ".portable-resume", "runtime")
 if _RUNTIME not in sys.path:
     sys.path.insert(0, _RUNTIME)
 
-from portable_resume.reader import main  # noqa: E402
-from portable_resume.model import SOURCE_KEYS  # noqa: E402
+try:
+    from portable_resume.reader import main  # noqa: E402
+    from portable_resume.model import SOURCE_KEYS  # noqa: E402
+except ModuleNotFoundError as error:
+    if error.name != "portable_resume":
+        raise
+    sys.stderr.write(
+        '{"attempts":null,"code":"E_CAPABILITY_UNAVAILABLE","exit_code":5,'
+        '"family":[],"message":"The requested source capability is unavailable.",'
+        '"provider":null,"schema_version":"portable-resume/diagnostic-v1","source":null}\n'
+    )
+    raise SystemExit(5)
 
 _BOUND_SOURCE = "${source_key}"
 _KNOWN_SOURCES = frozenset(SOURCE_KEYS)
@@ -77,8 +87,8 @@ def _force_expected_source(argv: list[str]) -> list[str]:
         cleaned = cleaned[1:]
 
     if not cleaned:
-        # No action: default to show latest (same as bare Grok-style invocation).
-        return [_BOUND_SOURCE, "show", "latest", "--expected-source", _BOUND_SOURCE]
+        # A bare invocation is the cheap, bounded discovery step.
+        return [_BOUND_SOURCE, "list", "--expected-source", _BOUND_SOURCE]
 
     if cleaned[0] in {"list", "show"}:
         return [_BOUND_SOURCE, *cleaned, "--expected-source", _BOUND_SOURCE]
