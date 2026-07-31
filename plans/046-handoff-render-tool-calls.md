@@ -11,6 +11,7 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P1 (highest-value in-session UX finding)
 - **Effort**: M
 - **Risk**: MED (turn ordinals and turn counts shift; envelope contract tests move with them)
@@ -139,6 +140,15 @@ renderer side can express this; Claude simply never populates it.
 
 ### Step 1: Decide the turn shape (and write it down)
 
+**Decision: Shape A.** A matched Claude `tool_use` enriches the existing
+`tool_result` turn with the correlated name and deterministic JSON input. The
+correlation map lives for the selected lineage, across physical JSONL records,
+and is capped by the effective `scanned_records` ceiling. Input is sanitized
+and redacted before it is truncated to at most one quarter of
+`--max-tool-chars`; framing plus the result use the remaining allowance, so an
+oversized input cannot evict its result. An unresolved pending call is emitted
+at the end as the same tool-turn shape with `[missing tool result]`.
+
 Two viable shapes — pick ONE and state the choice in your report:
 
 **A. Enrich the existing tool turn** (preferred; smallest blast radius):
@@ -235,6 +245,28 @@ the follow-up plan's scope.
 
 **Verify**: the report contains one line per adapter.
 
+#### Adapter inventory (2026-08-01)
+
+| Source | Current tool identity behavior |
+|---|---|
+| `codex` | Emits call names and bounded argument previews; outputs use a persisted name only when present, with no call-ID correlation. |
+| `cursor` | Preserves a persisted `tool_name` on CLI/desktop tool rows; does not correlate separate calls and results. |
+| `openhands` | Normalizes public message events only; tool-event identity is not surfaced. |
+| `openclaw` | Keeps command/output text for tool-like roles but does not populate `tool_name` or correlate calls. |
+| `goose` | Flattens tool request/response text and drops tool identity/correlation. |
+| `hermes` | Reads `tool_name` only as fallback content when tool content is absent; labels do not retain it. |
+| `grok` | Emits tool labels from titles/kinds/tool-call IDs, but does not correlate a call payload to its result. |
+| `gemini` | Emits tool-call names as tool content; inputs/results are not correlated. |
+| `cline` | Flattens tool-use names and tool-result content into message text without labels or correlation. |
+| `claude` | Correlates `tool_use.id` to `tool_result.tool_use_id`, preserving bounded input, name, result, and interrupted calls. |
+| `kimi` | Preserves available tool names; some wire results receive the generic `tool_result` label, with no ID correlation. |
+| `opencode` | Preserves a tool/name field on result parts; no separate call/result correlation is performed. |
+| `qwen` | Labels every tool row generically as `tool_result`; concrete identity is not preserved. |
+| `antigravity` | Labels known tool steps by step kind or persisted name; no call-ID correlation is performed. |
+| `pi` | Preserves `toolName` on results and renders bash command plus output; no separate call-ID correlation is needed by the pinned shape. |
+| `github-copilot` | Emits execution-start tool names only; arguments and results are intentionally omitted by the pinned adapter contract. |
+| `crush` | Flattens call name/input and result text into message content without a correlated tool label. |
+
 ### Step 6: Full gates
 
 **Verify**: full suite OK; `python3 scripts/self_verify.py` → 0;
@@ -250,15 +282,15 @@ was invisible at the adapter layer.
 
 ## Done criteria
 
-- [ ] `grep -n 'item.get("tool_name")' src/portable_resume/adapters/claude.py` → no matches
-- [ ] `"tool_use"` no longer in the discard set
-- [ ] 045's fixture renders tool name + bounded input; assertions flipped
-- [ ] Unmatched-id, missing-result, oversized-input, and hostile-input cases tested
-- [ ] Sanitization runs before the output bound (test-pinned with a token straddling the cutoff)
-- [ ] An oversized input never evicts its correlated result (test-pinned)
-- [ ] Per-adapter audit list in the completion report
-- [ ] Full suite + smoke matrix + gates green
-- [ ] `plans/README.md` updated
+- [x] `grep -n 'item.get("tool_name")' src/portable_resume/adapters/claude.py` → no matches
+- [x] `"tool_use"` no longer in the discard set
+- [x] 045's fixture renders tool name + bounded input; assertions flipped
+- [x] Unmatched-id, missing-result, oversized-input, and hostile-input cases tested
+- [x] Sanitization runs before the output bound (test-pinned with a token straddling the cutoff)
+- [x] An oversized input never evicts its correlated result (test-pinned)
+- [x] Per-adapter audit list recorded in this plan
+- [x] Full suite + smoke matrix + gates green
+- [x] `plans/README.md` updated
 
 ## STOP conditions
 
