@@ -414,6 +414,88 @@ class GitHubCopilotAdapterTests(unittest.TestCase):
             )
             self.assertEqual(session.cwd, CWD)
 
+    def test_list_and_show_latest_match_start_cwd_after_context_change(self) -> None:
+        """Querying the start cwd must survive select_session after context_changed."""
+        import io
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sid = BASIC_ID
+            sess = root / "session-state" / sid
+            sess.mkdir(parents=True)
+            old = "/tmp/old-project"
+            lines = [
+                {
+                    "type": "session.start",
+                    "id": "e1",
+                    "parentId": None,
+                    "timestamp": "2024-01-01T12:00:00.000Z",
+                    "data": {
+                        "sessionId": sid,
+                        "startTime": "2024-01-01T12:00:00.000Z",
+                        "context": {"cwd": old},
+                    },
+                },
+                {
+                    "type": "user.message",
+                    "id": "e2",
+                    "parentId": "e1",
+                    "timestamp": "2024-01-01T12:00:01.000Z",
+                    "data": {"content": "in old cwd"},
+                },
+                {
+                    "type": "session.context_changed",
+                    "id": "e3",
+                    "parentId": "e2",
+                    "timestamp": "2024-01-01T12:00:02.000Z",
+                    "data": {"cwd": CWD},
+                },
+                {
+                    "type": "assistant.message",
+                    "id": "e4",
+                    "parentId": "e3",
+                    "timestamp": "2024-01-01T12:00:03.000Z",
+                    "data": {"content": "now in new cwd"},
+                },
+            ]
+            (sess / "events.jsonl").write_text(
+                "".join(json.dumps(line) + "\n" for line in lines),
+                encoding="utf-8",
+            )
+            listed = ADAPTER.list(
+                Query(
+                    source="github-copilot",
+                    cwd=old,
+                    source_root=str(root),
+                    within_min=0,
+                ),
+                ReadBudget(),
+            )
+            self.assertEqual([item.session_id for item in listed], [sid])
+            self.assertEqual(listed[0].cwd, old)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            code = run(
+                [
+                    "github-copilot",
+                    "show",
+                    "latest",
+                    "--cwd",
+                    old,
+                    "--source-root",
+                    str(root),
+                    "--within-min",
+                    "0",
+                    "--format",
+                    "json",
+                ],
+                stdout=stdout,
+                stderr=stderr,
+            )
+            self.assertEqual(code, 0, stderr.getvalue())
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["sessions"][0]["session_id"], sid)
+
     def test_exact_path_ref_bypasses_age_and_list_cap(self) -> None:
         root = fixture_root("s-gcp-01-user-basic")
         events = root / "session-state" / BASIC_ID / "events.jsonl"

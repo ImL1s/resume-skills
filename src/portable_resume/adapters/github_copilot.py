@@ -720,7 +720,12 @@ def _session_summary_from_path(
         return None
     if not _cwd_matches(meta, query.cwd):
         return None
-    cwd = meta.get("cwd") if isinstance(meta.get("cwd"), str) else None
+    # Surface query.cwd when it matched any observed cwd so shared select_session
+    # keeps the candidate (final meta cwd alone can diverge after context_changed).
+    if query.cwd is not None:
+        cwd = query.cwd
+    else:
+        cwd = meta.get("cwd") if isinstance(meta.get("cwd"), str) else None
     # Prefer content stamps; file mtime covers long sessions past the head window.
     stamp = updated_at or created_at or _stamp_iso(meta.get("startTime"))
     mtime_stamp = _file_mtime_iso(path)
