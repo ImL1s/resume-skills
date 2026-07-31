@@ -28,7 +28,15 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
         self.assertIn(required_gate, con)
         self.assertIn("### Fast iteration during development", con)
         self.assertIn("python3 scripts/self_verify.py --only unit", con)
-        self.assertIn("python3 scripts/self_verify.py --only docs", con)
+        self.assertIn(
+            "python3 scripts/self_verify.py --only docs"
+            "          # localized quick-start docs gate",
+            con,
+        )
+        self.assertIn(
+            "For other\ndocumentation, run the focused unittest",
+            con,
+        )
         self.assertIn("python3 scripts/self_verify.py --profile ci-compat", con)
         self.assertIn("### Editable install (drops the `PYTHONPATH` prefix)", con)
         self.assertIn("pip install -e .", con)

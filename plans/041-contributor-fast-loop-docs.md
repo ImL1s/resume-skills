@@ -112,7 +112,7 @@ change touches; the full gate remains mandatory before opening the PR.
 ​```bash
 # Stage-scoped verification (same stages CI uses; see --help for the list)
 python3 scripts/self_verify.py --only unit          # just the unittest stage
-python3 scripts/self_verify.py --only docs          # after doc edits
+python3 scripts/self_verify.py --only docs          # localized quick-start docs gate
 python3 scripts/self_verify.py --profile ci-compat  # what one CI matrix cell runs
 
 # One test module / one test
