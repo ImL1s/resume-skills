@@ -130,7 +130,11 @@ def _default_copilot_home() -> str:
 
 
 def _resolve_layout(query: Query) -> tuple[str, str] | None:
-    """Return (session_state_dir, containment_root) or None."""
+    """Return (session_state_dir, containment_root) or None.
+
+    Exact file/session pins keep containment tight (session dir only) so path
+    refs cannot jump to sibling sessions under the same Copilot home.
+    """
 
     if query.source_root:
         candidate = query.source_root
@@ -140,15 +144,8 @@ def _resolve_layout(query: Query) -> tuple[str, str] | None:
                 if os.path.basename(path) != "events.jsonl":
                     return None
                 session_dir = os.path.dirname(path)
-                # Exact file: sole session dir (never widen to sibling sessions).
-                parent = os.path.dirname(session_dir)
-                try:
-                    if os.path.basename(parent) == "session-state":
-                        root = canonical_root(os.path.dirname(parent))
-                    else:
-                        root = canonical_root(session_dir)
-                except DiagnosticError:
-                    root = canonical_root(session_dir)
+                # Exact file: discovery + containment stay on this session only.
+                root = canonical_root(session_dir)
                 if not _regular_file(path, root):
                     return None
                 return session_dir, root
@@ -164,23 +161,14 @@ def _resolve_layout(query: Query) -> tuple[str, str] | None:
         # .../session-state  (full store scan)
         if os.path.basename(root.rstrip(os.sep)) == "session-state":
             return root, root
-        # .../session-state/<id> — keep this session only (do not widen to state)
+        # .../session-state/<id> — keep this session only (tight containment)
         events = os.path.join(root, "events.jsonl")
         if _regular_file(events, root) or any(
             n == "events.jsonl" for n in _safe_listdir(root)
         ):
-            parent = os.path.dirname(root)
-            try:
-                if os.path.basename(parent) == "session-state":
-                    contain = canonical_root(os.path.dirname(parent))
-                else:
-                    contain = root
-            except DiagnosticError:
-                contain = root
-            if not _regular_file(events, contain) and not _regular_file(events, root):
+            if not _regular_file(events, root):
                 return None
-            # layout root = this session dir so discovery cannot list siblings
-            return root, contain if _regular_file(events, contain) else root
+            return root, root
         return None
     try:
         home = _default_copilot_home()
@@ -256,8 +244,13 @@ def _discover_session_dirs(
     root: str,
     *,
     scan_limit: int,
+    prefer_id: str | None = None,
 ) -> list[tuple[str, str]]:
-    """Return (session_id, events.jsonl path) under session-state."""
+    """Return (session_id, events.jsonl path) under session-state.
+
+    Exact UUID prefers a direct path hit (no full tree walk). Otherwise
+    candidates are ordered by events.jsonl mtime (newest first) and capped.
+    """
 
     if os.path.basename(state_dir.rstrip(os.sep)) != "session-state":
         # single session dir
@@ -268,21 +261,33 @@ def _discover_session_dirs(
                 return [(sid, events)]
         return []
 
+    if prefer_id and _SESSION_ID_RE.fullmatch(prefer_id):
+        events = os.path.join(state_dir, prefer_id, "events.jsonl")
+        if _regular_file(events, root):
+            return [(prefer_id, events)]
+        # Fall through only when the preferred id is absent.
+
     names = _safe_listdir(state_dir)
-    out: list[tuple[str, str]] = []
-    # Cap returned sessions; do not fail-closed on mature stores with many ids.
-    for name in sorted(names):
+    ranked: list[tuple[float, str, str]] = []
+    for name in names:
         if not _SESSION_ID_RE.fullmatch(name):
             continue
         session_dir = os.path.join(state_dir, name)
         if not _regular_dir(session_dir, root):
             continue
         events = os.path.join(session_dir, "events.jsonl")
-        if _regular_file(events, root):
-            out.append((name, events))
-            if len(out) >= scan_limit:
-                break
-    return out
+        if not _regular_file(events, root):
+            continue
+        try:
+            mtime = float(os.lstat(events).st_mtime)
+        except OSError:
+            mtime = 0.0
+        ranked.append((mtime, name, events))
+        if len(ranked) > scan_limit * 4 and len(ranked) > 8_000:
+            # Soft cap on ranking work for pathological homes.
+            break
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [(name, events) for _mtime, name, events in ranked[:scan_limit]]
 
 
 def _message_turn(
@@ -385,12 +390,82 @@ def _apply_session_control(
     return created_at
 
 
+def _parse_metadata_line(
+    raw: bytes,
+    *,
+    maximum_record: int,
+    meta: dict[str, Any],
+    created_at: str | None,
+    updated_at: str | None,
+    budget: ReadBudget,
+) -> tuple[str | None, str | None]:
+    budget.consume_records()
+    body = raw[:-1] if raw.endswith(b"\n") else raw
+    if body.endswith(b"\r"):
+        body = body[:-1]
+    if len(body) > maximum_record:
+        raise DiagnosticError.limit_exceeded()
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise DiagnosticError(
+            "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
+        ) from error
+    stripped = text.strip()
+    if not stripped:
+        return created_at, updated_at
+    try:
+        record = json.loads(stripped, object_pairs_hook=_object)
+    except (json.JSONDecodeError, _DuplicateKey, RecursionError) as error:
+        raise DiagnosticError(
+            "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
+        ) from error
+    if not isinstance(record, Mapping):
+        raise DiagnosticError(
+            "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
+        )
+    stamp = _stamp_iso(record.get("timestamp"))
+    if stamp is not None:
+        if created_at is None:
+            created_at = stamp
+        if updated_at is None or stamp > updated_at:
+            updated_at = stamp
+    event_type = record.get("type")
+    if not isinstance(event_type, str):
+        raise DiagnosticError(
+            "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
+        )
+    payload = record.get("data")
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, Mapping):
+        raise DiagnosticError(
+            "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
+        )
+    created_at = _apply_session_control(
+        event_type, payload, meta, created_at=created_at
+    )
+    if event_type == "user.message":
+        content = payload.get("content")
+        if isinstance(content, str) and content.strip():
+            meta["has_user"] = True
+            if "title" not in meta:
+                meta["title"] = content.strip().splitlines()[0][
+                    : DEFAULT_BOUNDS.title_chars
+                ]
+    return created_at, updated_at
+
+
 def _scan_session_metadata(
     path: str,
     root: str,
     budget: ReadBudget,
 ) -> tuple[dict[str, Any], str | None, str | None]:
-    """Bounded head-window list metadata (charges scanned_records, not transcript)."""
+    """Bounded head+tail list metadata (charges scanned_records, not transcript).
+
+    Head supplies session.start / first user title; tail re-applies late
+    ``session.context_changed`` so list cwd matches show for long sessions.
+    """
 
     maximum_record = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
     scanned_ceiling = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
@@ -403,84 +478,63 @@ def _scan_session_metadata(
         path,
         root=root,
         head_bytes=min(_META_HEAD_BYTES, 4 * 1024 * 1024),
-        tail_bytes=0,
+        tail_bytes=min(64 * 1024, 64 * 1024),
         max_bytes=min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes),
         attempts=min(budget.limits.snapshot_attempts, DEFAULT_BOUNDS.snapshot_attempts),
         membership_limit=min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records),
         budget=budget,
         require_size_within_max=False,
     )
-    data = windows.head
-    full_in_head = windows.fingerprint.size <= len(data)
-    raw_lines = data.splitlines(keepends=True)
-    if raw_lines and not full_in_head:
-        last = raw_lines[-1]
+    head = windows.head
+    tail = windows.tail
+    full_in_head = windows.fingerprint.size <= len(head)
+    head_lines = head.splitlines(keepends=True)
+    if head_lines and not full_in_head:
+        last = head_lines[-1]
         if not last.endswith((b"\n", b"\r")):
-            raw_lines = raw_lines[:-1]
+            head_lines = head_lines[:-1]
 
     meta: dict[str, Any] = {}
     created_at: str | None = None
     updated_at: str | None = None
     lines_seen = 0
-    for raw in raw_lines:
+    for raw in head_lines:
         if lines_seen >= line_cap:
             break
         lines_seen += 1
-        budget.consume_records()
-        body = raw[:-1] if raw.endswith(b"\n") else raw
-        if body.endswith(b"\r"):
-            body = body[:-1]
-        if len(body) > maximum_record:
-            raise DiagnosticError.limit_exceeded()
-        try:
-            text = body.decode("utf-8")
-        except UnicodeDecodeError as error:
-            raise DiagnosticError(
-                "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
-            ) from error
-        stripped = text.strip()
-        if not stripped:
-            continue
-        try:
-            record = json.loads(stripped, object_pairs_hook=_object)
-        except (json.JSONDecodeError, _DuplicateKey, RecursionError) as error:
-            raise DiagnosticError(
-                "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
-            ) from error
-        if not isinstance(record, Mapping):
-            raise DiagnosticError(
-                "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
-            )
-        stamp = _stamp_iso(record.get("timestamp"))
-        if stamp is not None:
-            if created_at is None:
-                created_at = stamp
-            updated_at = stamp
-        event_type = record.get("type")
-        if not isinstance(event_type, str):
-            raise DiagnosticError(
-                "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
-            )
-        payload = record.get("data")
-        if payload is None:
-            payload = {}
-        if not isinstance(payload, Mapping):
-            raise DiagnosticError(
-                "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
-            )
-        created_at = _apply_session_control(
-            event_type, payload, meta, created_at=created_at
+        created_at, updated_at = _parse_metadata_line(
+            raw,
+            maximum_record=maximum_record,
+            meta=meta,
+            created_at=created_at,
+            updated_at=updated_at,
+            budget=budget,
         )
-        if event_type == "user.message":
-            content = payload.get("content")
-            if isinstance(content, str) and content.strip():
-                meta["has_user"] = True
-                if "title" not in meta:
-                    meta["title"] = content.strip().splitlines()[0][
-                        : DEFAULT_BOUNDS.title_chars
-                    ]
-        # Do not early-exit after the first user turn: later session.context_changed
-        # rows in the head window must update meta["cwd"] so list matches show.
+
+    # Tail: late context_changed / stamps (skip when entire file already in head).
+    if not full_in_head and tail:
+        tail_lines = tail.splitlines(keepends=True)
+        if tail_lines and not tail.endswith((b"\n", b"\r")):
+            tail_lines = tail_lines[:-1]
+        # Prefer the last complete lines in the tail window.
+        for raw in tail_lines[-min(32, line_cap) :]:
+            remaining = scanned_ceiling - budget.records
+            if remaining <= 0:
+                break
+            try:
+                created_at, updated_at = _parse_metadata_line(
+                    raw,
+                    maximum_record=maximum_record,
+                    meta=meta,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                    budget=budget,
+                )
+            except DiagnosticError as error:
+                if error.code == "E_CORRUPT_TAIL" or error.code == "E_CORRUPT_RECORD":
+                    # Mid-cut tail lines may be partial; skip quietly.
+                    continue
+                raise
     return meta, created_at, updated_at
 
 
@@ -696,15 +750,30 @@ class GitHubCopilotAdapter:
         exact_id = _exact_ref(query.ref)
         exact_path = _exact_path_session(query.ref, root)
         exact = exact_id is not None or exact_path is not None
+        # Absolute path ref outside containment / invalid shape → no match.
+        if (
+            query.ref
+            and query.ref.strip()
+            and os.path.isabs(query.ref.strip())
+            and exact_path is None
+            and exact_id is None
+        ):
+            return []
         scan_limit = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
         list_limit = min(budget.limits.listed_sessions, DEFAULT_BOUNDS.listed_sessions)
         if not exact and list_limit <= 0:
             return []
 
+        truncated = False
         if exact_path is not None:
             sessions = [exact_path]
         else:
-            sessions = _discover_session_dirs(state, root, scan_limit=scan_limit)
+            sessions = _discover_session_dirs(
+                state,
+                root,
+                scan_limit=scan_limit,
+                prefer_id=exact_id,
+            )
             if exact_id is not None:
                 sessions = [
                     (sid, path)
@@ -728,6 +797,7 @@ class GitHubCopilotAdapter:
             except DiagnosticError as error:
                 if error.code == "E_LIMIT_EXCEEDED" and not exact:
                     # Aggregate discovery budget exhausted — return partial list.
+                    truncated = True
                     break
                 if error.code in {"E_LIMIT_EXCEEDED", "E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
                     raise
@@ -739,9 +809,10 @@ class GitHubCopilotAdapter:
                 budget.consume_records()
             except DiagnosticError as error:
                 if error.code == "E_LIMIT_EXCEEDED" and not exact:
+                    truncated = True
                     break
                 raise
-            if not exact and len(values) >= scan_limit:
+            if not exact and len(values) >= list_limit:
                 break
 
         values.sort(key=lambda item: item.session_id)
@@ -749,7 +820,13 @@ class GitHubCopilotAdapter:
         values.sort(key=lambda item: item.updated_at is None)
         if exact:
             return values
-        return values[:list_limit]
+        capped = values[:list_limit]
+        if truncated or len(values) > list_limit:
+            capped = [
+                replace(item, warnings=tuple(dict.fromkeys((*item.warnings, "W_TRUNCATED"))))
+                for item in capped
+            ]
+        return capped
 
     def show(self, ref: ResolvedRef, query: Query, budget: ReadBudget) -> Session:
         layout = _resolve_layout(query)

@@ -522,6 +522,56 @@ class GitHubCopilotAdapterTests(unittest.TestCase):
             report = ADAPTER.probe(query(root))
             self.assertEqual(report.state, "supported")
 
+    def test_exact_file_source_root_rejects_sibling_path_ref(self) -> None:
+        """Pinned events.jsonl containment must not accept sibling path refs."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for sid, prompt in (
+                (BASIC_ID, "pinned"),
+                (OTHER_ID, "sibling"),
+            ):
+                sess = root / "session-state" / sid
+                sess.mkdir(parents=True)
+                (sess / "events.jsonl").write_text(
+                    "".join(
+                        json.dumps(line) + "\n"
+                        for line in (
+                            {
+                                "type": "session.start",
+                                "id": "e1",
+                                "parentId": None,
+                                "timestamp": "2024-01-01T12:00:00.000Z",
+                                "data": {
+                                    "sessionId": sid,
+                                    "startTime": "2024-01-01T12:00:00.000Z",
+                                    "context": {"cwd": CWD},
+                                },
+                            },
+                            {
+                                "type": "user.message",
+                                "id": "e2",
+                                "parentId": "e1",
+                                "timestamp": "2024-01-01T12:00:01.000Z",
+                                "data": {"content": prompt},
+                            },
+                        )
+                    ),
+                    encoding="utf-8",
+                )
+            pinned = root / "session-state" / BASIC_ID / "events.jsonl"
+            sibling = root / "session-state" / OTHER_ID / "events.jsonl"
+            listed = ADAPTER.list(
+                Query(
+                    source="github-copilot",
+                    ref=str(sibling),
+                    cwd=CWD,
+                    source_root=str(pinned),
+                    within_min=0,
+                ),
+                ReadBudget(),
+            )
+            self.assertEqual(listed, [])
+
     def test_list_truncates_when_aggregate_metadata_budget_exhausted(self) -> None:
         """Many sessions must not raise E_LIMIT_EXCEEDED on shared scanned budget."""
         from portable_resume.bounds import Bounds
