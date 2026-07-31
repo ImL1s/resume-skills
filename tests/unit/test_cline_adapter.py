@@ -85,6 +85,26 @@ class ClineAdapterTests(unittest.TestCase):
         )
         self.assertEqual(ADAPTER.list(other, ReadBudget()), [])
 
+    def test_exact_sessions_db_source_root_can_show(self) -> None:
+        """Direct sessions.db path must still reach sibling messages JSON (Codex P2)."""
+        root = fixture_root("s-cl-01-user-basic")
+        db_path = root / "data" / "db" / "sessions.db"
+        current = Query(
+            source="cline",
+            cwd=CWD,
+            source_root=str(db_path),
+            within_min=0,
+        )
+        report = ADAPTER.probe(current)
+        self.assertEqual(report.state, "supported")
+        summaries = ADAPTER.list(current, ReadBudget())
+        self.assertEqual(len(summaries), 1)
+        session = ADAPTER.show(ResolvedRef.from_summary(summaries[0]), current, ReadBudget())
+        self.assertEqual(
+            [turn.content for turn in session.turns],
+            ["synthetic cline user prompt", "synthetic cline assistant reply"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

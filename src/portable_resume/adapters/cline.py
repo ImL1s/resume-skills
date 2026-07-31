@@ -119,15 +119,20 @@ def _layout_from_root(candidate: str) -> tuple[str | None, str | None, str] | No
             base = os.path.basename(candidate)
             parent = os.path.dirname(os.path.abspath(candidate))
             if base == "sessions.db":
-                root = canonical_root(parent)
-                if not _regular_file(os.path.abspath(candidate), root):
-                    return None
-                # Prefer sibling ../sessions when parent is .../db
-                sessions_dir = None
+                # When DB is under .../data/db/sessions.db, containment must be
+                # the data dir so sibling .../data/sessions/<id>/*.json is allowed.
                 if os.path.basename(parent) == "db":
-                    sibling = os.path.join(os.path.dirname(parent), "sessions")
+                    data_dir = os.path.dirname(parent)
+                    root = canonical_root(data_dir)
+                    sessions_dir = None
+                    sibling = os.path.join(data_dir, "sessions")
                     if _regular_dir(sibling):
                         sessions_dir = sibling
+                else:
+                    root = canonical_root(parent)
+                    sessions_dir = None
+                if not _regular_file(os.path.abspath(candidate), root):
+                    return None
                 return os.path.abspath(candidate), sessions_dir, root
             if base.endswith(".json") and not base.endswith(".messages.json"):
                 # Exact manifest path: .../<id>/<id>.json
