@@ -35,14 +35,14 @@ def write_jsonl(path: Path, records: list[object], *, trailing: bytes = b"") -> 
 
 
 class AdapterFixtureManifestTests(unittest.TestCase):
-    def test_all_27_lane_manifests_are_strict_synthetic(self) -> None:
+    def test_all_28_lane_manifests_are_strict_synthetic(self) -> None:
         values = [
             value
             for value in validate_fixture_tree("tests/fixtures")
             if value.source in {"claude", "codex", "cursor"}
         ]
-        self.assertEqual(len(values), 27)
-        self.assertEqual(sum(value.source == "claude" for value in values), 7)
+        self.assertEqual(len(values), 28)
+        self.assertEqual(sum(value.source == "claude" for value in values), 8)
         self.assertEqual(sum(value.source == "codex" for value in values), 12)
         self.assertEqual(sum(value.source == "cursor" for value in values), 8)
         self.assertTrue(all(value.synthetic for value in values))
@@ -131,6 +131,13 @@ class ClaudeAdapterTests(unittest.TestCase):
                 [
                     {"type": "thinking", "thinking": "secret reasoning", "signature": "secret-signature"},
                     {"type": "text", "text": "answer"},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_synthetic_read_001",
+                        "name": "Read",
+                        "input": {"file_path": "/workspace/project/app.py"},
+                        "caller": {"type": "direct"},
+                    },
                 ],
                 -2,
                 sessionId=session_id,
@@ -139,7 +146,13 @@ class ClaudeAdapterTests(unittest.TestCase):
                 "user",
                 tool_id,
                 assistant_id,
-                [{"type": "tool_result", "content": "tool output", "tool_name": "Read"}],
+                [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_synthetic_read_001",
+                        "content": "tool output",
+                    }
+                ],
                 -1,
                 sessionId=session_id,
             ),
@@ -154,6 +167,42 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual([turn.role for turn in session.turns], ["user", "assistant", "tool"])
         self.assertNotIn("secret reasoning", serialized)
         self.assertNotIn("secret-signature", serialized)
+
+    def test_tool_use_input_is_currently_not_rendered_see_plan_046(self) -> None:
+        fixture_root = (
+            Path(__file__).parents[1]
+            / "fixtures"
+            / "claude"
+            / "s-cla-08-tool-use-result"
+            / "root"
+        )
+        stdout, stderr = io.StringIO(), io.StringIO()
+
+        code = run(
+            [
+                "claude",
+                "show",
+                "latest",
+                "--cwd",
+                "/workspace/project",
+                "--source-root",
+                str(fixture_root),
+                "--format",
+                "handoff",
+            ],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        self.assertEqual(code, 0, stderr.getvalue())
+        handoff = stdout.getvalue()
+        self.assertIn("synthetic file contents", handoff)
+        self.assertIn("[2 tool]", handoff)
+        self.assertNotIn("[2 tool/", handoff)
+        self.assertNotIn("Read", handoff)
+        self.assertNotIn("Bash", handoff)
+        self.assertNotIn("/workspace/project/app.py", handoff)
+        self.assertNotIn("pytest -x", handoff)
 
     def test_s_cla_05_broken_chain_warns_without_inventing_parent(self) -> None:
         session_id = str(uuid.uuid4())
