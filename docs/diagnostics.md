@@ -25,6 +25,9 @@ Messages are fixed English prose selected by code. Recovered text, filesystem pa
 
 ## Exit codes
 
+This table is generated from `ExitCode` in `src/portable_resume/diagnostics.py`.
+
+<!-- generated:exit-codes-table:begin (run scripts/render_docs.py --write) -->
 | Number | Name | Meaning | Caller action |
 |---:|---|---|---|
 | 0 | `OK` | The command completed successfully. | Parse the stdout result. |
@@ -35,6 +38,7 @@ Messages are fixed English prose selected by code. Recovered text, filesystem pa
 | 6 | `UNSAFE_OR_BUSY` | A path, live store, install root, or recovery state is unsafe or busy. | Retry later or inspect the reported store/install safety state. |
 | 7 | `CORRUPT_OR_LIMIT` | Persisted data is corrupt, a bound was exceeded, or verification failed. | Inspect the result, reduce scope if applicable, and repair or recreate invalid state. |
 | 8 | `INVARIANT` | An internal contract invariant failed. | Preserve the diagnostic and file a bug. |
+<!-- generated:exit-codes-table:end (run scripts/render_docs.py --write) -->
 
 ## Error codes
 
@@ -62,9 +66,22 @@ The table is generated from `ERROR_EXIT_CODES` and the fixed `DiagnosticError` m
 | `E_VERIFY_MISMATCH` | 7 | Installed files do not match the owned manifest. | Installer |
 <!-- generated:error-codes-table:end (run scripts/render_docs.py --write) -->
 
-## Warning codes
+## Reader self-check result warnings
 
-Warnings are not stderr diagnostics. They ride inside the stdout envelope's `warnings` array and do not independently change the process exit status. The list below is generated from `WARNING_CODES`.
+<!-- generated:self-check-result-contract:begin (run scripts/render_docs.py --write) -->
+The reader's `self-check` command has a separate JSON result contract on stdout. These result warnings are not `diagnostic-v1` stderr diagnostics:
+
+| Result warning | Meaning |
+|---|---|
+| `W_REGISTRY_INVALID:<ExceptionType>` | Registry validation raised the named exception type. |
+| `W_SCHEMA_MISSING` | The bundled request schema file is absent. |
+
+Either warning makes the self-check result's `ok` field false. The command still writes the result envelope to stdout and returns exit 7 (`CORRUPT_OR_LIMIT`), rather than emitting an error diagnostic.
+<!-- generated:self-check-result-contract:end (run scripts/render_docs.py --write) -->
+
+## Envelope warning codes
+
+The ordinary list/show warnings below are not stderr diagnostics. They ride inside the stdout envelope's `warnings` array and do not independently change the process exit status. The list is generated from `WARNING_CODES`.
 
 <!-- generated:warning-codes-list:begin (run scripts/render_docs.py --write) -->
 - `W_BINARY_OMITTED`
