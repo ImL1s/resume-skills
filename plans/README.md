@@ -114,7 +114,7 @@ only), i18n translation quality beyond counts, live host CLI activation.
 | 033 | README dual-path quick start; thirteen/nine/alt/CHANGELOG fixes | P1 | S | — | DONE |
 | 034 | openclaw bounds in SQL + caller-limit threading | P1 | S | — | TODO |
 | 035 | cline diagnostic propagation (unsafe/busy/budget) | P1 | S | — | TODO |
-| 036 | discovery no-follow retry removal + real `matches_expected` | P1 | S | — | TODO |
+| 036 | discovery no-follow retry removal + real `matches_expected` | P1 | S | — | **DONE** |
 | 037 | Archive member read caps + codex no-op affinity cleanup | P2 | S | — | DONE |
 | 038 | `materialize_plan` memoize + verify-loop hoist | P1 | S | — | TODO |
 | 039 | Registry-driven immutability/isolation security tests | P1 | S | before 034/035 preferred | TODO |
