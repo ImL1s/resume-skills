@@ -500,8 +500,8 @@ def _session_has_extractable(
         return False
     try:
         size = os.lstat(messages_path).st_size
-    except OSError:
-        return False
+    except OSError as error:
+        raise DiagnosticError.source_busy() from error
     if size <= 0:
         return False
     source_cap = min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes)

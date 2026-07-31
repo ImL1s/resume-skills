@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from portable_resume.adapters.base import ResolvedRef
@@ -21,7 +22,7 @@ def fixture_root(case: str) -> Path:
     return (FIXTURES / case).resolve()
 
 
-def query(root: Path, ref: str | None = None, **kwargs: object) -> Query:
+def query(root: Path, ref: str | None = None, **kwargs: Any) -> Query:
     return Query(
         source="cline",
         ref=ref,
@@ -33,6 +34,29 @@ def query(root: Path, ref: str | None = None, **kwargs: object) -> Query:
 
 
 class ClineAdapterTests(unittest.TestCase):
+    def test_messages_lstat_race_propagates_source_busy(self) -> None:
+        from portable_resume.adapters import cline as cline_mod
+
+        for raise_on_bad, error in (
+            (False, FileNotFoundError()),
+            (True, PermissionError()),
+        ):
+            with self.subTest(raise_on_bad=raise_on_bad, error=type(error).__name__):
+                with mock.patch(
+                    "portable_resume.adapters.cline.os.lstat",
+                    side_effect=error,
+                ):
+                    with self.assertRaises(DiagnosticError) as caught:
+                        cline_mod._session_has_extractable(
+                            session_id=BASIC_ID,
+                            messages_path="/already-validated/messages.json",
+                            root="/already-validated",
+                            budget=ReadBudget(),
+                            raise_on_bad=raise_on_bad,
+                        )
+
+                self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+
     def _assert_soft_listing_diagnostic(
         self,
         error: DiagnosticError,
@@ -217,7 +241,7 @@ class ClineAdapterTests(unittest.TestCase):
         )
         original_read = cline_mod.stable_read_bytes
 
-        def busy_manifest(path: str, **kwargs: object) -> object:
+        def busy_manifest(path: str, **kwargs: Any) -> Any:
             if path.endswith(f"/{BASIC_ID}.json"):
                 raise DiagnosticError.source_busy()
             return original_read(path, **kwargs)
@@ -484,9 +508,12 @@ class ClineAdapterTests(unittest.TestCase):
         root = fixture_root("s-cl-01-user-basic")
         summaries = ADAPTER.list(query(root), ReadBudget())
         self.assertEqual(len(summaries), 1)
+        source_path = summaries[0].source_path
+        self.assertIsNotNone(source_path)
+        assert source_path is not None
         self.assertTrue(
-            summaries[0].source_path.endswith(f"{BASIC_ID}.messages.json"),
-            summaries[0].source_path,
+            source_path.endswith(f"{BASIC_ID}.messages.json"),
+            source_path,
         )
 
     def test_exact_id_missing_from_stale_index_recovers_json(self) -> None:
