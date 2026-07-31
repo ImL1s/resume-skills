@@ -1,0 +1,17 @@
+{
+  "cwd": "/tmp/project",
+  "enable_spawn": false,
+  "enable_teams": false,
+  "enable_tools": true,
+  "interactive": true,
+  "messages_path": "cl000101-0101-4101-8101-010101010101.messages.json",
+  "model": "synthetic-model",
+  "pid": 1,
+  "provider": "synthetic",
+  "session_id": "cl000101-0101-4101-8101-010101010101",
+  "source": "cli",
+  "started_at": "2024-01-01T12:00:00Z",
+  "status": "completed",
+  "version": 1,
+  "workspace_root": "/tmp/project"
+}

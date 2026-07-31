@@ -1,6 +1,6 @@
 # Destination installation guide
 
-This repository ships twelve `resume-<source>` Skills to twelve destination hosts (derived from registries). The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
+This repository ships thirteen `resume-<source>` Skills to thirteen destination hosts (derived from registries). The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
 
 ## Build or inspect packages
 
@@ -10,13 +10,13 @@ PYTHONPATH=src python3 scripts/install-resume-skills matrix
 python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
-The package builder creates twelve `*-<host>-skills.zip` archives (one per
-enabled destination, including Pi, OpenClaw, goose, and Crush), seven supported
+The package builder creates thirteen `*-<host>-skills.zip` archives (one per
+enabled destination, including Pi, OpenClaw, goose, Crush, and Cline), seven supported
 plugin/marketplace archives, and `host-packages.json` (`host-packages-v2`) with
 SHA-256 digests, per-artifact offline `contract_id` validation (#27), and honest
 `native_evidence_status=not-run` until host CLI revalidation is recorded.
 Published `0.3.4` release assets remain historical nine-destination archives;
-current `main` builds twelve. Replace `<version>` below with the release version.
+current `main` builds thirteen. Replace `<version>` below with the release version.
 
 Download and verify an exact release before installing a plugin:
 
@@ -44,7 +44,7 @@ From PyPI:
 ```bash
 pipx install portable-resume
 install-resume-skills quick-install qwen        # user-global Qwen profile
-install-resume-skills quick-install all         # all twelve user-global profiles
+install-resume-skills quick-install all         # all thirteen user-global profiles
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
@@ -148,6 +148,7 @@ Use `--scope global` for the user root or `--root <path>` for an explicit root. 
 | OpenClaw (`openclaw`) | `skills/` / `~/.openclaw/skills` | Direct Skill only. Alternate `.agents/skills` roots are compatibility-only. Native `openclaw skills install` route is not-run. | Load `resume-openclaw` / `resume-<source>` from the skills tree |
 | goose (`goose`) | `.goose/skills` / `~/.config/goose/skills` | Direct Skill only. Legacy JSONL out of scope. Native goose UI not-run. | Load `resume-goose` / `resume-<source>` |
 | Crush (`crush`) | `.crush/skills` / `~/.config/crush/skills` | Direct Skill only. Per-project crush.db. Native Crush UI not-run. | Load `resume-crush` / `resume-<source>` |
+| Cline (`cline`) | `.cline/skills` / `~/.cline/skills` | Direct Skill only. Index+JSON authority. Native Cline UI not-run. | Load `resume-cline` / `resume-<source>` |
 
 For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, `resume-crush`, `resume-goose`, `resume-openclaw`, `resume-pi`, and `resume-qwen`.
 
@@ -205,8 +206,8 @@ harmful duplicates.
 
 ## Evidence boundary
 
-Current `main` claims registry-derived **12×12=144** packaging and installed-runner
-cells (including Pi, OpenClaw, goose, and Crush filesystem destinations). Published `0.3.4`
+Current `main` claims registry-derived **13×13=169** packaging and installed-runner
+cells (including Pi, OpenClaw, goose, Crush, and Cline filesystem destinations). Published `0.3.4`
 remains historical **9×9=81**. Historical `0.3.2` / `0.3.3` evidence covered
 **64/64** cells. Exact `0.3.2` local package installation passed on all seven
 supported native plugin/extension surfaces, including Cursor. Host-native

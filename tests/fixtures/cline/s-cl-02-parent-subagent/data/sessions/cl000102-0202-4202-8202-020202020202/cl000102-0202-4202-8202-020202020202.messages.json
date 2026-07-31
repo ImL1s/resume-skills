@@ -1,0 +1,13 @@
+{
+  "agent": "lead",
+  "messages": [
+    {
+      "content": "child should hide from default list",
+      "id": "c1",
+      "role": "user"
+    }
+  ],
+  "sessionId": "cl000102-0202-4202-8202-020202020202",
+  "updated_at": "2024-01-01T12:00:00Z",
+  "version": 1
+}

@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Cline source + destination (#41): `cline-session-json-v1` reader for
+  `~/.cline/data` (SQLite `sessions.db` index + authoritative
+  `<id>.messages.json` v1); default list hides subagent/child sessions;
+  destination install to `.cline/skills` and `~/.cline/skills`. Matrix is now
+  registry-derived **13×13=169**. Native Cline UI activation remains not-run.
+
+
 - Crush source + destination (#40): `crush-sqlite-v1` reader for per-project
   `.crush/crush.db` (pinned goose_db_version max 7); default list hides child
   sessions (`parent_session_id`); destination install to `.crush/skills` and

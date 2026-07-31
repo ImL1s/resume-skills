@@ -630,6 +630,47 @@ HOST_PROFILES: dict[str, HostProfile] = {
         ),
         evidence_level="verified-filesystem",
     ),
+    "cline": HostProfile(
+        key="cline",
+        profile_id="cline-v1",
+        project_rel=".cline/skills",
+        global_rel=".cline/skills",
+        display_name="Cline",
+        official_docs=(
+            "https://docs.cline.bot/customization/skills",
+        ),
+        project_layout="<project>/.cline/skills/<name>/SKILL.md",
+        global_layout="~/.cline/skills/<name>/SKILL.md",
+        alternate_project_roots=(".clinerules/skills", ".claude/skills"),
+        alternate_global_roots=(),
+        install_methods=(
+            "This installer: install-resume-skills install --host cline --scope project|global",
+            "Manual: copy each resume-*/ folder into .cline/skills/ or ~/.cline/skills/",
+        ),
+        activation_help=(
+            "Load resume-<source> from the Cline skills tree via use_skill or slash command. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-cline with ref latest",
+            "Use skill resume-cline with a session id",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (native session id or latest). "
+            "Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
+        ),
+        caveats=(
+            "SQLite index is discovery-only; messages JSON is authoritative for transcripts.",
+            "Does not invoke Cline CLI/hub/SDK, connectors, or migrations.",
+            "Native Cline UI / picker activation evidence remains not-run.",
+        ),
+        evidence_notes=(
+            "Cline sessions.db + messages.json v1 fixtures + Skills docs "
+            "(checked 2026-07-30). Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+    ),
 }
 
 SOURCE_TITLES = {
@@ -644,6 +685,7 @@ SOURCE_TITLES = {
     "openclaw": "OpenClaw",
     "goose": "goose",
     "crush": "Crush",
+    "cline": "Cline",
     "qwen": "Qwen Code",
 }
 

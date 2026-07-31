@@ -130,3 +130,14 @@ Do not copy real transcripts, credentials, developer home paths, or `~/.grok/bun
 - **Roots:** `--source-root` as data dir, project root, or exact `crush.db`; without root, only `<cwd>/.crush`
 - **Out of scope:** Crush CLI/serve/migrations/MCP; recursive home multi-project scan; parent session merge
 
+## cline-session-json-v1
+
+- **Store:** `~/.cline/data/db/sessions.db` (index) + `~/.cline/data/sessions/<id>/`
+- **Authority:** `<id>.messages.json` (`version: 1`) is the transcript source of truth;
+  SQLite is discovery/list only and never fabricates turns
+- **List policy:** root sessions only (`parent_session_id` empty, `is_subagent=0`);
+  require non-empty prompt or extractable public messages
+- **Messages:** public `user`/`assistant`/`tool` text; skip synthetic user kinds
+- **Roots:** `CLINE_DIR` / `~/.cline`, or `--source-root` as cline/data/db/sessions layout
+- **Out of scope:** Cline hub/CLI/SDK, team merge, connectors, cloud fetch
+

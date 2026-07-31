@@ -412,6 +412,27 @@ def _host_alternate_roots(host: str) -> list[DiscoveryRoot]:
                 role="alternate",
             ),
         ]
+    if host == "cline":
+        return [
+            DiscoveryRoot(
+                root_id="cline.project.clinerules",
+                scope="compat",
+                base="project",
+                rel=".clinerules/skills",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="cline.project.claude",
+                scope="compat",
+                base="project",
+                rel=".claude/skills",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+        ]
     if host == "codex":
         # Legacy community layout; precedence vs .agents unproven.
         return [
