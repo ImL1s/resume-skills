@@ -56,6 +56,7 @@ _DESTINATION_PAYLOAD_PROFILES: dict[str, str] = {
     "cline": "cline-v1",
     "openhands": "openhands-v1",
     "hermes": "hermes-v1",
+    "github-copilot": "github-copilot-v1",
 }
 
 _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
@@ -74,6 +75,7 @@ _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
     "cline": (".cline/skills", ".cline/skills"),
     "openhands": (".agents/skills", ".openhands/skills"),
     "hermes": (".hermes/skills", ".hermes/skills"),
+    "github-copilot": (".github/skills", ".copilot/skills"),
 }
 
 
@@ -178,6 +180,15 @@ SOURCE_PROFILES["hermes"] = SourceProfile(
     fixture_profile="hermes-state-sqlite-v1",
 )
 
+# Destination lands first (#44). Source stays research until events.jsonl schema is pinned.
+SOURCE_PROFILES["github-copilot"] = SourceProfile(
+    key="github-copilot",
+    adapter_module="portable_resume.adapters.github_copilot",
+    format_ids=(),
+    status="research",
+    fixture_profile=None,
+)
+
 # Native package surface key per destination (independent of direct Skills).
 # Hosts with only direct-skill install leave this unset (opencode, pi, …).
 _NATIVE_PACKAGE_BY_DESTINATION: dict[str, str] = {
@@ -270,6 +281,16 @@ DESTINATION_PROFILES["hermes"] = DestinationProfile(
     direct_skill=True,
     project_rel=".hermes/skills",
     global_rel=".hermes/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["github-copilot"] = DestinationProfile(
+    key="github-copilot",
+    payload_profile="github-copilot-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".github/skills",
+    global_rel=".copilot/skills",
     native_package_profile=None,
 )
 
