@@ -170,3 +170,14 @@ Do not copy real transcripts, credentials, developer home paths, or `~/.grok/bun
 - **Destination:** supported as `github-copilot` (`.github/skills`, `$COPILOT_HOME/skills`)
 - **Out of scope until qualification:** source probe/list/show, Chronicle, cloud session sync
 
+## gemini-cli-session-jsonl-v1
+
+- **Store:** `~/.gemini/tmp/<projectHash>/chats/session-*.jsonl` (or `$GEMINI_CLI_HOME/.gemini/tmp/...`)
+- **Authority:** JSONL session log (chatRecordingService); metadata line + MessageRecord lines; `$set` / `$rewindTo` control
+- **Public turns:** `type=user` and `type=gemini` text parts; tool names only when content empty
+- **Omit:** `info`/`error`/`warning`, nested `thoughts`, account/OAuth files, Antigravity roots
+- **List:** main sessions only (`kind!=subagent`); require a public user turn
+- **Distinct from:** `antigravity-transcript-jsonl-v1` — never aliased
+- **Lifecycle note:** consumer Login-with-Google for Gemini CLI ended 2026-06-18; Standard/Enterprise/API remain
+- **Out of scope:** gemini CLI process, Google APIs, MCP, Antigravity stores
+
