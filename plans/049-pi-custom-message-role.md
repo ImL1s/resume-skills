@@ -11,6 +11,7 @@
 
 ## Status
 
+- **Implementation status**: **DONE**
 - **Priority**: P2
 - **Effort**: S
 - **Risk**: LOW (scoped to one adapter)
@@ -79,7 +80,7 @@ it is an *explicit user request* — a semantic the pipeline does not enforce.
 
 | Purpose | Command | Expected on success |
 |---------|---------|---------------------|
-| Reproduce | `PYTHONPATH=src python3 scripts/portable-resume pi show latest --cwd /tmp/project --within-min 0 --source-root tests/fixtures/pi/s-pi-03-tool-and-custom/root --format handoff` | before: banner under "Latest explicit user request"; after: the real request |
+| Reproduce | `PYTHONPATH=src python3 scripts/portable-resume pi show latest --cwd /tmp/project --within-min 0 --source-root tests/fixtures/pi/s-pi-03-tool-and-custom/agent --format handoff` | before: banner under "Latest explicit user request"; after: the real request |
 | Pi tests | `PYTHONPATH=src python3 -m unittest tests.unit.test_pi_adapter -v` | pass |
 | Full suite | `PYTHONPATH=src python3 -m unittest discover -s tests -q` | OK |
 | Gates | `python3 scripts/self_verify.py && python3 scripts/check_secrets.py` | exit 0 |

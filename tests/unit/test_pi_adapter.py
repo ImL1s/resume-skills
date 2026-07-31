@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from portable_resume.adapters.pi import ADAPTER, FORMAT_ID_V2, FORMAT_ID_V3
 from portable_resume.bounds import Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.model import Query
+from portable_resume.reader import run
 from tests.helpers.core import tree_snapshot
 
 
@@ -93,6 +95,107 @@ class PiAdapterTests(unittest.TestCase):
                 "synthetic v2 compatibility assistant reply",
             ],
         )
+
+    def test_handoff_uses_authored_request_and_preserves_custom_message_evidence(self) -> None:
+        output = io.StringIO()
+        error = io.StringIO()
+        exit_code = run(
+            [
+                "pi",
+                "show",
+                "latest",
+                "--cwd",
+                CWD,
+                "--within-min",
+                "0",
+                "--source-root",
+                str(agent_root("s-pi-03-tool-and-custom")),
+                "--format",
+                "handoff",
+            ],
+            stdout=output,
+            stderr=error,
+        )
+
+        self.assertEqual(exit_code, 0, msg=error.getvalue())
+        handoff = output.getvalue()
+        request_start = handoff.index("### Latest explicit user request")
+        assistant_start = handoff.index("### Latest assistant action")
+        transcript_start = handoff.index("### Bounded transcript evidence")
+        request_section = handoff[request_start:assistant_start]
+        transcript_section = handoff[transcript_start:]
+        self.assertIn("> synthetic request needing tools", request_section)
+        self.assertNotIn("synthetic custom extension context", request_section)
+        self.assertIn("synthetic custom extension context", transcript_section)
+
+    def test_custom_message_only_handoff_has_no_user_request_and_hides_display_false(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            agent = Path(temporary) / "agent"
+            session_dir = agent / "sessions" / "--tmp-project--"
+            session_dir.mkdir(parents=True)
+            session_id = "11111111-2222-4333-8444-555555555555"
+            records = (
+                {
+                    "type": "session",
+                    "version": 3,
+                    "id": session_id,
+                    "timestamp": "2024-01-01T00:00:00.000Z",
+                    "cwd": CWD,
+                },
+                {
+                    "type": "custom_message",
+                    "id": "custom-visible",
+                    "parentId": None,
+                    "timestamp": "2024-01-01T00:00:01.000Z",
+                    "customType": "synthetic-extension",
+                    "content": "visible extension context",
+                    "display": True,
+                },
+                {
+                    "type": "custom_message",
+                    "id": "custom-hidden",
+                    "parentId": "custom-visible",
+                    "timestamp": "2024-01-01T00:00:02.000Z",
+                    "customType": "synthetic-extension",
+                    "content": "hidden extension context",
+                    "display": False,
+                },
+            )
+            session_path = session_dir / f"20240101T000000_{session_id}.jsonl"
+            session_path.write_text(
+                "\n".join(json.dumps(record, separators=(",", ":")) for record in records) + "\n",
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            error = io.StringIO()
+            exit_code = run(
+                [
+                    "pi",
+                    "show",
+                    "latest",
+                    "--cwd",
+                    CWD,
+                    "--within-min",
+                    "0",
+                    "--source-root",
+                    str(agent),
+                    "--format",
+                    "handoff",
+                ],
+                stdout=output,
+                stderr=error,
+            )
+
+        self.assertEqual(exit_code, 0, msg=error.getvalue())
+        handoff = output.getvalue()
+        request_start = handoff.index("### Latest explicit user request")
+        assistant_start = handoff.index("### Latest assistant action")
+        transcript_start = handoff.index("### Bounded transcript evidence")
+        request_section = handoff[request_start:assistant_start]
+        transcript_section = handoff[transcript_start:]
+        self.assertIn("> _(not persisted)_", request_section)
+        self.assertIn("visible extension context", transcript_section)
+        self.assertNotIn("hidden extension context", handoff)
 
     def test_corrupt_interior_raises_e_corrupt_record(self) -> None:
         root = agent_root("s-pi-04-corrupt-interior")

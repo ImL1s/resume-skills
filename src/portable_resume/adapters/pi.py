@@ -145,7 +145,13 @@ def _eligible(summary: SessionSummary, query: Query) -> bool:
     return updated >= datetime.now(timezone.utc) - timedelta(minutes=minutes)
 
 
-def _session_from(summary: SessionSummary, turns: list[Turn], warnings: list[str]) -> Session:
+def _session_from(
+    summary: SessionSummary,
+    turns: list[Turn],
+    warnings: list[str],
+    *,
+    non_authored_user_ordinals: set[int],
+) -> Session:
     values = tuple(turns)
     return Session(
         source=summary.source,
@@ -157,7 +163,14 @@ def _session_from(summary: SessionSummary, turns: list[Turn], warnings: list[str
         created_at=summary.created_at,
         updated_at=summary.updated_at,
         source_repo_root=summary.source_repo_root,
-        last_user_request=next((turn.content for turn in reversed(values) if turn.role == "user"), None),
+        last_user_request=next(
+            (
+                turn.content
+                for turn in reversed(values)
+                if turn.role == "user" and turn.ordinal not in non_authored_user_ordinals
+            ),
+            None,
+        ),
         last_assistant_action=next((turn.content for turn in reversed(values) if turn.role == "assistant"), None),
         turns=values,
         warnings=tuple(dict.fromkeys((*summary.warnings, *warnings))),
@@ -337,7 +350,7 @@ class PiAdapter:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=provider)
         if header["session_id"] != ref.session_id:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=provider)
-        turns, scan_warnings = self._scan_turns(
+        turns, scan_warnings, non_authored_user_ordinals = self._scan_turns(
             ref.source_path,
             root,
             budget,
@@ -354,7 +367,12 @@ class PiAdapter:
             provider=provider,
             warnings=tuple(dict.fromkeys((*header.get("warnings", ()), *scan_warnings))),
         )
-        return _session_from(summary, turns, scan_warnings)
+        return _session_from(
+            summary,
+            turns,
+            scan_warnings,
+            non_authored_user_ordinals=non_authored_user_ordinals,
+        )
 
     def _read_header(self, path: str, root: str, budget: ReadBudget) -> tuple[dict[str, Any], str]:
         windows = stable_read_windows(
@@ -503,9 +521,10 @@ class PiAdapter:
         *,
         provider: str,
         query: Query,
-    ) -> tuple[list[Turn], list[str]]:
+    ) -> tuple[list[Turn], list[str], set[int]]:
         entries: list[dict[str, Any]] = []
         warnings: list[str] = []
+        non_authored_user_ordinals: set[int] = set()
         first = True
         for line in stable_scan_lines(
             path,
@@ -546,10 +565,12 @@ class PiAdapter:
                 warnings=warnings,
             )
             warnings.extend(found)
+            if entry.get("type") == "custom_message":
+                non_authored_user_ordinals.update(turn.ordinal for turn in emitted)
             turns.extend(emitted)
         if not turns:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=provider)
-        return turns, warnings
+        return turns, warnings, non_authored_user_ordinals
 
     def _active_path(self, entries: list[dict[str, Any]], *, provider: str) -> list[dict[str, Any]]:
         by_id: dict[str, dict[str, Any]] = {}
