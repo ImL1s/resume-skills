@@ -54,6 +54,7 @@ _DESTINATION_PAYLOAD_PROFILES: dict[str, str] = {
     "goose": "goose-v1",
     "crush": "crush-v1",
     "cline": "cline-v1",
+    "openhands": "openhands-v1",
 }
 
 _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
@@ -70,6 +71,7 @@ _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
     "goose": (".goose/skills", ".config/goose/skills"),
     "crush": (".crush/skills", ".config/crush/skills"),
     "cline": (".cline/skills", ".cline/skills"),
+    "openhands": (".agents/skills", ".openhands/skills"),
 }
 
 
@@ -158,6 +160,14 @@ SOURCE_PROFILES["cline"] = SourceProfile(
     fixture_profile="cline-session-json-v1",
 )
 
+SOURCE_PROFILES["openhands"] = SourceProfile(
+    key="openhands",
+    adapter_module="portable_resume.adapters.openhands",
+    format_ids=("openhands-cli-events-v1",),
+    status="supported",
+    fixture_profile="openhands-cli-events-v1",
+)
+
 # Native package surface key per destination (independent of direct Skills).
 # Hosts with only direct-skill install leave this unset (opencode, pi, …).
 _NATIVE_PACKAGE_BY_DESTINATION: dict[str, str] = {
@@ -230,6 +240,16 @@ DESTINATION_PROFILES["cline"] = DestinationProfile(
     direct_skill=True,
     project_rel=".cline/skills",
     global_rel=".cline/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["openhands"] = DestinationProfile(
+    key="openhands",
+    payload_profile="openhands-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".agents/skills",
+    global_rel=".openhands/skills",
     native_package_profile=None,
 )
 

@@ -1,0 +1,15 @@
+{
+  "id": "e1",
+  "kind": "MessageEvent",
+  "llm_message": {
+    "content": [
+      {
+        "text": "synthetic openhands user prompt",
+        "type": "text"
+      }
+    ],
+    "role": "user"
+  },
+  "source": "user",
+  "timestamp": "2024-01-01T12:00:00.000000"
+}

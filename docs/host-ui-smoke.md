@@ -101,3 +101,4 @@ or a vendor-curated directory.
 
 | crush | not-run | filesystem install only; native picker not-run |
 | cline | not-run | filesystem install only; native picker not-run |
+| openhands | not-run | filesystem install only; native picker not-run |
