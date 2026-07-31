@@ -15,9 +15,15 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from portable_resume.install.catalog import host_catalog_snapshot  # noqa: E402
+from portable_resume.diagnostics import (  # noqa: E402
+    DiagnosticError,
+    ERROR_EXIT_CODES,
+    WARNING_CODES,
+)
 from portable_resume.registry import matrix_dimensions  # noqa: E402
 
 REGION_FILES = {
+    Path("docs/diagnostics.md"): ("error-codes-table", "warning-codes-list"),
     Path("docs/host-support.md"): ("matrix-summary", "host-support-table"),
     Path("docs/install-hosts.md"): ("matrix-summary", "install-hosts-table"),
 }
@@ -89,10 +95,40 @@ def _install_hosts_table() -> str:
     return "\n".join(lines)
 
 
+def _diagnostic_surface(code: str) -> str:
+    if code in {"E_INVALID_INPUT", "E_INVARIANT"}:
+        return "Reader and installer"
+    if code.startswith("E_INSTALL_") or code in {
+        "E_RECOVERY_REQUIRED",
+        "E_VERIFY_MISMATCH",
+    }:
+        return "Installer"
+    return "Reader"
+
+
+def _error_codes_table() -> str:
+    lines = [
+        "| Code | Exit | Fixed message | Emitted by |",
+        "|---|---:|---|---|",
+    ]
+    for code, exit_code in ERROR_EXIT_CODES.items():
+        lines.append(
+            f"| `{code}` | {int(exit_code)} | "
+            f"{_markdown(DiagnosticError(code).message)} | {_diagnostic_surface(code)} |"
+        )
+    return "\n".join(lines)
+
+
+def _warning_codes_list() -> str:
+    return "\n".join(f"- `{code}`" for code in sorted(WARNING_CODES))
+
+
 def rendered_regions() -> dict[str, str]:
     """Render every generated region from registry/catalog structure only."""
 
     return {
+        "error-codes-table": _error_codes_table(),
+        "warning-codes-list": _warning_codes_list(),
         "matrix-summary": _matrix_summary(),
         "host-support-table": _host_support_table(),
         "install-hosts-table": _install_hosts_table(),
