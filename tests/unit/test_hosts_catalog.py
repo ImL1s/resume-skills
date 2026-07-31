@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -60,6 +61,79 @@ class HostsCatalogTests(unittest.TestCase):
         for host, (project, global_rel) in expected.items():
             self.assertEqual(HOST_PROFILES[host].project_rel, project)
             self.assertEqual(HOST_PROFILES[host].global_rel, global_rel)
+
+    def test_kilo_evidence_is_release_pinned_and_permission_safe(self) -> None:
+        profile = HOST_PROFILES["kilo"]
+        sha = "a0364858a6e1b69a2e2dc5434a82d5cefbe79ea7"
+        self.assertTrue(any("releases/tag/v7.4.17" in url for url in profile.official_docs))
+        self.assertTrue(any(sha in url for url in profile.official_docs))
+        blob_urls = [url for url in profile.official_docs if "/blob/" in url]
+        self.assertTrue(blob_urls)
+        self.assertTrue(all(f"/blob/{sha}/" in url for url in blob_urls))
+        self.assertIn(sha, profile.evidence_notes)
+        caveats = "\n".join(profile.caveats).lower()
+        self.assertIn(
+            "do not use --auto or dangerously-skip-permissions",
+            caveats,
+        )
+        self.assertTrue(any("not-run" in note for note in profile.caveats))
+
+        activation_surface = "\n".join(
+            (
+                *profile.install_methods,
+                *profile.activation_examples,
+                profile.activation_help,
+                profile.arguments_note,
+            )
+        )
+        self.assertNotIn("--auto", activation_surface)
+        self.assertNotIn("dangerously-skip-permissions", activation_surface)
+
+        qualification = Path(
+            "docs/research/kilo-cli-v7.4.17-qualification.md"
+        ).read_text(encoding="utf-8")
+        source_refs = re.findall(
+            r"https://github\.com/Kilo-Org/kilocode/blob/([^/]+)/",
+            qualification,
+        )
+        self.assertTrue(source_refs)
+        self.assertEqual(set(source_refs), {sha})
+
+    def test_kilo_global_root_requires_explicit_override_for_nondefault_xdg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            xdg = Path(tmp) / "xdg"
+            override = Path(tmp) / "kilo-config"
+            home.mkdir()
+
+            default_root = resolve_skill_root(
+                host="kilo",
+                scope="global",
+                project_dir=None,
+                home_dir=str(home),
+                environ={"XDG_CONFIG_HOME": str(xdg)},
+                isolation=False,
+            )
+            self.assertEqual(
+                default_root,
+                os.path.join(os.path.realpath(home), ".config", "kilo", "skills"),
+            )
+
+            overridden_root = resolve_skill_root(
+                host="kilo",
+                scope="global",
+                project_dir=None,
+                home_dir=str(home),
+                environ={
+                    "XDG_CONFIG_HOME": str(xdg),
+                    "KILO_CONFIG_DIR": str(override),
+                },
+                isolation=False,
+            )
+            self.assertEqual(
+                overridden_root,
+                os.path.join(os.path.realpath(override), "skills"),
+            )
 
     def test_resolve_and_host_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

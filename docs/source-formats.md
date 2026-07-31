@@ -175,9 +175,10 @@ Do not copy real transcripts, credentials, developer home paths, or `~/.grok/bun
 
 ## kilo (research — not enabled)
 
-- **Status:** research / not in enabled sources (#46 Track B)
-- **Store (tentative):** Kilo core/effect SQLite session/message/event store under XDG app `kilo` (OpenCode fork; storage actively diverged)
-- **Blocker:** fixture-pin exact current CLI schema; do not assume OpenCode `opencode-sqlite-v1` authority
+- **Status:** research / not in enabled sources (#46 Track B); [v7.4.17 qualification](research/kilo-cli-v7.4.17-qualification.md) is **NO-GO for source enablement**
+- **Pinned store:** Kilo v7.4.17 uses the XDG-derived `kilo` data root and normally `kilo.db` (`KILO_DB` may override); opening vendor services can create directories, checkpoint WAL, and migrate, so readers must never invoke them
+- **Authority risk:** current CLI reads `session_message` by aggregate `seq`, while `event`/projectors and legacy `message`/`part` projections coexist; cloud import, legacy migration, and exact local provenance are not yet fixture-qualified
+- **Blocker:** independently generate exact-version synthetic DB/WAL fixtures and prove a Kilo-specific signature, reduction, filtering, and wrong-adapter rejection; never assume OpenCode `opencode-sqlite-v1` authority
 - **Destination:** supported as `kilo` (`.kilocode/skills`, `~/.config/kilo/skills`, `$KILO_CONFIG_DIR/skills`)
 - **Out of scope until qualification:** source probe/list/show, marketplace remote skills, IDE/cloud surfaces
 
@@ -192,4 +193,3 @@ Do not copy real transcripts, credentials, developer home paths, or `~/.grok/bun
 - **Distinct from:** `antigravity-transcript-jsonl-v1` — never aliased
 - **Lifecycle note:** consumer Login-with-Google for Gemini CLI ended 2026-06-18; Standard/Enterprise/API remain
 - **Out of scope:** gemini CLI process, Google APIs, MCP, Antigravity stores
-
