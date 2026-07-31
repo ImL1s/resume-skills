@@ -727,6 +727,21 @@ def _recorded_cwd_matches(
     return metadata.selected_cwd(requested_cwd) is not None
 
 
+def _provisional_metadata_budget(budget: ReadBudget) -> ReadBudget:
+    return ReadBudget(
+        budget.limits,
+        records=budget.records,
+        transcript_records_read=budget.transcript_records_read,
+        bytes_read=budget.bytes_read,
+        turns=budget.turns,
+    )
+
+
+def _commit_metadata_budget(target: ReadBudget, admitted: ReadBudget) -> None:
+    target.consume_records(admitted.records - target.records)
+    target.consume_bytes(admitted.bytes_read - target.bytes_read)
+
+
 def _validate_claude_bounds(budget: ReadBudget) -> None:
     limits = budget.limits
     bounded = (
@@ -1322,12 +1337,16 @@ class ClaudeAdapter:
                 else:
                     paths = _session_paths(root, exact_uuid=exact)
         for path in paths:
-            if (
-                cwd_fallback
-                and query.cwd is not None
-                and not _recorded_cwd_matches(path, root, query.cwd, budget)
-            ):
-                continue
+            if cwd_fallback and query.cwd is not None:
+                prefilter_budget = _provisional_metadata_budget(budget)
+                if not _recorded_cwd_matches(
+                    path,
+                    root,
+                    query.cwd,
+                    prefilter_budget,
+                ):
+                    _commit_metadata_budget(budget, prefilter_budget)
+                    continue
             # List still needs recorded cwd/title for collision safety; show does lineage.
             item = _summary(path, root, query, budget)
             if item is not None:

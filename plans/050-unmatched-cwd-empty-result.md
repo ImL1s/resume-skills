@@ -29,9 +29,12 @@ the full 2,000-record ceiling and raised `E_LIMIT_EXCEEDED`; after the change,
 the same store consumes exactly 60 records (1.0 per session). The current real
 store completes its unmatched scan in 482 records. If that cheap pass cannot
 finish within the configured ceiling, it must still raise, so no incomplete
-scan is presented as an authoritative empty
-listing. This preserves relocated-bucket discovery and leaves `bounds.py`
-unchanged.
+scan is presented as an authoritative empty listing. This preserves
+relocated-bucket discovery and leaves `bounds.py`
+unchanged. Prefilter accounting is provisional: unmatched sessions commit the
+records and bytes they admitted, while a matching session is charged once by
+the authoritative full summary scan rather than double-charging the same
+payload.
 
 ## Why this matters
 

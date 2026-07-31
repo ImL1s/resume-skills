@@ -353,11 +353,34 @@ class ClaudeAdapterTests(unittest.TestCase):
             ["00000000-0000-4000-8000-000000000004"],
         )
 
+    def test_issue167_matching_prefilter_payload_is_charged_once(self) -> None:
+        session_id = str(uuid.uuid4())
+        _, path = self.session(
+            [
+                self.turn(
+                    "user",
+                    str(uuid.uuid4()),
+                    None,
+                    "relocated once",
+                    0,
+                    sessionId=session_id,
+                )
+            ],
+            identifier=session_id,
+            project="relocated-bucket",
+        )
+        budget = ReadBudget(Bounds(source_read_bytes=path.stat().st_size))
+
+        values = claude.ADAPTER.list(self.query(), budget)
+
+        self.assertEqual([value.session_id for value in values], [session_id])
+        self.assertEqual(budget.bytes_read, path.stat().st_size)
+
     def test_issue167_matched_scan_still_fails_closed_when_oversized(self) -> None:
         with self.assertRaises(DiagnosticError) as caught:
             claude.ADAPTER.list(
                 self.issue167_query("/workspace/target"),
-                ReadBudget(Bounds(scanned_records=5)),
+                ReadBudget(Bounds(scanned_records=4)),
             )
 
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
