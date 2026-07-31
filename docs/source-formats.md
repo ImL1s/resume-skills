@@ -62,6 +62,10 @@ Antigravity transcript JSONL with optional index hints. Synthetic fixtures: `tes
 ### grok-grok-updates-jsonl-v1
 
 Grok Build session `updates.jsonl`. Synthetic fixtures: `tests/fixtures/grok/`.
+Show streams byte-bounded physical records and normalizes only allowlisted
+update fields. Provider-private `rawOutput` stays omitted and does not borrow
+the discovery `scanned_records` cardinality ceiling; duplicate keys, depth,
+map width, public-list cardinality, rewind, and compaction still fail closed.
 
 ### qwen-qwen-chat-jsonl-v1
 
