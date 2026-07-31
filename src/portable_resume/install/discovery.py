@@ -1263,7 +1263,9 @@ def require_no_blocking_shadow(
             for f in report["findings"]
             if f.get("policy") == POLICY_BLOCK and not f.get("is_selected")
         ]
-        raise DiagnosticError("E_INSTALL_SHADOW", family=tuple(blockers[:8]))
+        raise DiagnosticError(
+            "E_INSTALL_SHADOW", family=tuple(dict.fromkeys(blockers))[:8]
+        )
     return report
 
 
