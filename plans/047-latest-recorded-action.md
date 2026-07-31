@@ -14,7 +14,7 @@
 - **Priority**: P1
 - **Effort**: S
 - **Risk**: LOW–MED (`last_assistant_action` is a public envelope field)
-- **Depends on**: plans/045 (fixture) and preferably plans/046 (tool turns carry identity)
+- **Depends on**: plans/045 (fixture) and **plans/046 — hard dependency, not a preference** (see below)
 - **Category**: bug (handoff content)
 - **Planned at**: commit `2b4611c`, 2026-08-01
 - **Issue**: https://github.com/ImL1s/resume-skills/issues/164
@@ -42,6 +42,14 @@ The real last action was a file edit applied eight minutes after that
 sentence. A resuming agent reads "we were still planning" and may redo or
 conflict with an edit that is already on disk. The only thing standing
 between this and a duplicated edit is a generic checklist line.
+
+**Why 046 is a hard prerequisite** (raised as P2 in review): until 046 lands,
+Claude's turn assembly still discards `tool_use` blocks entirely. Running this
+plan first would let the reversed scan pick up an *earlier* tool **result**
+and label it the latest action, while a renderer-only fixture could still make
+the new test pass — the interrupted-call defect would survive behind a green
+test. Do not execute this plan before 046 unless you also surface pending
+`tool_use` records here, which is 046's job.
 
 ## Current state
 
@@ -196,6 +204,11 @@ adapter and handle it, or report if the list is long.
 
 ## STOP conditions
 
+- **Plan 046 has not landed** — check with
+  `grep -n '"tool_use"' src/portable_resume/adapters/claude.py`; if it still
+  appears in the discard set, STOP. Executing this plan first yields a green
+  test over a still-broken path (the scan would label an earlier tool result
+  as the latest action).
 - Option A turns out to need a schema change after all — STOP and report;
   do not edit the schema on your own initiative.
 - Some adapter drops tool turns from `session.turns` before the renderer sees

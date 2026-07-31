@@ -26,7 +26,7 @@ Plans 045–047 fix that chain.
 |------|-------|----------|--------|------------|--------|
 | 045 | Real-schema Claude tool fixture (prerequisite) | P1 | S | — | TODO |
 | 046 | Render tool calls with name + bounded input | P1 | M | 045 | TODO |
-| 047 | "Latest recorded action" includes tool turns | P1 | S | 045, prefer 046 | TODO |
+| 047 | "Latest recorded action" includes tool turns | P1 | S | 045, **046 (hard)** | TODO |
 | 048 | Truncation count at the cut point; warnings explained and hoisted | P2 | S | — | TODO |
 | 049 | `pi` extension banners must not become the user request | P2 | S | — | TODO |
 | 050 | Unmatched `--cwd` yields an empty listing, not `E_LIMIT_EXCEEDED` | P1 | M | — | TODO |
@@ -52,10 +52,14 @@ Plans 045–047 fix that chain.
 
 ### Dependency notes (2026-08-01)
 
-- **045 → 046 → 047**: 045 lands the real-schema fixture and pins today's
-  (wrong) behavior; 046 flips it; 047 builds on tool turns carrying identity.
-  Do not start 046 without 045 — the existing test fabricates a message shape
-  production never emits, which is why these defects survived review.
+- **045 → 046 → 047** (strict order, both arrows are hard): 045 lands the
+  real-schema fixture and pins today's (wrong) behavior; 046 flips it; 047
+  builds on tool turns carrying identity. Do not start 046 without 045 — the
+  existing test fabricates a message shape production never emits, which is
+  why these defects survived review. Do not start 047 without 046 — until
+  `tool_use` stops being discarded, 047's reversed scan would label an
+  *earlier* tool result as the latest action and a renderer-only fixture
+  would still go green.
 - **051/052 → 053**: both make small edits to `SKILL.md.tmpl`; 053 rewrites
   it. Land the small ones first or fold them in.
 - **054 and 055 need a maintainer decision** before implementation (cost

@@ -168,11 +168,30 @@ Within the message-item loop:
 3. When you see a `tool_result`, look up `item.get("tool_use_id")` in that
    mapping to obtain the real tool name. **Delete the `item.get("tool_name")`
    lookup entirely** — it can never match production data.
-4. Render `input` bounded: JSON-serialize with sorted keys, truncate to the
-   `--max-tool-chars` budget, and route it through the same sanitize path as
-   message content. A tool call whose result never arrives (interrupted
-   session — the common resume case) must still surface: emit its call with
-   the result shown as missing rather than dropping it.
+4. Render `input` bounded — **order matters, and so does the split**:
+
+   **a. Sanitize before truncating (P2 from review).** Serialize with sorted
+   keys, then run the existing sanitize/redact path, and only then apply the
+   output bound — or let the sanitizer perform the truncation itself.
+   Truncating first can cut a secret-shaped value below the redactor's
+   minimum match length (e.g. slicing a `ghp_…` token mid-string), turning a
+   value that *would* have been redacted into an unrecognized prefix that
+   ships. Read `sanitize_text` in `src/portable_resume/sanitize.py` and match
+   the order it already uses for message content.
+
+   **b. Do not let the input evict the result (P2 from review).** Under shape
+   A the input is prefixed to the existing tool-result turn, and
+   `sanitize_turn_record` then applies the same `--max-tool-chars` allowance
+   to the *combined* content — so an oversized input can consume the entire
+   budget and delete the correlated result, recreating exactly the
+   missing-evidence problem this plan exists to fix. Either bound the combined
+   representation once with a guaranteed share for the result, or give the
+   input its own smaller sub-budget (e.g. a fixed fraction of the allowance).
+   State which you chose.
+
+   A tool call whose result never arrives (interrupted session — the common
+   resume case) must still surface: emit its call with the result shown as
+   missing rather than dropping it.
 
 **Verify**: 045's fixture now renders the tool name and the file path /
 command from `input`; `[N tool]` becomes `[N tool/Read]`.
@@ -189,7 +208,14 @@ so the diff is purely renderer behavior.
 
 Add tests for:
 1. A `tool_use` whose `input` is very large → truncated at the tool-chars
-   budget, `W_TRUNCATED`-style signalling consistent with existing behavior.
+   budget, `W_TRUNCATED`-style signalling consistent with existing behavior,
+   **and the correlated result is still visible** (assert its text appears —
+   this pins the sub-budget/reserved-share decision from Step 2b).
+1b. A `tool_use` whose `input` contains a secret-shaped value positioned so
+   that a naive truncation would cut it mid-token → the value is redacted,
+   not shipped as a prefix (pins the sanitize-before-truncate order from
+   Step 2a). Build the case by placing the token so the cutoff falls inside
+   it.
 2. A `tool_result` whose `tool_use_id` matches **no** call → renders as
    today (unlabelled), no crash.
 3. A `tool_use` with **no** following result (interrupted) → the call is
@@ -228,6 +254,8 @@ was invisible at the adapter layer.
 - [ ] `"tool_use"` no longer in the discard set
 - [ ] 045's fixture renders tool name + bounded input; assertions flipped
 - [ ] Unmatched-id, missing-result, oversized-input, and hostile-input cases tested
+- [ ] Sanitization runs before the output bound (test-pinned with a token straddling the cutoff)
+- [ ] An oversized input never evicts its correlated result (test-pinned)
 - [ ] Per-adapter audit list in the completion report
 - [ ] Full suite + smoke matrix + gates green
 - [ ] `plans/README.md` updated
