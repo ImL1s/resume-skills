@@ -35,6 +35,7 @@ HANDOFF_WARNING_EXPLANATIONS: dict[str, str] = {
     "W_CONTROLS_REMOVED": "unsafe or invisible control characters were removed.",
     "W_BINARY_OMITTED": "binary content was omitted from the text handoff.",
     "W_UNKNOWN_RECORD_SKIPPED": "an unrecognized persisted record was skipped.",
+    "W_RUNTIME_IDENTITY_DRIFT": "the loaded runtime could not be matched to its recorded install root.",
 }
 
 _TURN_DROP_WARNING_NOTICE = (

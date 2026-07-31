@@ -901,7 +901,11 @@ class ArtifactIdentityVerifierTests(unittest.TestCase):
                 artifacts=(sdist,),
             )
             self.assertTrue(baseline["ok"])
-            sdist.write_bytes(sdist.read_bytes()[:-32])
+            compressed = sdist.read_bytes()
+            # Removing only the gzip trailer can still leave every tar member
+            # readable when payload compression changes. Cut through the
+            # archive body so this remains a deterministic truncation probe.
+            sdist.write_bytes(compressed[: len(compressed) // 2])
             stderr = io.StringIO()
 
             with redirect_stderr(stderr):

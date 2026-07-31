@@ -58,6 +58,7 @@ WARNING_CODES = frozenset(
         "W_LIVE_SMOKE_NOT_RUN",
         "W_SKILL_SHADOW",
         "W_SKILL_DUPLICATE",
+        "W_RUNTIME_IDENTITY_DRIFT",
     }
 )
 

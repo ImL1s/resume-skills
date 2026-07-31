@@ -33,7 +33,7 @@ Plans 045–047 fix that chain.
 | 051 | Runner hardening: bare invocation lists; missing runtime diagnoses | P1 | S | — | TODO |
 | 052 | `cwd` parity between argv and request-file lanes | P1 | S–M | — | TODO |
 | 053 | `SKILL.md` rewrite for agent legibility | P1 | M | prefer after 051, 052 | TODO |
-| 054 | Runtime drift detection for stale/foreign skill copies | P2 | M | — (design call) | TODO |
+| 054 | Runtime drift detection for stale/foreign skill copies | P2 | M | — | **DONE** |
 | 055 | Trigger-first skill `description` | P2 | S | — (wording call) | TODO |
 
 ### Published issues (2026-08-01 run)
@@ -62,9 +62,10 @@ Plans 045–047 fix that chain.
   would still go green.
 - **051/052 → 053**: both make small edits to `SKILL.md.tmpl`; 053 rewrites
   it. Land the small ones first or fold them in.
-- **054 and 055 need a maintainer decision** before implementation (cost
-  trade-off; wording with release implications). Both plans STOP for
-  confirmation at Step 1.
+- **054 chose A+C** after measuring 0.06 ms manifest reads versus 1.35 ms for
+  reading and hashing all 75 payload files; runtime checks recorded-root drift
+  and reports identity without claiming intact-old-copy detection. **055 still
+  needs a maintainer wording decision** with release implications.
 - 053 and 055 change installed skill bytes → `package_identity` moves →
   packaging/identity expectations move with them. Coordinate them in one
   release if possible.

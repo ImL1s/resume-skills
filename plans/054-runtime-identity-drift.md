@@ -11,6 +11,20 @@
 
 ## Status
 
+- **Decision (implemented)**: A + C. A temp Claude install exposed the bounded
+  ownership manifest at `.portable-resume/.state/manifest.json`, with one
+  recorded root and 75 payload files. On the implementation machine, 200
+  iterations averaged **0.06 ms** for the manifest read/parse and **1.35 ms**
+  for reading and hashing all 75 payload files. The runtime therefore performs
+  only the recorded-root check on the hot path and reports actual root,
+  recorded root, agreement, and package identity through `--version`; it does
+  not claim to detect an intact older install at its original root.
+- **Review hardening**: the default human-readable `list --cwd` table visibly
+  appends content-free warning codes while JSON keeps its existing warnings
+  array contract. Version path fields use JSON string encoding, distribution
+  smoke validates manifestless identity semantics plus negative path/enum/
+  digest cases, and the hot path is test-pinned to at most **one manifest file
+  read** per invocation.
 - **Priority**: P2
 - **Effort**: M
 - **Risk**: MED — adds I/O to every invocation; must warn, never block
@@ -222,7 +236,9 @@ STOP and report.
    this explicitly so nobody later mistakes the check for staleness detection
    (see the detectability table).
 6. Hot-path cost: assert the check does not read more than N files (prefer
-   counting reads over timing, which is flaky in CI).
+   counting reads over timing, which is flaky in CI). Implemented with
+   **N = 1**: the regression records `os.open` calls and permits only the
+   selected ownership manifest, never payload files.
 
 **Verify**: all pass; full suite OK.
 
@@ -240,14 +256,14 @@ in-process.
 
 ## Done criteria
 
-- [ ] Options written up with measured cost; decision recorded
-- [ ] A **relocated** copy produces a warning through an existing channel (test-pinned)
-- [ ] An intact tree at its recorded root produces no warning, even when older than another install elsewhere (negative control, test-pinned)
-- [ ] Exit codes and stdout content are unchanged by the check (test-pinned)
-- [ ] Missing manifest is silent (test-pinned)
-- [ ] `--version` reports the **actual loaded runtime root** plus a recorded-root agreement flag (not just payload identity and the copied manifest's root, which are identical across an exact relocated copy), and diffing the two outputs identifies which tree ran (test-pinned)
-- [ ] Runtime still does not import `install/**` (allowlist test green)
-- [ ] Full suite + smoke matrix + gates green; `plans/README.md` updated
+- [x] Options written up with measured cost; decision recorded
+- [x] A **relocated** copy produces a warning through an existing channel (test-pinned)
+- [x] An intact tree at its recorded root produces no warning, even when older than another install elsewhere (negative control, test-pinned)
+- [x] Exit codes and stdout content are unchanged by the check (test-pinned)
+- [x] Missing manifest is silent (test-pinned)
+- [x] `--version` reports the **actual loaded runtime root** plus a recorded-root agreement flag (not just payload identity and the copied manifest's root, which are identical across an exact relocated copy), and diffing the two outputs identifies which tree ran (test-pinned)
+- [x] Runtime still does not import `install/**` (allowlist test green)
+- [x] Full suite + smoke matrix + gates green; `plans/README.md` updated
 
 ## STOP conditions
 

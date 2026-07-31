@@ -80,6 +80,88 @@ def _install_result_payload(doc: dict[str, Any]) -> dict[str, Any]:
     return doc
 
 
+def _valid_absolute_path(value: str) -> bool:
+    return (
+        os.path.isabs(value)
+        and not any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in value)
+    )
+
+
+def _json_path(value: str) -> str | None:
+    try:
+        decoded = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(decoded, str) or not _valid_absolute_path(decoded):
+        return None
+    return decoded
+
+
+def _valid_version_output(
+    command: str,
+    output: str,
+    version: str,
+    *,
+    expected_runtime_root: Path | None = None,
+    require_manifestless: bool = False,
+) -> bool:
+    lines = output.strip().splitlines()
+    expected = f"{command} {version}"
+    if command != "portable-resume":
+        return lines == [expected]
+    if not lines or lines[0] != expected:
+        return False
+    expected_fields = (
+        "runtime-root",
+        "recorded-root",
+        "recorded-root-match",
+        "package-identity",
+    )
+    if len(lines) != len(expected_fields) + 1:
+        return False
+    values: dict[str, str] = {}
+    for line, field in zip(lines[1:], expected_fields, strict=True):
+        name, separator, value = line.partition(": ")
+        if not separator or name != field or not value:
+            return False
+        values[name] = value
+
+    runtime_root = _json_path(values["runtime-root"])
+    if runtime_root is None:
+        return False
+    if expected_runtime_root is not None and os.path.realpath(runtime_root) != os.path.realpath(
+        expected_runtime_root
+    ):
+        return False
+
+    recorded_value = values["recorded-root"]
+    recorded_root = None if recorded_value == "unknown" else _json_path(recorded_value)
+    if recorded_value != "unknown" and recorded_root is None:
+        return False
+    match = values["recorded-root-match"]
+    if match not in {"true", "false", "unknown"}:
+        return False
+    if recorded_root is None:
+        if match != "unknown":
+            return False
+    elif (os.path.realpath(recorded_root) == os.path.realpath(runtime_root)) != (match == "true"):
+        return False
+
+    package_identity = values["package-identity"]
+    if package_identity != "unknown" and not (
+        len(package_identity) == 64
+        and all(character in "0123456789abcdef" for character in package_identity)
+    ):
+        return False
+    if require_manifestless and (
+        recorded_value != "unknown"
+        or match != "unknown"
+        or package_identity != "unknown"
+    ):
+        return False
+    return True
+
+
 def smoke_artifact(
     artifact: Path,
     *,
@@ -145,6 +227,7 @@ def smoke_artifact(
         module_path = str(identity.get("module", ""))
         if str(REPO) in module_path:
             raise RuntimeError("installed import leaked to source checkout")
+        expected_runtime_root = Path(module_path).resolve().parents[1]
         project_urls: dict[str, str] = {}
         for item in identity.get("project_urls") or []:
             name, separator, url = str(item).partition(", ")
@@ -162,8 +245,15 @@ def smoke_artifact(
             )
             if (
                 version_output.returncode != 0
-                or version_output.stdout.strip()
-                != f"{command} {expected_identity['version']}"
+                or not _valid_version_output(
+                    command,
+                    version_output.stdout,
+                    str(expected_identity["version"]),
+                    expected_runtime_root=(
+                        expected_runtime_root if command == "portable-resume" else None
+                    ),
+                    require_manifestless=command == "portable-resume",
+                )
                 or version_output.stderr
             ):
                 raise RuntimeError(f"installed {command} version output is invalid")

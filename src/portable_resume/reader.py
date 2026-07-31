@@ -6,7 +6,9 @@ import argparse
 import importlib
 import json
 import os
+import stat
 import sys
+from pathlib import Path
 from typing import Any, Never, Sequence
 
 from .build_identity import latest_release, runtime_identity
@@ -27,12 +29,136 @@ class DiagnosticArgumentParser(argparse.ArgumentParser):
         raise DiagnosticError.invalid()
 
 
+_MAX_RUNTIME_MANIFEST_BYTES = 1024 * 1024
+_RUNTIME_DRIFT_WARNING = "W_RUNTIME_IDENTITY_DRIFT"
+
+
+def runtime_install_identity() -> dict[str, object]:
+    """Report the loaded tree and compare it with its recorded install root.
+
+    The installed runtime intentionally excludes ``portable_resume.install``.
+    This bounded, best-effort reader therefore understands only the two fixed
+    manifest locations and the small subset of fields needed for runtime
+    identity reporting. Missing manifests are a supported, silent state.
+    """
+
+    package_dir = Path(__file__).resolve().parent
+    runtime_dir = package_dir.parent
+    support_dir = runtime_dir.parent
+    installed_layout = runtime_dir.name == "runtime" and support_dir.name == ".portable-resume"
+    actual_root = support_dir.parent if installed_layout else package_dir.parent
+    result: dict[str, object] = {
+        "actual_root": os.path.realpath(actual_root),
+        "recorded_root": None,
+        "recorded_root_matches_actual": None,
+        "package_identity": None,
+        "manifest_present": False,
+    }
+    if not installed_layout:
+        return result
+
+    manifest_path: Path | None = None
+    for candidate in (
+        support_dir / ".state" / "manifest.json",
+        support_dir / "manifest.json",
+    ):
+        if os.path.lexists(candidate):
+            manifest_path = candidate
+            break
+    if manifest_path is None:
+        return result
+    result["manifest_present"] = True
+    try:
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        descriptor = os.open(manifest_path, flags)
+        try:
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_size > _MAX_RUNTIME_MANIFEST_BYTES
+            ):
+                return result
+            chunks: list[bytes] = []
+            remaining = _MAX_RUNTIME_MANIFEST_BYTES + 1
+            while remaining:
+                chunk = os.read(descriptor, min(remaining, 64 * 1024))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+        finally:
+            os.close(descriptor)
+        raw = b"".join(chunks)
+        if len(raw) > _MAX_RUNTIME_MANIFEST_BYTES:
+            return result
+        manifest = json.loads(raw.decode("utf-8"))
+        claims = manifest.get("claims") if isinstance(manifest, dict) else None
+        if not isinstance(claims, dict) or not claims:
+            return result
+        roots: set[str] = set()
+        for value in claims.values():
+            root = value.get("root") if isinstance(value, dict) else None
+            if (
+                not isinstance(root, str)
+                or not os.path.isabs(root)
+                or any(ord(character) < 32 or ord(character) == 127 for character in root)
+            ):
+                result["recorded_root_matches_actual"] = False
+                return result
+            roots.add(os.path.realpath(root))
+        if len(roots) != 1:
+            result["recorded_root_matches_actual"] = False
+            return result
+        recorded_root = roots.pop()
+        result["recorded_root"] = recorded_root
+        result["recorded_root_matches_actual"] = recorded_root == result["actual_root"]
+        package_identity = manifest.get("package_identity")
+        if (
+            isinstance(package_identity, str)
+            and len(package_identity) == 64
+            and all(character in "0123456789abcdef" for character in package_identity)
+        ):
+            result["package_identity"] = package_identity
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        TypeError,
+        ValueError,
+    ):
+        # Runtime identity is advisory only: it must never alter the exit code.
+        return result
+    return result
+
+
+def _runtime_version_report(identity: dict[str, object], *, prog: str) -> str:
+    first_line = f"{prog} {runtime_identity()['version']}"
+    actual_root = json.dumps(str(identity["actual_root"]), ensure_ascii=True)
+    recorded = identity["recorded_root"]
+    recorded_root = json.dumps(str(recorded), ensure_ascii=True) if recorded else "unknown"
+    package_identity = identity["package_identity"] or "unknown"
+    agreement = identity["recorded_root_matches_actual"]
+    agreement_text = "unknown" if agreement is None else str(agreement).lower()
+    return (
+        f"{first_line}\n"
+        f"runtime-root: {actual_root}\n"
+        f"recorded-root: {recorded_root}\n"
+        f"recorded-root-match: {agreement_text}\n"
+        f"package-identity: {package_identity}"
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = DiagnosticArgumentParser(prog="portable-resume", description="Read inert local session context without invoking a source CLI.")
     parser.add_argument(
         "--version",
-        action="version",
-        version=f"%(prog)s {runtime_identity()['version']}",
+        action="store_true",
     )
     parser.add_argument(
         "source",
@@ -157,7 +283,9 @@ def _json(value: dict[str, Any]) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
 
 
-def _table(summaries: Sequence[SessionSummary]) -> str:
+def _table(
+    summaries: Sequence[SessionSummary], *, warnings: Sequence[str] = ()
+) -> str:
     rows = ["SOURCE\tSESSION_ID\tUPDATED_AT\tTITLE\tCWD"]
     for item in summaries:
         rows.append(
@@ -171,6 +299,8 @@ def _table(summaries: Sequence[SessionSummary]) -> str:
                 )
             )
         )
+    if warnings:
+        rows.extend(("", "# Warnings", *(f"# {warning}" for warning in warnings)))
     return "\n".join(rows) + "\n"
 
 
@@ -250,10 +380,14 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
             return emit_diagnostic(error, stream=stderr)
         return self_check(stdout=stdout)
 
+    install_identity = runtime_install_identity()
     parser = build_parser()
     source: str | None = None
     try:
         namespace = parser.parse_args(argv_list)
+        if namespace.version:
+            stdout.write(_runtime_version_report(install_identity, prog=parser.prog) + "\n")
+            return 0
         source, action, ref, cwd, within_min = _resolve_invocation(namespace)
         output_format = _format(namespace, action)
         if within_min is not None and (within_min < 0 or within_min > 10 * 365 * 24 * 60):
@@ -291,6 +425,11 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
         # Internal identity for selection / ResolvedRef; public projection later.
         internal: list[SessionSummary] = []
         envelope_warnings: list[str] = list(capability.warnings)
+        if (
+            install_identity["manifest_present"]
+            and install_identity["recorded_root_matches_actual"] is not True
+        ):
+            envelope_warnings.append(_RUNTIME_DRIFT_WARNING)
         for raw in raw_summaries:
             if raw.source != source:
                 raise DiagnosticError("E_INVARIANT", source=source)
@@ -318,7 +457,7 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
             elif output_format == "handoff":
                 stdout.write(render_candidates(bounded_candidates(public_sessions), warnings=envelope.warnings))
             else:
-                stdout.write(_table(public_sessions))
+                stdout.write(_table(public_sessions, warnings=envelope.warnings))
             return 0
 
         try:
