@@ -1,4 +1,5 @@
 <!-- portable-resume-i18n: zh-CN v0.4.0.dev0 -->
+<!-- portable-resume-counts: sources=17 destinations=18 -->
 # Portable Resume — 简体中文快速指南
 
 **当前已发布版本：** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
@@ -14,7 +15,8 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
-从当前 `main` 源码 checkout 安装可运行 `pipx install .`。一次安装九个目标 host 到用户全局目录：
+<!-- portable-resume-current-registry:begin -->
+从当前 `main` 源码 checkout 安装可运行 `pipx install .`。一次安装 18 个目标 host 到用户全局目录：
 
 ```bash
 install-resume-skills quick-install all
@@ -26,7 +28,10 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-`main` 上启用的目标端包括 Claude Code、Codex、Cursor、OpenCode、Antigravity、Grok Build、Qwen Code、Kimi Code CLI，以及 Pi（文件系统安装；原生 UI 仍为 not-run）。已发布的 `0.3.4` 含九个目标端（含 Pi 文件系统安装；原生 UI 仍为 not-run）。各 host 的直接 Skill、extension、plugin 与 marketplace 命令见[安装指南](../install-hosts.md)。信任第三方 plugin 前，请检查内容并核对 release SHA-256。
+`main` 上启用的目标端包括 Antigravity / agy、Claude Code、Cline、Codex CLI / IDE、Crush、Cursor Agent、Gemini CLI、GitHub Copilot CLI、goose、Grok Build、Hermes Agent、Kilo CLI、Kimi Code CLI、OpenClaw、OpenCode、OpenHands、Pi agent，以及 Qwen Code。
+<!-- portable-resume-current-registry:end -->
+
+已发布的 `0.3.4` 含九个目标端（含 Pi 文件系统安装；原生 UI 仍为 not-run）。各 host 的直接 Skill、extension、plugin 与 marketplace 命令见[安装指南](../install-hosts.md)。信任第三方 plugin 前，请检查内容并核对 release SHA-256。
 
 ## 公开 marketplace
 

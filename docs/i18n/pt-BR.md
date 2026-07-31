@@ -1,4 +1,5 @@
 <!-- portable-resume-i18n: pt-BR v0.4.0.dev0 -->
+<!-- portable-resume-counts: sources=17 destinations=18 -->
 # Portable Resume — início rápido em português
 
 **Versão publicada atual:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
@@ -14,7 +15,8 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
-Em um checkout do `main` atual, use `pipx install .`. Para instalar os nove host de destino nos diretórios globais do usuário:
+<!-- portable-resume-current-registry:begin -->
+Em um checkout do `main` atual, use `pipx install .`. Para instalar os 18 host de destino nos diretórios globais do usuário:
 
 ```bash
 install-resume-skills quick-install all
@@ -26,7 +28,10 @@ Para instalar Qwen apenas no projeto atual:
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-Os destinos habilitados no `main` são Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI e Pi (instalação de arquivos; UI nativa not-run). O `0.3.4` publicado inclui nove destinos com Pi (instalação de arquivos; UI nativa not-run). A [documentação de instalação](../install-hosts.md) contém os comandos exatos de Skill, extension, plugin e marketplace. Inspecione qualquer plugin e confira o SHA-256 do release antes de confiar nele.
+Os destinos habilitados no `main` são Antigravity / agy, Claude Code, Cline, Codex CLI / IDE, Crush, Cursor Agent, Gemini CLI, GitHub Copilot CLI, goose, Grok Build, Hermes Agent, Kilo CLI, Kimi Code CLI, OpenClaw, OpenCode, OpenHands, Pi agent e Qwen Code.
+<!-- portable-resume-current-registry:end -->
+
+O `0.3.4` publicado inclui nove destinos com Pi (instalação de arquivos; UI nativa not-run). A [documentação de instalação](../install-hosts.md) contém os comandos exatos de Skill, extension, plugin e marketplace. Inspecione qualquer plugin e confira o SHA-256 do release antes de confiar nele.
 
 ## Marketplace público
 

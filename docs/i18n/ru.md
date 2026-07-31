@@ -1,4 +1,5 @@
 <!-- portable-resume-i18n: ru v0.4.0.dev0 -->
+<!-- portable-resume-counts: sources=17 destinations=18 -->
 # Portable Resume — краткое руководство на русском
 
 **Текущий опубликованный выпуск:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
@@ -14,7 +15,8 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
-Из checkout текущего `main` используйте `pipx install .`. Установка всех девяти целевых host в пользовательские каталоги:
+<!-- portable-resume-current-registry:begin -->
+Из checkout текущего `main` используйте `pipx install .`. Установка всех 18 целевых host в пользовательские каталоги:
 
 ```bash
 install-resume-skills quick-install all
@@ -26,7 +28,10 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-На `main` включены Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI и Pi (файловая установка; native UI — not-run). Опубликованный `0.3.4` включает девять назначений, в том числе Pi (файловая установка; native UI — not-run). Точные команды для Skill, extension, plugin и marketplace приведены в [руководстве по установке](../install-hosts.md). Перед доверием к plugin проверьте его содержимое и SHA-256 release.
+На `main` включены Antigravity / agy, Claude Code, Cline, Codex CLI / IDE, Crush, Cursor Agent, Gemini CLI, GitHub Copilot CLI, goose, Grok Build, Hermes Agent, Kilo CLI, Kimi Code CLI, OpenClaw, OpenCode, OpenHands, Pi agent и Qwen Code.
+<!-- portable-resume-current-registry:end -->
+
+Опубликованный `0.3.4` включает девять назначений, в том числе Pi (файловая установка; native UI — not-run). Точные команды для Skill, extension, plugin и marketplace приведены в [руководстве по установке](../install-hosts.md). Перед доверием к plugin проверьте его содержимое и SHA-256 release.
 
 ## Публичный marketplace
 

@@ -1094,6 +1094,48 @@ def _installer_command_pair(
     }
 
 
+def host_catalog_snapshot(
+    *, hosts: Iterable[str] | None = None
+) -> dict[str, Any]:
+    """Return environment-independent structural host documentation data."""
+
+    selected = sorted(hosts or HOST_KEYS)
+    records: list[dict[str, Any]] = []
+    for host in selected:
+        profile = HOST_PROFILES[host]
+        records.append(
+            {
+                "host": host,
+                "profile_id": profile.profile_id,
+                "display_name": profile.display_name or host,
+                "official_layouts": {
+                    "project": profile.project_layout,
+                    "global": profile.global_layout,
+                },
+                "installer_commands": {
+                    "project": _installer_command_pair(
+                        "install",
+                        "--host",
+                        host,
+                        "--scope",
+                        "project",
+                        "--project",
+                        "<PROJECT>",
+                    ),
+                    "global": _installer_command_pair(
+                        "install",
+                        "--host",
+                        host,
+                        "--scope",
+                        "global",
+                    ),
+                },
+                "activation_help": profile.activation_help,
+            }
+        )
+    return {"host_count": len(records), "hosts": records}
+
+
 def _discovery_roots_payload(host: str) -> list[dict[str, Any]]:
     """Lazy import avoids catalog↔discovery import cycle at module load."""
 

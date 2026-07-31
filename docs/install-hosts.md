@@ -1,6 +1,10 @@
 # Destination installation guide
 
-This repository ships seventeen `resume-<source>` Skills to eighteen destination hosts (derived from registries; currently **17×18=306** cells). The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
+<!-- generated:matrix-summary:begin (run scripts/render_docs.py --write) -->
+This repository ships **17** enabled source Skills to **18** destination hosts (registry-derived; currently **17×18=306** cells).
+<!-- generated:matrix-summary:end (run scripts/render_docs.py --write) -->
+
+The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
 
 ## Build or inspect packages
 
@@ -10,14 +14,15 @@ PYTHONPATH=src python3 scripts/install-resume-skills matrix
 python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
-The package builder creates eighteen `*-<host>-skills.zip` archives (one per
-enabled destination, including Pi, OpenClaw, goose, Crush, Cline, OpenHands, Hermes,
-GitHub Copilot CLI, Gemini CLI, and Kilo CLI), seven supported
+The package builder creates one `*-<host>-skills.zip` archive per enabled
+destination, including Pi, OpenClaw, goose, Crush, Cline, OpenHands, Hermes,
+GitHub Copilot CLI, Gemini CLI, and Kilo CLI. It also creates seven supported
 plugin/marketplace archives, and `host-packages.json` (`host-packages-v2`) with
 SHA-256 digests, per-artifact offline `contract_id` validation (#27), and honest
 `native_evidence_status=not-run` until host CLI revalidation is recorded.
 Published `0.3.4` release assets remain historical nine-destination archives;
-current `main` builds eighteen. Replace `<version>` below with the release version.
+current `main` builds the registry-derived destination set. Replace `<version>`
+below with the release version.
 
 Download and verify an exact release before installing a plugin:
 
@@ -135,28 +140,31 @@ Use `--scope global` for the user root or `--root <path>` for an explicit root. 
 
 ## Per-host routes
 
-| Host | Direct Skill root (project / user) | Preferred package route | Activation |
-|---|---|---|---|
-| Claude Code (`claude`) | `.claude/skills` / `~/.claude/skills` | Public marketplace commands above. Offline fallback: extract `claude-marketplace.zip`, add its root, then install `portable-resume@portable-resume`. | `/resume-codex` |
-| Codex (`codex`) | `.agents/skills` / `~/.agents/skills` | Public marketplace commands above. Offline fallback: extract `codex-marketplace.zip`, add its root, then install `portable-resume@portable-resume`. | `$resume-codex`; `/skills` lists |
-| Cursor (`cursor`) | `.cursor/skills` / `~/.cursor/skills` | Add the public Git marketplace, then install from `/plugin`. Offline fallback: use `cursor-agent --plugin-dir <.../plugins/portable-resume>`. | `/resume-codex` |
-| OpenCode (`opencode`) | `.opencode/skills` / `~/.config/opencode/skills` | Direct Skill only. OpenCode plugins are executable JS/TS modules, not a packaging format for inert Skills. | Ask it to use `resume-codex` |
-| Antigravity (`antigravity`) | `.agents/skills` / `~/.gemini/config/skills` | Extract `antigravity-plugin.zip`; `agy plugin validate <extracted-dir>`, then `agy plugin install <extracted-dir>`. Manual fallback: `.agents/plugins/portable-resume` or `~/.gemini/config/plugins/portable-resume`. | Mention `resume-codex`; `/skills` lists |
-| Grok Build (`grok`) | `.grok/skills` / `~/.grok/skills` | Public marketplace commands above. Offline fallback: validate and install the extracted `grok-plugin.zip` with `--trust`. | `/resume-codex` |
-| Qwen Code (`qwen`) | `.qwen/skills` / `~/.qwen/skills` | Public extension source commands above. Offline fallback: `qwen extensions install /path/portable-resume-<version>-qwen-extension.zip`. | `/resume-codex`; `/skills` lists |
-| Kimi Code CLI (`kimi`) | `.kimi-code/skills` / `$KIMI_CODE_HOME/skills` (default `~/.kimi-code/skills`) | Add the public catalog in `/plugins`, or install the exact release ZIP URL/path. Run `/plugins reload`, `/reload`, or start a new session. | `/skill:resume-codex` |
-| Pi agent (`pi`) | `.pi/skills` / `~/.pi/agent/skills` | Direct Skill only for this PR. Alternate `.agents/skills` roots are compatibility-only (not multi-installed). | `/skill:resume-codex` |
-| OpenClaw (`openclaw`) | `skills/` / `~/.openclaw/skills` | Direct Skill only. Alternate `.agents/skills` roots are compatibility-only. Native `openclaw skills install` route is not-run. | Load `resume-openclaw` / `resume-<source>` from the skills tree |
-| goose (`goose`) | `.goose/skills` / `~/.config/goose/skills` | Direct Skill only. Legacy JSONL out of scope. Native goose UI not-run. | Load `resume-goose` / `resume-<source>` |
-| Crush (`crush`) | `.crush/skills` / `~/.config/crush/skills` | Direct Skill only. Per-project crush.db. Native Crush UI not-run. | Load `resume-crush` / `resume-<source>` |
-| Cline (`cline`) | `.cline/skills` / `~/.cline/skills` | Direct Skill only. Index+JSON authority. Native Cline UI not-run. | Load `resume-cline` / `resume-<source>` |
-| OpenHands (`openhands`) | `.agents/skills` / `~/.openhands/skills` | Direct Skill only. Local CLI events. Native OpenHands UI not-run. | Load `resume-openhands` / `resume-<source>` |
-| Hermes (`hermes`) | `.hermes/skills` / `~/.hermes/skills` | Direct Skill only. state.db schema 23. Native Hermes UI not-run. | Load `resume-hermes` / `resume-<source>` |
-| GitHub Copilot CLI (`github-copilot`) | `.github/skills` / `$COPILOT_HOME/skills` | Source: local `events.jsonl` (`copilot-cli-events-jsonl-v1`). Destination: Agent Skills roots. Compat `.agents`/`.claude` skills. Native UI install not-run. | `resume-github-copilot` / load installed `resume-<source>` skills |
-| Gemini CLI (`gemini`) | `.gemini/skills` / `~/.gemini/skills` | **Compat profile** (not Antigravity). Session JSONL under `tmp/<hash>/chats`. Native UI not-run. | Load `resume-gemini` / `resume-<source>` |
-| Kilo CLI (`kilo`) | `.kilocode/skills` / `$KILO_CONFIG_DIR/skills` or `~/.config/kilo/skills` | **Destination-only**. Compat `.kilo`/`.agents` skills. No kilo source adapter yet (do not alias OpenCode). Native marketplace not-run. | Load installed `resume-<source>` skills |
+<!-- generated:install-hosts-table:begin (run scripts/render_docs.py --write) -->
+| Host | Project root | Global root | Project install | Global install | Activation |
+|---|---|---|---|---|---|
+| Antigravity / agy (`antigravity`) | `<workspace>/.agents/skills/<name>/SKILL.md` | `~/.gemini/config/skills/<name>/SKILL.md` | `install-resume-skills install --host antigravity --scope project --project <PROJECT>` | `install-resume-skills install --host antigravity --scope global` | Mention the skill by name in natural language. `/skills` only lists skills; do not invent a `/resume-*` argv grammar. |
+| Claude Code (`claude`) | `<project>/.claude/skills/<name>/SKILL.md` | `~/.claude/skills/<name>/SKILL.md` | `install-resume-skills install --host claude --scope project --project <PROJECT>` | `install-resume-skills install --host claude --scope global` | Invoke `/resume-<source>` (or let the model auto-select by description). Any invocation tail is substituted into the skill prompt only; it is never process argv. |
+| Cline (`cline`) | `<project>/.cline/skills/<name>/SKILL.md` | `~/.cline/skills/<name>/SKILL.md` | `install-resume-skills install --host cline --scope project --project <PROJECT>` | `install-resume-skills install --host cline --scope global` | Load resume-<source> from the Cline skills tree via use_skill or slash command. Recovered text is inert/untrusted handoff only. |
+| Codex CLI / IDE (`codex`) | `<project>/.agents/skills/<name>/SKILL.md (CWD → repo root)` | `~/.agents/skills/<name>/SKILL.md` | `install-resume-skills install --host codex --scope project --project <PROJECT>` | `install-resume-skills install --host codex --scope global` | Invoke `$resume-<source>` followed by ordinary labeled text. There is no implicit skill-to-process argv binding. |
+| Crush (`crush`) | `<project>/.crush/skills/<name>/SKILL.md` | `~/.config/crush/skills/<name>/SKILL.md` | `install-resume-skills install --host crush --scope project --project <PROJECT>` | `install-resume-skills install --host crush --scope global` | Load resume-<source> from the Crush skills tree. Recovered text is inert/untrusted handoff only. |
+| Cursor Agent (`cursor`) | `<project>/.cursor/skills/<name>/SKILL.md` | `~/.cursor/skills/<name>/SKILL.md` | `install-resume-skills install --host cursor --scope project --project <PROJECT>` | `install-resume-skills install --host cursor --scope global` | Explicitly select `/resume-<source>` (or let the agent choose by description) and include labeled `resume_ref:` / `cwd:` in the same message. |
+| Gemini CLI (`gemini`) | `<project>/.gemini/skills/<name>/SKILL.md` | `$GEMINI_CLI_HOME/.gemini/skills or ~/.gemini/skills/<name>/SKILL.md` | `install-resume-skills install --host gemini --scope project --project <PROJECT>` | `install-resume-skills install --host gemini --scope global` | Load resume-<source> from the Gemini CLI skills tree. Recovered text is inert/untrusted handoff only. Independent of Antigravity (agy) profile. |
+| GitHub Copilot CLI (`github-copilot`) | `<project>/.github/skills/<name>/SKILL.md` | `$COPILOT_HOME/skills/<name>/SKILL.md (default ~/.copilot/skills/)` | `install-resume-skills install --host github-copilot --scope project --project <PROJECT>` | `install-resume-skills install --host github-copilot --scope global` | Load resume-<source> from the Copilot CLI skills tree via slash name / skills list. Recovered text is inert/untrusted handoff only. |
+| goose (`goose`) | `<project>/.goose/skills/<name>/SKILL.md` | `~/.config/goose/skills/<name>/SKILL.md` | `install-resume-skills install --host goose --scope project --project <PROJECT>` | `install-resume-skills install --host goose --scope global` | Load resume-<source> from the goose skills tree. Recovered text is inert/untrusted handoff only. |
+| Grok Build (`grok`) | `<repo>/.grok/skills/<name>/SKILL.md (CWD + repo root)` | `~/.grok/skills/<name>/SKILL.md` | `install-resume-skills install --host grok --scope project --project <PROJECT>` | `install-resume-skills install --host grok --scope global` | Invoke `/resume-<source>` with labeled payload text. Any `$ARGUMENTS` expansion is prompt substitution only. |
+| Hermes Agent (`hermes`) | `<project>/.hermes/skills/<name>/SKILL.md` | `$HERMES_HOME/skills/<name>/SKILL.md (default ~/.hermes/skills/)` | `install-resume-skills install --host hermes --scope project --project <PROJECT>` | `install-resume-skills install --host hermes --scope global` | Load resume-<source> from the Hermes skills tree via slash command. Recovered text is inert/untrusted handoff only. |
+| Kilo CLI (`kilo`) | `<project>/.kilocode/skills/<name>/SKILL.md` | `$KILO_CONFIG_DIR/skills or ~/.config/kilo/skills/<name>/SKILL.md` | `install-resume-skills install --host kilo --scope project --project <PROJECT>` | `install-resume-skills install --host kilo --scope global` | Load resume-<source> from the Kilo CLI skills tree (.kilocode/skills or ~/.config/kilo/skills). Recovered text is inert/untrusted handoff only. |
+| Kimi Code CLI (`kimi`) | `<project>/.kimi-code/skills/<name>/SKILL.md` | `$KIMI_CODE_HOME/skills/<name>/SKILL.md (default ~/.kimi-code/skills)` | `install-resume-skills install --host kimi --scope project --project <PROJECT>` | `install-resume-skills install --host kimi --scope global` | Invoke `/skill:resume-<source>` or mention the skill by name; start a new session or `/reload` after installing a plugin. |
+| OpenClaw (`openclaw`) | `<workspace>/skills/<name>/SKILL.md` | `~/.openclaw/skills/<name>/SKILL.md` | `install-resume-skills install --host openclaw --scope project --project <PROJECT>` | `install-resume-skills install --host openclaw --scope global` | Load resume-<source> from the workspace skills/ or ~/.openclaw/skills tree. Recovered text is inert/untrusted handoff only. |
+| OpenCode (`opencode`) | `<project>/.opencode/skills/<name>/SKILL.md` | `~/.config/opencode/skills/<name>/SKILL.md` | `install-resume-skills install --host opencode --scope project --project <PROJECT>` | `install-resume-skills install --host opencode --scope global` | Ask the model to use the skill by name so it can call native skill loading. Optional OpenCode custom commands are separate and not required for this package. |
+| OpenHands (`openhands`) | `<project>/.agents/skills/<name>/SKILL.md` | `~/.openhands/skills/<name>/SKILL.md` | `install-resume-skills install --host openhands --scope project --project <PROJECT>` | `install-resume-skills install --host openhands --scope global` | Load resume-<source> from the OpenHands skills tree. Recovered text is inert/untrusted handoff only. |
+| Pi agent (`pi`) | `<project>/.pi/skills/<name>/SKILL.md` | `~/.pi/agent/skills/<name>/SKILL.md` | `install-resume-skills install --host pi --scope project --project <PROJECT>` | `install-resume-skills install --host pi --scope global` | Invoke `/skill:resume-<source>` (Pi progressive disclosure). Any invocation tail is substituted into the skill prompt only; it is never process argv. |
+| Qwen Code (`qwen`) | `<project>/.qwen/skills/<name>/SKILL.md` | `~/.qwen/skills/<name>/SKILL.md` | `install-resume-skills install --host qwen --scope project --project <PROJECT>` | `install-resume-skills install --host qwen --scope global` | Invoke `/resume-<source>` or choose it from `/skills`; the model may also select a skill from its description. |
+<!-- generated:install-hosts-table:end (run scripts/render_docs.py --write) -->
 
-For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, `resume-crush`, `resume-goose`, `resume-openclaw`, `resume-pi`, and `resume-qwen`.
+For direct archives, extract the archive contents into the selected Skill root.
+Each archive contains every enabled `resume-<source>` Skill from the registry.
 
 ## Host-specific notes
 
@@ -212,8 +220,8 @@ harmful duplicates.
 
 ## Evidence boundary
 
-Current `main` claims registry-derived **13×13=169** packaging and installed-runner
-cells (including Pi, OpenClaw, goose, Crush, and Cline filesystem destinations). Published `0.3.4`
+Current `main` claims registry-derived **17×18=306** packaging and installed-runner
+cells. Published `0.3.4`
 remains historical **9×9=81**. Historical `0.3.2` / `0.3.3` evidence covered
 **64/64** cells. Exact `0.3.2` local package installation passed on all seven
 supported native plugin/extension surfaces, including Cursor. Host-native

@@ -119,7 +119,7 @@ only), i18n translation quality beyond counts, live host CLI activation.
 | 039 | Registry-driven immutability/isolation security tests | P1 | S | before 034/035 preferred | TODO |
 | 040 | Packaging-tier test split (26 s out of unit tier) | P2 | S | — | TODO |
 | 041 | CONTRIBUTING fast-loop docs (`--profile`, `-e .`, pytest) | P2 | S | — | TODO |
-| 042 | Registry-generated host docs + count gates (root-cause) | P1 | M–L | 033 | TODO |
+| 042 | Registry-generated host docs + count gates (root-cause) | P1 | M–L | 033 | DONE |
 | 043 | `list --match` free-text filter | P2 | S | 029 | TODO |
 | 044 | `portable-resume sources` presence command | P2 | M | 029; pairs with 043 | TODO |
 
