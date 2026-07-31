@@ -291,20 +291,21 @@ def _session_has_extractable_turn(
     row_limit = min(budget.limits.transcript_records, DEFAULT_BOUNDS.transcript_records)
     if row_limit <= 0:
         return False
+    # Require a public user turn so gateway/tool-only heartbeats cannot win latest.
     rows = connection.execute(
         """
         SELECT role, content
         FROM messages
         WHERE session_id = ?
           AND COALESCE(active, 1) = 1
-          AND role IN ('user', 'assistant', 'tool', 'tool_result', 'function')
+          AND role = 'user'
         ORDER BY id ASC
         LIMIT ?
         """,
         (session_id, row_limit),
     )
     for role, content in rows:
-        if not isinstance(role, str):
+        if not isinstance(role, str) or role != "user":
             raise DiagnosticError("E_CORRUPT_RECORD", source="hermes", provider=FORMAT_ID)
         if content is not None and not isinstance(content, str):
             raise DiagnosticError("E_CORRUPT_RECORD", source="hermes", provider=FORMAT_ID)
@@ -314,8 +315,7 @@ def _session_has_extractable_turn(
                 raise DiagnosticError.limit_exceeded()
             budget.consume_bytes(len(encoded))
         budget.consume_records()
-        text = _content_text(content)
-        if text is not None:
+        if _content_text(content) is not None:
             return True
     return False
 
@@ -521,9 +521,10 @@ class HermesAdapter:
                 raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
 
             limit = min(budget.limits.transcript_records, DEFAULT_BOUNDS.transcript_records)
+            # Select only public fields — never materialize reasoning/tool_calls blobs.
             messages = connection.execute(
                 """
-                SELECT role, content, tool_name, tool_calls, reasoning
+                SELECT role, content, tool_name
                 FROM messages
                 WHERE session_id = ?
                   AND COALESCE(active, 1) = 1
@@ -538,11 +539,8 @@ class HermesAdapter:
             turns: list[Turn] = []
             warnings: list[str] = []
             turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
-            for role, content, tool_name, tool_calls, reasoning in messages:
+            for role, content, tool_name in messages:
                 budget.consume_transcript_records()
-                # Never surface reasoning / system-adjacent fields.
-                _ = reasoning
-                _ = tool_calls
                 if isinstance(content, str):
                     encoded = content.encode("utf-8")
                     if len(encoded) > budget.limits.record_bytes:
