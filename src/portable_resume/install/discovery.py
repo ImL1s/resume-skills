@@ -464,6 +464,119 @@ def _host_alternate_roots(host: str) -> list[DiscoveryRoot]:
                 role="alternate",
             ),
         ]
+    if host == "kilo":
+        # Upstream scans config dirs with {skill,skills}/**/SKILL.md plus
+        # external .agents and (unless disabled) .claude roots.
+        return [
+            DiscoveryRoot(
+                root_id="kilo.project.kilocode.skill",
+                scope="compat",
+                base="project",
+                rel=".kilocode/skill",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="kilo.project.kilo.skills",
+                scope="compat",
+                base="project",
+                rel=".kilo/skills",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="kilo.project.kilo.skill",
+                scope="compat",
+                base="project",
+                rel=".kilo/skill",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="kilo.project.agents",
+                scope="compat",
+                base="project",
+                rel=".agents/skills",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="kilo.project.claude",
+                scope="compat",
+                base="project",
+                rel=".claude/skills",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="kilo.user.config.skill",
+                scope="compat",
+                base="home",
+                rel=".config/kilo/skill",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="kilo.user.kilo.skills",
+                scope="compat",
+                base="home",
+                rel=".kilo/skills",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="kilo.user.kilo.skill",
+                scope="compat",
+                base="home",
+                rel=".kilo/skill",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="kilo.user.kilocode.skills",
+                scope="compat",
+                base="home",
+                rel=".kilocode/skills",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="kilo.user.kilocode.skill",
+                scope="compat",
+                base="home",
+                rel=".kilocode/skill",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="kilo.user.agents",
+                scope="compat",
+                base="home",
+                rel=".agents/skills",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+            DiscoveryRoot(
+                root_id="kilo.user.claude",
+                scope="compat",
+                base="home",
+                rel=".claude/skills",
+                precedence=None,
+                managed_by="host",
+                role="alternate",
+            ),
+        ]
     if host == "cline":
 
         return [
@@ -545,6 +658,20 @@ def resolve_discovery_path(
                 environ=environ,
                 isolation=isolation,
             ).path
+        # Kilo: singular skill/ under the same config home as plural skills/
+        # (default ~/.config/kilo or $KILO_CONFIG_DIR when set, non-isolation).
+        if host == "kilo" and entry.root_id == "kilo.user.config.skill":
+            from .catalog import resolve_skill_root_info
+
+            primary = resolve_skill_root_info(
+                host="kilo",
+                scope="global",
+                project_dir=None,
+                home_dir=home_dir,
+                environ=environ,
+                isolation=isolation,
+            ).path
+            return os.path.join(os.path.dirname(primary), "skill")
         base = os.path.realpath(home_dir)
         return os.path.join(base, *entry.rel.split("/"))
     return None

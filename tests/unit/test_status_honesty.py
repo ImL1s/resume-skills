@@ -26,7 +26,7 @@ class StatusHonestyTests(unittest.TestCase):
         )
         self.assertNotRegex(
             text,
-            r"(?i)(cline|openhands|hermes|copilot|gemini)[^.\n]{0,60}(picker|native).{0,20}pass",
+            r"(?i)(cline|openhands|hermes|copilot|gemini|kilo)[^.\n]{0,60}(picker|native).{0,20}pass",
         )
 
     def test_status_describes_registry_derived_matrix(self) -> None:
@@ -147,7 +147,7 @@ class StatusHonestyTests(unittest.TestCase):
         readme = Path("README.md").read_text(encoding="utf-8")
         self.assertRegex(readme, r"0\.3\.4")
         self.assertRegex(readme, r"169/169|144/144|121/121|100/100|81/81|historical 81")
-        self.assertRegex(readme, r"(?i)pi.*native|Pi/OpenClaw|goose|crush|cline|openhands|hermes|github-copilot|copilot|gemini|not-run")
+        self.assertRegex(readme, r"(?i)pi.*native|Pi/OpenClaw|goose|crush|cline|openhands|hermes|github-copilot|copilot|gemini|kilo|not-run")
         self.assertRegex(readme, r"not-run")
 
 

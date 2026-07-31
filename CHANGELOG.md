@@ -1,8 +1,11 @@
 ## Unreleased
 
+- Kilo CLI destination-only (#46 Track A): install into `.kilocode/skills` and
+  `~/.config/kilo/skills` (`KILO_CONFIG_DIR` override). Source remains research —
+  do not alias OpenCode storage. Matrix is now **16×18=288**.
 - Gemini CLI compatibility source + destination (#45): `gemini-cli-session-jsonl-v1`
   for `~/.gemini/tmp/<projectHash>/chats/session-*.jsonl` (independent of Antigravity).
-  Destination `.gemini/skills` / `~/.gemini/skills`. Matrix is now **16×17=272**.
+  Destination `.gemini/skills` / `~/.gemini/skills`. Matrix became **16×17=272**.
 - GitHub Copilot CLI destination (#44 Track A): install `resume-*` Skills into
   `.github/skills` and `$COPILOT_HOME/skills` (default `~/.copilot/skills`).
   Source adapter remains **research** until `events.jsonl` schema is pinned.

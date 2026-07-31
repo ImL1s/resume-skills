@@ -55,6 +55,7 @@ class HostsCatalogTests(unittest.TestCase):
             "hermes": (".hermes/skills", ".hermes/skills"),
             "github-copilot": (".github/skills", ".copilot/skills"),
             "gemini": (".gemini/skills", ".gemini/skills"),
+            "kilo": (".kilocode/skills", ".config/kilo/skills"),
         }
         for host, (project, global_rel) in expected.items():
             self.assertEqual(HOST_PROFILES[host].project_rel, project)

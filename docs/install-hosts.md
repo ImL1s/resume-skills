@@ -1,6 +1,6 @@
 # Destination installation guide
 
-This repository ships thirteen `resume-<source>` Skills to thirteen destination hosts (derived from registries). The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
+This repository ships sixteen `resume-<source>` Skills to eighteen destination hosts (derived from registries; currently **16×18=288** cells). The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
 
 ## Build or inspect packages
 
@@ -10,13 +10,14 @@ PYTHONPATH=src python3 scripts/install-resume-skills matrix
 python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
-The package builder creates thirteen `*-<host>-skills.zip` archives (one per
-enabled destination, including Pi, OpenClaw, goose, Crush, Cline, OpenHands, Hermes, GitHub Copilot CLI, and Gemini CLI), seven supported
+The package builder creates eighteen `*-<host>-skills.zip` archives (one per
+enabled destination, including Pi, OpenClaw, goose, Crush, Cline, OpenHands, Hermes,
+GitHub Copilot CLI, Gemini CLI, and Kilo CLI), seven supported
 plugin/marketplace archives, and `host-packages.json` (`host-packages-v2`) with
 SHA-256 digests, per-artifact offline `contract_id` validation (#27), and honest
 `native_evidence_status=not-run` until host CLI revalidation is recorded.
 Published `0.3.4` release assets remain historical nine-destination archives;
-current `main` builds thirteen. Replace `<version>` below with the release version.
+current `main` builds eighteen. Replace `<version>` below with the release version.
 
 Download and verify an exact release before installing a plugin:
 
@@ -153,6 +154,7 @@ Use `--scope global` for the user root or `--root <path>` for an explicit root. 
 | Hermes (`hermes`) | `.hermes/skills` / `~/.hermes/skills` | Direct Skill only. state.db schema 23. Native Hermes UI not-run. | Load `resume-hermes` / `resume-<source>` |
 | GitHub Copilot CLI (`github-copilot`) | `.github/skills` / `$COPILOT_HOME/skills` | **Destination-only**. Compat `.agents`/`.claude` skills. No copilot source adapter yet. Native CLI install not-run. | Load installed `resume-<source>` skills |
 | Gemini CLI (`gemini`) | `.gemini/skills` / `~/.gemini/skills` | **Compat profile** (not Antigravity). Session JSONL under `tmp/<hash>/chats`. Native UI not-run. | Load `resume-gemini` / `resume-<source>` |
+| Kilo CLI (`kilo`) | `.kilocode/skills` / `$KILO_CONFIG_DIR/skills` or `~/.config/kilo/skills` | **Destination-only**. Compat `.kilo`/`.agents` skills. No kilo source adapter yet (do not alias OpenCode). Native marketplace not-run. | Load installed `resume-<source>` skills |
 
 For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, `resume-crush`, `resume-goose`, `resume-openclaw`, `resume-pi`, and `resume-qwen`.
 

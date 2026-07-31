@@ -58,6 +58,7 @@ _DESTINATION_PAYLOAD_PROFILES: dict[str, str] = {
     "hermes": "hermes-v1",
     "github-copilot": "github-copilot-v1",
     "gemini": "gemini-v1",
+    "kilo": "kilo-v1",
 }
 
 _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
@@ -78,6 +79,7 @@ _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
     "hermes": (".hermes/skills", ".hermes/skills"),
     "github-copilot": (".github/skills", ".copilot/skills"),
     "gemini": (".gemini/skills", ".gemini/skills"),
+    "kilo": (".kilocode/skills", ".config/kilo/skills"),
 }
 
 
@@ -199,6 +201,16 @@ SOURCE_PROFILES["gemini"] = SourceProfile(
     fixture_profile="gemini-cli-session-jsonl-v1",
 )
 
+# Destination lands first (#46 Track A). Source stays research until core/effect
+# SQLite session schema is fixture-pinned (do not alias OpenCode by assumption).
+SOURCE_PROFILES["kilo"] = SourceProfile(
+    key="kilo",
+    adapter_module="portable_resume.adapters.kilo",
+    format_ids=(),
+    status="research",
+    fixture_profile=None,
+)
+
 # Native package surface key per destination (independent of direct Skills).
 # Hosts with only direct-skill install leave this unset (opencode, pi, …).
 _NATIVE_PACKAGE_BY_DESTINATION: dict[str, str] = {
@@ -311,6 +323,16 @@ DESTINATION_PROFILES["gemini"] = DestinationProfile(
     direct_skill=True,
     project_rel=".gemini/skills",
     global_rel=".gemini/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["kilo"] = DestinationProfile(
+    key="kilo",
+    payload_profile="kilo-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".kilocode/skills",
+    global_rel=".config/kilo/skills",
     native_package_profile=None,
 )
 

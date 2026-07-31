@@ -852,6 +852,70 @@ HOST_PROFILES: dict[str, HostProfile] = {
         global_home_env="GEMINI_CLI_HOME",
         global_env_rel=".gemini/skills",
     ),
+    "kilo": HostProfile(
+        key="kilo",
+        profile_id="kilo-v1",
+        project_rel=".kilocode/skills",
+        global_rel=".config/kilo/skills",
+        display_name="Kilo CLI",
+        official_docs=(
+            "https://github.com/Kilo-Org/kilocode",
+            "https://github.com/Kilo-Org/kilocode/blob/main/packages/opencode/src/skill/index.ts",
+            "https://github.com/Kilo-Org/kilocode/blob/main/packages/core/src/global.ts",
+        ),
+        project_layout="<project>/.kilocode/skills/<name>/SKILL.md",
+        global_layout="$KILO_CONFIG_DIR/skills or ~/.config/kilo/skills/<name>/SKILL.md",
+        alternate_project_roots=(
+            ".kilocode/skill",
+            ".kilo/skills",
+            ".kilo/skill",
+            ".agents/skills",
+            ".claude/skills",
+        ),
+        alternate_global_roots=(
+            "~/.config/kilo/skill",
+            "~/.kilocode/skills",
+            "~/.kilocode/skill",
+            "~/.kilo/skills",
+            "~/.kilo/skill",
+            "~/.agents/skills",
+            "~/.claude/skills",
+        ),
+        install_methods=(
+            "This installer: install-resume-skills install --host kilo --scope project|global",
+            "Manual: copy each resume-*/ folder into .kilocode/skills/ or ~/.config/kilo/skills/",
+            "Also: Kilo Marketplace / remote skill URLs (native route; not-run here)",
+        ),
+        activation_help=(
+            "Load resume-<source> from the Kilo CLI skills tree (.kilocode/skills or "
+            "~/.config/kilo/skills). Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-claude with ref latest",
+            "Confirm kilo discovers skills under .kilocode/skills",
+        ),
+        arguments_note=(
+            "Pass the session <ref> for a *supported* source skill (resume-<source>). "
+            "Kilo is destination-only in this release; no kilo source adapter yet."
+        ),
+        caveats=(
+            "Destination-only: no kilo source adapter until core/effect SQLite session schema is fixture-pinned (#46 Track B).",
+            "Do not point the OpenCode adapter at a guessed kilo.db — Kilo is a fork with independent storage evolution.",
+            "Does not invoke kilo CLI, marketplace network install, VS Code/JetBrains, or cloud sync.",
+            "Native kilo skill picker / marketplace activation evidence remains not-run.",
+            "Global installs honor KILO_CONFIG_DIR when set (absolute path → <dir>/skills).",
+        ),
+        evidence_notes=(
+            "Pinned 2026-07-31 from Kilo-Org/kilocode main (skill/index.ts + core/global.ts): "
+            "project .kilocode/.kilo with {skill,skills}/**/SKILL.md; global XDG app `kilo` → "
+            "~/.config/kilo; compat .agents/skills + .claude/skills unless disabled. "
+            "Primary installer root remains plural skills/; singular skill/ is discovery/shadow only. "
+            "Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+        global_home_env="KILO_CONFIG_DIR",
+        global_env_rel="skills",
+    ),
 }
 
 SOURCE_TITLES = {

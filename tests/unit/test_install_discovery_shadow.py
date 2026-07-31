@@ -361,6 +361,40 @@ class CodexFollowupTests(unittest.TestCase):
         )
         self.assertEqual(os.path.realpath(path), os.path.realpath(env_home / "skills"))
 
+    def test_kilo_config_dir_singular_skill_root(self) -> None:
+        """#46: singular skill/ must track KILO_CONFIG_DIR, not only $HOME."""
+        from portable_resume.install.discovery import discovery_roots_for_host, resolve_discovery_path
+
+        env_home = self.home / "kilo-custom"
+        env_home.mkdir()
+        entry = next(
+            r
+            for r in discovery_roots_for_host("kilo")
+            if r.root_id == "kilo.user.config.skill"
+        )
+        path = resolve_discovery_path(
+            entry,
+            project_dir=str(self.project),
+            home_dir=str(self.home),
+            host="kilo",
+            environ={"KILO_CONFIG_DIR": str(env_home)},
+            isolation=False,
+        )
+        self.assertEqual(os.path.realpath(path), os.path.realpath(env_home / "skill"))
+        # Isolation must ignore host env override.
+        iso = resolve_discovery_path(
+            entry,
+            project_dir=str(self.project),
+            home_dir=str(self.home),
+            host="kilo",
+            environ={"KILO_CONFIG_DIR": str(env_home)},
+            isolation=True,
+        )
+        self.assertEqual(
+            os.path.realpath(iso),
+            os.path.realpath(self.home / ".config" / "kilo" / "skill"),
+        )
+
 
 class CliAuditAndInstallGateTests(unittest.TestCase):
     def setUp(self) -> None:
