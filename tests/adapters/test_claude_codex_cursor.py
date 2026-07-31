@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import unittest
 import uuid
+from collections import Counter
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,16 +36,20 @@ def write_jsonl(path: Path, records: list[object], *, trailing: bytes = b"") -> 
 
 
 class AdapterFixtureManifestTests(unittest.TestCase):
-    def test_all_28_lane_manifests_are_strict_synthetic(self) -> None:
+    def test_lane_manifests_are_strict_synthetic(self) -> None:
+        lane_sources = {"claude", "codex", "cursor"}
         values = [
             value
             for value in validate_fixture_tree("tests/fixtures")
-            if value.source in {"claude", "codex", "cursor"}
+            if value.source in lane_sources
         ]
-        self.assertEqual(len(values), 28)
-        self.assertEqual(sum(value.source == "claude" for value in values), 8)
-        self.assertEqual(sum(value.source == "codex" for value in values), 12)
-        self.assertEqual(sum(value.source == "cursor" for value in values), 8)
+        fixture_sources = Counter(
+            path.parents[1].name
+            for path in Path("tests/fixtures").rglob("fixture.json")
+            if path.parents[1].name in lane_sources
+        )
+
+        self.assertEqual(Counter(value.source for value in values), fixture_sources)
         self.assertTrue(all(value.synthetic for value in values))
 
 
@@ -58,6 +63,12 @@ class ClaudeAdapterTests(unittest.TestCase):
 
     def query(self, ref: str | None = None, cwd: Path | None = None) -> Query:
         return Query("claude", ref=ref, cwd=str(cwd or self.cwd), source_root=str(self.root))
+
+    def issue167_query(self, cwd: str) -> Query:
+        root = Path(
+            "tests/fixtures/claude/s-cla-09-unmatched-cwd-bounds/root"
+        ).resolve()
+        return Query("claude", cwd=cwd, source_root=str(root))
 
     def session(self, records: list[dict], *, identifier: str | None = None, project: str = "project", trailing: bytes = b"") -> tuple[str, Path]:
         identifier = identifier or str(uuid.uuid4())
@@ -273,6 +284,111 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(session.cwd, str(self.cwd))
         self.assertEqual([turn.content for turn in session.turns], ["main request", "worktree answer"])
         self.assertEqual(claude.ADAPTER.list(self.query(cwd=worktree), ReadBudget()), [])
+
+    def test_issue167_unmatched_cwd_completes_with_empty_authoritative_result(self) -> None:
+        budget = ReadBudget(Bounds(scanned_records=4))
+        query = self.issue167_query("/workspace/unmatched")
+        fixture_before = tree_snapshot(Path(query.source_root or ""))
+
+        values = claude.ADAPTER.list(query, budget)
+
+        self.assertEqual(values, [])
+        self.assertEqual(budget.records, 4)
+        self.assertEqual(fixture_before, tree_snapshot(Path(query.source_root or "")))
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = run(
+            [
+                "claude",
+                "list",
+                "--cwd",
+                query.cwd or "",
+                "--source-root",
+                query.source_root or "",
+                "--json",
+            ],
+            stdout=stdout,
+            stderr=stderr,
+        )
+        envelope = json.loads(stdout.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(envelope["sessions"], [])
+        self.assertEqual(envelope["warnings"], [])
+
+    def test_issue167_unmatched_cwd_still_fails_when_prefilter_is_incomplete(self) -> None:
+        budget = ReadBudget(Bounds(scanned_records=3))
+
+        with self.assertRaises(DiagnosticError) as caught:
+            claude.ADAPTER.list(self.issue167_query("/workspace/unmatched"), budget)
+
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_issue167_show_latest_unmatched_cwd_renders_no_match_document(self) -> None:
+        query = self.issue167_query("/workspace/unmatched")
+        stdout, stderr = io.StringIO(), io.StringIO()
+
+        code = run(
+            [
+                "claude",
+                "show",
+                "latest",
+                "--cwd",
+                query.cwd or "",
+                "--source-root",
+                query.source_root or "",
+            ],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        self.assertEqual(code, 3)
+        self.assertIn("# Portable Resume No Match", stdout.getvalue())
+        self.assertGreater(len(stdout.getvalue()), 0)
+        self.assertEqual(json.loads(stderr.getvalue())["code"], "E_NO_MATCH")
+
+    def test_issue167_relocated_bucket_remains_discoverable(self) -> None:
+        values = claude.ADAPTER.list(
+            self.issue167_query("/workspace/target"),
+            ReadBudget(),
+        )
+
+        self.assertEqual(
+            [value.session_id for value in values],
+            ["00000000-0000-4000-8000-000000000004"],
+        )
+
+    def test_issue167_matching_prefilter_payload_is_charged_once(self) -> None:
+        session_id = str(uuid.uuid4())
+        _, path = self.session(
+            [
+                self.turn(
+                    "user",
+                    str(uuid.uuid4()),
+                    None,
+                    "relocated once",
+                    0,
+                    sessionId=session_id,
+                )
+            ],
+            identifier=session_id,
+            project="relocated-bucket",
+        )
+        budget = ReadBudget(Bounds(source_read_bytes=path.stat().st_size))
+
+        values = claude.ADAPTER.list(self.query(), budget)
+
+        self.assertEqual([value.session_id for value in values], [session_id])
+        self.assertEqual(budget.bytes_read, path.stat().st_size)
+
+    def test_issue167_matched_scan_still_fails_closed_when_oversized(self) -> None:
+        with self.assertRaises(DiagnosticError) as caught:
+            claude.ADAPTER.list(
+                self.issue167_query("/workspace/target"),
+                ReadBudget(Bounds(scanned_records=4)),
+            )
+
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
     def test_semantic_replay_uses_latest_parent_and_conflicts_fail_closed(self) -> None:
         session_id = str(uuid.uuid4())

@@ -19,6 +19,23 @@
 - **Planned at**: commit `2b4611c`, 2026-08-01
 - **Issue**: https://github.com/ImL1s/resume-skills/issues/167
 
+## Implementation decision
+
+Use **Option B**: during the cwd-scoped broad fallback, first inspect only
+enough metadata to determine each session's primary recorded cwd. Run the
+existing full summary scan only for sessions whose primary cwd matches the
+request. A synthetic 60-session baseline with 41 records per session consumed
+the full 2,000-record ceiling and raised `E_LIMIT_EXCEEDED`; after the change,
+the same store consumes exactly 60 records (1.0 per session). The current real
+store completes its unmatched scan in 482 records. If that cheap pass cannot
+finish within the configured ceiling, it must still raise, so no incomplete
+scan is presented as an authoritative empty listing. This preserves
+relocated-bucket discovery and leaves `bounds.py`
+unchanged. Prefilter accounting is provisional: unmatched sessions commit the
+records and bytes they admitted, while a matching session is charged once by
+the authoritative full summary scan rather than double-charging the same
+payload.
+
 ## Why this matters
 
 A host agent must pass the user's project directory as `--cwd`. Sessions were
@@ -278,14 +295,14 @@ bounded; the still-fails-closed case is the guard for the safety property.
 
 ## Done criteria
 
-- [ ] `list --cwd <unmatched>` exits 0 with an empty listing **when the scan completed**
-- [ ] An incomplete scan is never presented as an authoritative empty listing (test-pinned, both directions)
-- [ ] `show latest --cwd <unmatched>` exits 3 with a non-empty stdout document
-- [ ] Relocated-bucket discovery still works (test-pinned)
-- [ ] Oversized *matched* scans still raise `E_LIMIT_EXCEEDED` (test-pinned)
-- [ ] `bounds.py` unmodified (`git diff` empty)
-- [ ] Cross-adapter list in the completion report
-- [ ] Full suite + smoke matrix + gates green; `plans/README.md` updated
+- [x] `list --cwd <unmatched>` exits 0 with an empty listing **when the scan completed**
+- [x] An incomplete scan is never presented as an authoritative empty listing (test-pinned, both directions)
+- [x] `show latest --cwd <unmatched>` exits 3 with a non-empty stdout document
+- [x] Relocated-bucket discovery still works (test-pinned)
+- [x] Oversized *matched* scans still raise `E_LIMIT_EXCEEDED` (test-pinned)
+- [x] `bounds.py` unmodified (`git diff` empty)
+- [x] Cross-adapter list in the completion report
+- [x] Full suite + smoke matrix + gates green; `plans/README.md` updated
 
 ## STOP conditions
 

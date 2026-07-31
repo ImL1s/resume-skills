@@ -1,0 +1,2 @@
+{"type":"user","uuid":"30000000-0000-4000-8000-000000000001","parentUuid":null,"sessionId":"00000000-0000-4000-8000-000000000003","cwd":"/workspace/other-c","timestamp":"2026-01-01T00:02:00Z","message":{"role":"user","content":"synthetic request c"}}
+{"type":"assistant","uuid":"30000000-0000-4000-8000-000000000002","parentUuid":"30000000-0000-4000-8000-000000000001","sessionId":"00000000-0000-4000-8000-000000000003","cwd":"/workspace/other-c","timestamp":"2026-01-01T00:02:01Z","message":{"role":"assistant","content":"synthetic answer c"}}
