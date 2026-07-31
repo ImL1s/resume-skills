@@ -236,6 +236,130 @@ class GitHubCopilotAdapterTests(unittest.TestCase):
         ids = [item["session_id"] for item in payload["sessions"]]
         self.assertEqual(ids, [BASIC_ID])
 
+    def test_list_uses_bounded_metadata_not_full_transcript(self) -> None:
+        """List must not full-scan every transcript (Codex P1 budget)."""
+        from portable_resume.bounds import Bounds
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sid = BASIC_ID
+            sess = root / "session-state" / sid
+            sess.mkdir(parents=True)
+            lines = [
+                {
+                    "type": "session.start",
+                    "id": "e1",
+                    "parentId": None,
+                    "timestamp": "2024-01-01T12:00:00.000Z",
+                    "data": {
+                        "sessionId": sid,
+                        "startTime": "2024-01-01T12:00:00.000Z",
+                        "context": {"cwd": CWD},
+                    },
+                },
+                {
+                    "type": "user.message",
+                    "id": "e2",
+                    "parentId": "e1",
+                    "timestamp": "2024-01-01T12:00:01.000Z",
+                    "data": {"content": "title from early user"},
+                },
+            ]
+            # Pad with many assistant rows after the public user turn.
+            for index in range(200):
+                lines.append(
+                    {
+                        "type": "assistant.message",
+                        "id": f"a{index}",
+                        "parentId": "e2",
+                        "timestamp": f"2024-01-01T12:00:{index % 60:02d}.000Z",
+                        "data": {"content": f"pad {index}"},
+                    }
+                )
+            (sess / "events.jsonl").write_text(
+                "".join(json.dumps(line) + "\n" for line in lines),
+                encoding="utf-8",
+            )
+            # Budget would fail a full multi-thousand-line scan of many peers;
+            # single long file with tiny transcript budget must still list.
+            listed = ADAPTER.list(
+                query(root),
+                ReadBudget(Bounds(transcript_records=32, scanned_records=64)),
+            )
+            self.assertEqual([item.session_id for item in listed], [sid])
+            self.assertEqual(listed[0].title, "title from early user")
+
+    def test_show_uses_active_parent_lineage(self) -> None:
+        """Abandoned rewind branch must not appear in show handoff (Codex P1)."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sid = BASIC_ID
+            sess = root / "session-state" / sid
+            sess.mkdir(parents=True)
+            lines = [
+                {
+                    "type": "session.start",
+                    "id": "e1",
+                    "parentId": None,
+                    "timestamp": "2024-01-01T12:00:00.000Z",
+                    "data": {
+                        "sessionId": sid,
+                        "startTime": "2024-01-01T12:00:00.000Z",
+                        "context": {"cwd": CWD},
+                    },
+                },
+                {
+                    "type": "user.message",
+                    "id": "e2",
+                    "parentId": "e1",
+                    "timestamp": "2024-01-01T12:00:01.000Z",
+                    "data": {"content": "first user (abandoned after rewind)"},
+                },
+                {
+                    "type": "assistant.message",
+                    "id": "e3",
+                    "parentId": "e2",
+                    "timestamp": "2024-01-01T12:00:02.000Z",
+                    "data": {"content": "first assistant (abandoned)"},
+                },
+                # Rewind: new user re-parents to session root (sibling of e2).
+                {
+                    "type": "user.message",
+                    "id": "e4",
+                    "parentId": "e1",
+                    "timestamp": "2024-01-01T12:00:03.000Z",
+                    "data": {"content": "rewound user prompt"},
+                },
+                {
+                    "type": "assistant.message",
+                    "id": "e5",
+                    "parentId": "e4",
+                    "timestamp": "2024-01-01T12:00:04.000Z",
+                    "data": {"content": "rewound assistant reply"},
+                },
+                {
+                    "type": "session.shutdown",
+                    "id": "e6",
+                    "parentId": "e1",
+                    "timestamp": "2024-01-01T12:00:05.000Z",
+                    "data": {},
+                },
+            ]
+            (sess / "events.jsonl").write_text(
+                "".join(json.dumps(line) + "\n" for line in lines),
+                encoding="utf-8",
+            )
+            current = query(root, ref=sid)
+            listed = ADAPTER.list(current, ReadBudget())
+            self.assertEqual(len(listed), 1)
+            session = ADAPTER.show(
+                ResolvedRef.from_summary(listed[0]), current, ReadBudget()
+            )
+            texts = [turn.content for turn in session.turns]
+            self.assertEqual(texts, ["rewound user prompt", "rewound assistant reply"])
+            self.assertNotIn("first user (abandoned after rewind)", texts)
+            self.assertNotIn("first assistant (abandoned)", texts)
+
 
 if __name__ == "__main__":
     unittest.main()

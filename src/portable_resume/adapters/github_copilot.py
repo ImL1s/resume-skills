@@ -29,11 +29,13 @@ from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
 from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
 from ..sanitize import sanitize_turn_record
-from ..snapshot import stable_scan_lines
+from ..snapshot import stable_read_windows, stable_scan_lines
 from .base import CapabilityReport, ResolvedRef
 from .common import within_age
 
 FORMAT_ID = "copilot-cli-events-jsonl-v1"
+_META_HEAD_BYTES = 256 * 1024
+_META_HEAD_LINES = 64
 _SESSION_ID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -285,23 +287,187 @@ def _message_turn(
     return None
 
 
+def _file_mtime_iso(path: str) -> str | None:
+    try:
+        mtime = os.lstat(path).st_mtime
+    except OSError:
+        return None
+    return (
+        datetime.fromtimestamp(mtime, timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _active_lineage_ids(
+    parent_of: Mapping[str, str | None],
+    tip: str | None,
+) -> set[str] | None:
+    """Walk parentId chain from *tip*; None means lineage unavailable."""
+
+    if tip is None or tip not in parent_of:
+        return None
+    active: set[str] = set()
+    cur: str | None = tip
+    while cur is not None and cur not in active:
+        active.add(cur)
+        if cur not in parent_of:
+            break
+        parent = parent_of[cur]
+        if parent is None:
+            break
+        if not isinstance(parent, str) or not parent:
+            break
+        cur = parent
+    return active
+
+
+def _apply_session_control(
+    event_type: str,
+    data: Mapping[str, Any],
+    meta: dict[str, Any],
+    *,
+    created_at: str | None,
+) -> str | None:
+    """Update meta from control events; return maybe-updated created_at."""
+
+    if event_type == "session.start":
+        sid = data.get("sessionId")
+        if isinstance(sid, str):
+            meta["sessionId"] = sid
+        start = data.get("startTime")
+        if isinstance(start, str):
+            meta["startTime"] = start
+            created_at = _stamp_iso(start) or created_at
+        ctx = data.get("context")
+        if isinstance(ctx, Mapping):
+            cwd = ctx.get("cwd")
+            if isinstance(cwd, str) and cwd.strip():
+                meta["cwd"] = cwd.strip()
+            branch = ctx.get("branch")
+            if isinstance(branch, str) and branch.strip():
+                meta["branch"] = branch.strip()
+    elif event_type == "session.context_changed":
+        cwd = data.get("cwd")
+        if isinstance(cwd, str) and cwd.strip():
+            meta["cwd"] = cwd.strip()
+    return created_at
+
+
+def _scan_session_metadata(
+    path: str,
+    root: str,
+    budget: ReadBudget,
+) -> tuple[dict[str, Any], str | None, str | None]:
+    """Bounded head-window list metadata (charges scanned_records, not transcript)."""
+
+    maximum_record = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
+    line_cap = min(_META_HEAD_LINES, budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
+    if line_cap <= 0:
+        return {}, None, None
+    windows = stable_read_windows(
+        path,
+        root=root,
+        head_bytes=min(_META_HEAD_BYTES, 4 * 1024 * 1024),
+        tail_bytes=0,
+        max_bytes=min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes),
+        attempts=min(budget.limits.snapshot_attempts, DEFAULT_BOUNDS.snapshot_attempts),
+        membership_limit=min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records),
+        budget=budget,
+        require_size_within_max=False,
+    )
+    data = windows.head
+    full_in_head = windows.fingerprint.size <= len(data)
+    raw_lines = data.splitlines(keepends=True)
+    if raw_lines and not full_in_head:
+        last = raw_lines[-1]
+        if not last.endswith((b"\n", b"\r")):
+            raw_lines = raw_lines[:-1]
+
+    meta: dict[str, Any] = {}
+    created_at: str | None = None
+    updated_at: str | None = None
+    lines_seen = 0
+    for raw in raw_lines:
+        if lines_seen >= line_cap:
+            break
+        lines_seen += 1
+        budget.consume_records()
+        body = raw[:-1] if raw.endswith(b"\n") else raw
+        if body.endswith(b"\r"):
+            body = body[:-1]
+        if len(body) > maximum_record:
+            raise DiagnosticError.limit_exceeded()
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise DiagnosticError(
+                "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
+            ) from error
+        stripped = text.strip()
+        if not stripped:
+            continue
+        try:
+            record = json.loads(stripped, object_pairs_hook=_object)
+        except (json.JSONDecodeError, _DuplicateKey, RecursionError) as error:
+            raise DiagnosticError(
+                "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
+            ) from error
+        if not isinstance(record, Mapping):
+            raise DiagnosticError(
+                "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
+            )
+        stamp = _stamp_iso(record.get("timestamp"))
+        if stamp is not None:
+            if created_at is None:
+                created_at = stamp
+            updated_at = stamp
+        event_type = record.get("type")
+        if not isinstance(event_type, str):
+            raise DiagnosticError(
+                "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
+            )
+        payload = record.get("data")
+        if payload is None:
+            payload = {}
+        if not isinstance(payload, Mapping):
+            raise DiagnosticError(
+                "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
+            )
+        created_at = _apply_session_control(
+            event_type, payload, meta, created_at=created_at
+        )
+        if event_type == "user.message":
+            content = payload.get("content")
+            if isinstance(content, str) and content.strip():
+                meta["has_user"] = True
+                if "title" not in meta:
+                    meta["title"] = content.strip().splitlines()[0][
+                        : DEFAULT_BOUNDS.title_chars
+                    ]
+        if meta.get("has_user") and meta.get("sessionId") and meta.get("cwd"):
+            # Enough for list eligibility; stop early inside the head window.
+            break
+    return meta, created_at, updated_at
+
+
 def _scan_session(
     path: str,
     root: str,
     budget: ReadBudget,
     *,
-    metadata_only: bool,
     strict_unknown: bool,
 ) -> tuple[dict[str, Any], list[tuple[str, str]], str | None, str | None]:
-    """Return meta, turns (role,text), created_at, updated_at."""
+    """Full transcript scan with active ``id``/``parentId`` lineage for show."""
 
     meta: dict[str, Any] = {}
-    turns: list[tuple[str, str]] = []
+    pending: list[tuple[str | None, str, str]] = []
+    parent_of: dict[str, str | None] = {}
+    last_public_id: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
     count = 0
     limit = min(budget.limits.transcript_records, DEFAULT_BOUNDS.transcript_records)
-    meta_limit = min(64, limit)
 
     for line in stable_scan_lines(
         path,
@@ -311,9 +477,7 @@ def _scan_session(
         charge_transcript=True,
     ):
         count += 1
-        if metadata_only and count > meta_limit:
-            break
-        if not metadata_only and count > limit:
+        if count > limit:
             raise DiagnosticError.limit_exceeded()
         text = line.text.strip()
         if not text:
@@ -351,46 +515,42 @@ def _scan_session(
                 "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
             )
 
-        if event_type == "session.start":
-            sid = data.get("sessionId")
-            if isinstance(sid, str):
-                meta["sessionId"] = sid
-            start = data.get("startTime")
-            if isinstance(start, str):
-                meta["startTime"] = start
-                created_at = _stamp_iso(start) or created_at
-            ctx = data.get("context")
-            if isinstance(ctx, Mapping):
-                cwd = ctx.get("cwd")
-                if isinstance(cwd, str) and cwd.strip():
-                    meta["cwd"] = cwd.strip()
-                branch = ctx.get("branch")
-                if isinstance(branch, str) and branch.strip():
-                    meta["branch"] = branch.strip()
-            continue
-        if event_type == "session.context_changed":
-            cwd = data.get("cwd")
-            if isinstance(cwd, str) and cwd.strip():
-                meta["cwd"] = cwd.strip()
+        event_id = record.get("id")
+        event_id_s = event_id if isinstance(event_id, str) and event_id else None
+        parent_raw = record.get("parentId")
+        if parent_raw is None:
+            parent_s: str | None = None
+        elif isinstance(parent_raw, str) and parent_raw:
+            parent_s = parent_raw
+        else:
+            parent_s = None
+        if event_id_s is not None:
+            parent_of[event_id_s] = parent_s
+
+        if event_type in {"session.start", "session.context_changed"}:
+            created_at = _apply_session_control(
+                event_type, data, meta, created_at=created_at
+            )
             continue
         if event_type == "session.shutdown":
             continue
 
-        if metadata_only:
-            # Need only enough to know a public user turn exists + stamps/cwd.
-            if event_type == "user.message":
-                content = data.get("content")
-                if isinstance(content, str) and content.strip():
-                    meta["has_user"] = True
-                    if "title" not in meta:
-                        meta["title"] = content.strip().splitlines()[0][
-                            : DEFAULT_BOUNDS.title_chars
-                        ]
-            continue
-
         parsed = _message_turn(event_type, data, strict_unknown=strict_unknown)
         if parsed is not None:
-            turns.append(parsed)
+            role, content = parsed
+            pending.append((event_id_s, role, content))
+            if event_id_s is not None:
+                last_public_id = event_id_s
+
+    active = _active_lineage_ids(parent_of, last_public_id)
+    turns: list[tuple[str, str]] = []
+    if active is None:
+        turns = [(role, content) for _eid, role, content in pending]
+    else:
+        for event_id_s, role, content in pending:
+            # Orphan public rows without id stay (best-effort); id'd rows need lineage.
+            if event_id_s is None or event_id_s in active:
+                turns.append((role, content))
 
     return meta, turns, created_at, updated_at
 
@@ -405,13 +565,7 @@ def _session_summary_from_path(
     require_age: bool,
 ) -> SessionSummary | None:
     try:
-        meta, turns, created_at, updated_at = _scan_session(
-            path,
-            root,
-            budget,
-            metadata_only=False,
-            strict_unknown=False,
-        )
+        meta, created_at, updated_at = _scan_session_metadata(path, root, budget)
     except DiagnosticError as error:
         if error.code in {"E_LIMIT_EXCEEDED", "E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
             raise
@@ -419,23 +573,22 @@ def _session_summary_from_path(
     sid = meta.get("sessionId") if isinstance(meta.get("sessionId"), str) else session_id
     if not _SESSION_ID_RE.fullmatch(sid):
         return None
-    has_user = any(role == "user" for role, _ in turns)
-    if not has_user:
+    if not meta.get("has_user"):
         return None
     cwd = meta.get("cwd") if isinstance(meta.get("cwd"), str) else None
     if query.cwd is not None:
         if cwd is None or not same_cwd(cwd, query.cwd):
             return None
+    # Prefer content stamps; file mtime covers long sessions past the head window.
     stamp = updated_at or created_at or _stamp_iso(meta.get("startTime"))
+    mtime_stamp = _file_mtime_iso(path)
+    if mtime_stamp is not None and (stamp is None or mtime_stamp > stamp):
+        stamp = mtime_stamp
     if require_age and not within_age(
         stamp, query.within_min, default_minutes=DEFAULT_BOUNDS.listing_age_minutes
     ):
         return None
-    title = None
-    for role, text in turns:
-        if role == "user":
-            title = text.splitlines()[0][: DEFAULT_BOUNDS.title_chars]
-            break
+    title = meta.get("title") if isinstance(meta.get("title"), str) else None
     return SessionSummary(
         source="github-copilot",
         session_id=sid,
@@ -473,13 +626,7 @@ class GitHubCopilotAdapter:
             budget = ReadBudget()
             for _sid, path in sessions[:8]:
                 try:
-                    meta, _turns, _c, _u = _scan_session(
-                        path,
-                        root,
-                        budget,
-                        metadata_only=True,
-                        strict_unknown=False,
-                    )
+                    meta, _c, _u = _scan_session_metadata(path, root, budget)
                 except DiagnosticError as error:
                     if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"}:
                         return CapabilityReport(self.key, FORMAT_ID, "unsafe", root=root)
@@ -587,7 +734,6 @@ class GitHubCopilotAdapter:
             target,
             root,
             budget,
-            metadata_only=False,
             strict_unknown=True,
         )
         cwd = meta.get("cwd") if isinstance(meta.get("cwd"), str) else None
