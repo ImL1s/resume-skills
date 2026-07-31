@@ -17,6 +17,7 @@ REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / "src"
 sys.path.insert(0, str(SRC))
 
+from portable_resume.build_identity import load_identity_file  # noqa: E402
 from portable_resume.registry import matrix_dimensions  # noqa: E402
 
 EXPECTED_MATRIX_CELLS = matrix_dimensions()["cells"]
@@ -79,11 +80,18 @@ def _install_result_payload(doc: dict[str, Any]) -> dict[str, Any]:
     return doc
 
 
-def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
+def smoke_artifact(
+    artifact: Path,
+    *,
+    version: str,
+    expected_identity: dict[str, Any],
+) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="portable-resume-dist-") as temporary:
         base = Path(temporary)
         environment = os.environ.copy()
         environment.pop("PYTHONPATH", None)
+        environment.pop("PORTABLE_RESUME_BUILD_IDENTITY_FILE", None)
+        environment.pop("PORTABLE_RESUME_BUILD_IDENTITY_SHA256", None)
         environment["PYTHONNOUSERSITE"] = "1"
         environment["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
         environment["PIP_NO_INPUT"] = "1"
@@ -115,13 +123,13 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
                 "-c",
                 (
                     "import json,portable_resume;"
-                    "from portable_resume.build_identity import build_identity;"
+                    "from portable_resume.build_identity import runtime_identity;"
                     "from importlib.metadata import metadata,version;"
                     "m=metadata('portable-resume');"
                     "print(json.dumps({'module':portable_resume.__file__,"
                     "'source_version':portable_resume.__version__,"
                     "'metadata_version':version('portable-resume'),"
-                    "'build_identity':build_identity(),"
+                    "'build_identity':runtime_identity(),"
                     "'project_urls':m.get_all('Project-URL') or []}))"
                 ),
             ],
@@ -132,12 +140,8 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
         if identity.get("source_version") != version or identity.get("metadata_version") != version:
             raise RuntimeError("installed version does not match release version")
         build = identity.get("build_identity") or {}
-        if (
-            build.get("base_version") != version
-            or build.get("registry_sha256") is None
-            or build.get("source_sha256") is None
-        ):
-            raise RuntimeError("installed build identity does not match package version")
+        if build != expected_identity:
+            raise RuntimeError("installed build identity differs from the build pin")
         module_path = str(identity.get("module", ""))
         if str(REPO) in module_path:
             raise RuntimeError("installed import leaked to source checkout")
@@ -158,7 +162,8 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
             )
             if (
                 version_output.returncode != 0
-                or version_output.stdout.strip() != f"{command} {version}"
+                or version_output.stdout.strip()
+                != f"{command} {expected_identity['version']}"
                 or version_output.stderr
             ):
                 raise RuntimeError(f"installed {command} version output is invalid")
@@ -256,6 +261,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dist-dir", default="dist")
     parser.add_argument("--version", required=True)
+    parser.add_argument("--identity-file", required=True)
+    parser.add_argument("--identity-sha256", required=True)
     parser.add_argument("--json", action="store_true")
     namespace = parser.parse_args(argv)
     dist = Path(namespace.dist_dir)
@@ -272,13 +279,26 @@ def main(argv: list[str] | None = None) -> int:
         "ok": False,
     }
     try:
+        expected_identity = load_identity_file(
+            namespace.identity_file,
+            expected_sha256=namespace.identity_sha256,
+        )
+        if expected_identity.get("base_version") != namespace.version:
+            raise RuntimeError("expected identity base version differs from --version")
         if len(artifacts) != 2:
             raise RuntimeError("expected exactly one wheel and one sdist")
         report["artifacts"] = [
-            smoke_artifact(path, version=namespace.version) for path in artifacts
+            smoke_artifact(
+                path,
+                version=namespace.version,
+                expected_identity=expected_identity,
+            )
+            for path in artifacts
         ]
+        report["build_identity"] = expected_identity
+        report["build_identity_sha256"] = namespace.identity_sha256
         report["ok"] = True
-    except RuntimeError as error:
+    except (OSError, RuntimeError, ValueError) as error:
         report["error"] = str(error)
 
     if namespace.json or not report["ok"]:

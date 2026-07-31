@@ -26,10 +26,15 @@ The version lifecycle is fail-closed:
    `X.Y.Z.dev0` or minor-development version.
 2. Development builds retain that PEP 440 base. Explicit build/release reports
    expose commit/dirty/registry provenance through
-   `portable-resume/build-identity-v1`; runtime identity lookup never invokes
-   Git or another child process and uses the documented null-commit fallback
-   until embedded artifact identity is completed under #118. This does not
-   change the separate optional trusted-zstd reader boundary.
+   `portable-resume/build-identity-v2`. Version 2 adds the required non-package
+   build-input digest. Runtime inspection remains compatible with canonical v1
+   documents, but artifact-producing and verification paths require v2. Build
+   tooling pins one canonical document plus its SHA-256 before byte production
+   and embeds the exact bytes into every Python and host-package artifact.
+   Installed runtime identity lookup uses only
+   the fixed packaged resource, never the build-pin environment and never Git;
+   an unpackaged source checkout uses the documented null-commit fallback. This
+   does not change the separate optional trusted-zstd reader boundary.
 3. Prepare a release by replacing the development base with exact `X.Y.Z`,
    merging green CI, and only then creating the annotated matching tag.
 4. The release workflow rejects `.devN`; after publication, repeat step 1 before
@@ -63,21 +68,28 @@ git push origin vX.Y.Z
    CHANGELOG entry, clean tree, annotated tag, and reachability from
    `origin/main`; pin every downstream checkout to the validated commit SHA.
 3. Run the four canonical gates plus multilingual-document consistency on Ubuntu/macOS × Python 3.11/3.14.
-4. Build wheel, sdist, one direct host archive per enabled destination
-   (currently 18), and seven plugin/marketplace archives once.
-5. Smoke-install the exact wheel and sdist outside the checkout on both OSes.
-6. Generate artifact digests, `release-evidence.json`, and a `SHA256SUMS` that
+4. Pin one clean, exact-tag canonical build identity plus its SHA-256 before any
+   artifact bytes are produced. The identity binds the runtime source,
+   registries, and non-package artifact build inputs; set `SOURCE_DATE_EPOCH`
+   from that commit.
+5. Build wheel, sdist, one direct host archive per enabled destination
+   (currently 18), and seven plugin/marketplace archives once from that pin.
+6. Require every archive and the host report to contain the exact canonical
+   identity bytes at its contracted runtime path, then smoke-install the exact
+   wheel and sdist outside the checkout on both OSes with build-pin environment
+   variables scrubbed.
+7. Generate artifact digests, `release-evidence.json`, and a `SHA256SUMS` that
    uses the flat basenames delivered by GitHub Releases.
-7. Recreate that flat download layout and verify every checksum on Ubuntu and
+8. Recreate that flat download layout and verify every checksum on Ubuntu and
    macOS.
-8. Create GitHub artifact attestations and a **draft** Release containing those exact bytes.
-9. Reassert that the remote annotated tag still peels to the validated SHA,
+9. Create GitHub artifact attestations and a **draft** Release containing those exact bytes.
+10. Reassert that the remote annotated tag still peels to the validated SHA,
    then publish the same Python artifacts through PyPI Trusted Publishing.
-10. Reassert the remote tag again and publish the staged GitHub Release only
+11. Reassert the remote tag again and publish the staged GitHub Release only
     after PyPI succeeds. A manual dispatch may deliberately skip PyPI. Protect
     `v*` tags with an immutable repository ruleset because workflow checks
     cannot make a mutable Git ref atomic.
-11. Synchronize the public marketplace and verify its release:
+12. Synchronize the public marketplace and verify its release:
 
     ```bash
     gh workflow run sync.yml \

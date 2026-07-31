@@ -48,6 +48,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python
@@ -72,6 +73,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python
@@ -82,18 +84,68 @@ jobs:
       - name: Install isolated release tooling
         run: python -m pip install --disable-pip-version-check build==1.5.0 twine==6.2.0
 
+      - name: Pin one build identity
+        shell: bash
+        run: |
+          test ! -e src/portable_resume/resources/build-identity.json
+          git status --porcelain -- src/portable_resume \
+            > "$RUNNER_TEMP/package-source-status.before"
+          mkdir -p package-evidence
+          python scripts/prepare_build_identity.py \
+            --output package-evidence/build-identity.json \
+            --json > "$RUNNER_TEMP/build-identity-pin.json"
+          identity_sha="$(python -c \
+            'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["sha256"])' \
+            "$RUNNER_TEMP/build-identity-pin.json")"
+          {
+            echo "PORTABLE_RESUME_BUILD_IDENTITY_FILE=$GITHUB_WORKSPACE/package-evidence/build-identity.json"
+            echo "PORTABLE_RESUME_BUILD_IDENTITY_SHA256=$identity_sha"
+            echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)"
+          } >> "$GITHUB_ENV"
+
       - name: Build wheel and sdist
+        shell: bash
         run: |
           python -m build
           python -m twine check dist/*
-
-      - name: Smoke exact distributions
-        run: |
-          VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-          python scripts/smoke_distribution.py --dist-dir dist --version "$VERSION"
+          mkdir dist-repro
+          python -m build --outdir dist-repro
+          [[ "$(find dist -maxdepth 1 -type f | wc -l)" == "2" ]]
+          [[ "$(find dist-repro -maxdepth 1 -type f | wc -l)" == "2" ]]
+          for artifact in dist/*; do
+            cmp "$artifact" "dist-repro/${artifact#dist/}"
+          done
+          test ! -e src/portable_resume/resources/build-identity.json
+          git status --porcelain -- src/portable_resume \
+            > "$RUNNER_TEMP/package-source-status.after"
+          cmp "$RUNNER_TEMP/package-source-status.before" \
+            "$RUNNER_TEMP/package-source-status.after"
 
       - name: Build deterministic host packages
-        run: python scripts/build_host_packages.py --output-dir host-packages
+        run: |
+          python scripts/build_host_packages.py \
+            --output-dir host-packages \
+            --identity-file "$PORTABLE_RESUME_BUILD_IDENTITY_FILE" \
+            --identity-sha256 "$PORTABLE_RESUME_BUILD_IDENTITY_SHA256"
+
+      - name: Verify and smoke exact artifact identities
+        run: |
+          python scripts/verify_artifact_identities.py \
+            --identity-file "$PORTABLE_RESUME_BUILD_IDENTITY_FILE" \
+            --identity-sha256 "$PORTABLE_RESUME_BUILD_IDENTITY_SHA256" \
+            --host-report host-packages/host-packages.json \
+            --output package-evidence/artifact-identities.json \
+            dist/* host-packages/*.zip
+          VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          expected_identity_file="$PORTABLE_RESUME_BUILD_IDENTITY_FILE"
+          expected_identity_sha="$PORTABLE_RESUME_BUILD_IDENTITY_SHA256"
+          PORTABLE_RESUME_BUILD_IDENTITY_FILE="$RUNNER_TEMP/poison-build-identity.json" \
+          PORTABLE_RESUME_BUILD_IDENTITY_SHA256="$(printf '0%.0s' {1..64})" \
+          python scripts/smoke_distribution.py \
+            --dist-dir dist \
+            --version "$VERSION" \
+            --identity-file "$expected_identity_file" \
+            --identity-sha256 "$expected_identity_sha"
 
       - name: Upload CI package evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -102,5 +154,6 @@ jobs:
           path: |
             dist/*
             host-packages/*
+            package-evidence/*
           if-no-files-found: error
           retention-days: 14

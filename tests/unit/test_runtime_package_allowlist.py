@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import unittest
 
+from portable_resume.build_identity import runtime_identity
 from portable_resume.install.render import _RUNTIME_MODULES, materialize_plan
 
 
@@ -50,6 +52,7 @@ class RuntimePackageAllowlistTests(unittest.TestCase):
         self.assertEqual(set(_RUNTIME_MODULES), expected)
         self.assertEqual(len(_RUNTIME_MODULES), len(expected))
         self.assertFalse(any(path.startswith("install/") for path in _RUNTIME_MODULES))
+        self.assertNotIn("resources/build-identity.json", _RUNTIME_MODULES)
 
     def test_materialized_runtime_matches_allowlist_exactly(self) -> None:
         files = materialize_plan("claude")
@@ -59,7 +62,14 @@ class RuntimePackageAllowlistTests(unittest.TestCase):
             for relative in files
             if relative.startswith(prefix)
         }
-        self.assertEqual(packaged, set(_RUNTIME_MODULES))
+        self.assertEqual(
+            packaged,
+            {*_RUNTIME_MODULES, "resources/build-identity.json"},
+        )
+        embedded = json.loads(
+            files[f"{prefix}resources/build-identity.json"].decode("utf-8")
+        )
+        self.assertEqual(embedded, runtime_identity())
 
 
 if __name__ == "__main__":

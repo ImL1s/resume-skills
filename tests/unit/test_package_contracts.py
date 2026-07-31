@@ -4,16 +4,25 @@ from __future__ import annotations
 
 import io
 import json
+import stat
+import struct
+import tempfile
 import zipfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from portable_resume import __version__
+from portable_resume.build_identity import runtime_identity
+from portable_resume.install.render import materialize_plan
 from portable_resume.install.package_contracts import (
     PACKAGE_CONTRACTS,
     PACKAGE_CONTRACTS_SCHEMA,
+    MAX_MANIFEST_MEMBER_BYTES,
     contract_for_package_type,
     contracts_report,
     validate_archive_bytes,
+    validate_archive_path,
     validate_member_paths,
     validate_skills_layout,
 )
@@ -44,6 +53,13 @@ class PackageContractRegistryTests(unittest.TestCase):
 
 
 class OfflineValidationTests(unittest.TestCase):
+    def _zip(self, files: dict[str, bytes]) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            for name, data in sorted(files.items()):
+                archive.writestr(name, data)
+        return buf.getvalue()
+
     def test_rejects_parent_escape_and_install_runtime(self) -> None:
         failures = validate_member_paths(
             [
@@ -69,10 +85,17 @@ class OfflineValidationTests(unittest.TestCase):
         self.assertTrue(any("missing skill" in f for f in failures))
 
     def test_validate_bad_zip(self) -> None:
-        report = validate_archive_bytes(b"not-a-zip", package_type="direct-skills")
+        with mock.patch(
+            "portable_resume.install.package_contracts.zipfile.ZipFile"
+        ) as zip_parser:
+            report = validate_archive_bytes(
+                b"not-a-zip",
+                package_type="direct-skills",
+            )
         self.assertFalse(report["ok"])
         self.assertEqual(report["native_evidence_status"], "not-run")
         self.assertTrue(report["failures"])
+        zip_parser.assert_not_called()
 
     def test_minimal_direct_skills_contract_shape(self) -> None:
         # Empty archive fails skills layout — proves contract is enforced.
@@ -83,9 +106,240 @@ class OfflineValidationTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertEqual(report["contract_id"], "direct-skills-v1")
 
+    def test_rejects_manifest_decompression_bomb(self) -> None:
+        payload = b" " * (MAX_MANIFEST_MEMBER_BYTES + 1)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("plugin.json", payload)
+            info = archive.getinfo("plugin.json")
+            self.assertGreater(info.file_size, MAX_MANIFEST_MEMBER_BYTES)
+            self.assertLess(info.compress_size, info.file_size // 100)
+
+        report = validate_archive_bytes(
+            buf.getvalue(),
+            package_type="antigravity-plugin",
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any("bounded regular file" in failure for failure in report["failures"])
+        )
+
+    def test_rejects_archive_member_count_over_bound(self) -> None:
+        data = self._zip({"one": b"1", "two": b"2"})
+
+        with (
+            mock.patch(
+                "portable_resume.install.package_contracts.MAX_ARCHIVE_MEMBERS",
+                1,
+            ),
+            mock.patch(
+                "portable_resume.install.package_contracts.zipfile.ZipFile"
+            ) as zip_parser,
+        ):
+            report = validate_archive_bytes(data, package_type="direct-skills")
+
+        self.assertFalse(report["ok"])
+        self.assertIn("archive exceeds the member-count bound", report["failures"])
+        zip_parser.assert_not_called()
+
+    def test_rejects_central_directory_bytes_over_bound_before_parser(self) -> None:
+        data = self._zip({"one": b"1"})
+
+        with (
+            mock.patch(
+                "portable_resume.install.package_contracts."
+                "MAX_ARCHIVE_CENTRAL_DIRECTORY_BYTES",
+                1,
+            ),
+            mock.patch(
+                "portable_resume.install.package_contracts.zipfile.ZipFile"
+            ) as zip_parser,
+        ):
+            report = validate_archive_bytes(data, package_type="direct-skills")
+
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "archive exceeds the central-directory size bound",
+            report["failures"],
+        )
+        zip_parser.assert_not_called()
+
+    def test_rejects_malformed_zip64_before_parser(self) -> None:
+        data = bytearray(self._zip({"one": b"1"}))
+        eocd_offset = data.rfind(b"PK\x05\x06")
+        self.assertGreaterEqual(eocd_offset, 0)
+        struct.pack_into("<HH", data, eocd_offset + 8, 0xFFFF, 0xFFFF)
+
+        with mock.patch(
+            "portable_resume.install.package_contracts.zipfile.ZipFile"
+        ) as zip_parser:
+            report = validate_archive_bytes(
+                bytes(data),
+                package_type="direct-skills",
+            )
+
+        self.assertFalse(report["ok"])
+        self.assertIn("archive ZIP64 locator is invalid", report["failures"])
+        zip_parser.assert_not_called()
+
+    def test_rejects_total_decompressed_size_over_bound(self) -> None:
+        data = self._zip({"payload": b"1234"})
+
+        with mock.patch(
+            "portable_resume.install.package_contracts.MAX_ARCHIVE_UNCOMPRESSED_BYTES",
+            3,
+        ):
+            report = validate_archive_bytes(data, package_type="direct-skills")
+
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "archive exceeds the total decompressed size bound",
+            report["failures"],
+        )
+
+    def test_validate_archive_path_rejects_oversized_input(self) -> None:
+        data = self._zip({"payload": b"x"})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "package.zip")
+            path.write_bytes(data)
+            with mock.patch(
+                "portable_resume.install.package_contracts.MAX_ARCHIVE_BYTES",
+                len(data) - 1,
+            ):
+                report = validate_archive_path(
+                    str(path),
+                    package_type="direct-skills",
+                )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(
+            report["failures"],
+            ["archive is not a bounded stable regular file"],
+        )
+
     def test_contract_for_unknown_raises(self) -> None:
         with self.assertRaises(KeyError):
             contract_for_package_type("nope")
+
+    def test_direct_contract_requires_exact_embedded_identity(self) -> None:
+        identity = runtime_identity()
+        data = self._zip(materialize_plan("claude", identity=identity))
+
+        report = validate_archive_bytes(
+            data,
+            package_type="direct-skills",
+            expected_identity=identity,
+        )
+
+        self.assertTrue(report["ok"], report["failures"])
+        self.assertIsNotNone(report["build_identity_sha256"])
+
+    def test_direct_contract_rejects_mismatched_embedded_identity(self) -> None:
+        identity = runtime_identity()
+        files = materialize_plan("claude", identity=identity)
+        member = ".portable-resume/runtime/portable_resume/resources/build-identity.json"
+        files[member] = files[member].replace(b'"dirty":null', b'"dirty":false')
+
+        report = validate_archive_bytes(
+            self._zip(files),
+            package_type="direct-skills",
+            expected_identity=identity,
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any("build identity" in failure for failure in report["failures"])
+        )
+
+    def test_direct_contract_rejects_identity_at_decoy_path(self) -> None:
+        identity = runtime_identity()
+        files = materialize_plan("claude", identity=identity)
+        member = ".portable-resume/runtime/portable_resume/resources/build-identity.json"
+        files["decoy/portable_resume/resources/build-identity.json"] = files.pop(member)
+
+        report = validate_archive_bytes(
+            self._zip(files),
+            package_type="direct-skills",
+            expected_identity=identity,
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any("embedded build identity" in failure for failure in report["failures"])
+        )
+
+    def test_direct_contract_rejects_symlink_identity_member(self) -> None:
+        identity = runtime_identity()
+        files = materialize_plan("claude", identity=identity)
+        member = ".portable-resume/runtime/portable_resume/resources/build-identity.json"
+        encoded = files.pop(member)
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            for name, data in sorted(files.items()):
+                archive.writestr(name, data)
+            info = zipfile.ZipInfo(member)
+            info.create_system = 3
+            info.external_attr = (stat.S_IFLNK | 0o777) << 16
+            archive.writestr(info, encoded)
+
+        report = validate_archive_bytes(
+            buffer.getvalue(),
+            package_type="direct-skills",
+            expected_identity=identity,
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any("bounded regular file" in failure for failure in report["failures"])
+        )
+
+    def test_direct_contract_rejects_non_identity_symlink_member(self) -> None:
+        identity = runtime_identity()
+        files = materialize_plan("claude", identity=identity)
+        member = ".portable-resume/runtime/portable_resume/__init__.py"
+        encoded = files.pop(member)
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            for name, data in sorted(files.items()):
+                archive.writestr(name, data)
+            info = zipfile.ZipInfo(member)
+            info.create_system = 3
+            info.external_attr = (stat.S_IFLNK | 0o777) << 16
+            archive.writestr(info, encoded)
+
+        report = validate_archive_bytes(
+            buffer.getvalue(),
+            package_type="direct-skills",
+            expected_identity=identity,
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any("non-regular members" in failure for failure in report["failures"])
+        )
+
+    def test_direct_contract_rejects_schema_at_decoy_path(self) -> None:
+        identity = runtime_identity()
+        files = materialize_plan("claude", identity=identity)
+        member = (
+            ".portable-resume/runtime/portable_resume/resources/"
+            "portable-resume-v1.schema.json"
+        )
+        files[
+            "decoy/portable_resume/resources/portable-resume-v1.schema.json"
+        ] = files.pop(member)
+
+        report = validate_archive_bytes(
+            self._zip(files),
+            package_type="direct-skills",
+            expected_identity=identity,
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any("exactly one runtime schema" in failure for failure in report["failures"])
+        )
 
     def test_marketplace_rejects_stale_version_and_wrong_source_root(self) -> None:
         import zipfile

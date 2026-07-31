@@ -44,6 +44,14 @@ class HostPackageBuilderTests(unittest.TestCase):
             self.assertEqual(report["host_count"], len(HOST_KEYS))
             self.assertEqual(report["direct_package_count"], len(HOST_KEYS))
             self.assertEqual(report["plugin_package_count"], len(enabled_package_keys()))
+            expected_artifact_count = len(HOST_KEYS) + len(enabled_package_keys())
+            self.assertEqual(len(report["artifacts"]), expected_artifact_count)
+            artifact_files = [item["file"] for item in report["artifacts"]]
+            self.assertEqual(len(artifact_files), len(set(artifact_files)))
+            self.assertEqual(
+                {path.name for path in first.glob("*.zip")},
+                set(artifact_files),
+            )
             self.assertEqual(
                 set(report["package_surfaces"]),
                 set(enabled_package_keys()),
@@ -101,6 +109,18 @@ class HostPackageBuilderTests(unittest.TestCase):
                     )
                     self.assertFalse(
                         any("/portable_resume/install/" in name for name in names)
+                    )
+                    identity_members = [
+                        name
+                        for name in names
+                        if name.endswith(
+                            "/portable_resume/resources/build-identity.json"
+                        )
+                    ]
+                    self.assertEqual(len(identity_members), 1)
+                    self.assertEqual(
+                        json.loads(zipped.read(identity_members[0]).decode("utf-8")),
+                        report["build_identity"],
                     )
 
     def test_plugin_archives_have_required_root_manifests(self) -> None:

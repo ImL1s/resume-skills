@@ -17,17 +17,22 @@ Clean-room-oriented Agent Skills for migrating bounded local coding-agent contex
 installed-runner cells on current `main` (17 sources × 18 destinations, including
 Pi + OpenClaw + goose + Crush + Cline + OpenHands + Hermes + GitHub Copilot CLI (destination) + Gemini CLI (compat) filesystem install; published `0.3.4` remains historical 81).
 
+**Host evidence boundary:** v0.3.2-era checks cover 7/7 exact native local
+plugin/extension installs, 8/8 host-native headless Skill invocations, 6/6
+compatible public marketplace installs, and Cursor/Kimi pickers. Fresh v0.3.4
+host reinstall/picker flows and Pi/OpenClaw native UI remain **not-run**.
+
 **Current `main` development version:** `0.4.0.dev0`. Explicit build/release
 reports add `+g<commit>[.dirty]` while package metadata keeps the PEP 440 base.
-Ordinary reader/installer runtime never invokes Git and currently reports the
-deterministic base/null-commit fallback; exact wheel/sdist embedded provenance
-remains open under #118. Every identity binds the enabled capability registry
-and runtime source digests without exposing local paths.
-Separate **v0.3.2-era** host evidence records 7/7 exact native local
-plugin/extension installs, 8/8 host-native headless Skill invocations, and 6/6
-compatible public marketplace installs, including Cursor and Kimi marketplace
-pickers. Fresh **v0.3.4** host reinstall/picker flows and **Pi/OpenClaw native
-UI** remain separate **not-run** claims.
+Artifact builds pin one canonical identity before producing bytes and embed its
+exact canonical JSON in the wheel, sdist, all direct-host ZIPs, and all native
+package ZIPs. Installed reader/installer runtimes read only that fixed packaged
+resource—never an environment-selected path and never Git—while an unpackaged
+source checkout retains the deterministic base/null-commit fallback. Every
+identity binds the enabled capability registry, runtime source, and
+artifact-producing build-input digests without exposing local paths.
+Repository-level immutable `v*` tag enforcement
+remains a separate external setup gate under #118; no `0.4.0` release is claimed.
 
 ## Sources and destinations
 
@@ -162,7 +167,17 @@ PYTHONPATH=src python3 -m unittest discover -s tests -q
 PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
-`.github/workflows/ci.yml` runs those gates across Ubuntu/macOS and Python 3.11–3.14, then builds and smoke-installs the exact wheel and sdist. `.github/workflows/release.yml` accepts only annotated `vMAJOR.MINOR.PATCH` tags reachable from `main`, re-runs dual-OS gates, builds release bytes once, tests those exact bytes, creates SHA-256 checksums and GitHub attestations, stages a GitHub Release, and publishes through PyPI Trusted Publishing.
+`.github/workflows/ci.yml` runs those gates across Ubuntu/macOS and Python
+3.11–3.14, then builds the wheel/sdist twice from one identity pin and epoch,
+requires byte-for-byte reproducibility, proves the source package was not
+mutated, verifies the same embedded identity across all 27 generated artifacts
+in four artifact families,
+and smoke-installs the exact wheel and sdist with poisoned build-pin environment
+variables removed from child processes. `.github/workflows/release.yml` accepts
+only annotated `vMAJOR.MINOR.PATCH` tags reachable from `main`, re-runs dual-OS
+gates, builds release bytes once from one pinned identity, tests those exact
+bytes, creates SHA-256 checksums and GitHub attestations, stages a GitHub
+Release, and publishes through PyPI Trusted Publishing.
 
 `src/portable_resume/resources/latest-release.json` records the immutable latest
 published identity. Normal CI fetches release tags and fails if changed source

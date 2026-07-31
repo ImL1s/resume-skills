@@ -10,7 +10,7 @@ import stat
 import sys
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / "src"
@@ -30,7 +30,10 @@ from portable_resume.registry import (  # noqa: E402
     enabled_destination_keys,
     enabled_package_keys,
 )
-from git_build_identity import git_build_identity  # noqa: E402
+from build_artifact_identity import (  # noqa: E402
+    identity_sha256,
+    resolve_build_identity,
+)
 
 DESCRIPTION = "Offline, inert context migration across supported coding agents"
 AUTHOR = {"name": "portable-resume-skills contributors"}
@@ -43,11 +46,23 @@ def _json_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def _prefixed_plan(host: str, prefix: str) -> dict[str, bytes]:
-    return {f"{prefix}{path}": data for path, data in materialize_plan(host).items()}
+def _prefixed_plan(
+    host: str,
+    prefix: str,
+    *,
+    identity: Mapping[str, Any],
+) -> dict[str, bytes]:
+    return {
+        f"{prefix}{path}": data
+        for path, data in materialize_plan(host, identity=identity).items()
+    }
 
 
-def _plugin_files(host: str) -> tuple[str, dict[str, bytes], str] | None:
+def _plugin_files(
+    host: str,
+    *,
+    identity: Mapping[str, Any],
+) -> tuple[str, dict[str, bytes]] | None:
     common = {
         "name": "portable-resume",
         "version": __version__,
@@ -60,7 +75,7 @@ def _plugin_files(host: str) -> tuple[str, dict[str, bytes], str] | None:
     }
     if host == "claude":
         plugin_root = "plugins/portable-resume/"
-        files = _prefixed_plan(host, f"{plugin_root}skills/")
+        files = _prefixed_plan(host, f"{plugin_root}skills/", identity=identity)
         files[f"{plugin_root}.claude-plugin/plugin.json"] = _json_bytes(common)
         files[".claude-plugin/marketplace.json"] = _json_bytes(
             {
@@ -78,15 +93,10 @@ def _plugin_files(host: str) -> tuple[str, dict[str, bytes], str] | None:
                 ],
             }
         )
-        return (
-            "claude-marketplace",
-            files,
-            "claude plugin marketplace add <extracted-dir>; "
-            "claude plugin install portable-resume@portable-resume",
-        )
+        return "claude-marketplace", files
     if host == "codex":
         plugin_root = "plugins/portable-resume/"
-        files = _prefixed_plan(host, f"{plugin_root}skills/")
+        files = _prefixed_plan(host, f"{plugin_root}skills/", identity=identity)
         files[f"{plugin_root}.codex-plugin/plugin.json"] = _json_bytes(
             {**common, "skills": "./skills/"}
         )
@@ -110,15 +120,10 @@ def _plugin_files(host: str) -> tuple[str, dict[str, bytes], str] | None:
                 ],
             }
         )
-        return (
-            "codex-marketplace",
-            files,
-            "codex plugin marketplace add <extracted-dir>; "
-            "codex plugin add portable-resume@portable-resume",
-        )
+        return "codex-marketplace", files
     if host == "cursor":
         plugin_root = "plugins/portable-resume/"
-        files = _prefixed_plan(host, f"{plugin_root}skills/")
+        files = _prefixed_plan(host, f"{plugin_root}skills/", identity=identity)
         files[f"{plugin_root}.cursor-plugin/plugin.json"] = _json_bytes(
             {
                 "name": "portable-resume",
@@ -149,32 +154,17 @@ def _plugin_files(host: str) -> tuple[str, dict[str, bytes], str] | None:
                 ],
             }
         )
-        return (
-            "cursor-marketplace",
-            files,
-            "copy or symlink <extracted-dir>/plugins/portable-resume to "
-            "~/.cursor/plugins/local/portable-resume, or run "
-            "cursor agent --plugin-dir <extracted-dir>/plugins/portable-resume",
-        )
+        return "cursor-marketplace", files
     if host == "antigravity":
-        files = _prefixed_plan(host, "skills/")
+        files = _prefixed_plan(host, "skills/", identity=identity)
         files["plugin.json"] = _json_bytes({"name": "portable-resume"})
-        return (
-            "antigravity-plugin",
-            files,
-            "agy plugin validate <extracted-dir>; agy plugin install <extracted-dir>",
-        )
+        return "antigravity-plugin", files
     if host == "grok":
-        files = _prefixed_plan(host, "skills/")
+        files = _prefixed_plan(host, "skills/", identity=identity)
         files["plugin.json"] = _json_bytes(common)
-        return (
-            "grok-plugin",
-            files,
-            "grok plugin validate <extracted-dir>; "
-            "grok plugin install <extracted-dir> --trust",
-        )
+        return "grok-plugin", files
     if host == "qwen":
-        files = _prefixed_plan(host, "skills/")
+        files = _prefixed_plan(host, "skills/", identity=identity)
         files["qwen-extension.json"] = _json_bytes(
             {
                 "name": "portable-resume",
@@ -183,13 +173,9 @@ def _plugin_files(host: str) -> tuple[str, dict[str, bytes], str] | None:
                 "skills": "skills",
             }
         )
-        return (
-            "qwen-extension",
-            files,
-            "qwen extensions install <archive-or-url>",
-        )
+        return "qwen-extension", files
     if host == "kimi":
-        files = _prefixed_plan(host, "skills/")
+        files = _prefixed_plan(host, "skills/", identity=identity)
         files["kimi.plugin.json"] = _json_bytes(
             {
                 **common,
@@ -200,12 +186,7 @@ def _plugin_files(host: str) -> tuple[str, dict[str, bytes], str] | None:
                 },
             }
         )
-        return (
-            "kimi-plugin",
-            files,
-            "/plugins install <extracted-dir-or-zip-url-or-github-url>; "
-            "/plugins reload",
-        )
+        return "kimi-plugin", files
     return None
 
 
@@ -252,11 +233,16 @@ def _validated_zip(
     files: dict[str, bytes],
     *,
     package_type: str,
+    expected_identity: Mapping[str, Any],
 ) -> tuple[str, dict[str, Any]]:
     """Write zip, run offline contract validation (#27), return digest + report."""
 
     digest = _write_zip(path, files)
-    validation = validate_archive_bytes(path.read_bytes(), package_type=package_type)
+    validation = validate_archive_bytes(
+        path.read_bytes(),
+        package_type=package_type,
+        expected_identity=expected_identity,
+    )
     if not validation["ok"]:
         raise ValueError(
             f"package contract failed for {package_type}: {validation['failures'][:8]}"
@@ -268,10 +254,16 @@ def _validated_zip(
         "native_evidence_status": contract.native_evidence_status,
         "last_native_evidence_ref": contract.last_native_evidence_ref,
         "offline_validation": "pass",
+        "build_identity_sha256": validation["build_identity_sha256"],
     }
 
 
-def build(output: Path) -> dict[str, Any]:
+def build(
+    output: Path,
+    *,
+    identity_file: str | Path | None = None,
+    identity_digest: str | None = None,
+) -> dict[str, Any]:
     """Build direct-skill zips for every enabled destination + registry package surfaces.
 
     Direct Skills and native packages are independent axes (#36): destinations
@@ -286,15 +278,24 @@ def build(output: Path) -> dict[str, Any]:
         raise ValueError("output directory must be empty")
     hosts = tuple(sorted(enabled_destination_keys()))
     package_keys = tuple(sorted(enabled_package_keys()))
-    identity = git_build_identity(repo_root=REPO, package_root=SRC / "portable_resume")
+    identity = resolve_build_identity(
+        repo_root=REPO,
+        package_root=SRC / "portable_resume",
+        identity_file=identity_file,
+        expected_sha256=identity_digest,
+    )
+    canonical_identity_sha256 = identity_sha256(identity)
     artifact_version = str(identity["version"])
     artifacts: list[dict[str, Any]] = []
     for host in hosts:
         direct_name = f"portable-resume-{artifact_version}-{host}-skills.zip"
         direct_path = output / direct_name
-        direct_files = materialize_plan(host)
+        direct_files = materialize_plan(host, identity=identity)
         digest, meta = _validated_zip(
-            direct_path, direct_files, package_type="direct-skills"
+            direct_path,
+            direct_files,
+            package_type="direct-skills",
+            expected_identity=identity,
         )
         artifacts.append(
             {
@@ -303,23 +304,28 @@ def build(output: Path) -> dict[str, Any]:
                 "file": direct_name,
                 "sha256": digest,
                 "members": len(direct_files),
-                "install": "extract into the host skill root documented in docs/install-hosts.md",
+                "install": contract_for_package_type("direct-skills").install_hint,
                 **meta,
             }
         )
     for surface_key in package_keys:
         surface = PACKAGE_SURFACES[surface_key]
-        plugin = _plugin_files(surface.destination)
+        plugin = _plugin_files(surface.destination, identity=identity)
         if plugin is None:
             raise ValueError(f"package surface not buildable: {surface_key}")
-        kind, files, install = plugin
+        kind, files = plugin
         if kind != surface.key:
             raise ValueError(
                 f"package surface kind mismatch: registry={surface.key} builder={kind}"
             )
         name = f"portable-resume-{artifact_version}-{kind}.zip"
         path = output / name
-        digest, meta = _validated_zip(path, files, package_type=kind)
+        digest, meta = _validated_zip(
+            path,
+            files,
+            package_type=kind,
+            expected_identity=identity,
+        )
         artifacts.append(
             {
                 "host": surface.destination,
@@ -328,7 +334,7 @@ def build(output: Path) -> dict[str, Any]:
                 "file": name,
                 "sha256": digest,
                 "members": len(files),
-                "install": install,
+                "install": contract_for_package_type(kind).install_hint,
                 **meta,
             }
         )
@@ -337,6 +343,7 @@ def build(output: Path) -> dict[str, Any]:
         "version": __version__,
         "artifact_version": artifact_version,
         "build_identity": identity,
+        "build_identity_sha256": canonical_identity_sha256,
         "package_contracts_schema": PACKAGE_CONTRACTS_SCHEMA,
         "host_count": len(hosts),
         "direct_package_count": len(hosts),
@@ -355,10 +362,16 @@ def build(output: Path) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--identity-file")
+    parser.add_argument("--identity-sha256")
     parser.add_argument("--json", action="store_true")
     namespace = parser.parse_args(argv)
     try:
-        report = build(Path(namespace.output_dir))
+        report = build(
+            Path(namespace.output_dir),
+            identity_file=namespace.identity_file,
+            identity_digest=namespace.identity_sha256,
+        )
     except (OSError, ValueError, KeyError) as error:
         print(f"HOST_PACKAGE_BUILD FAIL {type(error).__name__}", file=sys.stderr)
         return 1

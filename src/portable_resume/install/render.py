@@ -5,8 +5,13 @@ from __future__ import annotations
 import stat
 from pathlib import Path
 from string import Template
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
+from ..build_identity import (
+    assert_identity_matches_package,
+    identity_json_bytes,
+    runtime_identity,
+)
 from ..diagnostics import SOURCE_KEYS
 from .catalog import (
     BUNDLE_VERSION,
@@ -93,10 +98,16 @@ def render_run_reader(*, source: str) -> str:
     return tmpl.safe_substitute(source_key=source)
 
 
-def materialize_plan(host: str) -> dict[str, bytes]:
+def materialize_plan(
+    host: str,
+    *,
+    identity: Mapping[str, Any] | None = None,
+) -> dict[str, bytes]:
     """Return relative path -> file bytes for one complete skill root."""
     if host not in HOST_PROFILES:
         raise KeyError(host)
+    selected_identity = runtime_identity() if identity is None else identity
+    assert_identity_matches_package(selected_identity, package_root=_PACKAGE_ROOT)
     files: dict[str, bytes] = {}
     # support resources
     policy = (_RESOURCES / "handoff-policy.md").read_bytes()
@@ -113,6 +124,9 @@ def materialize_plan(host: str) -> dict[str, bytes]:
         rel = path.relative_to(_RUNTIME_SRC)
         dest = Path(".portable-resume") / "runtime" / "portable_resume" / rel
         files[dest.as_posix()] = path.read_bytes()
+    files[
+        ".portable-resume/runtime/portable_resume/resources/build-identity.json"
+    ] = identity_json_bytes(selected_identity)
     # one skill for every supported source
     for source in sorted(SOURCE_KEYS):
         skill = skill_name_for(source)
