@@ -26,6 +26,7 @@ STAGE_NAMES = (
     "docs",
     "secrets",
     "unit",
+    "packaging",
     "reader_self_check",
     "installer_matrix",
     "fixture_list_show",
@@ -87,7 +88,21 @@ def _stage_secrets() -> tuple[int, str]:
 
 
 def _stage_unit() -> tuple[int, str]:
-    completed = run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"])
+    details: list[str] = []
+    for suite in ("adapters", "e2e", "integration", "security", "unit"):
+        completed = run(
+            [sys.executable, "-m", "unittest", "discover", "-s", f"tests/{suite}", "-q"]
+        )
+        details.append(completed.stderr or completed.stdout or "")
+        if completed.returncode != 0:
+            return completed.returncode, "".join(details)[-400:]
+    return 0, "".join(details)[-400:]
+
+
+def _stage_packaging() -> tuple[int, str]:
+    completed = run(
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests/packaging", "-q"]
+    )
     return completed.returncode, (completed.stderr or completed.stdout or "")[-400:]
 
 
@@ -168,6 +183,7 @@ STAGE_RUNNERS: dict[str, Callable[[], tuple[int, str]]] = {
     "docs": _stage_docs,
     "secrets": _stage_secrets,
     "unit": _stage_unit,
+    "packaging": _stage_packaging,
     "reader_self_check": _stage_reader_self_check,
     "installer_matrix": _stage_installer_matrix,
     "fixture_list_show": _stage_fixture_list_show,
@@ -248,6 +264,9 @@ def main(argv: list[str] | None = None) -> int:
         elif name == "unit":
             print(detail)
             print("unittest", code)
+        elif name == "packaging":
+            print(detail)
+            print("packaging", code)
         elif name == "reader_self_check":
             print(detail)
             print("self-check", code)

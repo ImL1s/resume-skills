@@ -117,8 +117,8 @@ only), i18n translation quality beyond counts, live host CLI activation.
 | 036 | discovery no-follow retry removal + real `matches_expected` | P1 | S | — | **DONE** |
 | 037 | Archive member read caps + codex no-op affinity cleanup | P2 | S | — | DONE |
 | 038 | `materialize_plan` memoize + verify-loop hoist | P1 | S | — | TODO |
-| 039 | Registry-driven immutability/isolation security tests | P1 | S | before 034/035 preferred | DONE |
-| 040 | Packaging-tier test split (26 s out of unit tier) | P2 | S | — | TODO |
+| 039 | Registry-driven immutability/isolation security tests | P1 | S | before 034/035 preferred | TODO |
+| 040 | Packaging-tier test split (26 s out of unit tier) | P2 | S | — | DONE |
 | 041 | CONTRIBUTING fast-loop docs (`--profile`, `-e .`, pytest) | P2 | S | — | TODO |
 | 042 | Registry-generated host docs + count gates (root-cause) | P1 | M–L | 033 | DONE |
 | 043 | `list --match` free-text filter | P2 | S | 029 | TODO |
