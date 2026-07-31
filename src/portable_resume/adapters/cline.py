@@ -1036,9 +1036,11 @@ class ClineAdapter:
         title = None
         if isinstance(prompt, str) and prompt.strip():
             title = prompt.strip().splitlines()[0][: DEFAULT_BOUNDS.title_chars]
+        # Keep source_path aligned with list() (messages path preferred) so the
+        # reader invariant list.source_path == show.source_path holds.
         return _show_from_messages(
             session_id=session_id,
-            source_path=source_path or msg_path,
+            source_path=msg_path or source_path,
             messages_path=msg_path,
             root=root,
             query=query,
