@@ -140,6 +140,15 @@ budget per admitted row: `budget.consume_records()` and
 pattern. Update both call sites (around lines 833/849 — find with
 `grep -n "_list_nodes(" src/portable_resume/adapters/openclaw.py`).
 
+**Also cover the exact-ref path (from Codex PR review):** when `query.ref` is
+an exact session ID, `OpenClawAdapter.list()` takes `_exact_session_summaries`
+instead of `_list_nodes` — that helper currently fetches and parses
+`entry_json` without accepting or charging the `ReadBudget`, so the
+exact-ref/show-selection path would still bypass the contract. Thread `budget`
+through it the same way: bound its query, charge `consume_records()` /
+`consume_bytes(...)` per fetched row. Locate with
+`grep -n "_exact_session_summaries" src/portable_resume/adapters/openclaw.py`.
+
 **Verify**: openclaw test module passes; full suite OK.
 
 ### Step 2: Pass lowered bounds into the snapshot
@@ -179,6 +188,11 @@ cases — find them via `grep -rn "limit_exceeded\|scanned_records" tests/ | gre
    assert the branch, not just absence of crash.
 3. **Budget debit**: after a `list`, the shared `ReadBudget` shows consumed
    records/bytes > 0.
+3b. **Exact-ref path bounds**: exact-ID selection (`show <id>` /
+   `query.ref` set) against the over-ceiling fixture with a lowered budget →
+   `E_LIMIT_EXCEEDED` raised from `_exact_session_summaries`, and the budget
+   is debited on that path too (the review found ordinary-listing-only tests
+   leave this path unverified).
 4. Fixture manifests must carry `"synthetic": true` and a registered
    `format_id` (repo rule — `CONTRIBUTING.md` "Code and fixture rules").
 
@@ -197,6 +211,7 @@ bounds tests. All fixtures synthetic, no absolute home paths.
 ## Done criteria
 
 - [ ] `_list_nodes` SQL contains `LIMIT ?`; post-check retained
+- [ ] `_exact_session_summaries` accepts and charges the budget (exact-ref test proves)
 - [ ] `_open_connection` passes `bounds=limits`
 - [ ] No budget-relevant bare `DEFAULT_BOUNDS.` reads remain in openclaw.py (grep proves; structural exceptions listed in report)
 - [ ] New bounds tests pass; full suite + smoke matrix + gates green

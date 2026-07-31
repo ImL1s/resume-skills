@@ -140,13 +140,28 @@ In `_resolve_invocation` / `run()`:
   policed.
 - Validate exactly like ref: `reject_controls(match)`, length ≤
   `DEFAULT_BOUNDS.ref_chars`.
-- In the list branch, filter after ordering, before the
-  `listed_sessions` truncation... **No** — filter BEFORE the
-  `W_TRUNCATED`/truncation logic so truncation applies to the filtered set
-  (matching user intent: "top N matching", not "matches within top N").
-  Concretely: apply `summary_matches` to `internal` before
-  `ordered_internal_all` is computed. An empty result is a valid empty list
-  envelope (exit 0), NOT `E_NO_MATCH` — list semantics, not selection.
+- **Two truncation layers exist — define v1 semantics honestly (Codex PR
+  review).** Adapters internally cap their own listings at
+  `DEFAULT_BOUNDS.listed_sessions` before the reader ever sees them (e.g.
+  openclaw returns only its newest page), so a reader-side filter can only
+  search the bounded window plain `list` shows — a matching session older
+  than the adapter's page is invisible to both. v1 semantics of this plan:
+  `--match` filters that same visible window; it is NOT a full-history
+  search. Requirements that make this honest:
+  - Apply `summary_matches` to `internal` before `ordered_internal_all` /
+    the reader-side cap, so the reader cap applies to matches ("top N of the
+    visible window that match").
+  - Help text must say: "searches the most recent bounded listing window per
+    source, not full store history".
+  - If the pre-filter listing already hit a cap (`W_TRUNCATED` computed, or
+    `len(internal) >= DEFAULT_BOUNDS.listed_sessions`), the envelope MUST
+    carry `W_TRUNCATED` even when the filtered result is small or empty —
+    consumers must be able to tell "no match exists in the window" from "no
+    match found, window was clipped".
+  - An empty result is a valid empty list envelope (exit 0), NOT
+    `E_NO_MATCH` — list semantics, not selection.
+  Threading the predicate into adapter discovery (true full-history match) is
+  explicitly out of scope — see Maintenance notes.
 - Query echo per the schema decision in "Current state".
 
 **Verify**: fixture smoke with `--match` returns the subset; `--match` with
@@ -174,9 +189,12 @@ Reader tests (model after existing list-format tests, found via
 3. `--match` + `show` → exit 2; `--match` + `--request-file` → exit 2.
 4. Control chars / over-length match string → exit 2.
 5. Zero matches → exit 0, empty sessions array, no `E_NO_MATCH`.
-6. Truncation interaction: fixture with > N matching rows → `W_TRUNCATED`
-   present and rows = cap (skip if no fixture exceeds the cap cheaply — note
-   it in the report instead).
+6. Truncation honesty: with a listing that hits the cap (build via a lowered
+   `DEFAULT_BOUNDS`-style budget or a many-session synthetic fixture),
+   `--match` results — including an EMPTY result — carry `W_TRUNCATED`, so
+   "not in window" is distinguishable from "not anywhere". (If constructing
+   an over-cap fixture is genuinely expensive, lower the effective cap via
+   the budget/limits seam instead; only skip with a note if neither works.)
 7. Select refactor equivalence: existing `select_session` tests untouched and
    green.
 
@@ -212,6 +230,12 @@ golden tests it forces you to update.
 
 ## Maintenance notes
 
+- **Deferred by design**: threading the match predicate into adapter
+  discovery (so adapters scan a larger bounded window than their output page
+  when a filter is active) — that is what would upgrade `--match` from
+  "filters the visible window" to true bounded history search. It touches all
+  17 adapters and belongs with the request-v2 work. Until then the
+  `W_TRUNCATED` contract above is the honesty mechanism.
 - DIRECTION-04 (request-v2 with `list` + `match`) builds directly on this;
   the predicate extracted in Step 1 is the piece it will reuse.
 - Reviewer: confirm `--match` text can never reach a shell or a diagnostic

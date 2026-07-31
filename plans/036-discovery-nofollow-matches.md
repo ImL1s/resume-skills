@@ -96,10 +96,15 @@ def inspect_skill_copy(
         result["matches_expected"] = False
 ```
 
-  The ownership metadata read just below (around lines 846–868) already loads
-  the on-disk manifest and, when owned, records
-  `result["package_identity"] = manifest.package_identity` — this is the value
-  `expected_payload_digest` should be compared against:
+  The ownership metadata read just below (around lines 846–868) loads the
+  on-disk manifest and, when owned, records
+  `result["package_identity"] = manifest.package_identity`. **Do NOT use that
+  as the comparison target** (Codex PR review): the manifest is informational
+  metadata that can be stale or tampered independently of the payload — a
+  byte-identical payload with stale metadata would read "not matching", and a
+  stale caller-supplied digest could read "matching" merely because the
+  manifest shares the stale value. The honest target is the *computed
+  on-disk package identity* (hash of the actual installed bytes):
 
 ```python
     if manifest is not None and manifest.claims:
@@ -169,40 +174,50 @@ trees (find via the grep in "Commands").
 **Verify**: new test passes; on the pre-fix code it must fail (run once
 against stash if convenient — optional but recommended).
 
-### Step 3 (Part B): Compare the digest for real
+### Step 3 (Part B): Compare the digest against the computed on-disk identity
 
-Replace the presence-based block with a real comparison against the manifest's
-recorded identity. Because the manifest is loaded *after* the current block,
-move the `matches_expected` computation to after the manifest read:
+Replace the presence-based block with a comparison against the **computed**
+on-disk package identity — never the manifest's recorded one (see Current
+state). First read `_on_disk_package_matches` (discovery.py, ~lines 746–767):
+it already walks the expected file set and byte-compares each file via the
+no-follow capped reader. Extend that walk (or add a sibling helper reusing
+`_read_regular_capped`) to also collect the on-disk bytes per relative path
+and compute `package_identity(collected)` — the same function the expected
+digest was produced with (`from .render import package_identity`). Then:
 
 ```python
-    on_disk_identity = result.get("package_identity")  # set only when owned
-    if expected_payload_digest is None:
-        pass  # field omitted or None-stable per current schema behavior
-    else:
+    if expected_payload_digest is not None:
         result["matches_expected"] = (
-            result["payload_verified"] and on_disk_identity == expected_payload_digest
+            on_disk_identity is not None
+            and on_disk_identity == expected_payload_digest
         )
 ```
 
-Keep the early-return path for unreadable manifests (`manifest_unreadable`)
-setting `matches_expected = False` as it already does. Preserve the field's
-presence semantics exactly as today (emitted whenever
-`expected_payload_digest` was passed) so `discovery-scan-v1` consumers see the
-same keys.
+`manifest.package_identity` stays an informational field, untouched and
+uncompared. Keep the early-return path for unreadable manifests
+(`manifest_unreadable`) setting `matches_expected = False` as it already
+does. Preserve the field's presence semantics exactly as today (emitted
+whenever `expected_payload_digest` was passed) so `discovery-scan-v1`
+consumers see the same keys. Avoid reading every file twice: collect bytes in
+the same pass `_on_disk_package_matches` already makes.
 
 **Verify**: full suite OK.
 
-### Step 4 (Part B): Test both directions
+### Step 4 (Part B): Test the field's independence in both directions
 
-1. Owned, byte-verified copy whose manifest `package_identity` equals the
-   expected digest → `matches_expected` true.
-2. Owned, byte-verified copy whose manifest records a *different*
-   `package_identity` (hand-edit the manifest in the temp tree) →
-   `payload_verified` may be true, `matches_expected` **false** — this is the
-   case the old code got wrong; assert it.
+1. Intact installed copy, expected digest = current materialization →
+   `payload_verified` true AND `matches_expected` true.
+2. **Metadata-independence (the review's case)**: intact payload, ownership
+   manifest hand-edited to a stale/wrong `package_identity` →
+   `matches_expected` **true** (payload bytes are what count; stale metadata
+   must not flip it).
+3. Payload file modified on disk → `payload_verified` false and
+   `matches_expected` false.
+4. Intact payload but caller passes a *different* expected digest →
+   `payload_verified` true, `matches_expected` **false** — the two fields now
+   measure different things; assert both values.
 
-**Verify**: both tests pass; full suite + smoke matrix + gates green.
+**Verify**: all four pass; full suite + smoke matrix + gates green.
 
 ## Test plan
 
@@ -212,7 +227,7 @@ with temp skill roots.
 ## Done criteria
 
 - [ ] `_read_regular_capped` has no second `os.open`; symlinked SKILL.md test proves fail-closed
-- [ ] `matches_expected` is a real comparison; divergent-manifest test proves it can be false while `payload_verified` is true
+- [ ] `matches_expected` compares the computed on-disk identity (never `manifest.package_identity`); the metadata-independence and divergent-expected tests prove the field is independent of both the manifest and `payload_verified`
 - [ ] `discovery-scan-v1` key set unchanged (same fields emitted)
 - [ ] Full suite, smoke matrix, `self_verify.py`, `check_secrets.py` all green
 - [ ] `plans/README.md` updated
@@ -222,9 +237,9 @@ with temp skill roots.
 - A fixture or test legitimately reads through a symlink via
   `_read_regular_capped` (would mean something depends on the fallback) —
   report it; that dependency is itself a finding.
-- The manifest's `package_identity` field is absent for owned copies in real
-  trees (Part B's comparison would always be false) — verify against a fresh
-  `install` into a temp root first; if absent, STOP and report.
+- `_on_disk_package_matches`'s walk cannot be extended to collect bytes
+  without double-reading every file or restructuring beyond ~40 lines —
+  report the observed structure instead of forcing it.
 - Windows CI (if any appears) behaves differently — note it; `O_NOFOLLOW`=0
   there means Part A's change is a no-op on Windows, which is acceptable and
   documented here.
