@@ -23,6 +23,7 @@ from ..build_identity import (
     identity_json_bytes,
     load_identity_bytes,
     registry_sha256,
+    validate_current_identity,
 )
 from ..diagnostics import DiagnosticError, SOURCE_KEYS
 from ..snapshot import stable_read_bytes
@@ -758,6 +759,7 @@ def validate_archive_bytes(
                     else:
                         try:
                             embedded_identity = load_identity_bytes(raw_identity)
+                            validate_current_identity(embedded_identity)
                         except ValueError as error:
                             failures.append(
                                 f"embedded build identity is invalid: {error}"

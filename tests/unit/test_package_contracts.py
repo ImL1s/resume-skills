@@ -15,7 +15,11 @@ from pathlib import Path
 from unittest import mock
 
 from portable_resume import __version__
-from portable_resume.build_identity import runtime_identity
+from portable_resume.build_identity import (
+    BUILD_IDENTITY_SCHEMA_V1,
+    identity_json_bytes,
+    runtime_identity,
+)
 from portable_resume.install.render import materialize_plan
 from portable_resume.install.package_contracts import (
     PACKAGE_CONTRACTS,
@@ -418,6 +422,34 @@ class OfflineValidationTests(unittest.TestCase):
 
         self.assertTrue(report["ok"], report["failures"])
         self.assertIsNotNone(report["build_identity_sha256"])
+
+    def test_direct_contract_rejects_legacy_embedded_identity_without_pin(
+        self,
+    ) -> None:
+        identity = runtime_identity()
+        legacy = dict(identity)
+        legacy["schema"] = BUILD_IDENTITY_SCHEMA_V1
+        del legacy["build_inputs_sha256"]
+        files = materialize_plan("claude", identity=identity)
+        member = (
+            ".portable-resume/runtime/portable_resume/resources/"
+            "build-identity.json"
+        )
+        files[member] = identity_json_bytes(legacy)
+
+        report = validate_archive_bytes(
+            self._zip(files),
+            package_type="direct-skills",
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(
+            any(
+                "current identity schema" in failure
+                for failure in report["failures"]
+            ),
+            report["failures"],
+        )
 
     def test_direct_contract_rejects_mismatched_embedded_identity(self) -> None:
         identity = runtime_identity()

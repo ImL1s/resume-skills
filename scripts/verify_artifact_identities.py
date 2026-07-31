@@ -12,6 +12,7 @@ import struct
 import sys
 import tarfile
 import zipfile
+import zlib
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Iterable, Iterator
@@ -337,7 +338,7 @@ def _sdist_identity(path: Path) -> tuple[str, bytes, str, int]:
                 if handle is None:
                     raise ValueError("sdist build identity is unreadable")
                 data = handle.read(MAX_BUILD_IDENTITY_BYTES + 1)
-    except (tarfile.TarError, OSError) as error:
+    except (tarfile.TarError, OSError, EOFError, zlib.error) as error:
         raise ValueError("artifact is not a valid sdist") from error
     if len(data) > MAX_BUILD_IDENTITY_BYTES:
         raise ValueError("sdist build identity is oversized")

@@ -25,7 +25,11 @@
   Zstandard member payloads use the same bounded decoder-error boundary in
   package and artifact validation;
   unsupported ZIP metadata versions also return controlled failures before
-  member reads begin. The host report is checked against
+  member reads begin. Truncated or corrupt gzip sdists likewise normalize
+  decoder failures instead of emitting tracebacks. Offline package validation
+  requires the current v2 identity schema for newly verified artifacts while
+  legacy v1 identity loading remains available for runtime inspection. The host
+  report is checked against
   registry-derived filenames, family paths, member counts, and canonical install
   hints. The new `MANIFEST.in` path uses `setuptools==83.0.0`, outside
   the affected range of

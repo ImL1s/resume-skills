@@ -10,6 +10,7 @@ import tarfile
 import tempfile
 import unittest
 import zipfile
+import zlib
 from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
@@ -869,6 +870,82 @@ class ArtifactIdentityVerifierTests(unittest.TestCase):
                         "--identity-sha256",
                         digest,
                         str(wheel),
+                    ]
+                )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(
+            stderr.getvalue(), "ARTIFACT_IDENTITY_VERIFY FAIL ValueError\n"
+        )
+
+    def test_cli_reports_truncated_sdist_without_traceback(self) -> None:
+        identity = runtime_identity()
+        encoded = identity_json_bytes(identity)
+        digest = hashlib.sha256(encoded).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pin = root / "identity.json"
+            pin.write_bytes(encoded)
+            sdist = root / "portable_resume-0.tar.gz"
+            self._sdist(
+                sdist,
+                (
+                    "portable_resume-0/src/portable_resume/resources/"
+                    "build-identity.json"
+                ),
+                encoded,
+            )
+            baseline = verify_artifact_identities(
+                identity_file=pin,
+                expected_sha256=digest,
+                artifacts=(sdist,),
+            )
+            self.assertTrue(baseline["ok"])
+            sdist.write_bytes(sdist.read_bytes()[:-32])
+            stderr = io.StringIO()
+
+            with redirect_stderr(stderr):
+                result = verifier_main(
+                    [
+                        "--identity-file",
+                        str(pin),
+                        "--identity-sha256",
+                        digest,
+                        str(sdist),
+                    ]
+                )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(
+            stderr.getvalue(), "ARTIFACT_IDENTITY_VERIFY FAIL ValueError\n"
+        )
+
+    def test_cli_reports_sdist_decoder_error_without_traceback(self) -> None:
+        identity = runtime_identity()
+        encoded = identity_json_bytes(identity)
+        digest = hashlib.sha256(encoded).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pin = root / "identity.json"
+            pin.write_bytes(encoded)
+            sdist = root / "portable_resume-0.tar.gz"
+            sdist.write_bytes(b"bounded synthetic sdist")
+            stderr = io.StringIO()
+
+            with (
+                mock.patch(
+                    "scripts.verify_artifact_identities.tarfile.open",
+                    side_effect=zlib.error("synthetic decoder failure"),
+                ),
+                redirect_stderr(stderr),
+            ):
+                result = verifier_main(
+                    [
+                        "--identity-file",
+                        str(pin),
+                        "--identity-sha256",
+                        digest,
+                        str(sdist),
                     ]
                 )
 
