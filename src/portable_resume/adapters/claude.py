@@ -29,7 +29,7 @@ from ..paths import (
     require_regular_no_symlinks,
     same_cwd,
 )
-from ..sanitize import sanitize_turn_record
+from ..sanitize import sanitize_text, sanitize_turn_record
 from ..snapshot import FileSnapshot, StableWindows, snapshot_regular_file, stable_read_windows
 from .base import CapabilityReport, ResolvedRef
 
@@ -1031,7 +1031,107 @@ def _flatten_text(value: object) -> str | None:
     return None
 
 
-def _turn_records(record: Mapping[str, Any]) -> list[dict[str, Any]]:
+@dataclass(frozen=True, slots=True)
+class _PendingToolCall:
+    name: str | None
+    rendered_input: str
+    timestamp: str | None
+    input_truncated: bool
+
+
+@dataclass(slots=True)
+class _ToolCallContext:
+    maximum_pending: int
+    maximum_chars: int
+    pending: dict[str, _PendingToolCall] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+
+    def observe_call(self, item: Mapping[str, Any], timestamp: str | None) -> None:
+        identifier = item.get("id")
+        if not isinstance(identifier, str) or not identifier:
+            return
+        if identifier not in self.pending and len(self.pending) >= self.maximum_pending:
+            return
+        serialized = json.dumps(
+            item.get("input"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        cleaned = sanitize_text(serialized, max_chars=self._input_allowance())
+        self.warnings.extend(cleaned.warnings)
+        name = item.get("name")
+        self.pending[identifier] = _PendingToolCall(
+            name=name if isinstance(name, str) else None,
+            rendered_input=cleaned.text,
+            timestamp=timestamp,
+            input_truncated=cleaned.truncated,
+        )
+
+    def correlated_result(
+        self,
+        item: Mapping[str, Any],
+        result: str,
+        timestamp: str | None,
+    ) -> dict[str, Any]:
+        identifier = item.get("tool_use_id")
+        call = self.pending.pop(identifier, None) if isinstance(identifier, str) else None
+        if call is None:
+            return {"role": "tool", "content": result, "timestamp": timestamp}
+        content, result_truncated = self._combined_content(call.rendered_input, result)
+        return {
+            "role": "tool",
+            "content": content,
+            "tool_name": call.name,
+            "timestamp": timestamp,
+            "_pretruncated": call.input_truncated or result_truncated,
+        }
+
+    def missing_results(self) -> list[dict[str, Any]]:
+        values: list[dict[str, Any]] = []
+        for call in self.pending.values():
+            content, result_truncated = self._combined_content(
+                call.rendered_input,
+                "[missing tool result]",
+            )
+            values.append(
+                {
+                    "role": "tool",
+                    "content": content,
+                    "tool_name": call.name,
+                    "timestamp": call.timestamp,
+                    "_pretruncated": call.input_truncated or result_truncated,
+                }
+            )
+        self.pending.clear()
+        return values
+
+    def _input_allowance(self) -> int:
+        framing = len("Input: \nResult:\n")
+        result_reserve = self.maximum_chars // 2
+        return max(
+            0,
+            min(
+                self.maximum_chars // 4,
+                self.maximum_chars - framing - result_reserve,
+            ),
+        )
+
+    def _combined_content(self, rendered_input: str, result: str) -> tuple[str, bool]:
+        prefix = f"Input: {rendered_input}\nResult:\n"
+        if len(prefix) >= self.maximum_chars:
+            cleaned = sanitize_text(result, max_chars=self.maximum_chars)
+            self.warnings.extend(cleaned.warnings)
+            return cleaned.text, cleaned.truncated
+        cleaned = sanitize_text(result, max_chars=self.maximum_chars - len(prefix))
+        self.warnings.extend(cleaned.warnings)
+        return prefix + cleaned.text, cleaned.truncated
+
+
+def _turn_records(
+    record: Mapping[str, Any],
+    tool_calls: _ToolCallContext,
+) -> list[dict[str, Any]]:
     record_type = record.get("type")
     if record_type not in {"user", "assistant"} or record.get("isMeta") is True:
         return []
@@ -1052,21 +1152,17 @@ def _turn_records(record: Mapping[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(item, Mapping):
             continue
         kind = item.get("type")
-        if kind in {"thinking", "redacted_thinking", "signature", "tool_use"}:
+        if kind in {"thinking", "redacted_thinking", "signature"}:
+            continue
+        if kind == "tool_use":
+            tool_calls.observe_call(item, timestamp)
             continue
         if kind in {"text", "input_text", "output_text"} and isinstance(item.get("text"), str):
             values.append({"role": message_role, "content": item["text"], "timestamp": timestamp})
         elif kind == "tool_result":
             text = _flatten_text(item.get("content"))
             if text is not None:
-                values.append(
-                    {
-                        "role": "tool",
-                        "content": text,
-                        "tool_name": item.get("tool_name") if isinstance(item.get("tool_name"), str) else None,
-                        "timestamp": timestamp,
-                    }
-                )
+                values.append(tool_calls.correlated_result(item, text, timestamp))
     return values
 
 
@@ -1434,17 +1530,33 @@ class ClaudeAdapter:
             turns: list[Turn] = []
             all_warnings = list((*index.warnings, *lineage_warnings))
             turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
+            tool_calls = _ToolCallContext(
+                maximum_pending=min(
+                    budget.limits.scanned_records,
+                    DEFAULT_BOUNDS.scanned_records,
+                ),
+                maximum_chars=query.max_tool_chars,
+            )
+
+            def append_turn(raw: Mapping[str, Any]) -> None:
+                turn, turn_warnings = sanitize_turn_record(
+                    raw,
+                    ordinal=len(turns),
+                    bounds=turn_bounds,
+                )
+                all_warnings.extend(turn_warnings)
+                if turn is not None:
+                    if raw.get("_pretruncated") is True and not turn.truncated:
+                        turn = replace(turn, truncated=True)
+                    budget.consume_turns()
+                    turns.append(turn)
+
             for record in records:
-                for raw in _turn_records(record):
-                    turn, turn_warnings = sanitize_turn_record(
-                        raw,
-                        ordinal=len(turns),
-                        bounds=turn_bounds,
-                    )
-                    all_warnings.extend(turn_warnings)
-                    if turn is not None:
-                        budget.consume_turns()
-                        turns.append(turn)
+                for raw in _turn_records(record, tool_calls):
+                    append_turn(raw)
+            for raw in tool_calls.missing_results():
+                append_turn(raw)
+            all_warnings.extend(tool_calls.warnings)
             last_user = next(
                 (turn.content for turn in reversed(turns) if turn.role == "user"),
                 None,

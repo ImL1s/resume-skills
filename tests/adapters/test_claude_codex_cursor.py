@@ -88,6 +88,37 @@ class ClaudeAdapterTests(unittest.TestCase):
             **extra,
         }
 
+    def render_handoff(
+        self,
+        records: list[dict],
+        *,
+        max_tool_chars: int = DEFAULT_BOUNDS.tool_output_chars,
+    ) -> str:
+        raw_session_id = records[0].get("sessionId")
+        self.assertIsInstance(raw_session_id, str)
+        session_id = str(raw_session_id)
+        self.session(records, identifier=session_id)
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = run(
+            [
+                "claude",
+                "show",
+                session_id,
+                "--cwd",
+                str(self.cwd),
+                "--source-root",
+                str(self.root),
+                "--max-tool-chars",
+                str(max_tool_chars),
+                "--format",
+                "handoff",
+            ],
+            stdout=stdout,
+            stderr=stderr,
+        )
+        self.assertEqual(code, 0, stderr.getvalue())
+        return stdout.getvalue()
+
     def test_s_cla_01_02_parent_chain_and_fork_choose_one_lineage(self) -> None:
         session_id = str(uuid.uuid4())
         user_id, old_id, fork_id = (str(uuid.uuid4()) for _ in range(3))
@@ -179,7 +210,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertNotIn("secret reasoning", serialized)
         self.assertNotIn("secret-signature", serialized)
 
-    def test_tool_use_input_is_currently_not_rendered_see_plan_046(self) -> None:
+    def test_s_cla_08_tool_use_input_and_name_render_with_result(self) -> None:
         fixture_root = (
             Path(__file__).parents[1]
             / "fixtures"
@@ -208,12 +239,158 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(code, 0, stderr.getvalue())
         handoff = stdout.getvalue()
         self.assertIn("synthetic file contents", handoff)
-        self.assertIn("[2 tool]", handoff)
-        self.assertNotIn("[2 tool/", handoff)
-        self.assertNotIn("Read", handoff)
-        self.assertNotIn("Bash", handoff)
-        self.assertNotIn("/workspace/project/app.py", handoff)
-        self.assertNotIn("pytest -x", handoff)
+        self.assertIn("[2 tool/Read]", handoff)
+        self.assertIn("[3 tool/Bash]", handoff)
+        self.assertIn("/workspace/project/app.py", handoff)
+        self.assertIn("pytest -x", handoff)
+        self.assertIn("missing tool result", handoff)
+
+    def test_tool_input_is_bounded_without_evicting_correlated_result(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id, call_id, result_id = (str(uuid.uuid4()) for _ in range(3))
+        handoff = self.render_handoff(
+            [
+                self.turn("user", user_id, None, "question", -3, sessionId=session_id),
+                self.turn(
+                    "assistant",
+                    call_id,
+                    user_id,
+                    [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_large_input",
+                            "name": "Read",
+                            "input": {"file_path": "/workspace/project/" + "x" * 500},
+                        }
+                    ],
+                    -2,
+                    sessionId=session_id,
+                ),
+                self.turn(
+                    "user",
+                    result_id,
+                    call_id,
+                    [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_large_input",
+                            "content": "RESULT_STILL_VISIBLE",
+                        }
+                    ],
+                    -1,
+                    sessionId=session_id,
+                ),
+            ],
+            max_tool_chars=120,
+        )
+
+        self.assertIn("[1 tool/Read]", handoff)
+        self.assertIn("RESULT_STILL_VISIBLE", handoff)
+        self.assertIn("W_TRUNCATED", handoff)
+        self.assertNotIn("x" * 100, handoff)
+
+    def test_tool_input_is_redacted_before_its_sub_budget_truncates(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id, call_id, result_id = (str(uuid.uuid4()) for _ in range(3))
+        secret = "gh" + "p_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"
+        handoff = self.render_handoff(
+            [
+                self.turn("user", user_id, None, "question", -3, sessionId=session_id),
+                self.turn(
+                    "assistant",
+                    call_id,
+                    user_id,
+                    [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_secret_input",
+                            "name": "Bash",
+                            "input": {"command": "x " + secret, "note": "\x00unsafe"},
+                        }
+                    ],
+                    -2,
+                    sessionId=session_id,
+                ),
+                self.turn(
+                    "user",
+                    result_id,
+                    call_id,
+                    [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_secret_input",
+                            "content": "safe result",
+                        }
+                    ],
+                    -1,
+                    sessionId=session_id,
+                ),
+            ],
+            max_tool_chars=96,
+        )
+
+        self.assertIn("[REDACTED]", handoff)
+        self.assertIn("safe result", handoff)
+        self.assertNotIn(secret, handoff)
+        self.assertNotIn(secret[:18], handoff)
+        self.assertNotIn("\x00", handoff)
+
+    def test_unmatched_tool_result_remains_anonymous(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id, result_id = (str(uuid.uuid4()) for _ in range(2))
+        handoff = self.render_handoff(
+            [
+                self.turn("user", user_id, None, "question", -2, sessionId=session_id),
+                self.turn(
+                    "user",
+                    result_id,
+                    user_id,
+                    [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_unknown",
+                            "tool_name": "FabricatedName",
+                            "content": "orphan result",
+                        }
+                    ],
+                    -1,
+                    sessionId=session_id,
+                ),
+            ]
+        )
+
+        self.assertIn("[1 tool]", handoff)
+        self.assertNotIn("[1 tool/", handoff)
+        self.assertNotIn("FabricatedName", handoff)
+        self.assertIn("orphan result", handoff)
+
+    def test_interrupted_tool_call_renders_missing_result(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id, call_id = (str(uuid.uuid4()) for _ in range(2))
+        handoff = self.render_handoff(
+            [
+                self.turn("user", user_id, None, "question", -2, sessionId=session_id),
+                self.turn(
+                    "assistant",
+                    call_id,
+                    user_id,
+                    [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_interrupted",
+                            "name": "Read",
+                            "input": {"file_path": "/workspace/project/pending.py"},
+                        }
+                    ],
+                    -1,
+                    sessionId=session_id,
+                ),
+            ]
+        )
+
+        self.assertIn("[1 tool/Read]", handoff)
+        self.assertIn("/workspace/project/pending.py", handoff)
+        self.assertIn("missing tool result", handoff)
 
     def test_s_cla_05_broken_chain_warns_without_inventing_parent(self) -> None:
         session_id = str(uuid.uuid4())
