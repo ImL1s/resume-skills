@@ -19,6 +19,12 @@
   only the recorded-root check on the hot path and reports actual root,
   recorded root, agreement, and package identity through `--version`; it does
   not claim to detect an intact older install at its original root.
+- **Review hardening**: the default human-readable `list --cwd` table visibly
+  appends content-free warning codes while JSON keeps its existing warnings
+  array contract. Version path fields use JSON string encoding, distribution
+  smoke validates manifestless identity semantics plus negative path/enum/
+  digest cases, and the hot path is test-pinned to at most **one manifest file
+  read** per invocation.
 - **Priority**: P2
 - **Effort**: M
 - **Risk**: MED — adds I/O to every invocation; must warn, never block
@@ -230,7 +236,9 @@ STOP and report.
    this explicitly so nobody later mistakes the check for staleness detection
    (see the detectability table).
 6. Hot-path cost: assert the check does not read more than N files (prefer
-   counting reads over timing, which is flaky in CI).
+   counting reads over timing, which is flaky in CI). Implemented with
+   **N = 1**: the regression records `os.open` calls and permits only the
+   selected ownership manifest, never payload files.
 
 **Verify**: all pass; full suite OK.
 

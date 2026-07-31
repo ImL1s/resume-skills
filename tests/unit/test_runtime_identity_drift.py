@@ -7,7 +7,10 @@ import sys
 import tempfile
 import unittest
 import uuid
+from unittest import mock
 from pathlib import Path
+
+from portable_resume import reader
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -85,6 +88,23 @@ class RuntimeIdentityDriftTests(unittest.TestCase):
             check=False,
         )
 
+    def _list_default(self, root: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(self._runner(root)),
+                "list",
+                "--cwd",
+                str(self.cwd),
+                "--source-root",
+                str(self.source_root),
+            ],
+            cwd=REPO,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
     def _relocate(self) -> Path:
         relocated = self.base / "relocated"
         shutil.copytree(self.installed / "resume-claude", relocated / "resume-claude")
@@ -120,6 +140,14 @@ class RuntimeIdentityDriftTests(unittest.TestCase):
         relocated_payload["generated_at"] = pristine_payload["generated_at"]
         self.assertEqual(relocated_payload, pristine_payload)
 
+    def test_relocated_tree_default_list_visibly_warns_without_failing(self) -> None:
+        completed = self._list_default(self._relocate())
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertTrue(completed.stdout.startswith("SOURCE\tSESSION_ID\t"))
+        self.assertIn(f"# {WARNING}\n", completed.stdout)
+        self.assertEqual(completed.stderr, "")
+
     def test_other_install_does_not_make_an_intact_tree_look_stale(self) -> None:
         self._install(self.base / "newer-elsewhere")
         intact = self._list(self.installed)
@@ -132,6 +160,30 @@ class RuntimeIdentityDriftTests(unittest.TestCase):
         completed = self._list(self.installed)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn(WARNING, json.loads(completed.stdout)["warnings"])
+
+    def test_runtime_identity_hot_path_reads_at_most_one_file(self) -> None:
+        manifest = self.installed / ".portable-resume" / ".state" / "manifest.json"
+        runtime_reader = (
+            self.installed
+            / ".portable-resume"
+            / "runtime"
+            / "portable_resume"
+            / "reader.py"
+        )
+        real_open = reader.os.open
+        opened: list[object] = []
+
+        def tracking_open(path: object, flags: int) -> int:
+            opened.append(path)
+            return real_open(path, flags)
+
+        with mock.patch.object(reader, "__file__", str(runtime_reader)), mock.patch.object(
+            reader.os, "open", side_effect=tracking_open
+        ):
+            identity = reader.runtime_install_identity()
+
+        self.assertTrue(identity["manifest_present"])
+        self.assertEqual(opened, [manifest])
 
     def test_version_identifies_actual_and_recorded_roots(self) -> None:
         relocated = self._relocate()
@@ -151,9 +203,9 @@ class RuntimeIdentityDriftTests(unittest.TestCase):
         self.assertEqual(pristine.returncode, 0, pristine.stderr)
         self.assertEqual(copied.returncode, 0, copied.stderr)
         self.assertNotEqual(pristine.stdout, copied.stdout)
-        self.assertIn(f"runtime-root: {self.installed}", pristine.stdout)
-        self.assertIn(f"runtime-root: {relocated}", copied.stdout)
-        self.assertIn(f"recorded-root: {self.installed}", pristine.stdout)
+        self.assertIn(f"runtime-root: {json.dumps(str(self.installed))}", pristine.stdout)
+        self.assertIn(f"runtime-root: {json.dumps(str(relocated))}", copied.stdout)
+        self.assertIn(f"recorded-root: {json.dumps(str(self.installed))}", pristine.stdout)
         self.assertIn("recorded-root-match: true", pristine.stdout)
         self.assertIn("recorded-root-match: false", copied.stdout)
         self.assertIn("package-identity: ", pristine.stdout)

@@ -26,7 +26,7 @@ class DistributionSmokeVersionTests(unittest.TestCase):
         output = "\n".join(
             (
                 "portable-resume 0.4.0.dev0",
-                "runtime-root: /tmp/current",
+                'runtime-root: "/tmp/current"',
                 "recorded-root: unknown",
                 "recorded-root-match: unknown",
                 "package-identity: unknown",
@@ -37,6 +37,55 @@ class DistributionSmokeVersionTests(unittest.TestCase):
                 "portable-resume", output, "0.4.0.dev0"
             )
         )
+
+    def test_manifestless_distribution_identity_is_exact_and_consistent(self) -> None:
+        output = "\n".join(
+            (
+                "portable-resume 0.4.0.dev0",
+                'runtime-root: "/tmp/venv/site-packages"',
+                "recorded-root: unknown",
+                "recorded-root-match: unknown",
+                "package-identity: unknown",
+            )
+        )
+        self.assertTrue(
+            self.smoke._valid_version_output(
+                "portable-resume",
+                output,
+                "0.4.0.dev0",
+                expected_runtime_root=Path("/tmp/venv/site-packages"),
+                require_manifestless=True,
+            )
+        )
+
+    def test_portable_resume_rejects_invalid_identity_fields(self) -> None:
+        valid = [
+            "portable-resume 0.4.0.dev0",
+            'runtime-root: "/tmp/current"',
+            "recorded-root: unknown",
+            "recorded-root-match: unknown",
+            "package-identity: unknown",
+        ]
+        cases = {
+            "relative path": (1, 'runtime-root: "relative"'),
+            "control path": (1, 'runtime-root: "/tmp/bad\\u0000path"'),
+            "bad enum": (3, "recorded-root-match: maybe"),
+            "bad digest": (4, "package-identity: abc123"),
+            "manifest claim": (2, 'recorded-root: "/tmp/recorded"'),
+        }
+        for name, (index, replacement) in cases.items():
+            with self.subTest(name=name):
+                lines = list(valid)
+                lines[index] = replacement
+                self.assertFalse(
+                    self.smoke._valid_version_output(
+                        "portable-resume",
+                        "\n".join(lines),
+                        "0.4.0.dev0",
+                        expected_runtime_root=Path("/tmp/current"),
+                        require_manifestless=True,
+                    )
+                )
 
     def test_installer_version_remains_exactly_one_line(self) -> None:
         self.assertTrue(

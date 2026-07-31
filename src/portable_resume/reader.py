@@ -46,7 +46,7 @@ def runtime_install_identity() -> dict[str, object]:
     runtime_dir = package_dir.parent
     support_dir = runtime_dir.parent
     installed_layout = runtime_dir.name == "runtime" and support_dir.name == ".portable-resume"
-    actual_root = support_dir.parent if installed_layout else package_dir.parents[1]
+    actual_root = support_dir.parent if installed_layout else package_dir.parent
     result: dict[str, object] = {
         "actual_root": os.path.realpath(actual_root),
         "recorded_root": None,
@@ -132,8 +132,9 @@ def runtime_install_identity() -> dict[str, object]:
 
 def _runtime_version_report(identity: dict[str, object], *, prog: str) -> str:
     first_line = f"{prog} {runtime_identity()['version']}"
-    actual_root = identity["actual_root"]
-    recorded_root = identity["recorded_root"] or "unknown"
+    actual_root = json.dumps(str(identity["actual_root"]), ensure_ascii=True)
+    recorded = identity["recorded_root"]
+    recorded_root = json.dumps(str(recorded), ensure_ascii=True) if recorded else "unknown"
     package_identity = identity["package_identity"] or "unknown"
     agreement = identity["recorded_root_matches_actual"]
     agreement_text = "unknown" if agreement is None else str(agreement).lower()
@@ -275,7 +276,9 @@ def _json(value: dict[str, Any]) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
 
 
-def _table(summaries: Sequence[SessionSummary]) -> str:
+def _table(
+    summaries: Sequence[SessionSummary], *, warnings: Sequence[str] = ()
+) -> str:
     rows = ["SOURCE\tSESSION_ID\tUPDATED_AT\tTITLE\tCWD"]
     for item in summaries:
         rows.append(
@@ -289,6 +292,8 @@ def _table(summaries: Sequence[SessionSummary]) -> str:
                 )
             )
         )
+    if warnings:
+        rows.extend(("", "# Warnings", *(f"# {warning}" for warning in warnings)))
     return "\n".join(rows) + "\n"
 
 
@@ -445,7 +450,7 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
             elif output_format == "handoff":
                 stdout.write(render_candidates(bounded_candidates(public_sessions), warnings=envelope.warnings))
             else:
-                stdout.write(_table(public_sessions))
+                stdout.write(_table(public_sessions, warnings=envelope.warnings))
             return 0
 
         try:
