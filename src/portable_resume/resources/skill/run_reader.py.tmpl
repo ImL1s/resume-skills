@@ -53,8 +53,8 @@ for _module_name in tuple(sys.modules):
     if _module_name == "portable_resume" or _module_name.startswith("portable_resume."):
         sys.modules.pop(_module_name, None)
 
-if _RUNTIME not in sys.path:
-    sys.path.insert(0, _RUNTIME)
+sys.path[:] = [_entry for _entry in sys.path if _entry != _RUNTIME]
+sys.path.insert(0, _RUNTIME)
 
 try:
     from portable_resume.reader import main  # noqa: E402

@@ -173,7 +173,7 @@ class OwnedRunnerRuntimeFailureTests(unittest.TestCase):
         self,
         runner: Path,
         *,
-        pythonpath: Path | None = None,
+        pythonpath: Path | str | None = None,
         argv: tuple[str, ...] = ("list", "--cwd", "/tmp"),
     ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
@@ -288,6 +288,31 @@ class OwnedRunnerRuntimeFailureTests(unittest.TestCase):
             )
             completed = self._run(runner, pythonpath=foreign, argv=("--help",))
             self.assertTrue(import_marker.exists())
+            self.assertFalse(main_marker.exists())
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("usage:", completed.stdout)
+
+    def test_owned_runtime_is_repositioned_before_foreign_pythonpath(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            self._write_owned_runtime(root)
+            import_marker = root / "foreign-imported"
+            main_marker = root / "foreign-main-executed"
+            foreign = root / "foreign"
+            self._write_hostile_package(
+                foreign, import_marker, main_marker=main_marker
+            )
+            owned_runtime = Path(
+                os.path.realpath(root / ".portable-resume" / "runtime")
+            )
+            completed = self._run(
+                runner,
+                pythonpath=f"{foreign}{os.pathsep}{owned_runtime}",
+                argv=("--help",),
+            )
+            self.assertFalse(import_marker.exists())
             self.assertFalse(main_marker.exists())
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
