@@ -3318,14 +3318,17 @@ def _verify_root_locked(root: str, *, claim: str | None = None) -> dict[str, Any
         except DiagnosticError as error:
             raise DiagnosticError("E_VERIFY_MISMATCH") from error
     try:
+        expected_by_host: dict[str, tuple[dict[str, bytes], str]] = {}
         for claim_id, meta in manifest.claims.items():
             if claim is not None and claim_id != claim:
                 continue
             host = meta.get("host")
             if host not in HOST_PROFILES or meta.get("bundle_version") != BUNDLE_VERSION:
                 raise DiagnosticError("E_VERIFY_MISMATCH")
-            expected_files = materialize_plan(host)
-            expected_identity = package_identity(expected_files)
+            if host not in expected_by_host:
+                files = materialize_plan(host)
+                expected_by_host[host] = (files, package_identity(files))
+            expected_files, expected_identity = expected_by_host[host]
             if manifest.package_identity != expected_identity:
                 raise DiagnosticError("E_VERIFY_MISMATCH")
             claimed_paths = {rel for rel, entry in manifest.files.items() if claim_id in entry.claims}
