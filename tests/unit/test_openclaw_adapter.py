@@ -223,6 +223,34 @@ class OpenClawAdapterTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
         self.assertEqual(budget.records, 2)
 
+    def test_listing_rejects_blob_entry_json(self) -> None:
+        from portable_resume.adapters import openclaw as oc
+
+        rows = [
+            ("key-1", "session-1", b"{}", 1, 1, "operator", "one", None, 1),
+        ]
+        connection = mock.Mock()
+        connection.execute.return_value = _NoFetchAllCursor(rows)
+        budget = ReadBudget(Bounds(scanned_records=5, source_read_bytes=1024))
+        current = Query(
+            source="openclaw",
+            source_root=str(fixture_root("s-oc-01-basic")),
+            within_min=0,
+        )
+
+        with self.assertRaises(DiagnosticError) as caught:
+            oc._list_nodes(
+                connection,
+                agent_id="main",
+                database="synthetic.sqlite",
+                query=current,
+                include_internal=False,
+                budget=budget,
+            )
+
+        self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+        self.assertEqual(budget.records, 1)
+
     def test_exact_ref_streams_before_enforcing_byte_budget(self) -> None:
         from portable_resume.adapters import openclaw as oc
 

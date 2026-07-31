@@ -322,7 +322,7 @@ def _row_to_summary(
 def _charge_entry_json(entry_json: object, budget: ReadBudget) -> None:
     budget.consume_records()
     if not isinstance(entry_json, str):
-        return
+        raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
     encoded = entry_json.encode("utf-8")
     if len(encoded) > min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes):
         raise DiagnosticError.limit_exceeded()
