@@ -185,14 +185,27 @@ produces none; a manifest-less tree produces none.
 
 ### Step 3: Surface identity in `--version`
 
-Extend `--version` (and, if cheap, `self-check`) to report the identity of the
-**loaded tree** in addition to the build version, so an agent or human can
-tell two copies apart. Keep the first line's existing format stable if any
-test or doc depends on it — check with
-`grep -rn "\-\-version" tests/ docs/ | head`.
+Extend `--version` (and, if cheap, `self-check`) to report enough to tell two
+copies apart. **Payload identity and the manifest's recorded root are not
+enough** (raised as P2 in review): an exact relocated copy has a byte-identical
+payload digest *and* carries the original recorded root in its copied
+manifest, so both fields match the pristine install and the comparison cannot
+distinguish them.
 
-**Verify**: the pristine install and the relocated copy print
-distinguishable identity information.
+Report, in addition to the build version:
+- the **actual** runtime root the process resolved and loaded (i.e. the
+  realpath derived from `__file__` at load time), and
+- an explicit recorded-root-vs-actual-root agreement flag (the same signal
+  Step 2's option A computes).
+
+Those two are what differ between a pristine tree and its relocated copy.
+Keep the first line's existing format stable if any test or doc depends on it
+— check with `grep -rn "\-\-version" tests/ docs/ | head`.
+
+**Verify**: run `--version` on the pristine install and on the relocated copy
+and diff the two outputs — they must differ, and the difference must identify
+which tree ran. If the outputs are identical, the plan's premise is unmet:
+STOP and report.
 
 ### Step 4: Tests
 
@@ -232,7 +245,7 @@ in-process.
 - [ ] An intact tree at its recorded root produces no warning, even when older than another install elsewhere (negative control, test-pinned)
 - [ ] Exit codes and stdout content are unchanged by the check (test-pinned)
 - [ ] Missing manifest is silent (test-pinned)
-- [ ] `--version` reports the loaded tree's identity and recorded root, so an external comparison can distinguish two copies
+- [ ] `--version` reports the **actual loaded runtime root** plus a recorded-root agreement flag (not just payload identity and the copied manifest's root, which are identical across an exact relocated copy), and diffing the two outputs identifies which tree ran (test-pinned)
 - [ ] Runtime still does not import `install/**` (allowlist test green)
 - [ ] Full suite + smoke matrix + gates green; `plans/README.md` updated
 

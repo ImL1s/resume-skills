@@ -184,17 +184,23 @@ which narrows on the module name:
 ```
 
 Apply the same discipline: catch `ModuleNotFoundError`, and re-raise unless
-`error.name` is the top-level `portable_resume` package (i.e. the runtime
-tree itself is absent). Anything else propagates unchanged. In the
-missing-runtime path, write a literal diagnostic document to **stderr** and
-exit with a stable code — do not re-raise, do not print a traceback:
+`error.name` is **exactly** the top-level `portable_resume` package (i.e. the
+runtime tree itself is absent). Compare the whole string — do **not** split on
+`.` and compare the first segment: that would also swallow
+`portable_resume.reader` or `portable_resume.some_internal_module`, so an
+installed-but-broken runtime (missing `reader.py`, or importing a missing
+internal module by its package-qualified name) would be misreported as
+capability-unavailable, concealing the corruption (raised as P2 across two
+review rounds). Anything else propagates unchanged. In the missing-runtime
+path, write a literal diagnostic document to **stderr** and exit with a stable
+code — do not re-raise, do not print a traceback:
 
 ```python
 try:
     from portable_resume.reader import main  # noqa: E402
     from portable_resume.model import SOURCE_KEYS  # noqa: E402
 except ModuleNotFoundError as error:
-    if (error.name or "").split(".")[0] != "portable_resume":
+    if error.name != "portable_resume":
         raise
     sys.stderr.write(
         '{"schema_version":"portable-resume/diagnostic-v1",'
@@ -224,12 +230,15 @@ exit code is the one you chose (not 1), and `python3 -c "import json,sys; json.l
 2. Missing runtime: render the template to a temp dir **without** the runtime,
    run it as a subprocess, assert the exit code, empty stdout, and that stderr
    parses as JSON with the expected `code`/`exit_code`.
-2b. **Broken runtime is NOT swallowed**: place a runtime tree that exists but
-   fails to import for an unrelated reason (e.g. a `portable_resume/` package
-   whose `reader.py` imports a module that does not exist), run the runner as
-   a subprocess, and assert it does **not** emit the capability-unavailable
-   diagnostic — the underlying `ModuleNotFoundError` must surface. This pins
-   the narrowing from Step 3.
+2b. **Broken runtime is NOT swallowed** — two cases, both required:
+   (i) a `portable_resume/` package present but with `reader.py` deleted, so
+   the failing `error.name` is `portable_resume.reader`; and (ii) a package
+   whose `reader.py` imports a missing internal module by its
+   package-qualified name (`portable_resume.does_not_exist`). Run the runner
+   as a subprocess for each and assert it does **not** emit the
+   capability-unavailable diagnostic — the underlying `ModuleNotFoundError`
+   must surface. These pin the exact-match narrowing from Step 3; a
+   first-segment comparison would pass case (i) wrongly.
 3. Regression: `--expected-source qwen` against a claude-bound runner still
    returns claude rows (the passing behavior above).
 

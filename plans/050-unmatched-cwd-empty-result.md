@@ -122,12 +122,18 @@ or your report — exit codes, counts and timings only.
 **In scope**:
 - `src/portable_resume/adapters/claude.py` — the cwd-scoped fallback and its
   budget accounting
+- **Only if you choose option A**: `src/portable_resume/bounds.py` (the
+  warnings accumulator on `ReadBudget`), `src/portable_resume/reader.py`
+  (consuming it into `envelope_warnings`), and
+  `src/portable_resume/diagnostics.py` (registering the `W_*` code). Without
+  these, option A's signal is emitted into a void — see Step 2.
 - Claude adapter tests + synthetic fixtures large enough to cross the ceiling
 - `plans/README.md` — status row
 
 **Out of scope**:
 - Raising `DEFAULT_BOUNDS.scanned_records` — the ceiling is a safety property,
-  not the bug. Do not touch `bounds.py`.
+  not the bug. (Under option A you may add a warnings accumulator to
+  `bounds.py`, but you must not change any ceiling value.)
 - Other adapters — check whether any shares this shape and **report**; do not
   fix here.
 - The reader's generic budget handling in `reader.py`.
@@ -163,13 +169,30 @@ intentional fallback comment and that invariant:
 **A. Establish an incomplete-listing channel, then degrade** (best outcome,
 largest change): give the fallback its own sub-budget and, on exhaustion,
 return what was gathered **plus a machine-readable incompleteness signal**.
-Since `list()` cannot carry one today, you must first add a channel — the
-cheapest honest options are (i) surface it through the adapter's
-`CapabilityReport.warnings` (already seeded into `envelope_warnings` before
-listing), or (ii) let the adapter record a `W_*` code on a mutable accumulator
-passed alongside the budget. Do **not** invent a new return type for
-`SourceAdapter.list` without saying so explicitly — that changes the adapter
-contract for all 17 sources.
+
+Two candidate channels are **not viable** — verify this yourself before
+designing, and do not rediscover it the hard way (raised as P2 across review
+rounds):
+- `CapabilityReport.warnings` — the dataclass is
+  `@dataclass(frozen=True, slots=True)` in
+  `src/portable_resume/adapters/base.py`, and `probe()` returns it *before*
+  `adapter.list()` runs, so the adapter cannot append to it afterwards.
+- A bare accumulator that nothing reads — `src/portable_resume/reader.py`
+  builds `envelope_warnings` from `capability.warnings` **only**; a warning
+  the adapter records anywhere else is silently dropped.
+
+So option A is only implementable **together with a reader change**. The
+concrete shape: add a bounded warnings accumulator to `ReadBudget`
+(`src/portable_resume/bounds.py` — it is a mutable dataclass with a lock, so
+this fits), have the adapter record a `W_*` code on it when the fallback scan
+is cut short, and change `reader.py` to seed `envelope_warnings` from both
+`capability.warnings` and the budget's accumulator. **If you take option A,
+`reader.py` and `bounds.py` move into scope** (the Scope section says so
+explicitly) — and every new code must be a member of
+`diagnostics.WARNING_CODES`.
+
+Do **not** invent a new return type for `SourceAdapter.list` without saying so
+explicitly — that changes the adapter contract for all 17 sources.
 
 **B. Complete the scan cheaply instead of truncating it** (preferred if the
 numbers work): the fallback only needs each session's *recorded cwd*, not its
