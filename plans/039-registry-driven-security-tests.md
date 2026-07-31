@@ -141,13 +141,28 @@ and iterate `for source, (root, cwd) in sorted(FIXTURES.items()):` with
 **Verify**: `PYTHONPATH=src python3 -m unittest tests.security.test_source_immutability -v`
 → 17 subtests pass (or failures that are REAL findings — see STOP).
 
-### Step 2: Widen the isolation shim loop
+### Step 2: Widen the isolation shim loop AND exercise every source under it
 
-In `test_isolation.py` line ~53, replace the literal tuple with
-`sorted(SOURCE_KEYS)` (import it the way `test_no_source_cli_exec.py` does).
-Keep the extra "common launcher names" list that follows, if present, as-is.
+Two parts (Codex round-3: widening shim *names* alone proves nothing — the
+existing tests only ever invoke the Claude reader path, so another adapter
+could shell out from its own `list()`/`show()` while every shim test stays
+green):
 
-**Verify**: `PYTHONPATH=src python3 -m unittest tests.security.test_isolation -v` → pass.
+1. In `test_isolation.py` line ~53, replace the literal tuple with
+   `sorted(SOURCE_KEYS)` (import it the way `test_no_source_cli_exec.py`
+   does). Keep the extra "common launcher names" list that follows, if
+   present, as-is.
+2. Add a parametrized all-source invocation test (in
+   `test_no_source_cli_exec.py`, or a new sibling module following its
+   structure): under the PATH-shim harness, for EVERY source in the
+   `FIXTURES` map from Step 1, run a real fixture-backed `list` and a `show`
+   (reuse each adapter test's known-good `--source-root`/`--cwd`/ref the same
+   way Step 1 does) via `portable_resume.reader.run([...])`, assert the
+   invocation succeeds (exit 0 or the fixture's documented exit) and the
+   marker file was never created. This is what actually proves "no source
+   CLI is invoked" per adapter code path, not just per shim name.
+
+**Verify**: `PYTHONPATH=src python3 -m unittest tests.security.test_isolation tests.security.test_no_source_cli_exec -v` → pass; the new test reports one subtest per source (17).
 
 ### Step 3: Full gates
 
@@ -155,13 +170,15 @@ Keep the extra "common launcher names" list that follows, if present, as-is.
 
 ## Test plan
 
-The plan IS tests. Expected new coverage: 14 additional immutability subtests,
-11 additional shim names. The completeness assertion is the permanent guard.
+The plan IS tests. Expected new coverage: 14 additional immutability
+subtests, 11 additional shim names, and 17 per-source list/show invocations
+under the shim harness. The completeness assertion is the permanent guard.
 
 ## Done criteria
 
 - [ ] `FIXTURES` keys == `SOURCE_KEYS` (asserted by a test)
 - [ ] Immutability runs a fingerprint case per source; isolation shims cover every source key
+- [ ] Every source runs a real fixture-backed list + show under the PATH-shim harness with no marker created (17 subtests)
 - [ ] Full suite green — or documented STOP report of real violations
 - [ ] No `src/` changes; `plans/README.md` updated
 

@@ -165,10 +165,15 @@ represents a *per-query* limit (listed_sessions, scanned_records,
 record_bytes, source_read_bytes): replace with
 `min(budget.limits.X, DEFAULT_BOUNDS.X)` where a budget is in scope. Leave
 hits that are structural constants (if any) unchanged and list them in your
-report. In the show-path byte loop (~684–689), replace the local
-`total_bytes` accumulation with `budget.consume_bytes(len(encoded))` (which
-enforces `source_read_bytes` centrally) while keeping the per-record
-`record_bytes` check.
+report. **This includes `_agent_db_paths` (Codex round-3): that helper
+currently has no budget parameter and uses `DEFAULT_BOUNDS.scanned_records`
+at both of its directory-scan checks, so a caller with `scanned_records=5`
+could still enumerate up to 2,000 agent directories before any lowered SQL
+limit applies — thread `budget` into `_agent_db_paths` and bound the
+directory enumeration with the same `min(...)` rule.** In the show-path byte
+loop (~684–689), replace the local `total_bytes` accumulation with
+`budget.consume_bytes(len(encoded))` (which enforces `source_read_bytes`
+centrally) while keeping the per-record `record_bytes` check.
 
 **Verify**: full suite OK; behavior with default bounds unchanged (existing
 fixtures pass untouched).
@@ -193,6 +198,10 @@ cases — find them via `grep -rn "limit_exceeded\|scanned_records" tests/ | gre
    `E_LIMIT_EXCEEDED` raised from `_exact_session_summaries`, and the budget
    is debited on that path too (the review found ordinary-listing-only tests
    leave this path unverified).
+3c. **Multi-agent directory enumeration bounds**: synthetic store with more
+   agent databases than a lowered `scanned_records` (e.g. 6 agent dirs,
+   budget of 5) → `_agent_db_paths` fails closed with `E_LIMIT_EXCEEDED`
+   under the lowered budget instead of enumerating up to the global default.
 4. Fixture manifests must carry `"synthetic": true` and a registered
    `format_id` (repo rule — `CONTRIBUTING.md` "Code and fixture rules").
 

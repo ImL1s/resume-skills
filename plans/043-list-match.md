@@ -74,16 +74,16 @@ exist.
 
   (read the surrounding lines for full context before editing).
 
-- Envelope surface: `Envelope.create(operation="list", query=query, ...)` —
-  `Query` already carries `ref` (it is `None` for list today). Decision made
-  by this plan: pass the match text as `Query.ref` for list invocations so the
-  echoed query in the envelope is truthful, IF the JSON schema
-  (`src/portable_resume/resources/portable-resume-v1.schema.json`) and
-  `validate_envelope` accept a non-null ref on list envelopes — check first
-  (`grep -n "ref" src/portable_resume/resources/portable-resume-v1.schema.json`).
-  If the schema constrains ref-on-list, keep `Query.ref = None` and do not
-  echo the match text at all (bounded behavior change: filter only). Do NOT
-  edit the schema in this plan.
+- Envelope/Query surface — **hard rule (Codex PR review): the match text must
+  NEVER be placed in the `Query` passed to `adapter.list()`.** Adapters
+  interpret `Query.ref` as *selection* input — openclaw's `_parse_ref` treats
+  ID-shaped tokens as an exact session filter, and cline has a similar
+  exact-ref fast path — so `list --match database` would ask the adapter for
+  session ID "database" and return empty even when a visible title contains
+  the word. The adapter-facing `Query` keeps `ref=None`, exactly as plain
+  `list` today; `--match` lives in reader-local state only. The stdout
+  envelope simply does not echo the match text (echoed ref stays null) — do
+  NOT edit the schema or `contracts.py` to make an echo possible.
 
 ## Commands you will need
 
@@ -148,9 +148,14 @@ In `_resolve_invocation` / `run()`:
   than the adapter's page is invisible to both. v1 semantics of this plan:
   `--match` filters that same visible window; it is NOT a full-history
   search. Requirements that make this honest:
-  - Apply `summary_matches` to `internal` before `ordered_internal_all` /
-    the reader-side cap, so the reader cap applies to matches ("top N of the
-    visible window that match").
+  - **Order of operations: build the visible window first, then filter.**
+    Sort `internal`, compute `W_TRUNCATED`, and apply the reader-side
+    `listed_sessions` cap exactly as plain `list` does today — and only THEN
+    apply `summary_matches` to that capped window. Filtering before the cap
+    would surface matches ranked below row 50 that plain `list` cannot show,
+    contradicting the stated "filters the window plain list exposes"
+    semantics (adapters like Claude can return up to `scanned_records` rows,
+    far more than the 50-row output page).
   - Help text must say: "searches the most recent bounded listing window per
     source, not full store history".
   - If the pre-filter listing already hit a cap (`W_TRUNCATED` computed, or

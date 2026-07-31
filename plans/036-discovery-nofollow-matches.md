@@ -194,12 +194,19 @@ digest was produced with (`from .render import package_identity`). Then:
 ```
 
 `manifest.package_identity` stays an informational field, untouched and
-uncompared. Keep the early-return path for unreadable manifests
-(`manifest_unreadable`) setting `matches_expected = False` as it already
-does. Preserve the field's presence semantics exactly as today (emitted
-whenever `expected_payload_digest` was passed) so `discovery-scan-v1`
-consumers see the same keys. Avoid reading every file twice: collect bytes in
-the same pass `_on_disk_package_matches` already makes.
+uncompared. **Unreadable-manifest path (Codex round-3): retain the computed
+comparison.** Compute the on-disk identity *before* the manifest read, and on
+the `manifest_unreadable` early return set `matches_expected` from that
+computed comparison instead of forcing it to `False` — a byte-identical copy
+whose informational manifest is malformed still matches the expected digest;
+forcing false would reintroduce exactly the metadata dependence this step
+removes. Ownership/policy fields (`owned=False`, `manifest_unreadable=True`,
+and the existing `payload_verified` policy on soft-manifest roots) keep their
+current behavior — only `matches_expected` becomes metadata-independent.
+Preserve the field's presence semantics exactly as today (emitted whenever
+`expected_payload_digest` was passed) so `discovery-scan-v1` consumers see
+the same keys. Avoid reading every file twice: collect bytes in the same pass
+`_on_disk_package_matches` already makes.
 
 **Verify**: full suite OK.
 
@@ -216,6 +223,9 @@ the same pass `_on_disk_package_matches` already makes.
 4. Intact payload but caller passes a *different* expected digest →
    `payload_verified` true, `matches_expected` **false** — the two fields now
    measure different things; assert both values.
+5. Byte-identical copy whose ownership manifest is malformed/unreadable →
+   `manifest_unreadable` true AND `matches_expected` **true** (the computed
+   comparison survives the unreadable-manifest early return).
 
 **Verify**: all four pass; full suite + smoke matrix + gates green.
 

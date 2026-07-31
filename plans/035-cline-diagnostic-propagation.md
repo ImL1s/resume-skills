@@ -195,6 +195,19 @@ Split the except:
 
 **Verify**: full suite OK.
 
+### Step 2b: Apply the same split to the show-path manifest read
+
+`ClineAdapter.show` has a second optional-manifest read with the same blanket
+catch (around `cline.py:1029–1055`, wrapping `stable_read_bytes` — locate
+with `grep -n "except (DiagnosticError" src/portable_resume/adapters/cline.py`,
+which must ultimately return exactly two hits, both fixed). Apply the
+identical split there: re-raise `E_UNSAFE_PATH` / `E_SOURCE_BUSY` /
+`E_LIMIT_EXCEEDED`, keep parse/corrupt failures as a skip — otherwise a
+manifest swapped to a symlink or exhausting the budget during `show` is still
+swallowed and `show` silently proceeds on the messages payload alone.
+
+**Verify**: `grep -c "except (DiagnosticError" src/portable_resume/adapters/cline.py` → 0 (both blanket catches replaced by the split form); full suite OK.
+
 ### Step 3: Update the docstring
 
 Make `_session_has_extractable`'s docstring state the now-true contract:
@@ -220,6 +233,11 @@ Add to the cline test module (fixtures synthetic, per CONTRIBUTING rules):
 4. **Corrupt manifest still skips**: fixture with malformed `<id>.json`
    manifest → session still listed (metadata-less), exit 0 — pins the
    preserved behavior.
+5. **Show-path manifest injection**: same read-layer injection raising
+   `DiagnosticError.source_busy()` during `show`'s optional manifest read →
+   `E_SOURCE_BUSY` propagates (was: swallowed, show succeeded on messages
+   alone); and a corrupt-manifest fixture during `show` still succeeds
+   (parse failures remain a skip).
 
 Model the diagnostic-injection tests on existing mock-based unsafe-path tests
 (find via `grep -rln "E_UNSAFE_PATH" tests/ | head`).
