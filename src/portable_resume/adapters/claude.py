@@ -507,14 +507,24 @@ def _session_paths(
         return _exact_uuid_paths(root, exact_uuid, prefer_slugs=prefer_slugs)
 
     if cwd_scoped and prefer_slugs:
-        preferred_dirs = _project_dirs(root, prefer_slugs=prefer_slugs, prefer_only=True)
-        if preferred_dirs:
-            return _paths_under_projects(preferred_dirs, exact_uuid=None)
-        # Preferred slug dir missing: preserve legacy broad list so sessions
-        # whose project bucket name differs can still match recorded cwd.
+        paths, _fallback = _cwd_scoped_session_paths(root, prefer_slugs)
+        return paths
 
     project_dirs = _project_dirs(root, prefer_slugs=prefer_slugs, prefer_only=False)
     return _paths_under_projects(project_dirs, exact_uuid=exact_uuid)
+
+
+def _cwd_scoped_session_paths(
+    root: str,
+    prefer_slugs: tuple[str, ...],
+) -> tuple[list[str], bool]:
+    preferred_dirs = _project_dirs(root, prefer_slugs=prefer_slugs, prefer_only=True)
+    if preferred_dirs:
+        return _paths_under_projects(preferred_dirs, exact_uuid=None), False
+    # Preferred slug dir missing: preserve legacy broad list so sessions whose
+    # project bucket name differs can still match recorded cwd.
+    project_dirs = _project_dirs(root, prefer_slugs=prefer_slugs, prefer_only=False)
+    return _paths_under_projects(project_dirs, exact_uuid=None), True
 
 
 def _exact_uuid_paths(
@@ -616,6 +626,7 @@ def _scan_metadata_chunk(
     starts_mid_line: bool,
     ends_at_eof: bool,
     stop_when_primary_ready: bool,
+    stop_when_cwd_ready: bool = False,
 ) -> None:
     lines = data.splitlines(keepends=True)
     start = 1 if starts_mid_line and lines else 0
@@ -637,6 +648,8 @@ def _scan_metadata_chunk(
                 break
             continue
         metadata.observe(value)
+        if stop_when_cwd_ready and metadata.cwds:
+            break
         if (
             stop_when_primary_ready
             and metadata.cwds
@@ -650,6 +663,8 @@ def _metadata_windows(
     path: str,
     root: str,
     budget: ReadBudget,
+    *,
+    cwd_only: bool = False,
 ) -> tuple[StableWindows, _TranscriptMetadata, tuple[str, ...]]:
     _validate_claude_bounds(budget)
     observation = stable_read_windows(
@@ -672,9 +687,10 @@ def _metadata_windows(
         warnings=warnings,
         starts_mid_line=False,
         ends_at_eof=full_in_head,
-        stop_when_primary_ready=not full_in_head,
+        stop_when_primary_ready=not full_in_head and not cwd_only,
+        stop_when_cwd_ready=cwd_only,
     )
-    if not full_in_head and observation.tail:
+    if not full_in_head and observation.tail and not (cwd_only and metadata.cwds):
         tail = observation.tail
         starts_mid_line = observation.tail_offset > 0
         if observation.tail_offset < len(observation.head):
@@ -689,10 +705,26 @@ def _metadata_windows(
             starts_mid_line=starts_mid_line,
             ends_at_eof=True,
             stop_when_primary_ready=False,
+            stop_when_cwd_ready=cwd_only,
         )
     if metadata.records_seen == 0:
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="claude", provider=FORMAT_ID)
     return observation, metadata, tuple(dict.fromkeys(warnings))
+
+
+def _recorded_cwd_matches(
+    path: str,
+    root: str,
+    requested_cwd: str,
+    budget: ReadBudget,
+) -> bool:
+    _observation, metadata, _warnings = _metadata_windows(
+        path,
+        root,
+        budget,
+        cwd_only=True,
+    )
+    return metadata.selected_cwd(requested_cwd) is not None
 
 
 def _validate_claude_bounds(budget: ReadBudget) -> None:
@@ -1251,6 +1283,7 @@ class ClaudeAdapter:
         if root is None:
             raise DiagnosticError("E_CAPABILITY_UNAVAILABLE", source=self.key, provider=FORMAT_ID)
         values: list[SessionSummary] = []
+        cwd_fallback = False
         # Absolute approved path: validate/read that file only (#19).
         exact_path = _exact_path_candidate(root, query)
         if exact_path is not None:
@@ -1284,13 +1317,17 @@ class ClaudeAdapter:
                 paths = [path for path in paths if path not in tried]
             else:
                 # Non-exact list still cwd-scopes when a preferred slug exists.
-                paths = _session_paths(
-                    root,
-                    prefer_slugs=prefer,
-                    exact_uuid=exact,
-                    cwd_scoped=bool(prefer) and exact is None,
-                )
+                if prefer:
+                    paths, cwd_fallback = _cwd_scoped_session_paths(root, prefer)
+                else:
+                    paths = _session_paths(root, exact_uuid=exact)
         for path in paths:
+            if (
+                cwd_fallback
+                and query.cwd is not None
+                and not _recorded_cwd_matches(path, root, query.cwd, budget)
+            ):
+                continue
             # List still needs recorded cwd/title for collision safety; show does lineage.
             item = _summary(path, root, query, budget)
             if item is not None:
