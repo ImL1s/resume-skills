@@ -134,17 +134,20 @@ class HandoffOutputBudgetTests(unittest.TestCase):
 
     def test_turn_body_truncation_has_distinct_warning_notice(self) -> None:
         session = self._session(
-            user="LATEST_USER",
-            turns=(Turn(ordinal=0, role="user", content="shortened", truncated=True),),
+            user="LATEST_USER_" + ("U" * 20_000),
+            assistant="LATEST_ASSISTANT_" + ("A" * 20_000),
         )
+        bounds = replace(DEFAULT_BOUNDS, handoff_output_bytes=3_500)
 
-        rendered = render_session(session)
+        with patch("portable_resume.handoff.DEFAULT_BOUNDS", bounds):
+            rendered = render_session(session)
 
         self.assertIn(
             "`[W_TRUNCATED]` one or more recovered text bodies were shortened before display.",
             rendered,
         )
         self.assertNotIn("earlier transcript turns were omitted", rendered)
+        self.assertLessEqual(len(rendered.encode("utf-8")), bounds.handoff_output_bytes)
 
     def test_every_handoff_warning_has_a_static_explanation(self) -> None:
         install_only = {
