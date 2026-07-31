@@ -313,11 +313,17 @@ class DiscoveryReaderSafetyTests(unittest.TestCase):
         real_open = os.open
         calls: list[int] = []
 
-        def fail_first_open(path: str, flags: int, *args: object, **kwargs: object) -> int:
+        def fail_first_open(
+            path: str | bytes,
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
             calls.append(flags)
             if len(calls) == 1:
                 raise OSError("simulated no-follow race")
-            return real_open(path, flags, *args, **kwargs)
+            return real_open(path, flags, mode, dir_fd=dir_fd)
 
         with mock.patch("portable_resume.install.discovery.os.open", side_effect=fail_first_open):
             self.assertIsNone(_read_regular_capped(str(skill_md), max_bytes=256 * 1024))
@@ -359,6 +365,58 @@ class DiscoveryReaderSafetyTests(unittest.TestCase):
         modified = self.inspect()
         self.assertFalse(modified["payload_verified"])
         self.assertFalse(modified["matches_expected"])
+
+    def test_matches_expected_uses_actual_identity_for_same_size_mismatch(self) -> None:
+        rel = "resume-codex/scripts/run_reader.py"
+        runner = self.root / rel
+        original = runner.read_bytes()
+        replacement = bytes([original[0] ^ 1]) + original[1:]
+        self.assertEqual(len(replacement), len(original))
+        runner.write_bytes(replacement)
+        actual = materialize_plan("cursor")
+        actual[rel] = replacement
+
+        result = self.inspect(expected=package_identity(actual))
+
+        self.assertFalse(result["payload_verified"])
+        self.assertTrue(result["matches_expected"])
+
+    def test_capped_read_fails_closed_when_file_grows_during_read(self) -> None:
+        path = self.root / "growing"
+        original = b"bounded"
+        path.write_bytes(original)
+        real_read = os.read
+        grew = False
+
+        def grow_after_first_read(fd: int, size: int) -> bytes:
+            nonlocal grew
+            chunk = real_read(fd, size)
+            if not grew:
+                grew = True
+                with path.open("ab") as stream:
+                    stream.write(b"!")
+            return chunk
+
+        with mock.patch("portable_resume.install.discovery.os.read", side_effect=grow_after_first_read):
+            self.assertIsNone(_read_regular_capped(str(path), max_bytes=len(original)))
+
+    def test_capped_read_fails_closed_when_file_mutates_during_read(self) -> None:
+        path = self.root / "mutating"
+        original = b"stable"
+        path.write_bytes(original)
+        real_read = os.read
+        mutated = False
+
+        def mutate_after_first_read(fd: int, size: int) -> bytes:
+            nonlocal mutated
+            chunk = real_read(fd, size)
+            if not mutated:
+                mutated = True
+                path.write_bytes(b"change")
+            return chunk
+
+        with mock.patch("portable_resume.install.discovery.os.read", side_effect=mutate_after_first_read):
+            self.assertIsNone(_read_regular_capped(str(path), max_bytes=len(original)))
 
     def test_unreadable_manifest_does_not_hide_matching_payload(self) -> None:
         Path(manifest_path(str(self.root))).write_text("{not-json", encoding="utf-8")

@@ -27,6 +27,7 @@ from .render import materialize_plan, package_identity
 # Bounded SKILL.md body read for fingerprinting foreign/owned copies.
 _MAX_SKILL_MD_BYTES = 256 * 1024
 _MAX_RUNNER_BYTES = 256 * 1024
+_MAX_PACKAGE_MEMBER_BYTES = 2 * 1024 * 1024
 
 # realpath(selected_root) -> precedence for the selected install root.
 _SELECTED_PRECEDENCE: dict[str, int | None] = {}
@@ -706,12 +707,12 @@ def _read_regular_capped(path: str, *, max_bytes: int) -> bytes | None:
     """Read a regular non-symlink file up to *max_bytes*; None if unsafe/missing."""
 
     try:
-        st = os.lstat(path)
+        path_st = os.lstat(path)
     except OSError:
         return None
-    if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISREG(st.st_mode):
+    if stat_mod.S_ISLNK(path_st.st_mode) or not stat_mod.S_ISREG(path_st.st_mode):
         return None
-    if st.st_size > max_bytes:
+    if path_st.st_size > max_bytes:
         return None
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -719,20 +720,39 @@ def _read_regular_capped(path: str, *, max_bytes: int) -> bytes | None:
     except OSError:
         return None
     try:
-        st = os.fstat(fd)
-        if not stat_mod.S_ISREG(st.st_mode):
+        before = os.fstat(fd)
+        if not stat_mod.S_ISREG(before.st_mode):
             return None
-        if st.st_size > max_bytes:
+        if (before.st_dev, before.st_ino) != (path_st.st_dev, path_st.st_ino):
+            return None
+        if before.st_size > max_bytes:
             return None
         chunks: list[bytes] = []
-        remaining = max_bytes
+        remaining = max_bytes + 1
         while remaining > 0:
             chunk = os.read(fd, min(65536, remaining))
             if not chunk:
                 break
             chunks.append(chunk)
             remaining -= len(chunk)
-        return b"".join(chunks)
+        body = b"".join(chunks)
+        if len(body) > max_bytes:
+            return None
+        after = os.fstat(fd)
+        stable_fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(before, field) != getattr(after, field) for field in stable_fields):
+            return None
+        if len(body) != before.st_size:
+            return None
+        try:
+            current = os.lstat(path)
+        except OSError:
+            return None
+        if stat_mod.S_ISLNK(current.st_mode) or not stat_mod.S_ISREG(current.st_mode):
+            return None
+        if any(getattr(current, field) != getattr(after, field) for field in stable_fields):
+            return None
+        return body
     finally:
         os.close(fd)
 
@@ -746,6 +766,7 @@ def _on_disk_package_state(skill_root: str, host: str) -> tuple[bool, str | None
 
     expected = materialize_plan(host)
     actual: dict[str, bytes] = {}
+    matches_expected = True
     for rel, data in expected.items():
         path = os.path.join(skill_root, *rel.split("/"))
         try:
@@ -754,13 +775,16 @@ def _on_disk_package_state(skill_root: str, host: str) -> tuple[bool, str | None
             return False, None
         if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISREG(st.st_mode):
             return False, None
-        if st.st_size != len(data):
-            return False, None
-        body = _read_regular_capped(path, max_bytes=max(len(data), 1))
-        if body is None or body != data:
+        body = _read_regular_capped(
+            path,
+            max_bytes=max(len(data), _MAX_PACKAGE_MEMBER_BYTES),
+        )
+        if body is None:
             return False, None
         actual[rel] = body
-    return True, package_identity(actual)
+        if body != data:
+            matches_expected = False
+    return matches_expected, package_identity(actual)
 
 
 def _on_disk_package_matches(skill_root: str, host: str) -> bool:
