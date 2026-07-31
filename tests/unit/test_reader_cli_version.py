@@ -25,10 +25,20 @@ class ReaderCliVersionTests(unittest.TestCase):
                 )
 
                 self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertEqual(
-                    completed.stdout.strip(),
-                    f"{command} {build_identity()['version']}",
-                )
+                lines = completed.stdout.strip().splitlines()
+                self.assertEqual(lines[0], f"{command} {build_identity()['version']}")
+                if command == "portable-resume":
+                    self.assertEqual(
+                        [line.split(":", 1)[0] for line in lines[1:]],
+                        [
+                            "runtime-root",
+                            "recorded-root",
+                            "recorded-root-match",
+                            "package-identity",
+                        ],
+                    )
+                else:
+                    self.assertEqual(len(lines), 1)
                 self.assertEqual(completed.stderr, "")
 
 

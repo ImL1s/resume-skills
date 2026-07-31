@@ -11,6 +11,14 @@
 
 ## Status
 
+- **Decision (implemented)**: A + C. A temp Claude install exposed the bounded
+  ownership manifest at `.portable-resume/.state/manifest.json`, with one
+  recorded root and 75 payload files. On the implementation machine, 200
+  iterations averaged **0.06 ms** for the manifest read/parse and **1.35 ms**
+  for reading and hashing all 75 payload files. The runtime therefore performs
+  only the recorded-root check on the hot path and reports actual root,
+  recorded root, agreement, and package identity through `--version`; it does
+  not claim to detect an intact older install at its original root.
 - **Priority**: P2
 - **Effort**: M
 - **Risk**: MED — adds I/O to every invocation; must warn, never block
