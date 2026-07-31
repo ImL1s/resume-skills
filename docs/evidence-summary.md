@@ -1,5 +1,26 @@
 # Evidence summary
 
+## Unreleased main: release identity and tag-policy evidence
+
+| Field | Evidence |
+|---|---|
+| Date / maintainer | 2026-08-01 / `ImL1s` |
+| Artifact identity merge | [PR #150](https://github.com/ImL1s/resume-skills/pull/150) → `ff119f16f2af76468e848a828bde51433d968754` |
+| PR current-head CI | [run 30660388798](https://github.com/ImL1s/resume-skills/actions/runs/30660388798), 10/10 jobs associated with head `9beccaf21c0ef2acc24492924e67de05b5d09f82` |
+| PR current-head AI review | [Codex no-major callback](https://github.com/ImL1s/resume-skills/pull/150#issuecomment-5146921285), reviewed `9beccaf21c` |
+| Main CI | [run 30661760699](https://github.com/ImL1s/resume-skills/actions/runs/30661760699), 10/10 PASS for `ff119f16f2af76468e848a828bde51433d968754` |
+| Repository ruleset | [Immutable semantic release tags, ID `20148806`](https://github.com/ImL1s/resume-skills/rules/20148806) |
+| Ruleset readback | `target=tag`; `enforcement=active`; include `refs/tags/v*`; rules `update` + `deletion`; `bypass_actors=[]` |
+| PR package evidence | synthetic merge-result identity SHA-256 `c4aac7a08c97116233214d9ce1d0a9752240540bfe9be0ccf9a01ef00f905fbc`; 27/27 artifacts matched; wheel `8daa309f22eb62dbaeaab4d988ab0e3b3d717b53e97e180b6f0923617089c46a`; sdist `ebdddbe5c0ac91075481e76b9240f87c27a5920cf4e24ee64195c3e50c82e359` |
+
+The API readback was captured immediately after creation and proves the active
+repository policy has no bypass actors. The PR workflow's artifact identity is
+bound to GitHub's synthetic `pull_request` merge checkout
+`737e87126ef4b0553458f7400f41e3c37d5463f3`, not mislabeled as the PR head or
+the eventual squash commit. This evidence completes the pre-release integrity
+work tracked in #118; it does **not** publish `0.4.0`, rerun host UI/pickers, or
+upgrade any separate `not-run` claim.
+
 ## Published archive: v0.3.4
 
 | Field | Evidence |
