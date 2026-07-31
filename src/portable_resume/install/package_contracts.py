@@ -601,9 +601,9 @@ def validate_archive_bytes(
     try:
         if not isinstance(data, bytes) or len(data) > MAX_ARCHIVE_BYTES:
             raise ValueError("archive exceeds the compressed size bound")
-        handle = io.BytesIO(data)
-        declared_entries = _preflight_zip_archive(handle)
-        with zipfile.ZipFile(handle) as archive:
+        archive_stream = io.BytesIO(data)
+        declared_entries = _preflight_zip_archive(archive_stream)
+        with zipfile.ZipFile(archive_stream) as archive:
             infos = archive.infolist()
             if len(infos) != declared_entries:
                 raise ValueError("archive ZIP member count is inconsistent")
@@ -700,8 +700,8 @@ def validate_archive_bytes(
                         "embedded build identity is not a bounded regular file"
                     )
                 else:
-                    with archive.open(info) as handle:
-                        raw_identity = handle.read(MAX_BUILD_IDENTITY_BYTES + 1)
+                    with archive.open(info) as member_handle:
+                        raw_identity = member_handle.read(MAX_BUILD_IDENTITY_BYTES + 1)
                     if len(raw_identity) > MAX_BUILD_IDENTITY_BYTES:
                         failures.append("embedded build identity is oversized")
                         raw_identity = b""
