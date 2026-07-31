@@ -323,7 +323,9 @@ def sanitize_summary(summary: "SessionSummary", *, bounds: Bounds = DEFAULT_BOUN
         provider=summary.provider,
         warnings=tuple(dict.fromkeys((*summary.warnings, *warnings))),
     )
-    return result, _dedupe(warnings)
+    # Include carried summary warnings (e.g. adapter W_TRUNCATED) in the
+    # returned set so reader envelopes promote them to top-level warnings.
+    return result, _dedupe([*summary.warnings, *warnings])
 
 
 def sanitize_session(session: "Session", *, bounds: Bounds = DEFAULT_BOUNDS) -> "Session":

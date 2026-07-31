@@ -16,7 +16,7 @@ from .contracts import validate_envelope
 from .diagnostics import DiagnosticError, ExitCode, SOURCE_KEYS, WARNING_CODES, emit_diagnostic
 from .handoff import render_candidates, render_handoff, render_no_match
 from .model import Envelope, Query, SessionSummary
-from .paths import canonical_root, canonicalize_cwd, reject_controls
+from .paths import canonical_root, canonical_source_root, canonicalize_cwd, reject_controls
 from .request import load_request
 from .sanitize import sanitize_session, sanitize_summary, validate_structural_summary
 from .select import AmbiguousSelection, bounded_candidates, select_session, summary_sort_key
@@ -257,7 +257,10 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
             raise DiagnosticError.invalid(source=source)
         if not 0 <= namespace.max_tool_chars <= DEFAULT_BOUNDS.tool_output_chars:
             raise DiagnosticError.invalid(source=source)
-        source_root = canonical_root(namespace.source_root) if namespace.source_root else None
+        # File or directory: adapters pin exact store files (events.jsonl, *.db).
+        source_root = (
+            canonical_source_root(namespace.source_root) if namespace.source_root else None
+        )
         query = Query(
             source=source,
             ref=ref,

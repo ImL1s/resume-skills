@@ -1,6 +1,6 @@
 # Destination installation guide
 
-This repository ships sixteen `resume-<source>` Skills to eighteen destination hosts (derived from registries; currently **16×18=288** cells). The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
+This repository ships seventeen `resume-<source>` Skills to eighteen destination hosts (derived from registries; currently **17×18=306** cells). The reader remains offline and stdlib-only; plugin/marketplace packages contain the same inert Skills and no network integration.
 
 ## Build or inspect packages
 
@@ -152,7 +152,7 @@ Use `--scope global` for the user root or `--root <path>` for an explicit root. 
 | Cline (`cline`) | `.cline/skills` / `~/.cline/skills` | Direct Skill only. Index+JSON authority. Native Cline UI not-run. | Load `resume-cline` / `resume-<source>` |
 | OpenHands (`openhands`) | `.agents/skills` / `~/.openhands/skills` | Direct Skill only. Local CLI events. Native OpenHands UI not-run. | Load `resume-openhands` / `resume-<source>` |
 | Hermes (`hermes`) | `.hermes/skills` / `~/.hermes/skills` | Direct Skill only. state.db schema 23. Native Hermes UI not-run. | Load `resume-hermes` / `resume-<source>` |
-| GitHub Copilot CLI (`github-copilot`) | `.github/skills` / `$COPILOT_HOME/skills` | **Destination-only**. Compat `.agents`/`.claude` skills. No copilot source adapter yet. Native CLI install not-run. | Load installed `resume-<source>` skills |
+| GitHub Copilot CLI (`github-copilot`) | `.github/skills` / `$COPILOT_HOME/skills` | Source: local `events.jsonl` (`copilot-cli-events-jsonl-v1`). Destination: Agent Skills roots. Compat `.agents`/`.claude` skills. Native UI install not-run. | `resume-github-copilot` / load installed `resume-<source>` skills |
 | Gemini CLI (`gemini`) | `.gemini/skills` / `~/.gemini/skills` | **Compat profile** (not Antigravity). Session JSONL under `tmp/<hash>/chats`. Native UI not-run. | Load `resume-gemini` / `resume-<source>` |
 | Kilo CLI (`kilo`) | `.kilocode/skills` / `$KILO_CONFIG_DIR/skills` or `~/.config/kilo/skills` | **Destination-only**. Compat `.kilo`/`.agents` skills. No kilo source adapter yet (do not alias OpenCode). Native marketplace not-run. | Load installed `resume-<source>` skills |
 

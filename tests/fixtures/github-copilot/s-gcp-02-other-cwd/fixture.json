@@ -1,0 +1,10 @@
+{
+  "case": "s-gcp-02-other-cwd",
+  "expected_code": 0,
+  "expected_operation": "list",
+  "expected_warnings": [],
+  "format_id": "copilot-cli-events-jsonl-v1",
+  "provenance_ref": "docs/source-formats.md#copilot-cli-events-jsonl-v1",
+  "source": "github-copilot",
+  "synthetic": true
+}

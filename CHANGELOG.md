@@ -1,15 +1,17 @@
 ## Unreleased
 
+- GitHub Copilot CLI source (#44 Track B): `copilot-cli-events-jsonl-v1` reader for
+  `$COPILOT_HOME/session-state/<id>/events.jsonl` (local authority; not session-store.db /
+  Chronicle / cloud sync). Matrix is now **17×18=306**.
 - Kilo CLI destination-only (#46 Track A): install into `.kilocode/skills` and
   `~/.config/kilo/skills` (`KILO_CONFIG_DIR` override). Source remains research —
-  do not alias OpenCode storage. Matrix is now **16×18=288**.
+  do not alias OpenCode storage. Matrix became **16×18=288**.
 - Gemini CLI compatibility source + destination (#45): `gemini-cli-session-jsonl-v1`
   for `~/.gemini/tmp/<projectHash>/chats/session-*.jsonl` (independent of Antigravity).
   Destination `.gemini/skills` / `~/.gemini/skills`. Matrix became **16×17=272**.
 - GitHub Copilot CLI destination (#44 Track A): install `resume-*` Skills into
   `.github/skills` and `$COPILOT_HOME/skills` (default `~/.copilot/skills`).
-  Source adapter remains **research** until `events.jsonl` schema is pinned.
-  Matrix is now **15×16=240** (destination without source).
+  Matrix became **15×16=240** (destination without source at that time).
 - Hermes source + destination (#43): `hermes-state-sqlite-v1` reader for
   `~/.hermes/state.db` (schema version 23; root sessions; hide child/subagent).
   Destination install to `.hermes/skills` / `~/.hermes/skills`. Matrix is now

@@ -1,0 +1,8 @@
+{"type": "session.start", "id": "e1", "parentId": null, "timestamp": "2024-01-01T12:00:00.000Z", "data": {"sessionId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "startTime": "2024-01-01T12:00:00.000Z", "context": {"cwd": "/tmp/project", "branch": "main", "repository": "example/repo"}}}
+{"type": "user.message", "id": "e2", "parentId": "e1", "timestamp": "2024-01-01T12:00:01.000Z", "data": {"content": "synthetic copilot user prompt", "attachments": []}}
+{"type": "assistant.turn_start", "id": "e3", "parentId": "e2", "timestamp": "2024-01-01T12:00:02.000Z", "data": {"turnId": "t1"}}
+{"type": "assistant.message", "id": "e4", "parentId": "e3", "timestamp": "2024-01-01T12:00:03.000Z", "data": {"content": "synthetic copilot assistant reply", "messageId": "m1", "reasoningText": "must omit reasoning"}}
+{"type": "tool.execution_start", "id": "e5", "parentId": "e4", "timestamp": "2024-01-01T12:00:04.000Z", "data": {"toolName": "bash", "toolCallId": "tc1", "arguments": {"command": "secret cmd"}}}
+{"type": "tool.execution_complete", "id": "e6", "parentId": "e5", "timestamp": "2024-01-01T12:00:05.000Z", "data": {"toolCallId": "tc1", "success": true, "result": "secret out"}}
+{"type": "assistant.turn_end", "id": "e7", "parentId": "e3", "timestamp": "2024-01-01T12:00:06.000Z", "data": {"turnId": "t1"}}
+{"type": "session.shutdown", "id": "e8", "parentId": "e1", "timestamp": "2024-01-01T12:00:07.000Z", "data": {"shutdownType": "user"}}
