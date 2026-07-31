@@ -103,6 +103,6 @@ or a vendor-curated directory.
 | cline | not-run | filesystem install only; native picker not-run |
 | openhands | not-run | filesystem install only; native picker not-run |
 | hermes | not-run | filesystem install only; native picker not-run |
-| github-copilot | not-run | destination-only filesystem install; native plugins/picker not-run |
+| github-copilot | not-run | source events.jsonl supported offline; destination filesystem install; native plugins/picker not-run |
 | gemini | not-run | compat filesystem install; not Antigravity; native picker not-run |
 | kilo | not-run | destination-only filesystem install; marketplace/UI not-run |

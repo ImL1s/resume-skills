@@ -262,9 +262,16 @@ def _discover_session_dirs(
         return []
 
     if prefer_id and _SESSION_ID_RE.fullmatch(prefer_id):
-        events = os.path.join(state_dir, prefer_id, "events.jsonl")
+        # Directory names are lowercase UUIDs; accept mixed-case pasted refs.
+        prefer = prefer_id.lower()
+        events = os.path.join(state_dir, prefer, "events.jsonl")
         if _regular_file(events, root):
-            return [(prefer_id, events)]
+            return [(prefer, events)]
+        # Case-sensitive FS miss on unusual mixed-case dir names: try raw.
+        if prefer != prefer_id:
+            events_raw = os.path.join(state_dir, prefer_id, "events.jsonl")
+            if _regular_file(events_raw, root):
+                return [(prefer_id, events_raw)]
         # Fall through only when the preferred id is absent.
 
     names = _safe_listdir(state_dir)
@@ -516,8 +523,9 @@ def _scan_session_metadata(
         tail_lines = tail.splitlines(keepends=True)
         if tail_lines and not tail.endswith((b"\n", b"\r")):
             tail_lines = tail_lines[:-1]
-        # Prefer the last complete lines in the tail window.
-        for raw in tail_lines[-min(32, line_cap) :]:
+        # Walk all complete lines in the tail window so late context_changed
+        # is not lost behind a trailing burst of assistant/tool events.
+        for raw in tail_lines:
             remaining = scanned_ceiling - budget.records
             if remaining <= 0:
                 break
@@ -531,7 +539,7 @@ def _scan_session_metadata(
                     budget=budget,
                 )
             except DiagnosticError as error:
-                if error.code == "E_CORRUPT_TAIL" or error.code == "E_CORRUPT_RECORD":
+                if error.code in {"E_CORRUPT_TAIL", "E_CORRUPT_RECORD"}:
                     # Mid-cut tail lines may be partial; skip quietly.
                     continue
                 raise
@@ -708,8 +716,12 @@ class GitHubCopilotAdapter:
             if layout is None:
                 return CapabilityReport(self.key, FORMAT_ID, "unavailable")
             state, root = layout
+            prefer = _exact_ref(query.ref)
             sessions = _discover_session_dirs(
-                state, root, scan_limit=min(DEFAULT_BOUNDS.scanned_records, 2_000)
+                state,
+                root,
+                scan_limit=min(DEFAULT_BOUNDS.scanned_records, 2_000),
+                prefer_id=prefer,
             )
             if not sessions:
                 return CapabilityReport(
@@ -813,6 +825,8 @@ class GitHubCopilotAdapter:
                     break
                 raise
             if not exact and len(values) >= list_limit:
+                # More candidates may remain unexamined — mark incomplete.
+                truncated = True
                 break
 
         values.sort(key=lambda item: item.session_id)
