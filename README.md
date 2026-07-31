@@ -218,6 +218,7 @@ evidence are archived in [`docs/evidence-summary.md`](docs/evidence-summary.md).
 ## Key documentation
 
 - [`docs/i18n/README.md`](docs/i18n/README.md) — 12 localized quick-start guides
+- [`docs/diagnostics.md`](docs/diagnostics.md) — exit codes and machine diagnostics
 - [`docs/STATUS.md`](docs/STATUS.md) — done/not-done truth
 - [`docs/install-hosts.md`](docs/install-hosts.md) — per-host installation
 - [`docs/source-formats.md`](docs/source-formats.md) — format and provenance registry

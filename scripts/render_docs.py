@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Render registry-derived documentation regions without generating evidence claims."""
+"""Render source-of-truth-derived documentation without generating evidence claims."""
 
 from __future__ import annotations
 
 import argparse
+import ast
 import difflib
 import re
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -15,13 +17,87 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from portable_resume.install.catalog import host_catalog_snapshot  # noqa: E402
+from portable_resume.diagnostics import (  # noqa: E402
+    DiagnosticError,
+    ERROR_EXIT_CODES,
+    ExitCode,
+    WARNING_CODES,
+)
 from portable_resume.registry import matrix_dimensions  # noqa: E402
 
 REGION_FILES = {
+    Path("docs/diagnostics.md"): (
+        "exit-codes-table",
+        "error-codes-table",
+        "self-check-result-contract",
+        "warning-codes-list",
+    ),
     Path("docs/host-support.md"): ("matrix-summary", "host-support-table"),
     Path("docs/install-hosts.md"): ("matrix-summary", "install-hosts-table"),
 }
 MARKER_TEMPLATE = "<!-- generated:{name}:{edge} (run scripts/render_docs.py --write) -->"
+
+EXIT_CODE_REFERENCE: dict[ExitCode, tuple[str, str]] = {
+    ExitCode.OK: (
+        "The command completed successfully.",
+        "Parse the stdout result.",
+    ),
+    ExitCode.INVALID_INPUT: (
+        "Arguments or request data are invalid.",
+        "Correct the invocation; do not retry unchanged input.",
+    ),
+    ExitCode.NO_MATCH: (
+        "No eligible persisted session matched.",
+        "Treat this as an empty result or broaden the query.",
+    ),
+    ExitCode.AMBIGUOUS: (
+        "More than one eligible session matched.",
+        "Parse the stdout candidates envelope and choose an exact reference.",
+    ),
+    ExitCode.UNSUPPORTED: (
+        "The store format or requested capability is unavailable.",
+        "Select a supported source/capability or install the optional capability.",
+    ),
+    ExitCode.UNSAFE_OR_BUSY: (
+        "A path, live store, install root, or recovery state is unsafe or busy.",
+        "Retry later or inspect the reported store/install safety state.",
+    ),
+    ExitCode.CORRUPT_OR_LIMIT: (
+        "Persisted data is corrupt, a bound was exceeded, or verification failed.",
+        "Inspect the result, reduce scope if applicable, and repair or recreate invalid state.",
+    ),
+    ExitCode.INVARIANT: (
+        "An internal contract invariant failed.",
+        "Preserve the diagnostic and file a bug.",
+    ),
+}
+
+DIAGNOSTIC_SURFACES: dict[str, str] = {
+    "E_INVALID_INPUT": "Reader and installer",
+    "E_NO_MATCH": "Reader",
+    "E_AMBIGUOUS": "Reader",
+    "E_UNSUPPORTED_FORMAT": "Reader",
+    "E_CAPABILITY_UNAVAILABLE": "Reader",
+    "E_UNSAFE_PATH": "Reader",
+    "E_SOURCE_BUSY": "Reader",
+    "E_SQLITE_HOT_JOURNAL": "Reader",
+    "E_LIMIT_EXCEEDED": "Reader",
+    "E_CORRUPT_RECORD": "Reader",
+    "E_INVARIANT": "Reader and installer",
+    "E_INSTALL_BUSY": "Installer",
+    "E_INSTALL_CONFLICT": "Installer",
+    "E_INSTALL_SHADOW": "Installer",
+    "E_INSTALL_UNSUPPORTED_PLATFORM": "Installer",
+    "E_RECOVERY_REQUIRED": "Installer",
+    "E_VERIFY_MISMATCH": "Installer",
+}
+
+SELF_CHECK_RESULT_WARNINGS: dict[str, str] = {
+    "W_REGISTRY_INVALID:<ExceptionType>": (
+        "Registry validation raised the named exception type."
+    ),
+    "W_SCHEMA_MISSING": "The bundled request schema file is absent.",
+}
 
 
 def counts() -> dict[str, int]:
@@ -89,10 +165,144 @@ def _install_hosts_table() -> str:
     return "\n".join(lines)
 
 
+def _require_exact_keys(
+    label: str,
+    actual: Iterable[object],
+    expected: Iterable[object],
+) -> None:
+    actual_keys = set(actual)
+    expected_keys = set(expected)
+    if actual_keys != expected_keys:
+        missing = sorted(str(item) for item in expected_keys - actual_keys)
+        unexpected = sorted(str(item) for item in actual_keys - expected_keys)
+        raise ValueError(
+            f"{label} keys must be exhaustive: missing={missing} unexpected={unexpected}"
+        )
+
+
+def _exit_codes_table() -> str:
+    _require_exact_keys("exit-code reference", EXIT_CODE_REFERENCE, ExitCode)
+    lines = [
+        "| Number | Name | Meaning | Caller action |",
+        "|---:|---|---|---|",
+    ]
+    for exit_code in ExitCode:
+        meaning, action = EXIT_CODE_REFERENCE[exit_code]
+        lines.append(
+            f"| {int(exit_code)} | `{exit_code.name}` | {_markdown(meaning)} | "
+            f"{_markdown(action)} |"
+        )
+    return "\n".join(lines)
+
+
+def _error_codes_table() -> str:
+    _require_exact_keys("diagnostic surfaces", DIAGNOSTIC_SURFACES, ERROR_EXIT_CODES)
+    lines = [
+        "| Code | Exit | Fixed message | Emitted by |",
+        "|---|---:|---|---|",
+    ]
+    for code, exit_code in ERROR_EXIT_CODES.items():
+        lines.append(
+            f"| `{code}` | {int(exit_code)} | "
+            f"{_markdown(DiagnosticError(code).message)} | {DIAGNOSTIC_SURFACES[code]} |"
+        )
+    return "\n".join(lines)
+
+
+def _warning_codes_list() -> str:
+    return "\n".join(f"- `{code}`" for code in sorted(WARNING_CODES))
+
+
+def _self_check_source_contract(source: str | None = None) -> set[str]:
+    """Read the self-check function contract without resolving runtime paths."""
+
+    if source is None:
+        source = (SRC / "portable_resume" / "reader.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "self_check"
+        ),
+        None,
+    )
+    if function is None:
+        raise ValueError("reader self-check function is missing")
+
+    warnings: set[str] = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            # A JoinedStr's literal prefix also appears as an ast.Constant;
+            # only the completed f-string pattern is part of the contract.
+            if node.value.startswith("W_") and not node.value.endswith(":"):
+                warnings.add(node.value)
+        elif isinstance(node, ast.JoinedStr):
+            parts: list[str] = []
+            for value in node.values:
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    parts.append(value.value)
+                elif isinstance(value, ast.FormattedValue):
+                    parts.append("<ExceptionType>")
+            joined = "".join(parts)
+            if joined.startswith("W_"):
+                warnings.add(joined)
+    _require_exact_keys(
+        "self-check result warnings",
+        SELF_CHECK_RESULT_WARNINGS,
+        warnings,
+    )
+    conditional_returns = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.IfExp)
+    ]
+    failure_branch: ast.expr | None = None
+    if len(conditional_returns) == 1:
+        return_value = conditional_returns[0].value
+        if isinstance(return_value, ast.IfExp):
+            failure_branch = return_value.orelse
+    if not (
+        isinstance(failure_branch, ast.Attribute)
+        and failure_branch.attr == ExitCode.CORRUPT_OR_LIMIT.name
+        and isinstance(failure_branch.value, ast.Name)
+        and failure_branch.value.id == "ExitCode"
+    ):
+        raise ValueError("reader self-check must return CORRUPT_OR_LIMIT on failure")
+    return warnings
+
+
+def _self_check_result_contract() -> str:
+    _self_check_source_contract()
+    lines = [
+        "The reader's `self-check` command has a separate JSON result contract on stdout. "
+        "These result warnings are not `diagnostic-v1` stderr diagnostics:",
+        "",
+        "| Result warning | Meaning |",
+        "|---|---|",
+    ]
+    for warning, meaning in SELF_CHECK_RESULT_WARNINGS.items():
+        lines.append(f"| `{warning}` | {_markdown(meaning)} |")
+    lines.extend(
+        (
+            "",
+            "Either warning makes the self-check result's `ok` field false. The command still "
+            f"writes the result envelope to stdout and returns exit {int(ExitCode.CORRUPT_OR_LIMIT)} "
+            f"(`{ExitCode.CORRUPT_OR_LIMIT.name}`), rather than emitting an error diagnostic.",
+        )
+    )
+    return "\n".join(lines)
+
+
 def rendered_regions() -> dict[str, str]:
-    """Render every generated region from registry/catalog structure only."""
+    """Render every generated region from code-owned structure only."""
 
     return {
+        "exit-codes-table": _exit_codes_table(),
+        "error-codes-table": _error_codes_table(),
+        "self-check-result-contract": _self_check_result_contract(),
+        "warning-codes-list": _warning_codes_list(),
         "matrix-summary": _matrix_summary(),
         "host-support-table": _host_support_table(),
         "install-hosts-table": _install_hosts_table(),
@@ -128,9 +338,12 @@ def check(root: Path = REPO) -> list[str]:
     failures: list[str] = []
     for relative, names in REGION_FILES.items():
         path = root / relative
-        current = path.read_text(encoding="utf-8")
         try:
+            current = path.read_text(encoding="utf-8")
             expected = _render_file(root, relative, names)
+        except FileNotFoundError:
+            failures.append(f"{relative}: missing registered document")
+            continue
         except (OSError, ValueError) as exc:
             failures.append(str(exc))
             continue

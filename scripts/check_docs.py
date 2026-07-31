@@ -15,6 +15,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from portable_resume import __version__  # noqa: E402
+from portable_resume.diagnostics import ERROR_EXIT_CODES, WARNING_CODES  # noqa: E402
 from portable_resume.install.catalog import host_catalog_snapshot  # noqa: E402
 from portable_resume.registry import (  # noqa: E402
     enabled_destination_keys,
@@ -167,10 +168,26 @@ def _check_root_docs(failures: list[str], root_readme: str) -> None:
         )
 
 
+def _check_diagnostics_reference(failures: list[str]) -> None:
+    path = REPO / "docs" / "diagnostics.md"
+    if not path.is_file():
+        failures.append("docs/diagnostics.md: missing")
+        return
+    text = path.read_text(encoding="utf-8")
+    missing = [
+        code
+        for code in (*ERROR_EXIT_CODES, *sorted(WARNING_CODES))
+        if code not in text
+    ]
+    if missing:
+        failures.append(f"docs/diagnostics.md: missing codes: {missing}")
+
+
 def check() -> dict[str, object]:
     failures: list[str] = []
     root_readme = (REPO / "README.md").read_text(encoding="utf-8")
     _check_root_docs(failures, root_readme)
+    _check_diagnostics_reference(failures)
     if "docs/i18n/README.md" not in root_readme:
         failures.append("README.md: missing multilingual documentation link")
 
