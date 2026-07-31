@@ -134,23 +134,21 @@ def _resolve_layout(query: Query) -> tuple[str, str] | None:
         try:
             if os.path.isfile(candidate):
                 path = os.path.abspath(candidate)
-                if not path.endswith("events.jsonl"):
+                if os.path.basename(path) != "events.jsonl":
                     return None
                 session_dir = os.path.dirname(path)
-                state = os.path.dirname(session_dir)
-                if os.path.basename(state) != "session-state":
-                    # source-root is events.jsonl under session dir; contain under parent
+                # Exact file: sole session dir (never widen to sibling sessions).
+                parent = os.path.dirname(session_dir)
+                try:
+                    if os.path.basename(parent) == "session-state":
+                        root = canonical_root(os.path.dirname(parent))
+                    else:
+                        root = canonical_root(session_dir)
+                except DiagnosticError:
                     root = canonical_root(session_dir)
-                    if not _regular_file(path, root):
-                        return None
-                    return session_dir, root
-                home = os.path.dirname(state)
-                root = canonical_root(home)
                 if not _regular_file(path, root):
-                    root = canonical_root(state)
-                    if not _regular_file(path, root):
-                        return None
-                return state, root
+                    return None
+                return session_dir, root
             if not os.path.isdir(candidate):
                 return None
             root = canonical_root(candidate)
@@ -160,10 +158,10 @@ def _resolve_layout(query: Query) -> tuple[str, str] | None:
         state = os.path.join(root, "session-state")
         if _regular_dir(state, root):
             return state, root
-        # .../session-state
+        # .../session-state  (full store scan)
         if os.path.basename(root.rstrip(os.sep)) == "session-state":
             return root, root
-        # .../session-state/<id>
+        # .../session-state/<id> — keep this session only (do not widen to state)
         events = os.path.join(root, "events.jsonl")
         if _regular_file(events, root) or any(
             n == "events.jsonl" for n in _safe_listdir(root)
@@ -171,11 +169,15 @@ def _resolve_layout(query: Query) -> tuple[str, str] | None:
             parent = os.path.dirname(root)
             try:
                 if os.path.basename(parent) == "session-state":
-                    home = canonical_root(os.path.dirname(parent))
-                    return parent, home
+                    contain = canonical_root(os.path.dirname(parent))
+                else:
+                    contain = root
             except DiagnosticError:
-                pass
-            return root, root
+                contain = root
+            if not _regular_file(events, contain) and not _regular_file(events, root):
+                return None
+            # layout root = this session dir so discovery cannot list siblings
+            return root, contain if _regular_file(events, contain) else root
         return None
     try:
         home = _default_copilot_home()

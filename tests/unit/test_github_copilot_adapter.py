@@ -153,6 +153,60 @@ class GitHubCopilotAdapterTests(unittest.TestCase):
         )
         self.assertEqual([item.session_id for item in listed], [BASIC_ID])
 
+    def test_exact_file_source_root_does_not_list_siblings(self) -> None:
+        """exact events.jsonl must not widen to sibling session-state entries."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for sid, cwd, stamp, prompt in (
+                (BASIC_ID, CWD, "2024-01-01T12:00:00.000Z", "older session"),
+                (OTHER_ID, CWD, "2024-01-02T12:00:00.000Z", "newer sibling same cwd"),
+            ):
+                sess = root / "session-state" / sid
+                sess.mkdir(parents=True)
+                lines = [
+                    {
+                        "type": "session.start",
+                        "id": "e1",
+                        "parentId": None,
+                        "timestamp": stamp,
+                        "data": {
+                            "sessionId": sid,
+                            "startTime": stamp,
+                            "context": {"cwd": cwd},
+                        },
+                    },
+                    {
+                        "type": "user.message",
+                        "id": "e2",
+                        "parentId": "e1",
+                        "timestamp": stamp,
+                        "data": {"content": prompt},
+                    },
+                    {
+                        "type": "assistant.message",
+                        "id": "e3",
+                        "parentId": "e2",
+                        "timestamp": stamp,
+                        "data": {"content": "reply"},
+                    },
+                ]
+                (sess / "events.jsonl").write_text(
+                    "".join(json.dumps(line) + "\n" for line in lines),
+                    encoding="utf-8",
+                )
+            exact = root / "session-state" / BASIC_ID / "events.jsonl"
+            listed = ADAPTER.list(
+                Query(
+                    source="github-copilot",
+                    ref=None,
+                    cwd=CWD,
+                    source_root=str(exact),
+                    within_min=0,
+                ),
+                ReadBudget(),
+            )
+            self.assertEqual([item.session_id for item in listed], [BASIC_ID])
+
 
 if __name__ == "__main__":
     unittest.main()
