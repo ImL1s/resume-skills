@@ -152,11 +152,20 @@ def _layout_from_root(candidate: str) -> tuple[str, str] | None:
     except DiagnosticError:
         return None
 
+    # Exact conversation directory: .../<id> with events/ (before root scan).
+    events = os.path.join(root, "events")
+    if _regular_dir(events, root):
+        parent = os.path.dirname(root)
+        try:
+            parent_root = canonical_root(parent)
+        except DiagnosticError:
+            parent_root = root
+        return parent_root if _regular_dir(parent, parent_root) else root, parent_root
+
     # Direct conversations root (contains <id>/events/)
     names = _safe_listdir(root)
     if any(
         _regular_dir(os.path.join(root, name, "events"), root)
-        or _regular_dir(os.path.join(root, name), root)
         for name in names
         if _CONV_ID_RE.fullmatch(name)
     ):
@@ -166,16 +175,6 @@ def _layout_from_root(candidate: str) -> tuple[str, str] | None:
     conversations = os.path.join(root, "conversations")
     if _regular_dir(conversations, root):
         return conversations, root
-
-    # Exact conversation directory: .../<id> with events/
-    events = os.path.join(root, "events")
-    if _regular_dir(events, root):
-        parent = os.path.dirname(root)
-        try:
-            parent_root = canonical_root(parent)
-        except DiagnosticError:
-            parent_root = root
-        return parent_root if _regular_dir(parent, parent_root) else root, parent_root
 
     return None
 
@@ -407,6 +406,10 @@ def _has_public_turn(
             payload = _load_event_json(path, root, budget)
             turn = _handle_event(payload, strict_unknown=True)
         except DiagnosticError as error:
+            if error.code == "E_LIMIT_EXCEEDED":
+                # Propagate exhausted budgets — do not skip remaining candidates
+                # as if they were corrupt (Codex P1).
+                raise
             if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
                 if raise_on_bad:
                     raise
@@ -508,6 +511,8 @@ class OpenHandsAdapter:
                 ):
                     continue
             except DiagnosticError as error:
+                if error.code == "E_LIMIT_EXCEEDED":
+                    raise
                 if exact is not None:
                     raise
                 if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
@@ -518,6 +523,8 @@ class OpenHandsAdapter:
                     events_dir, root, budget
                 )
             except DiagnosticError as error:
+                if error.code == "E_LIMIT_EXCEEDED":
+                    raise
                 if exact is not None:
                     raise
                 if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:

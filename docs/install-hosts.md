@@ -11,7 +11,7 @@ python3 scripts/build_host_packages.py --output-dir host-packages
 ```
 
 The package builder creates thirteen `*-<host>-skills.zip` archives (one per
-enabled destination, including Pi, OpenClaw, goose, Crush, and Cline), seven supported
+enabled destination, including Pi, OpenClaw, goose, Crush, Cline, and OpenHands), seven supported
 plugin/marketplace archives, and `host-packages.json` (`host-packages-v2`) with
 SHA-256 digests, per-artifact offline `contract_id` validation (#27), and honest
 `native_evidence_status=not-run` until host CLI revalidation is recorded.

@@ -4,10 +4,10 @@
 
 | Gate | Status |
 |---|---|
-| Source adapters | 13: Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi, Pi, OpenClaw, goose, Crush, **Cline** |
-| Destination profiles | 13 including **Pi** + **OpenClaw** + **goose** + **Crush** + **Cline** (filesystem install supported) |
-| Packaging matrix | **169/169** on current main tip (**13×13**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
-| Installed runner matrix | **169/169** on current main tip (**13×13**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
+| Source adapters | 14: Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi, Pi, OpenClaw, goose, Crush, Cline, **OpenHands** |
+| Destination profiles | 14 including **Pi** + **OpenClaw** + **goose** + **Crush** + **Cline** + **OpenHands** (filesystem install supported) |
+| Packaging matrix | **196/196** on current main tip (**14×14**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
+| Installed runner matrix | **196/196** on current main tip (**14×14**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
 | Python test suite | **426 pass locally** (**426 collected**) after Wave 0 activation baseline validators (pre-Wave 0 main was **407** post-#11/#72; v0.3.4 tag was 375; historical Pi destination PR C local suite remains **359**). |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
@@ -87,7 +87,7 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 | Descriptor-relative install (#31) | [Issue #31](https://github.com/ImL1s/resume-skills/issues/31) + PR #49/#64 | **Closed** via [PR #64](https://github.com/ImL1s/resume-skills/pull/64) on main for commit + stage pin + rollback + orphan delete + uninstall + verify (dirfd/`O_NOFOLLOW`, quarantine unlink, required snapshot digests, no post-manifest payload rollback). Windows mutating ops fail closed without dirfd (#29). |
 | Post-manifest stale journal recover (#64 gate P1) | [PR #70](https://github.com/ImL1s/resume-skills/pull/70) → `e6a26b1` | **Fixed on main:** if complete journal write fails after ownership manifest publish, `recover_root` matches journal target generation to on-disk manifest and clears stage/journal only (no payload rollback). Regressions in `test_install_control_store`. |
 | Cursor #11 post-merge skeptic P1s | [PR #72](https://github.com/ImL1s/resume-skills/pull/72) → `3e94dea` | **Fixed on main:** Desktop list window = `scanned_records+1` (not `listed_sessions*4`); show case-fold for stored UUID; live CLI blob respects lowered `Bounds.record_bytes`. CI green on pre-merge HEAD. |
-| Next-wave agent roadmap (Pi, OpenClaw, goose, …) | [Issue #48](https://github.com/ImL1s/resume-skills/issues/48) + [Issue #38](https://github.com/ImL1s/resume-skills/issues/38) | Phase 0 on `7b5192c`. **Pi / OpenClaw / goose** filesystem product paths done (matrix **14×14=196**). Native UI/picker activation not-run for these hosts. Remaining wave agents: Hermes/Copilot/Gemini/Kilo/… |
+| Next-wave agent roadmap (Pi, OpenClaw, goose, …) | [Issue #48](https://github.com/ImL1s/resume-skills/issues/48) + [Issue #38](https://github.com/ImL1s/resume-skills/issues/38) | Phase 0 on `7b5192c`. **Pi / OpenClaw / goose / Crush / Cline / OpenHands** filesystem product paths done (matrix **14×14=196**). Native UI/picker activation not-run for these hosts. Remaining wave agents: Hermes/Copilot/Gemini/Kilo/… |
 | OpenClaw source + destination (#37) | [Issue #37](https://github.com/ImL1s/resume-skills/issues/37) | **Done (filesystem/product path):** source `openclaw-agent-sqlite-v1`; destination workspace `skills/` + `~/.openclaw/skills`. Residual: native `openclaw skills install` / host UI activation **not-run**. |
 | goose source + destination (#39) | [Issue #39](https://github.com/ImL1s/resume-skills/issues/39) | **Done (filesystem/product path):** source `goose-sessions-sqlite-v15` (`sessions/sessions.db`); destination `.goose/skills` + `~/.config/goose/skills`. Residual: legacy JSONL out of scope; native goose UI **not-run**. |
 | Crush source + destination (#40) | [Issue #40](https://github.com/ImL1s/resume-skills/issues/40) | **Done (filesystem/product path):** source `crush-sqlite-v1` (per-project `.crush/crush.db`, goose_db_version 7); destination `.crush/skills` + `~/.config/crush/skills`; matrix **14×14=196**. Residual: native Crush UI **not-run**; no recursive multi-project home scan. |
