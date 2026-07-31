@@ -110,7 +110,7 @@ only), i18n translation quality beyond counts, live host CLI activation.
 | 030 | Installer arg validation (`E_INVALID_INPUT`, `--host` choices, family dedupe) | P1 | S | — | TODO |
 | 031 | `E_INSTALL_SHADOW` static hint + upgrade docs | P1 | M | 030 | TODO |
 | 032 | `docs/diagnostics.md` exit-code reference + gate | P1 | S | — | TODO |
-| 033 | README dual-path quick start; thirteen/nine/alt/CHANGELOG fixes | P1 | S | — | TODO |
+| 033 | README dual-path quick start; thirteen/nine/alt/CHANGELOG fixes | P1 | S | — | DONE |
 | 034 | openclaw bounds in SQL + caller-limit threading | P1 | S | — | TODO |
 | 035 | cline diagnostic propagation (unsafe/busy/budget) | P1 | S | — | TODO |
 | 036 | discovery no-follow retry removal + real `matches_expected` | P1 | S | — | TODO |

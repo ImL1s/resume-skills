@@ -45,7 +45,7 @@ From PyPI:
 ```bash
 pipx install portable-resume
 install-resume-skills quick-install qwen        # user-global Qwen profile
-install-resume-skills quick-install all         # all thirteen user-global profiles
+install-resume-skills quick-install all         # all user-global profiles (count derives from the registry)
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 

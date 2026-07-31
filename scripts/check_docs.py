@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -14,6 +15,10 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from portable_resume import __version__  # noqa: E402
+from portable_resume.registry import (  # noqa: E402
+    enabled_destination_keys,
+    enabled_source_keys,
+)
 
 LOCALES = {
     "ar": "العربية",
@@ -61,11 +66,79 @@ EVIDENCE_SCOPE_MARKER = (
     "<!-- portable-resume-evidence-scope: "
     "v0.3.2-hosts v0.3.4-host-reinstall-not-run -->"
 )
+ROOT_INSTALLED_COMMANDS = (
+    "portable-resume --version",
+    "install-resume-skills --version",
+    "portable-resume self-check --json",
+    "install-resume-skills matrix",
+    "install-resume-skills hosts --json",
+    "install-resume-skills install \\",
+    "install-resume-skills verify \\",
+)
+_COUNT_TOKEN = re.compile(
+    r"\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|"
+    r"twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+    r"twenty|hundred|thousand|\d+)\b",
+    re.IGNORECASE,
+)
+
+
+def _check_root_docs(failures: list[str], root_readme: str) -> None:
+    hero_match = re.search(
+        r'<img\s+src="docs/assets/portable-resume-skills-hero-v2\.jpg"\s+'
+        r'alt="([^"]*)"',
+        root_readme,
+    )
+    if hero_match is None or _COUNT_TOKEN.search(hero_match.group(1)):
+        failures.append("README.md: hero alt text must be count-free")
+
+    installed_heading = "Installed (pipx/pip):"
+    checkout_heading = "From a source checkout (no install):"
+    installed_start = root_readme.find(installed_heading)
+    checkout_start = root_readme.find(checkout_heading)
+    if installed_start < 0 or checkout_start <= installed_start:
+        failures.append("README.md: missing installed (pipx/pip) command section")
+    else:
+        installed_section = root_readme[installed_start:checkout_start]
+        for command in ROOT_INSTALLED_COMMANDS:
+            if command not in installed_section:
+                failures.append(
+                    f"README.md: installed command section missing {command!r}"
+                )
+
+    install_hosts = (REPO / "docs" / "install-hosts.md").read_text(encoding="utf-8")
+    quick_install_line = next(
+        (
+            line
+            for line in install_hosts.splitlines()
+            if "install-resume-skills quick-install all" in line
+        ),
+        "",
+    )
+    comment = quick_install_line.partition("#")[2]
+    if not comment or "registry" not in comment.lower() or _COUNT_TOKEN.search(comment):
+        failures.append(
+            "docs/install-hosts.md: quick-install all comment must be registry-derived"
+        )
+
+    changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    headings = [line for line in changelog.splitlines() if line.startswith("#")]
+    if (
+        not headings
+        or headings[0] != "# Changelog"
+        or headings.count("# Changelog") != 1
+        or headings.count("## Unreleased") != 1
+        or headings.index("# Changelog") > headings.index("## Unreleased")
+    ):
+        failures.append(
+            "CHANGELOG.md: expected one H1 followed by one Unreleased section"
+        )
 
 
 def check() -> dict[str, object]:
     failures: list[str] = []
     root_readme = (REPO / "README.md").read_text(encoding="utf-8")
+    _check_root_docs(failures, root_readme)
     if "docs/i18n/README.md" not in root_readme:
         failures.append("README.md: missing multilingual documentation link")
 
@@ -113,6 +186,8 @@ def check() -> dict[str, object]:
         "ok": not failures,
         "version": __version__,
         "required_locale_count": len(LOCALES),
+        "source_count": len(enabled_source_keys()),
+        "destination_count": len(enabled_destination_keys()),
         "checked_locales": checked,
         "failures": failures,
     }
