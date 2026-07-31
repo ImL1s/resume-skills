@@ -153,6 +153,7 @@ Use `--scope global` for the user root or `--root <path>` for an explicit root. 
 | Hermes (`hermes`) | `.hermes/skills` / `~/.hermes/skills` | Direct Skill only. state.db schema 23. Native Hermes UI not-run. | Load `resume-hermes` / `resume-<source>` |
 | GitHub Copilot CLI (`github-copilot`) | `.github/skills` / `$COPILOT_HOME/skills` | **Destination-only**. Compat `.agents`/`.claude` skills. No copilot source adapter yet. Native CLI install not-run. | Load installed `resume-<source>` skills |
 | Gemini CLI (`gemini`) | `.gemini/skills` / `~/.gemini/skills` | **Compat profile** (not Antigravity). Session JSONL under `tmp/<hash>/chats`. Native UI not-run. | Load `resume-gemini` / `resume-<source>` |
+| Kilo CLI (`kilo`) | `.kilocode/skills` / `$KILO_CONFIG_DIR/skills` or `~/.config/kilo/skills` | **Destination-only**. Compat `.kilo`/`.agents` skills. No kilo source adapter yet (do not alias OpenCode). Native marketplace not-run. | Load installed `resume-<source>` skills |
 
 For direct archives, extract the archive contents into the selected Skill root. Each archive contains `resume-antigravity`, `resume-claude`, `resume-codex`, `resume-cursor`, `resume-grok`, `resume-kimi`, `resume-opencode`, `resume-crush`, `resume-goose`, `resume-openclaw`, `resume-pi`, and `resume-qwen`.
 

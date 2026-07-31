@@ -105,3 +105,4 @@ or a vendor-curated directory.
 | hermes | not-run | filesystem install only; native picker not-run |
 | github-copilot | not-run | destination-only filesystem install; native plugins/picker not-run |
 | gemini | not-run | compat filesystem install; not Antigravity; native picker not-run |
+| kilo | not-run | destination-only filesystem install; marketplace/UI not-run |

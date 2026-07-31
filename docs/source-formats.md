@@ -170,6 +170,14 @@ Do not copy real transcripts, credentials, developer home paths, or `~/.grok/bun
 - **Destination:** supported as `github-copilot` (`.github/skills`, `$COPILOT_HOME/skills`)
 - **Out of scope until qualification:** source probe/list/show, Chronicle, cloud session sync
 
+## kilo (research — not enabled)
+
+- **Status:** research / not in enabled sources (#46 Track B)
+- **Store (tentative):** Kilo core/effect SQLite session/message/event store under XDG app `kilo` (OpenCode fork; storage actively diverged)
+- **Blocker:** fixture-pin exact current CLI schema; do not assume OpenCode `opencode-sqlite-v1` authority
+- **Destination:** supported as `kilo` (`.kilocode/skills`, `~/.config/kilo/skills`, `$KILO_CONFIG_DIR/skills`)
+- **Out of scope until qualification:** source probe/list/show, marketplace remote skills, IDE/cloud surfaces
+
 ## gemini-cli-session-jsonl-v1
 
 - **Store:** `~/.gemini/tmp/<projectHash>/chats/session-*.jsonl` (or `$GEMINI_CLI_HOME/.gemini/tmp/...`)

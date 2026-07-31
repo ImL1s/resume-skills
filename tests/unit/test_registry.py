@@ -23,7 +23,7 @@ from portable_resume.registry import (
 
 
 class RegistryInvariantTests(unittest.TestCase):
-    def test_current_sixteen_sources_and_seventeen_destinations(self) -> None:
+    def test_current_sixteen_sources_and_eighteen_destinations(self) -> None:
         self.assertEqual(
             enabled_source_keys(),
             frozenset(
@@ -59,6 +59,7 @@ class RegistryInvariantTests(unittest.TestCase):
                     "hermes",
                     "github-copilot",
                     "gemini",
+                    "kilo",
                     "crush",
                     "cursor",
                     "goose",
@@ -73,8 +74,8 @@ class RegistryInvariantTests(unittest.TestCase):
         )
         dims = matrix_dimensions()
         self.assertEqual(dims["sources"], 16)
-        self.assertEqual(dims["destinations"], 17)
-        self.assertEqual(dims["cells"], 272)
+        self.assertEqual(dims["destinations"], 18)
+        self.assertEqual(dims["cells"], 288)
 
     def test_source_and_destination_sets_are_independent_types(self) -> None:
         # Adding a destination-only key must not invent a source.
@@ -253,10 +254,17 @@ class RegistryInvariantTests(unittest.TestCase):
         self.assertIn("github-copilot", enabled_destination_keys())
         self.assertNotIn("github-copilot", enabled_source_keys())
         self.assertEqual(SOURCE_PROFILES["github-copilot"].status, "research")
+
+    def test_kilo_destination_without_enabled_source(self) -> None:
+        """#46 Track A: destination-only kilo; source stays research."""
+        self.assertIn("kilo", enabled_destination_keys())
+        self.assertNotIn("kilo", enabled_source_keys())
+        self.assertEqual(SOURCE_PROFILES["kilo"].status, "research")
+        self.assertEqual(SOURCE_PROFILES["kilo"].format_ids, ())
         dims = matrix_dimensions()
         self.assertEqual(dims["sources"], 16)
-        self.assertEqual(dims["destinations"], 17)
-        self.assertEqual(dims["cells"], 272)
+        self.assertEqual(dims["destinations"], 18)
+        self.assertEqual(dims["cells"], 288)
 
     def test_research_source_has_no_format_ids(self) -> None:
         profile = SOURCE_PROFILES["github-copilot"]
@@ -271,7 +279,7 @@ class DynamicMatrixTests(unittest.TestCase):
         cells = matrix_cells()
         dims = matrix_dimensions()
         self.assertEqual(len(cells), dims["cells"])
-        self.assertEqual(len(cells), 272)
+        self.assertEqual(len(cells), 288)
 
     def test_destination_only_expands_rectangle(self) -> None:
         from portable_resume.registry import rectangular_cells
