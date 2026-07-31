@@ -91,6 +91,79 @@ class SanitizerAndHandoffTests(unittest.TestCase):
             self.assertIn(item, handoff)
         self.assertIn("possibly stale", handoff)
 
+    def test_latest_assistant_message_and_recorded_action_are_distinct(self) -> None:
+        session = Session(
+            source="claude",
+            session_id="session-1",
+            last_user_request="request",
+            last_assistant_action="assistant prose",
+            turns=(
+                Turn(0, "user", "request"),
+                Turn(1, "assistant", "assistant prose"),
+                Turn(2, "tool", "applied one edit", tool_name="Edit"),
+            ),
+        )
+
+        handoff = render_handoff(
+            Envelope.create(
+                operation="show",
+                query=Query("claude", cwd="/current"),
+                sessions=(session,),
+                generated_at="2026-07-20T00:00:00Z",
+            )
+        )
+
+        message_start = handoff.index("### Latest assistant message")
+        action_start = handoff.index("### Latest recorded action")
+        warnings_start = handoff.index("## Warnings")
+        message_section = handoff[message_start:action_start]
+        action_section = handoff[action_start:warnings_start]
+        self.assertIn("assistant prose", message_section)
+        self.assertNotIn("applied one edit", message_section)
+        self.assertIn("[2 tool/Edit]", action_section)
+        self.assertIn("applied one edit", action_section)
+        self.assertNotIn("assistant prose", action_section)
+
+    def test_latest_recorded_action_handles_assistant_end_and_empty_turns(self) -> None:
+        assistant_only = Session(
+            source="claude",
+            session_id="session-1",
+            last_assistant_action="finished",
+            turns=(Turn(0, "assistant", "finished"),),
+        )
+        empty = replace(
+            assistant_only,
+            session_id="session-2",
+            last_assistant_action=None,
+            turns=(),
+        )
+
+        assistant_handoff = render_handoff(
+            Envelope.create(
+                operation="show",
+                query=Query("claude"),
+                sessions=(assistant_only,),
+                generated_at="2026-07-20T00:00:00Z",
+            )
+        )
+        empty_handoff = render_handoff(
+            Envelope.create(
+                operation="show",
+                query=Query("claude"),
+                sessions=(empty,),
+                generated_at="2026-07-20T00:00:00Z",
+            )
+        )
+
+        action_start = assistant_handoff.index("### Latest recorded action")
+        warnings_start = assistant_handoff.index("## Warnings")
+        self.assertIn("[0 assistant]", assistant_handoff[action_start:warnings_start])
+        self.assertIn("finished", assistant_handoff[action_start:warnings_start])
+        empty_action = empty_handoff[
+            empty_handoff.index("### Latest recorded action") : empty_handoff.index("## Warnings")
+        ]
+        self.assertIn("> _(not persisted)_", empty_action)
+
     def test_handoff_warnings_are_explained_before_transcript_evidence(self) -> None:
         handoff = render_handoff(self.envelope())
         warning_line = "> - `W_STALE_INDEX` — persisted metadata may be stale or inconsistent with recovered content."

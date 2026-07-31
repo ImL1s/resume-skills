@@ -120,7 +120,7 @@ class PiAdapterTests(unittest.TestCase):
         self.assertEqual(exit_code, 0, msg=error.getvalue())
         handoff = output.getvalue()
         request_start = handoff.index("### Latest explicit user request")
-        assistant_start = handoff.index("### Latest assistant action")
+        assistant_start = handoff.index("### Latest assistant message")
         transcript_start = handoff.index("### Bounded transcript evidence")
         request_section = handoff[request_start:assistant_start]
         transcript_section = handoff[transcript_start:]
@@ -189,7 +189,7 @@ class PiAdapterTests(unittest.TestCase):
         self.assertEqual(exit_code, 0, msg=error.getvalue())
         handoff = output.getvalue()
         request_start = handoff.index("### Latest explicit user request")
-        assistant_start = handoff.index("### Latest assistant action")
+        assistant_start = handoff.index("### Latest assistant message")
         transcript_start = handoff.index("### Bounded transcript evidence")
         request_section = handoff[request_start:assistant_start]
         transcript_section = handoff[transcript_start:]

@@ -149,6 +149,27 @@ class HandoffOutputBudgetTests(unittest.TestCase):
         self.assertNotIn("earlier transcript turns were omitted", rendered)
         self.assertLessEqual(len(rendered.encode("utf-8")), bounds.handoff_output_bytes)
 
+    def test_latest_recorded_action_is_bounded_with_the_handoff(self) -> None:
+        turns = (
+            Turn(ordinal=0, role="user", content="request"),
+            Turn(ordinal=1, role="assistant", content="A" * 20_000),
+        )
+        session = self._session(
+            user="LATEST_USER",
+            assistant="LATEST_ASSISTANT_MESSAGE",
+            turns=turns,
+        )
+        bounds = replace(DEFAULT_BOUNDS, handoff_output_bytes=3_500)
+
+        with patch("portable_resume.handoff.DEFAULT_BOUNDS", bounds):
+            rendered = render_session(session)
+
+        self.assertIn("### Latest assistant message", rendered)
+        self.assertIn("### Latest recorded action", rendered)
+        self.assertIn("[1 assistant]", rendered)
+        self.assertIn("W_TRUNCATED", rendered)
+        self.assertLessEqual(len(rendered.encode("utf-8")), bounds.handoff_output_bytes)
+
     def test_every_handoff_warning_has_a_static_explanation(self) -> None:
         install_only = {
             "W_HOST_DISCOVERY_UNPROVEN",
