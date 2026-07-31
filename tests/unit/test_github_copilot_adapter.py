@@ -280,11 +280,11 @@ class GitHubCopilotAdapterTests(unittest.TestCase):
                 "".join(json.dumps(line) + "\n" for line in lines),
                 encoding="utf-8",
             )
-            # Budget would fail a full multi-thousand-line scan of many peers;
-            # single long file with tiny transcript budget must still list.
+            # Budget would fail a full multi-thousand-line scan; list only charges
+            # scanned_records for the head window (not transcript_records).
             listed = ADAPTER.list(
                 query(root),
-                ReadBudget(Bounds(transcript_records=32, scanned_records=64)),
+                ReadBudget(Bounds(transcript_records=8, scanned_records=128)),
             )
             self.assertEqual([item.session_id for item in listed], [sid])
             self.assertEqual(listed[0].title, "title from early user")
@@ -359,6 +359,168 @@ class GitHubCopilotAdapterTests(unittest.TestCase):
             self.assertEqual(texts, ["rewound user prompt", "rewound assistant reply"])
             self.assertNotIn("first user (abandoned after rewind)", texts)
             self.assertNotIn("first assistant (abandoned)", texts)
+
+    def test_list_respects_late_context_changed(self) -> None:
+        """list cwd must match show after session.context_changed in head."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sid = BASIC_ID
+            sess = root / "session-state" / sid
+            sess.mkdir(parents=True)
+            lines = [
+                {
+                    "type": "session.start",
+                    "id": "e1",
+                    "parentId": None,
+                    "timestamp": "2024-01-01T12:00:00.000Z",
+                    "data": {
+                        "sessionId": sid,
+                        "startTime": "2024-01-01T12:00:00.000Z",
+                        "context": {"cwd": "/tmp/old-project"},
+                    },
+                },
+                {
+                    "type": "user.message",
+                    "id": "e2",
+                    "parentId": "e1",
+                    "timestamp": "2024-01-01T12:00:01.000Z",
+                    "data": {"content": "started in old cwd"},
+                },
+                {
+                    "type": "session.context_changed",
+                    "id": "e3",
+                    "parentId": "e2",
+                    "timestamp": "2024-01-01T12:00:02.000Z",
+                    "data": {"cwd": CWD},
+                },
+                {
+                    "type": "user.message",
+                    "id": "e4",
+                    "parentId": "e3",
+                    "timestamp": "2024-01-01T12:00:03.000Z",
+                    "data": {"content": "continued in new cwd"},
+                },
+            ]
+            (sess / "events.jsonl").write_text(
+                "".join(json.dumps(line) + "\n" for line in lines),
+                encoding="utf-8",
+            )
+            current = query(root)
+            listed = ADAPTER.list(current, ReadBudget())
+            self.assertEqual([item.session_id for item in listed], [sid])
+            self.assertEqual(listed[0].cwd, CWD)
+            session = ADAPTER.show(
+                ResolvedRef.from_summary(listed[0]), current, ReadBudget()
+            )
+            self.assertEqual(session.cwd, CWD)
+
+    def test_exact_path_ref_bypasses_age_and_list_cap(self) -> None:
+        root = fixture_root("s-gcp-01-user-basic")
+        events = root / "session-state" / BASIC_ID / "events.jsonl"
+        listed = ADAPTER.list(
+            Query(
+                source="github-copilot",
+                ref=str(events),
+                cwd=CWD,
+                source_root=str(root),
+                within_min=1,  # would exclude 2024 fixtures without exact bypass
+            ),
+            ReadBudget(),
+        )
+        self.assertEqual([item.session_id for item in listed], [BASIC_ID])
+
+    def test_assistant_reasoning_is_omitted_not_fatal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sid = BASIC_ID
+            sess = root / "session-state" / sid
+            sess.mkdir(parents=True)
+            lines = [
+                {
+                    "type": "session.start",
+                    "id": "e1",
+                    "parentId": None,
+                    "timestamp": "2024-01-01T12:00:00.000Z",
+                    "data": {
+                        "sessionId": sid,
+                        "startTime": "2024-01-01T12:00:00.000Z",
+                        "context": {"cwd": CWD},
+                    },
+                },
+                {
+                    "type": "user.message",
+                    "id": "e2",
+                    "parentId": "e1",
+                    "timestamp": "2024-01-01T12:00:01.000Z",
+                    "data": {"content": "ask"},
+                },
+                {
+                    "type": "assistant.reasoning",
+                    "id": "e3",
+                    "parentId": "e2",
+                    "timestamp": "2024-01-01T12:00:02.000Z",
+                    "data": {"content": "private chain of thought"},
+                },
+                {
+                    "type": "assistant.message",
+                    "id": "e4",
+                    "parentId": "e3",
+                    "timestamp": "2024-01-01T12:00:03.000Z",
+                    "data": {"content": "public reply"},
+                },
+            ]
+            (sess / "events.jsonl").write_text(
+                "".join(json.dumps(line) + "\n" for line in lines),
+                encoding="utf-8",
+            )
+            current = query(root, ref=sid)
+            session = ADAPTER.show(
+                ResolvedRef.from_summary(ADAPTER.list(current, ReadBudget())[0]),
+                current,
+                ReadBudget(),
+            )
+            texts = [turn.content for turn in session.turns]
+            self.assertEqual(texts, ["ask", "public reply"])
+            self.assertNotIn("private chain of thought", texts)
+
+    def test_probe_handles_many_session_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = root / "session-state"
+            state.mkdir()
+            for index in range(80):
+                sid = f"aaaaaaaa-bbbb-4ccc-8ddd-{index:012d}"
+                sess = state / sid
+                sess.mkdir()
+                (sess / "events.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "type": "session.start",
+                            "id": "e1",
+                            "parentId": None,
+                            "timestamp": "2024-01-01T12:00:00.000Z",
+                            "data": {
+                                "sessionId": sid,
+                                "startTime": "2024-01-01T12:00:00.000Z",
+                                "context": {"cwd": CWD},
+                            },
+                        }
+                    )
+                    + "\n"
+                    + json.dumps(
+                        {
+                            "type": "user.message",
+                            "id": "e2",
+                            "parentId": "e1",
+                            "timestamp": "2024-01-01T12:00:01.000Z",
+                            "data": {"content": "hi"},
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+            report = ADAPTER.probe(query(root))
+            self.assertEqual(report.state, "supported")
 
 
 if __name__ == "__main__":

@@ -56,6 +56,7 @@ _OMIT_TYPES = frozenset(
         "session.task_complete",
         "assistant.turn_start",
         "assistant.turn_end",
+        "assistant.reasoning",
         "tool.execution_complete",
         "hook.start",
         "hook.end",
@@ -195,6 +196,8 @@ def _resolve_layout(query: Query) -> tuple[str, str] | None:
 
 
 def _exact_ref(value: str | None) -> str | None:
+    """Return UUID session id when *value* is an exact id (not a path)."""
+
     if not value:
         return None
     text = value.strip()
@@ -202,6 +205,34 @@ def _exact_ref(value: str | None) -> str | None:
         return None
     if _SESSION_ID_RE.fullmatch(text):
         return text
+    return None
+
+
+def _exact_path_session(
+    value: str | None, root: str
+) -> tuple[str, str] | None:
+    """Return (session_id, events.jsonl) for an approved absolute path ref."""
+
+    if not value:
+        return None
+    text = value.strip()
+    if not text or not os.path.isabs(text):
+        return None
+    path = os.path.abspath(text)
+    if os.path.basename(path) == "events.jsonl":
+        if not _regular_file(path, root):
+            return None
+        session_dir = os.path.dirname(path)
+        sid = os.path.basename(session_dir.rstrip(os.sep))
+        if _SESSION_ID_RE.fullmatch(sid):
+            return sid, path
+        return None
+    if _regular_dir(path, root):
+        events = os.path.join(path, "events.jsonl")
+        if _regular_file(events, root):
+            sid = os.path.basename(path.rstrip(os.sep))
+            if _SESSION_ID_RE.fullmatch(sid):
+                return sid, events
     return None
 
 
@@ -238,9 +269,8 @@ def _discover_session_dirs(
         return []
 
     names = _safe_listdir(state_dir)
-    if len(names) > scan_limit:
-        raise DiagnosticError.limit_exceeded()
     out: list[tuple[str, str]] = []
+    # Cap returned sessions; do not fail-closed on mature stores with many ids.
     for name in sorted(names):
         if not _SESSION_ID_RE.fullmatch(name):
             continue
@@ -250,8 +280,8 @@ def _discover_session_dirs(
         events = os.path.join(session_dir, "events.jsonl")
         if _regular_file(events, root):
             out.append((name, events))
-            if len(out) > scan_limit:
-                raise DiagnosticError.limit_exceeded()
+            if len(out) >= scan_limit:
+                break
     return out
 
 
@@ -272,7 +302,8 @@ def _message_turn(
         if isinstance(name, str) and name.strip():
             return "tool", name.strip()
         return None
-    if event_type in _OMIT_TYPES:
+    if event_type in _OMIT_TYPES or "reasoning" in event_type:
+        # Omit reasoning* / control; never surface private chain-of-thought.
         return None
     # Unknown type: fail closed on show when content-bearing.
     content = data.get("content")
@@ -445,9 +476,8 @@ def _scan_session_metadata(
                     meta["title"] = content.strip().splitlines()[0][
                         : DEFAULT_BOUNDS.title_chars
                     ]
-        if meta.get("has_user") and meta.get("sessionId") and meta.get("cwd"):
-            # Enough for list eligibility; stop early inside the head window.
-            break
+        # Do not early-exit after the first user turn: later session.context_changed
+        # rows in the head window must update meta["cwd"] so list matches show.
     return meta, created_at, updated_at
 
 
@@ -526,6 +556,11 @@ def _scan_session(
             parent_s = None
         if event_id_s is not None:
             parent_of[event_id_s] = parent_s
+
+        # Sub-agent rows share the parent stream; omit from parent handoff.
+        agent_id = record.get("agentId")
+        if agent_id is not None and agent_id != "":
+            continue
 
         if event_type in {"session.start", "session.context_changed"}:
             created_at = _apply_session_control(
@@ -617,7 +652,7 @@ class GitHubCopilotAdapter:
                 return CapabilityReport(self.key, FORMAT_ID, "unavailable")
             state, root = layout
             sessions = _discover_session_dirs(
-                state, root, scan_limit=min(DEFAULT_BOUNDS.scanned_records, 64)
+                state, root, scan_limit=min(DEFAULT_BOUNDS.scanned_records, 2_000)
             )
             if not sessions:
                 return CapabilityReport(
@@ -655,21 +690,26 @@ class GitHubCopilotAdapter:
                 "E_CAPABILITY_UNAVAILABLE", source=self.key, provider=FORMAT_ID
             )
         state, root = layout
-        exact = _exact_ref(query.ref)
+        exact_id = _exact_ref(query.ref)
+        exact_path = _exact_path_session(query.ref, root)
+        exact = exact_id is not None or exact_path is not None
         scan_limit = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
         list_limit = min(budget.limits.listed_sessions, DEFAULT_BOUNDS.listed_sessions)
-        if exact is None and list_limit <= 0:
+        if not exact and list_limit <= 0:
             return []
 
-        sessions = _discover_session_dirs(state, root, scan_limit=scan_limit)
-        if exact is not None:
-            sessions = [
-                (sid, path)
-                for sid, path in sessions
-                if sid.lower() == exact.lower()
-            ]
-            if not sessions:
-                return []
+        if exact_path is not None:
+            sessions = [exact_path]
+        else:
+            sessions = _discover_session_dirs(state, root, scan_limit=scan_limit)
+            if exact_id is not None:
+                sessions = [
+                    (sid, path)
+                    for sid, path in sessions
+                    if sid.lower() == exact_id.lower()
+                ]
+                if not sessions:
+                    return []
 
         values: list[SessionSummary] = []
         for sid, path in sessions:
@@ -680,7 +720,7 @@ class GitHubCopilotAdapter:
                     root,
                     query,
                     budget,
-                    require_age=exact is None,
+                    require_age=not exact,
                 )
             except DiagnosticError as error:
                 if error.code in {"E_LIMIT_EXCEEDED", "E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
@@ -690,13 +730,13 @@ class GitHubCopilotAdapter:
                 continue
             values.append(item)
             budget.consume_records()
-            if exact is None and len(values) >= scan_limit:
+            if not exact and len(values) >= scan_limit:
                 break
 
         values.sort(key=lambda item: item.session_id)
         values.sort(key=lambda item: item.updated_at or "", reverse=True)
         values.sort(key=lambda item: item.updated_at is None)
-        if exact is not None:
+        if exact:
             return values
         return values[:list_limit]
 

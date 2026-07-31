@@ -787,8 +787,8 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "/skills reload",
         ),
         arguments_note=(
-            "Pass the session <ref> for a *supported* source skill (resume-<source>). "
-            "GitHub Copilot is destination-only in this release; no copilot source adapter yet."
+            "Pass the session <ref> for resume-github-copilot (UUID, latest, or exact events.jsonl path). "
+            "Destination install uses .github/skills (project) or $COPILOT_HOME/skills (global)."
         ),
         caveats=(
             "Source: local events.jsonl only (copilot-cli-events-jsonl-v1); session-store.db is not authority.",
