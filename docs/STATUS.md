@@ -162,7 +162,7 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 
 | Area | Status | Required evidence |
 |---|---|---|
-| Current local release gates | pass | **426 pass locally** + 81/81 installed-runner after Wave 0 baseline validators (2026-07-28); pre-Wave 0 main was 407; historical 378-tests claim is pre-#11/#72 growth |
+| Current local release gates | pass | **712 pass locally** + **306/306** registry-derived installed-runner (2026-07-31); the Wave 0 snapshot was 426 tests + 81/81 on 2026-07-28 |
 | `v0.3.4` dual-OS release | pass | [Actions run 30269713516](https://github.com/ImL1s/resume-skills/actions/runs/30269713516), commit `fa1344bf62eb26332baea7b7ef4540a1a37acba8` |
 | `v0.3.4` PyPI publication | pass | [portable-resume 0.3.4](https://pypi.org/project/portable-resume/0.3.4/), public isolated 81-cell self-check |
 | `v0.3.2` dual-OS release | pass | [Actions run 30093776529](https://github.com/ImL1s/resume-skills/actions/runs/30093776529), commit `284865a4dc8c1c3dca16ee40f5204053cabb3a92` |
