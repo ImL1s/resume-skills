@@ -522,6 +522,61 @@ class GitHubCopilotAdapterTests(unittest.TestCase):
             report = ADAPTER.probe(query(root))
             self.assertEqual(report.state, "supported")
 
+    def test_list_truncates_when_aggregate_metadata_budget_exhausted(self) -> None:
+        """Many sessions must not raise E_LIMIT_EXCEEDED on shared scanned budget."""
+        from portable_resume.bounds import Bounds
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = root / "session-state"
+            state.mkdir()
+            for index in range(40):
+                sid = f"aaaaaaaa-bbbb-4ccc-8ddd-{index:012d}"
+                sess = state / sid
+                sess.mkdir()
+                lines = [
+                    {
+                        "type": "session.start",
+                        "id": "e1",
+                        "parentId": None,
+                        "timestamp": "2024-01-01T12:00:00.000Z",
+                        "data": {
+                            "sessionId": sid,
+                            "startTime": "2024-01-01T12:00:00.000Z",
+                            "context": {"cwd": CWD},
+                        },
+                    },
+                    {
+                        "type": "user.message",
+                        "id": "e2",
+                        "parentId": "e1",
+                        "timestamp": "2024-01-01T12:00:01.000Z",
+                        "data": {"content": f"session {index}"},
+                    },
+                ]
+                # Pad each file so metadata hits the per-file head cap.
+                for pad in range(62):
+                    lines.append(
+                        {
+                            "type": "assistant.message",
+                            "id": f"a{pad}",
+                            "parentId": "e2",
+                            "timestamp": "2024-01-01T12:00:02.000Z",
+                            "data": {"content": f"pad {pad}"},
+                        }
+                    )
+                (sess / "events.jsonl").write_text(
+                    "".join(json.dumps(line) + "\n" for line in lines),
+                    encoding="utf-8",
+                )
+            # 40 * 64 would exceed scanned_records=200; list must truncate, not raise.
+            listed = ADAPTER.list(
+                query(root),
+                ReadBudget(Bounds(scanned_records=200, listed_sessions=50)),
+            )
+            self.assertGreater(len(listed), 0)
+            self.assertLessEqual(len(listed), 50)
+
 
 if __name__ == "__main__":
     unittest.main()

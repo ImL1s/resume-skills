@@ -393,9 +393,12 @@ def _scan_session_metadata(
     """Bounded head-window list metadata (charges scanned_records, not transcript)."""
 
     maximum_record = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
-    line_cap = min(_META_HEAD_LINES, budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
+    scanned_ceiling = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
+    remaining = scanned_ceiling - budget.records
+    # Honor remaining aggregate budget so multi-session list can truncate cleanly.
+    line_cap = min(_META_HEAD_LINES, remaining)
     if line_cap <= 0:
-        return {}, None, None
+        raise DiagnosticError.limit_exceeded()
     windows = stable_read_windows(
         path,
         root=root,
@@ -723,13 +726,21 @@ class GitHubCopilotAdapter:
                     require_age=not exact,
                 )
             except DiagnosticError as error:
+                if error.code == "E_LIMIT_EXCEEDED" and not exact:
+                    # Aggregate discovery budget exhausted — return partial list.
+                    break
                 if error.code in {"E_LIMIT_EXCEEDED", "E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
                     raise
                 continue
             if item is None:
                 continue
             values.append(item)
-            budget.consume_records()
+            try:
+                budget.consume_records()
+            except DiagnosticError as error:
+                if error.code == "E_LIMIT_EXCEEDED" and not exact:
+                    break
+                raise
             if not exact and len(values) >= scan_limit:
                 break
 
