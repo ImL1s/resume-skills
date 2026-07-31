@@ -8,6 +8,7 @@ import ast
 import difflib
 import re
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -164,7 +165,11 @@ def _install_hosts_table() -> str:
     return "\n".join(lines)
 
 
-def _require_exact_keys(label: str, actual: object, expected: object) -> None:
+def _require_exact_keys(
+    label: str,
+    actual: Iterable[object],
+    expected: Iterable[object],
+) -> None:
     actual_keys = set(actual)
     expected_keys = set(expected)
     if actual_keys != expected_keys:
@@ -208,10 +213,11 @@ def _warning_codes_list() -> str:
     return "\n".join(f"- `{code}`" for code in sorted(WARNING_CODES))
 
 
-def _self_check_source_contract() -> set[str]:
+def _self_check_source_contract(source: str | None = None) -> set[str]:
     """Read the self-check function contract without resolving runtime paths."""
 
-    source = (SRC / "portable_resume" / "reader.py").read_text(encoding="utf-8")
+    if source is None:
+        source = (SRC / "portable_resume" / "reader.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     function = next(
         (
@@ -226,7 +232,6 @@ def _self_check_source_contract() -> set[str]:
         raise ValueError("reader self-check function is missing")
 
     warnings: set[str] = set()
-    has_corrupt_or_limit_exit = False
     for node in ast.walk(function):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             # A JoinedStr's literal prefix also appears as an ast.Constant;
@@ -243,20 +248,27 @@ def _self_check_source_contract() -> set[str]:
             joined = "".join(parts)
             if joined.startswith("W_"):
                 warnings.add(joined)
-        elif (
-            isinstance(node, ast.Attribute)
-            and node.attr == ExitCode.CORRUPT_OR_LIMIT.name
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "ExitCode"
-        ):
-            has_corrupt_or_limit_exit = True
-
     _require_exact_keys(
         "self-check result warnings",
         SELF_CHECK_RESULT_WARNINGS,
         warnings,
     )
-    if not has_corrupt_or_limit_exit:
+    conditional_returns = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.IfExp)
+    ]
+    failure_branch: ast.expr | None = None
+    if len(conditional_returns) == 1:
+        return_value = conditional_returns[0].value
+        if isinstance(return_value, ast.IfExp):
+            failure_branch = return_value.orelse
+    if not (
+        isinstance(failure_branch, ast.Attribute)
+        and failure_branch.attr == ExitCode.CORRUPT_OR_LIMIT.name
+        and isinstance(failure_branch.value, ast.Name)
+        and failure_branch.value.id == "ExitCode"
+    ):
         raise ValueError("reader self-check must return CORRUPT_OR_LIMIT on failure")
     return warnings
 
@@ -326,9 +338,12 @@ def check(root: Path = REPO) -> list[str]:
     failures: list[str] = []
     for relative, names in REGION_FILES.items():
         path = root / relative
-        current = path.read_text(encoding="utf-8")
         try:
+            current = path.read_text(encoding="utf-8")
             expected = _render_file(root, relative, names)
+        except FileNotFoundError:
+            failures.append(f"{relative}: missing registered document")
+            continue
         except (OSError, ValueError) as exc:
             failures.append(str(exc))
             continue

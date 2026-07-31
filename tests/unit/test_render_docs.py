@@ -78,6 +78,20 @@ class RenderDocsTests(unittest.TestCase):
         self.assertIn("docs/diagnostics.md", failures[0])
         self.assertIn("W_SCHEMA_MISSING", failures[0])
 
+    def test_check_reports_missing_registered_document(self) -> None:
+        from scripts import render_docs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(REPO / "docs", root / "docs")
+            (root / "docs" / "diagnostics.md").unlink()
+
+            failures = render_docs.check(root)
+
+        self.assertEqual(len(failures), 1)
+        self.assertIn("docs/diagnostics.md", failures[0])
+        self.assertIn("missing", failures[0].lower())
+
     def test_diagnostic_surface_mapping_is_exact_and_fails_closed(self) -> None:
         from scripts import render_docs
         from portable_resume.diagnostics import ERROR_EXIT_CODES, ExitCode
@@ -124,6 +138,23 @@ class RenderDocsTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(ValueError, "self-check result warnings"):
                 render_docs.rendered_regions()
+
+    def test_self_check_contract_rejects_wrong_failure_return(self) -> None:
+        from scripts import render_docs
+
+        source = (
+            REPO / "src" / "portable_resume" / "reader.py"
+        ).read_text(encoding="utf-8")
+        expected = 'return 0 if report["ok"] else ExitCode.CORRUPT_OR_LIMIT'
+        replacement = (
+            "incidental = ExitCode.CORRUPT_OR_LIMIT\n"
+            "    return 0 if report[\"ok\"] else ExitCode.UNSAFE_OR_BUSY"
+        )
+        self.assertIn(expected, source)
+        mutated = source.replace(expected, replacement, 1)
+
+        with self.assertRaisesRegex(ValueError, "CORRUPT_OR_LIMIT"):
+            render_docs._self_check_source_contract(mutated)
 
     def test_generated_regions_contain_structure_not_evidence_claims(self) -> None:
         from scripts import render_docs
