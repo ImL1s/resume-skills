@@ -15,10 +15,15 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from portable_resume import __version__  # noqa: E402
+from portable_resume.install.catalog import hosts_report  # noqa: E402
 from portable_resume.registry import (  # noqa: E402
     enabled_destination_keys,
     enabled_source_keys,
 )
+try:  # Direct script execution puts scripts/ rather than the repo root on sys.path.
+    from scripts import render_docs  # type: ignore[no-redef]  # noqa: E402
+except ModuleNotFoundError:
+    import render_docs  # type: ignore[no-redef]  # noqa: E402
 
 LOCALES = {
     "ar": "العربية",
@@ -34,17 +39,6 @@ LOCALES = {
     "zh-CN": "简体中文",
     "zh-TW": "繁體中文",
 }
-HOST_NAMES = (
-    "Claude",
-    "Codex",
-    "Cursor",
-    "OpenCode",
-    "Antigravity",
-    "Grok",
-    "Qwen",
-    "Kimi",
-    "Pi",
-)
 REQUIRED_COMMANDS = (
     "pipx install portable-resume",
     "install-resume-skills quick-install qwen",
@@ -57,6 +51,8 @@ REQUIRED_LINKS = (
     "../STATUS.md",
     "https://github.com/ImL1s/portable-resume-marketplace",
 )
+# Plan 042 generates registry structure/counts only. These evidence claims remain
+# human-recorded truth and must never be inferred by scripts/render_docs.py.
 REQUIRED_EVIDENCE_MARKERS = (
     "8/8",
     "7/7",
@@ -81,9 +77,24 @@ _COUNT_TOKEN = re.compile(
     r"twenty|hundred|thousand|\d+)\b",
     re.IGNORECASE,
 )
+_COUNTS_MARKER = re.compile(
+    r"<!-- portable-resume-counts: sources=(\d+) destinations=(\d+) -->"
+)
+
+
+def _host_names() -> tuple[str, ...]:
+    return tuple(host["display_name"] for host in hosts_report()["hosts"])
 
 
 def _check_root_docs(failures: list[str], root_readme: str) -> None:
+    source_count = len(enabled_source_keys())
+    destination_count = len(enabled_destination_keys())
+    current_counts = f"{source_count} sources × {destination_count} hosts"
+    if f"{current_counts} (derived from registries)" not in root_readme:
+        failures.append(
+            f"README.md: current registry counts must be {current_counts}"
+        )
+
     hero_match = re.search(
         r'<img\s+src="docs/assets/portable-resume-skills-hero-v2\.jpg"\s+'
         r'alt="([^"]*)"',
@@ -149,6 +160,9 @@ def check() -> dict[str, object]:
     else:
         index = index_path.read_text(encoding="utf-8")
 
+    source_count = len(enabled_source_keys())
+    destination_count = len(enabled_destination_keys())
+    host_names = _host_names()
     checked: list[str] = []
     for locale, label in LOCALES.items():
         relative = f"./{locale}.md"
@@ -163,6 +177,13 @@ def check() -> dict[str, object]:
         marker = f"<!-- portable-resume-i18n: {locale} v{__version__} -->"
         if marker not in text:
             failures.append(f"{path.relative_to(REPO)}: missing current version marker")
+        count_markers = _COUNTS_MARKER.findall(text)
+        expected_counts = (str(source_count), str(destination_count))
+        if count_markers != [expected_counts]:
+            failures.append(
+                f"{path.relative_to(REPO)}: counts marker must be "
+                f"sources={source_count} destinations={destination_count}"
+            )
         for command in REQUIRED_COMMANDS:
             if command not in text:
                 failures.append(f"{path.relative_to(REPO)}: missing command {command!r}")
@@ -178,9 +199,12 @@ def check() -> dict[str, object]:
             failures.append(
                 f"{path.relative_to(REPO)}: missing version-scoped host evidence marker"
             )
-        for host in HOST_NAMES:
+        for host in host_names:
             if host not in text:
                 failures.append(f"{path.relative_to(REPO)}: missing host {host}")
+
+    for failure in render_docs.check(REPO):
+        failures.append(f"generated docs drift:\n{failure}")
 
     return {
         "ok": not failures,

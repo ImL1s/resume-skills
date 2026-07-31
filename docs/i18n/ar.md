@@ -1,4 +1,5 @@
 <!-- portable-resume-i18n: ar v0.4.0.dev0 -->
+<!-- portable-resume-counts: sources=17 destinations=18 -->
 # Portable Resume — دليل البدء السريع بالعربية
 
 **الإصدار الحالي المنشور:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
@@ -14,7 +15,7 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
-من checkout على `main` الحالي استخدم `pipx install .`. لتثبيت جميع host التسعة في مسارات المستخدم العامة:
+من checkout على `main` الحالي استخدم `pipx install .`. لتثبيت جميع host 18 في مسارات المستخدم العامة:
 
 ```bash
 install-resume-skills quick-install all
@@ -26,7 +27,7 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-الوجهات المفعّلة على `main` هي Claude Code وCodex وCursor وOpenCode وAntigravity وGrok Build وQwen Code وKimi Code CLI وPi (تثبيت ملفات فقط؛ واجهة المستخدم الأصلية not-run). إصدار `0.3.4` المنشور يشمل تسع وجهات مع Pi (تثبيت ملفات؛ الواجهة الأصلية not-run). راجع [دليل التثبيت](../install-hosts.md) لأوامر Skill وextension وplugin وmarketplace الدقيقة. افحص أي plugin وتحقق من SHA-256 الخاص بالـ release قبل منحه الثقة.
+الوجهات المفعّلة على `main` هي Antigravity / agy وClaude Code وCline وCodex CLI / IDE وCrush وCursor Agent وGemini CLI وGitHub Copilot CLI وgoose وGrok Build وHermes Agent وKilo CLI وKimi Code CLI وOpenClaw وOpenCode وOpenHands وPi agent وQwen Code. إصدار `0.3.4` المنشور يشمل تسع وجهات مع Pi (تثبيت ملفات؛ الواجهة الأصلية not-run). راجع [دليل التثبيت](../install-hosts.md) لأوامر Skill وextension وplugin وmarketplace الدقيقة. افحص أي plugin وتحقق من SHA-256 الخاص بالـ release قبل منحه الثقة.
 
 ## Marketplace عام
 

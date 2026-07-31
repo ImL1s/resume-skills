@@ -50,6 +50,11 @@ class DocumentationI18nTests(unittest.TestCase):
                 "\nportable-resume --version",
                 "\nPYTHONPATH=src python3 scripts/portable-resume --version",
             )
+            readme = readme.replace(
+                "17 sources × 18 hosts (derived from registries)",
+                "17 sources × 9 hosts (derived from registries)",
+                1,
+            )
             readme_path.write_text(readme, encoding="utf-8")
 
             install_hosts_path = root / "docs" / "install-hosts.md"
@@ -66,6 +71,13 @@ class DocumentationI18nTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            locale_path = root / "docs" / "i18n" / "en.md"
+            locale = locale_path.read_text(encoding="utf-8").replace(
+                "portable-resume-counts: sources=17 destinations=18",
+                "portable-resume-counts: sources=17 destinations=9",
+            )
+            locale_path.write_text(locale, encoding="utf-8")
+
             with mock.patch.object(check_docs, "REPO", root):
                 report = check_docs.check()
 
@@ -78,6 +90,14 @@ class DocumentationI18nTests(unittest.TestCase):
         )
         self.assertIn(
             "CHANGELOG.md: expected one H1 followed by one Unreleased section",
+            failures,
+        )
+        self.assertIn(
+            "README.md: current registry counts must be 17 sources × 18 hosts",
+            failures,
+        )
+        self.assertIn(
+            "docs/i18n/en.md: counts marker must be sources=17 destinations=18",
             failures,
         )
 

@@ -1,4 +1,5 @@
 <!-- portable-resume-i18n: ko v0.4.0.dev0 -->
+<!-- portable-resume-counts: sources=17 destinations=18 -->
 # Portable Resume — 한국어 빠른 시작
 
 **현재 공개 릴리스:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
@@ -14,7 +15,7 @@ pipx install portable-resume
 install-resume-skills quick-install qwen
 ```
 
-현재 `main` checkout에서는 `pipx install .`을 사용할 수 있습니다. 9개 대상 host를 사용자 전역 경로에 한 번에 설치:
+현재 `main` checkout에서는 `pipx install .`을 사용할 수 있습니다. 18개 대상 host를 사용자 전역 경로에 한 번에 설치:
 
 ```bash
 install-resume-skills quick-install all
@@ -26,7 +27,7 @@ install-resume-skills quick-install all
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
-`main`에서 활성화된 대상은 Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI, 그리고 Pi(파일시스템 설치; 네이티브 UI는 not-run)입니다. 게시된 `0.3.4`은 Pi(파일시스템 설치)를 포함한 9개 대상입니다(네이티브 UI는 not-run). host별 직접 Skill, extension, plugin, marketplace 명령은 [설치 가이드](../install-hosts.md)를 확인하세요. plugin을 신뢰하기 전에 내용과 release SHA-256을 검증해야 합니다.
+`main`에서 활성화된 대상은 Antigravity / agy, Claude Code, Cline, Codex CLI / IDE, Crush, Cursor Agent, Gemini CLI, GitHub Copilot CLI, goose, Grok Build, Hermes Agent, Kilo CLI, Kimi Code CLI, OpenClaw, OpenCode, OpenHands, Pi agent, 그리고 Qwen Code입니다. 게시된 `0.3.4`은 Pi(파일시스템 설치)를 포함한 9개 대상입니다(네이티브 UI는 not-run). host별 직접 Skill, extension, plugin, marketplace 명령은 [설치 가이드](../install-hosts.md)를 확인하세요. plugin을 신뢰하기 전에 내용과 release SHA-256을 검증해야 합니다.
 
 ## 공개 marketplace
 

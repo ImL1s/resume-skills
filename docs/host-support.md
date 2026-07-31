@@ -1,6 +1,10 @@
 # Host support matrix
 
-Status date: **2026-07-27**. Installer truth lives in `src/portable_resume/install/catalog.py` and `src/portable_resume/registry.py`; matrix dimensions are **derived from registries** (currently **9×9=81** cells). Detailed commands are in [`install-hosts.md`](install-hosts.md).
+Status date: **2026-08-01**. Installer truth lives in `src/portable_resume/install/catalog.py` and `src/portable_resume/registry.py`. Detailed commands are in [`install-hosts.md`](install-hosts.md).
+
+<!-- generated:matrix-summary:begin (run scripts/render_docs.py --write) -->
+This repository ships **17** enabled source Skills to **18** destination hosts (registry-derived; currently **17×18=306** cells).
+<!-- generated:matrix-summary:end (run scripts/render_docs.py --write) -->
 
 ## Evidence levels
 
@@ -14,30 +18,41 @@ Status date: **2026-07-27**. Installer truth lives in `src/portable_resume/insta
 
 ## Destination profiles
 
-| Profile | Project root | User root | Primary activation | Package route | UI |
-|---|---|---|---|---|---|
-| `claude-v1` | `.claude/skills` | `~/.claude/skills` | `/resume-<source>` | direct + public Claude marketplace | v0.3.2-era headless/public install pass; fresh v0.3.4 reinstall `not-run`; Skill picker `not-run` |
-| `codex-v1` | `.agents/skills` | `~/.agents/skills` | `$resume-<source>` | direct + public Codex marketplace | v0.3.2-era headless/public install pass; fresh v0.3.4 reinstall `not-run`; Skill picker `not-run` |
-| `cursor-v1` | `.cursor/skills` | `~/.cursor/skills` | `/resume-<source>` | direct + public Cursor marketplace | v0.3.2-era headless/marketplace picker pass; fresh v0.3.4 reinstall/picker `not-run`; Skill picker `not-run` |
-| `opencode-v1` | `.opencode/skills` | `~/.config/opencode/skills` | model loads Skill by name | direct only | v0.3.2-era headless pass; picker `not-run` |
-| `antigravity-v1` | `.agents/skills` | `~/.gemini/config/skills` | name mention | direct + plugin | v0.3.2-era headless pass; picker `not-run` |
-| `grok-v1` | `.grok/skills` | `~/.grok/skills` | `/resume-<source>` | direct + public marketplace | v0.3.2-era headless/public install pass; fresh v0.3.4 reinstall `not-run`; picker `not-run` |
-| `qwen-v1` | `.qwen/skills` | `~/.qwen/skills` | `/resume-<source>` | direct + public Qwen extension source | v0.3.2-era headless/public install pass; fresh v0.3.4 reinstall `not-run`; picker `not-run` |
-| `kimi-code-v1` | `.kimi-code/skills` | `$KIMI_CODE_HOME/skills` | `/skill:resume-<source>` | direct + public Kimi catalog | v0.3.2-era headless/marketplace picker pass; fresh v0.3.4 reinstall/picker `not-run`; Skill picker `not-run` |
-| `pi-v1` | `.pi/skills` | `~/.pi/agent/skills` | `/skill:resume-<source>` | direct only | filesystem install pass; native picker `not-run` |
+<!-- generated:host-support-table:begin (run scripts/render_docs.py --write) -->
+| Host | Profile | Project root | Global root |
+|---|---|---|---|
+| Antigravity / agy | `antigravity-v1` | `<workspace>/.agents/skills/<name>/SKILL.md` | `~/.gemini/config/skills/<name>/SKILL.md` |
+| Claude Code | `claude-v1` | `<project>/.claude/skills/<name>/SKILL.md` | `~/.claude/skills/<name>/SKILL.md` |
+| Cline | `cline-v1` | `<project>/.cline/skills/<name>/SKILL.md` | `~/.cline/skills/<name>/SKILL.md` |
+| Codex CLI / IDE | `codex-v1` | `<project>/.agents/skills/<name>/SKILL.md (CWD → repo root)` | `~/.agents/skills/<name>/SKILL.md` |
+| Crush | `crush-v1` | `<project>/.crush/skills/<name>/SKILL.md` | `~/.config/crush/skills/<name>/SKILL.md` |
+| Cursor Agent | `cursor-v1` | `<project>/.cursor/skills/<name>/SKILL.md` | `~/.cursor/skills/<name>/SKILL.md` |
+| Gemini CLI | `gemini-v1` | `<project>/.gemini/skills/<name>/SKILL.md` | `$GEMINI_CLI_HOME/.gemini/skills or ~/.gemini/skills/<name>/SKILL.md` |
+| GitHub Copilot CLI | `github-copilot-v1` | `<project>/.github/skills/<name>/SKILL.md` | `$COPILOT_HOME/skills/<name>/SKILL.md (default ~/.copilot/skills/)` |
+| goose | `goose-v1` | `<project>/.goose/skills/<name>/SKILL.md` | `~/.config/goose/skills/<name>/SKILL.md` |
+| Grok Build | `grok-v1` | `<repo>/.grok/skills/<name>/SKILL.md (CWD + repo root)` | `~/.grok/skills/<name>/SKILL.md` |
+| Hermes Agent | `hermes-v1` | `<project>/.hermes/skills/<name>/SKILL.md` | `$HERMES_HOME/skills/<name>/SKILL.md (default ~/.hermes/skills/)` |
+| Kilo CLI | `kilo-v1` | `<project>/.kilocode/skills/<name>/SKILL.md` | `$KILO_CONFIG_DIR/skills or ~/.config/kilo/skills/<name>/SKILL.md` |
+| Kimi Code CLI | `kimi-code-v2` | `<project>/.kimi-code/skills/<name>/SKILL.md` | `$KIMI_CODE_HOME/skills/<name>/SKILL.md (default ~/.kimi-code/skills)` |
+| OpenClaw | `openclaw-v1` | `<workspace>/skills/<name>/SKILL.md` | `~/.openclaw/skills/<name>/SKILL.md` |
+| OpenCode | `opencode-v1` | `<project>/.opencode/skills/<name>/SKILL.md` | `~/.config/opencode/skills/<name>/SKILL.md` |
+| OpenHands | `openhands-v1` | `<project>/.agents/skills/<name>/SKILL.md` | `~/.openhands/skills/<name>/SKILL.md` |
+| Pi agent | `pi-v1` | `<project>/.pi/skills/<name>/SKILL.md` | `~/.pi/agent/skills/<name>/SKILL.md` |
+| Qwen Code | `qwen-v1` | `<project>/.qwen/skills/<name>/SKILL.md` | `~/.qwen/skills/<name>/SKILL.md` |
+<!-- generated:host-support-table:end (run scripts/render_docs.py --write) -->
 
-Every profile packages all nine source readers. The portable Skill frontmatter contains only `name` and `description`; host invocation text is model context, not automatic process argv.
+Every profile packages every enabled source reader. The portable Skill frontmatter contains only `name` and `description`; host invocation text is model context, not automatic process argv.
 
 ## Source adapters
 
-Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi, and **Pi** have fixture/parser coverage. Live store support is intentionally bounded and fail-closed. Cursor Desktop full bubble graph remains **not claimed**. Pi native host UI / picker activation remains **not-run** (filesystem install is supported).
+Enabled source adapters and their store families are listed in the root README. Live store support is intentionally bounded and fail-closed. Cursor Desktop full bubble graph remains **not claimed**. Native host UI / picker activation stays separately recorded in `host-ui-smoke.md`.
 
 ## Platform and release scope
 
 | Layer | Current status |
 |---|---|
-| Local packaging matrix | 81/81 pass (currently 9×9, derived from registries) |
-| Installed runner matrix | 81/81 pass (currently 9×9, derived from registries) |
+| Local packaging matrix | 306/306 pass (currently 17×18, derived from registries) |
+| Installed runner matrix | 306/306 pass (currently 17×18, derived from registries) |
 | Native local plugin/extension installs | 7/7 pass with exact v0.3.2 release assets |
 | Host-native headless Skill invocation | 8/8 pass from v0.3.2-era evidence; Pi not-run |
 | Public marketplace installation | 6/6 compatible hosts pass on v0.3.2; fresh v0.3.4 reinstall not-run |
