@@ -100,8 +100,11 @@ class RuntimeIdentityDriftTests(unittest.TestCase):
         manifest.unlink()
         manifestless = self._list(self.installed)
         self.assertEqual(manifestless.returncode, 0, manifestless.stderr)
-        self.assertNotIn(WARNING, json.loads(manifestless.stdout)["warnings"])
-        self.assertEqual(json.loads(pristine.stdout), json.loads(manifestless.stdout))
+        pristine_payload = json.loads(pristine.stdout)
+        manifestless_payload = json.loads(manifestless.stdout)
+        self.assertNotIn(WARNING, manifestless_payload["warnings"])
+        manifestless_payload["generated_at"] = pristine_payload["generated_at"]
+        self.assertEqual(pristine_payload, manifestless_payload)
 
     def test_relocated_tree_warns_without_changing_exit_or_payload(self) -> None:
         pristine = self._list(self.installed)
