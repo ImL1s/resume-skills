@@ -15,6 +15,7 @@ for candidate in (ROOT, ROOT / "src", ROOT / "scripts"):
         sys.path.insert(0, str(candidate))
 
 from build_artifact_identity import (  # noqa: E402
+    reproducible_build_umask,
     resolve_build_identity,
     stage_package_identity,
     write_reproducible_sdist,
@@ -93,9 +94,10 @@ class EmbeddedIdentityBuildPy(build_py):
         return outputs
 
 
-setup(
-    cmdclass={
-        "build_py": EmbeddedIdentityBuildPy,
-        "sdist": EmbeddedIdentitySdist,
-    }
-)
+with reproducible_build_umask():
+    setup(
+        cmdclass={
+            "build_py": EmbeddedIdentityBuildPy,
+            "sdist": EmbeddedIdentitySdist,
+        }
+    )

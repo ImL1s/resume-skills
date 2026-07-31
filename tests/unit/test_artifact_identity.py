@@ -19,6 +19,7 @@ from scripts.git_build_identity import git_build_identity
 from scripts.build_artifact_identity import (
     IDENTITY_FILE_ENV,
     IDENTITY_SHA256_ENV,
+    reproducible_build_umask,
     resolve_build_identity,
     stage_package_identity,
     write_external_identity,
@@ -416,11 +417,21 @@ class ArtifactIdentityTests(unittest.TestCase):
             root = Path(temporary)
             first_tree = root / "first"
             second_tree = root / "second"
-            for tree, timestamp in ((first_tree, 100), (second_tree, 200)):
+            for tree, timestamp, directory_mode, file_mode, executable_mode in (
+                (first_tree, 100, 0o755, 0o644, 0o755),
+                (second_tree, 200, 0o700, 0o600, 0o700),
+            ):
                 (tree / "pkg").mkdir(parents=True)
                 source = tree / "pkg" / "module.py"
                 source.write_text("VALUE = 1\n", encoding="utf-8")
+                executable = tree / "pkg" / "tool"
+                executable.write_text("#!/bin/sh\n", encoding="utf-8")
+                tree.chmod(directory_mode)
+                (tree / "pkg").chmod(directory_mode)
+                source.chmod(file_mode)
+                executable.chmod(executable_mode)
                 os.utime(source, (timestamp, timestamp))
+                os.utime(executable, (timestamp, timestamp))
                 os.utime(tree / "pkg", (timestamp, timestamp))
                 os.utime(tree, (timestamp, timestamp))
             first = root / "first.tar.gz"
@@ -447,10 +458,40 @@ class ArtifactIdentityTests(unittest.TestCase):
                     "portable_resume-1.0.0",
                     "portable_resume-1.0.0/pkg",
                     "portable_resume-1.0.0/pkg/module.py",
+                    "portable_resume-1.0.0/pkg/tool",
                 ],
             )
             self.assertTrue(all(member.mtime == 1234567890 for member in members))
             self.assertTrue(all(member.uid == 0 and member.gid == 0 for member in members))
+            self.assertEqual(
+                {member.name: member.mode for member in members},
+                {
+                    "portable_resume-1.0.0": 0o755,
+                    "portable_resume-1.0.0/pkg": 0o755,
+                    "portable_resume-1.0.0/pkg/module.py": 0o644,
+                    "portable_resume-1.0.0/pkg/tool": 0o755,
+                },
+            )
+
+    @unittest.skipIf(os.name == "nt", "POSIX umask semantics required")
+    def test_reproducible_build_umask_normalizes_and_restores(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original = os.umask(0o077)
+            try:
+                with reproducible_build_umask():
+                    normalized_dir = root / "normalized"
+                    normalized_dir.mkdir()
+                    normalized_file = normalized_dir / "file"
+                    normalized_file.write_text("normalized\n", encoding="utf-8")
+                restored_file = root / "restored"
+                restored_file.write_text("restored\n", encoding="utf-8")
+            finally:
+                os.umask(original)
+
+            self.assertEqual(normalized_dir.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(normalized_file.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(restored_file.stat().st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":

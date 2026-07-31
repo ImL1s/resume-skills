@@ -21,7 +21,7 @@ in `SECURITY.md`.
 | Packaging matrix | **306/306** on current main tip (**17×18**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
 | Version identity (#118) | **Artifact layer implemented, unreleased:** current main base `0.4.0.dev0`; `check_version_state.py` rejects reuse of immutable `v0.3.4`; release tags reject `.devN`; one canonical identity is embedded and verified across wheel, sdist, 18 direct ZIPs, seven native ZIPs, host report, and installed runtime. Remaining external gate: activate/read back an immutable `v*` tag ruleset. |
 | Installed runner matrix | **306/306** on current main tip (**17×18**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
-| Python test suite | **820 pass locally** in the fresh 2026-07-31 canonical verification (v0.3.4 tag was 375; historical counts remain release-specific evidence only). |
+| Python test suite | **821 pass locally** in the fresh 2026-07-31 canonical verification (v0.3.4 tag was 375; historical counts remain release-specific evidence only). |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
 | Host-native headless Skill activation | **8/8 tested CLI surfaces pass** in v0.3.2-era evidence; fresh v0.3.4 host activation and Pi native activation **not-run** |
@@ -175,7 +175,7 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 
 | Area | Status | Required evidence |
 |---|---|---|
-| Current local release gates | pass | **820 pass locally** + **306/306** registry-derived installed-runner (2026-07-31); the Wave 0 snapshot was 426 tests + 81/81 on 2026-07-28 |
+| Current local release gates | pass | **821 pass locally** + **306/306** registry-derived installed-runner (2026-07-31); the Wave 0 snapshot was 426 tests + 81/81 on 2026-07-28 |
 | `v0.3.4` dual-OS release | pass | [Actions run 30269713516](https://github.com/ImL1s/resume-skills/actions/runs/30269713516), commit `fa1344bf62eb26332baea7b7ef4540a1a37acba8` |
 | `v0.3.4` PyPI publication | pass | [portable-resume 0.3.4](https://pypi.org/project/portable-resume/0.3.4/), public isolated 81-cell self-check |
 | `v0.3.2` dual-OS release | pass | [Actions run 30093776529](https://github.com/ImL1s/resume-skills/actions/runs/30093776529), commit `284865a4dc8c1c3dca16ee40f5204053cabb3a92` |

@@ -9,10 +9,11 @@ import re
 import stat
 import tarfile
 import tempfile
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from pathlib import PurePosixPath
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from portable_resume.build_identity import (
     assert_identity_matches_package,
@@ -31,6 +32,17 @@ EMBEDDED_IDENTITY = Path("resources/build-identity.json")
 _STABLE_BASE_VERSION = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 MAX_SDIST_FILE_BYTES = 64 * 1024 * 1024
 MAX_SDIST_TOTAL_BYTES = 512 * 1024 * 1024
+
+
+@contextmanager
+def reproducible_build_umask() -> Iterator[None]:
+    """Give generated public build files stable POSIX permissions."""
+
+    previous = os.umask(0o022)
+    try:
+        yield
+    finally:
+        os.umask(previous)
 
 
 def identity_sha256(identity: Mapping[str, Any]) -> str:
@@ -277,12 +289,15 @@ def write_reproducible_sdist(
                         info.uname = ""
                         info.gname = ""
                         info.mtime = normalized_epoch
-                        info.mode = stat.S_IMODE(metadata.st_mode)
                         if stat.S_ISDIR(metadata.st_mode):
+                            info.mode = 0o755
                             info.type = tarfile.DIRTYPE
                             info.size = 0
                             archive.addfile(info)
                         elif stat.S_ISREG(metadata.st_mode):
+                            info.mode = (
+                                0o755 if stat.S_IMODE(metadata.st_mode) & 0o111 else 0o644
+                            )
                             data = _read_staged_regular_file(entry, metadata)
                             total_bytes += len(data)
                             if total_bytes > MAX_SDIST_TOTAL_BYTES:

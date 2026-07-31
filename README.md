@@ -168,13 +168,14 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 ```
 
 `.github/workflows/ci.yml` runs those gates across Ubuntu/macOS and Python
-3.11–3.14, then builds the wheel/sdist twice from one identity pin and epoch,
-requires byte-for-byte reproducibility, proves the source package was not
-mutated, verifies the same embedded identity across all 27 generated artifacts
-in four artifact families,
-and smoke-installs the exact wheel and sdist with poisoned build-pin environment
-variables removed from child processes. `.github/workflows/release.yml` accepts
-only annotated `vMAJOR.MINOR.PATCH` tags reachable from `main`, re-runs dual-OS
+3.11–3.14, then builds the wheel/sdist twice from one identity pin and epoch
+under different parent umasks, requires byte-for-byte reproducibility, proves
+the source package was not mutated, verifies the same embedded identity across
+all 27 generated artifacts in four artifact families,
+and smoke-installs the exact wheel and sdist with poisoned build-pin
+environment variables removed from child processes.
+`.github/workflows/release.yml` accepts only annotated `vMAJOR.MINOR.PATCH` tags
+reachable from `main`, re-runs dual-OS
 gates, builds release bytes once from one pinned identity, tests those exact
 bytes, creates SHA-256 checksums and GitHub attestations, stages a GitHub
 Release, and publishes through PyPI Trusted Publishing.

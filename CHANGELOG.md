@@ -16,12 +16,14 @@
   installation permission modes, while the Git-only build-input digest still
   detects package mode drift before artifacts are produced. CI builds
   wheel/sdist twice with one pin and
-  `SOURCE_DATE_EPOCH`, requires byte-identical output, and proves the source tree
-  was not mutated. Archive validation bounds compressed bytes, member count,
-  total expanded bytes, and manifest reads; encrypted or unsupported-compression
-  required members now produce validation failures instead of escaping as
-  exceptions. Corrupt DEFLATE, BZIP2, LZMA, and Zstandard member payloads use
-  the same bounded decoder-error boundary in package and artifact validation;
+  `SOURCE_DATE_EPOCH`, normalizes generated build permissions, requires
+  byte-identical output even when the second build starts under `umask 077`, and
+  proves the source tree was not mutated. Archive validation bounds compressed
+  bytes, member count, total expanded bytes, and manifest reads; encrypted or
+  unsupported-compression required members now produce validation failures
+  instead of escaping as exceptions. Corrupt DEFLATE, BZIP2, LZMA, and
+  Zstandard member payloads use the same bounded decoder-error boundary in
+  package and artifact validation;
   unsupported ZIP metadata versions also return controlled failures before
   member reads begin. The host report is checked against
   registry-derived filenames, family paths, member counts, and canonical install
