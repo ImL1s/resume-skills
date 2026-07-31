@@ -564,7 +564,8 @@ class GrokAdapter:
             if not isinstance(kind, str):
                 raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
             kind = kind.casefold()
-            if _contains_encrypted(update):
+            public_update = {key: item for key, item in update.items() if key != "rawOutput"}
+            if _contains_encrypted(public_update):
                 recognized += 1
                 continue
             if kind in _ESSENTIAL_UNSUPPORTED:

@@ -697,7 +697,10 @@ class GrokAdapterTests(unittest.TestCase):
                         "toolCallId": "synthetic-tool",
                         "content": "public tool result",
                         "rawOutput": {
-                            "output_delta": [ignored_marker] * 2_873,
+                            "output_delta": [
+                                {"signature": ignored_marker},
+                                *([ignored_marker] * 2_872),
+                            ],
                         },
                     },
                 },
