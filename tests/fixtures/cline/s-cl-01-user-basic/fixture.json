@@ -1,0 +1,10 @@
+{
+  "case": "s-cl-01-user-basic",
+  "expected_code": 0,
+  "expected_operation": "show",
+  "expected_warnings": [],
+  "format_id": "cline-session-json-v1",
+  "provenance_ref": "docs/source-formats.md#cline-session-json-v1",
+  "source": "cline",
+  "synthetic": true
+}

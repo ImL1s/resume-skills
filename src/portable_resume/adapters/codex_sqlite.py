@@ -120,7 +120,16 @@ def _database_connection(path: str, root: str) -> Iterator[sqlite3.Connection]:
         yield connection
 
 
-def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) -> tuple[bool, list[SessionSummary]]:
+def _database_summaries(
+    path: str, root: str, query: Query, budget: ReadBudget
+) -> tuple[bool, list[SessionSummary], int]:
+    """Return ``(schema_supported, summaries, unresolved_path_count)``.
+
+    ``unresolved_path_count`` counts eligible SQL rows whose rollout path could
+    not be resolved (missing, symlink, UUID mismatch, or zstd without decoder).
+    Callers use it to decide read-only filesystem head fallback (#7).
+    """
+
     def _fetch_rows(connection: sqlite3.Connection) -> tuple[bool, str | None, list[tuple]]:
         supported, updated_column = _table_signature(connection)
         if not supported or updated_column is None:
@@ -167,9 +176,10 @@ def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) 
     with _database_connection(path, root) as connection:
         supported, _updated_column, rows = _fetch_rows(connection)
     if not supported:
-        return False, []
+        return False, [], 0
 
     values: list[SessionSummary] = []
+    unresolved = 0
     exact = _exact_uuid_ref(query.ref)
     for row in rows:
         budget.consume_records()
@@ -218,6 +228,7 @@ def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) 
             continue
         rollout = _resolve_rollout_path(root, rollout_raw, identifier)
         if rollout is None or (rollout.endswith(".zst") and _trusted_zstd() is None):
+            unresolved += 1
             continue
         values.append(
             SessionSummary(
@@ -235,4 +246,4 @@ def _database_summaries(path: str, root: str, query: Query, budget: ReadBudget) 
                 provider=SQLITE_FORMAT,
             )
         )
-    return True, values
+    return True, values, unresolved

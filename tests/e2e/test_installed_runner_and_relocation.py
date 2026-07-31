@@ -131,7 +131,7 @@ class RelocationTests(unittest.TestCase):
 
             env = {**os.environ, "PYTHONPATH": str(relocated / "src")}
             completed = subprocess.run(
-                [sys.executable, "-m", "portable_resume.install.cli", "matrix", "--json"],
+                [sys.executable, "-m", "portable_resume.install.cli", "matrix"],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -139,9 +139,10 @@ class RelocationTests(unittest.TestCase):
                 cwd=str(relocated),
             )
             report = json.loads(completed.stdout)
+            self.assertEqual(report["schema_version"], "portable-resume/install-result-v1")
             self.assertTrue(report["ok"])
             self.assertEqual(
-                report["cell_count"],
+                report["results"][0]["cell_count"],
                 matrix_dimensions()["cells"],
             )
 
@@ -160,7 +161,6 @@ class RelocationTests(unittest.TestCase):
                     "project",
                     "--project",
                     str(project),
-                    "--json",
                 ],
                 check=True,
                 capture_output=True,

@@ -1,3 +1,42 @@
+## Unreleased
+
+- GitHub Copilot CLI source (#44 Track B): `copilot-cli-events-jsonl-v1` reader for
+  `$COPILOT_HOME/session-state/<id>/events.jsonl` (local authority; not session-store.db /
+  Chronicle / cloud sync). Matrix is now **17×18=306**.
+- Kilo CLI source qualification (#46 Track B PR 1): pin `@kilocode/cli` v7.4.17 at
+  `a0364858a6e1b69a2e2dc5434a82d5cefbe79ea7`; source enablement remains **NO-GO**
+  until synthetic exact-schema fixtures prove `session_message`/event/projector authority,
+  migration/cloud provenance, and Kilo↔OpenCode wrong-adapter rejection. Counts stay 17×18=306.
+- Kilo CLI destination-only (#46 Track A): install into `.kilocode/skills` and
+  `~/.config/kilo/skills` (`KILO_CONFIG_DIR` override). Source remains research —
+  do not alias OpenCode storage. Matrix became **16×18=288**.
+- Gemini CLI compatibility source + destination (#45): `gemini-cli-session-jsonl-v1`
+  for `~/.gemini/tmp/<projectHash>/chats/session-*.jsonl` (independent of Antigravity).
+  Destination `.gemini/skills` / `~/.gemini/skills`. Matrix became **16×17=272**.
+- GitHub Copilot CLI destination (#44 Track A): install `resume-*` Skills into
+  `.github/skills` and `$COPILOT_HOME/skills` (default `~/.copilot/skills`).
+  Matrix became **15×16=240** (destination without source at that time).
+- Hermes source + destination (#43): `hermes-state-sqlite-v1` reader for
+  `~/.hermes/state.db` (schema version 23; root sessions; hide child/subagent).
+  Destination install to `.hermes/skills` / `~/.hermes/skills`. Matrix is now
+  **15×15=225**.
+- OpenHands source + destination (#42): `openhands-cli-events-v1` reader for
+  `~/.openhands/conversations/<id>/events/event-*.json` (local CLI only; no SDK
+  import / cloud / ACP). Destination install to `.agents/skills` and
+  `~/.openhands/skills`. Matrix is now **14×14=196**.
+- Cline source + destination (#41): `cline-session-json-v1` reader for
+  `~/.cline/data` (SQLite `sessions.db` index + authoritative
+  `<id>.messages.json` v1); default list hides subagent/child sessions;
+  destination install to `.cline/skills` and `~/.cline/skills`. Matrix is now
+  registry-derived **13×13=169**. Native Cline UI activation remains not-run.
+
+
+- Crush source + destination (#40): `crush-sqlite-v1` reader for per-project
+  `.crush/crush.db` (pinned goose_db_version max 7); default list hides child
+  sessions (`parent_session_id`); destination install to `.crush/skills` and
+  `~/.config/crush/skills`. Matrix is now registry-derived **12×12=144**. Native
+  Crush UI activation remains not-run.
+
 # Changelog
 
 ## Unreleased
@@ -11,7 +50,107 @@
   parent-directory symlink swaps cannot redirect writes or deletes outside the
   root (POSIX). Windows remains fail-closed where dirfd support is absent (#29).
 
+### Added
+- goose source + destination (#39): `goose-sessions-sqlite-v15` reader for
+  `sessions/sessions.db` (schema_version max 15); default list prefers
+  `session_type=user` and hides scheduled/sub_agent/hidden/gateway/acp plus
+  archived rows (exact id can still select them); destination filesystem
+  install to `.goose/skills` and `~/.config/goose/skills`. Matrix is now
+  registry-derived **11×11=121**. Legacy JSONL and native goose UI activation
+  remain out of scope / not-run.
+- OpenClaw source + destination (#37): `openclaw-agent-sqlite-v1` reader for
+  per-agent `agents/<id>/agent/openclaw-agent.sqlite` (schema user_version 11);
+  composite session ids `agentId:sessionId`; default list filters internal/cron
+  runs; destination filesystem install to workspace `skills/` and
+  `~/.openclaw/skills`. Native `openclaw skills install` / picker activation
+  remains not-run.
+
 ### Fixed
+- Claude exact-reference discovery (#19): absolute approved
+  `projects/<slug>/<uuid>.jsonl` paths are validated/read without enumerating
+  unrelated project directories; exact UUID + concrete cwd constructs the
+  deterministic slug path first and only broad-scans when that candidate is
+  absent or fails recorded-cwd validation (so a cwd-mismatched slug file
+  cannot hide a relocated eligible copy). Broad fallback uses a bounded
+  basename probe per project (no full per-project session scandir). Recorded
+  primary cwd remains authoritative — slug name alone never selects.
+  Discovery optimization only; graph/metadata-window behavior unchanged.
+- Native package contracts (#27): versioned offline contracts per direct-skill
+  and plugin/marketplace surface (`package-contracts-v1`); builder validates
+  each archive (members, manifests, skills layout, marketplace source paths,
+  forbidden install runtime) before reporting; `host-packages.json` is
+  `host-packages-v2` with per-artifact `contract_id`, `offline_validation`,
+  and explicit `native_evidence_status=not-run` (historical v0.3.2 ref only).
+  Native CLI install/activate remains a separate evidence layer.
+- Installer CLI contract (#32 Option A): install/verify/uninstall/recover/
+  matrix/quick-install/audit-host always emit versioned
+  `portable-resume/install-result-v1` JSON on stdout with a uniform `results`
+  array (no silent no-op `--json`). `verify` no longer accepts `--dry-run`.
+  `hosts` remains human by default with optional `--json`. Docs/scripts updated.
+- Project-scope control state split (#33 Option A): mutable installer control
+  files (manifest, lock, journal, backups, stage) live under
+  `.portable-resume/.state/` with mode `0700` where supported; shareable
+  payload remains `.portable-resume/runtime|resources` plus deterministic
+  `.portable-resume/.gitignore` that ignores only `.state/`. Legacy v1 control
+  files migrate into `.state/` under lock; verify dual-reads legacy paths.
+  Absolute claim roots stay machine-local (never in committed payload).
+  Residual: portable relative claim identity still uses absolute root strings
+  inside gitignored manifest only.
+- Discovery duplicate/shadow scan (#34): each host has executable
+  `DiscoveryRoot` policy (primary + known alternates); `install` fails closed
+  with `E_INSTALL_SHADOW` when a higher-precedence root holds a divergent
+  `resume-*` Skill; equal-tier / unknown-precedence copies warn; identical
+  payloads and same-physical shared roots allow. New read-only
+  `install-resume-skills audit-host`; `verify` attaches a discovery report;
+  `hosts --json` emits `discovery_roots`. Foreign roots stay read-only;
+  no automatic delete. Follow-up: global install without `--project` scans
+  CWD project roots; alternate malformed manifests warn not abort; user
+  primary roots honor host env homes (`KIMI_CODE_HOME`). Residual: plugin
+  tree wildcards, host-native activation provenance, versioned precedence
+  evidence (#27).
+- Collect-free `stable_scan_lines` (#10 residual): verified attempts spool lines
+  (RAM spill to disk) and replay after fingerprint checks instead of retaining a
+  full `list[ScannedLine]`. Mid-attempt output is still never exposed. Zstd
+  whole-decompress for compressed Codex rollouts remains residual under #8.
+- Host-neutral Skill payloads (#25): direct `resume-*/SKILL.md` no longer embeds
+  host activation prose; all destinations share `agent-skills-portable-v1`
+  package bytes so Codex + Antigravity (and other shared-root pairs) can claim
+  one physical Skill tree. Host grammar stays in catalog / `hosts` / docs.
+- Multi-root install locking (#23): `--host all` / multi-target install
+  acquires exclusive locks on every unique physical root in canonical order
+  before checkpoint or mutation; replans and compensates while locks remain
+  held. Compensation refuses foreign digests outside the transaction allowed
+  set. Same-process compensation only — per-root journals remain the durable
+  crash boundary (not a durable multi-root coordinator).
+- Installer uninstall/verify transactions (#22): `uninstall` is a journaled
+  recoverable transaction (`operation=uninstall`) that snapshots sole-claim
+  owned files before unlink; `recover` finishes published uninstalls or rolls
+  incomplete ones back to the previous generation. Post-snapshot digest drift
+  is retained (not rolled back over concurrent user edits). `verify` takes the
+  exclusive root lock on POSIX only when a support tree already exists so
+  never-installed roots stay observationally pure (Windows residual remains
+  #29). Pending journals report `E_RECOVERY_REQUIRED`, not false drift.
+- Destination root resolution (#24): global install honors documented host
+  env homes (Kimi `$KIMI_CODE_HOME/skills`); isolation `--home` ignores host
+  env overrides; `hosts --json` reports `global_root_source` / `project_root_source`.
+- Grok/Antigravity large histories (#15): Grok list is metadata-first
+  (`summary.json` + mtime; no full updates parse for list); Antigravity exact
+  show no longer depends on optional `brain/index.json` rediscovery (soft stale
+  on corrupt/oversized index); list/show stream-reduce without retaining every
+  outer record.
+- Codex streaming show (#8): plain rollout `show` streams via
+  `stable_scan_lines` + attempt-local history reduce (no whole-file
+  `stable_read_bytes` / full outer-record list); `updated_at` pinned to the
+  scanned inode. Compressed rollouts still use trusted-zstd decompress + line
+  parse. Large synthetic (~20 MiB) regression included.
+- Codex probe/list discovery (#7): capability from SQLite signature without
+  walking `sessions/`; probe uses a soft-capped sample (not full tree walk);
+  plain rollout discovery uses byte-bounded `stable_read_windows` heads;
+  filesystem head fallback when schema missing, paths unresolved/stale, or the
+  recognized DB is under-filled (sparse index).
+- Hosts report commands (#66): recommend installed `install-resume-skills` entrypoint
+  with argv arrays; label source-checkout forms separately; scope shared-root
+  warnings to selected host sets.
 - CI de-duplication (#67): `scripts/self_verify.py` exposes named stages and
   profiles; GitHub Actions matrix uses `ci-compat` (suite once per cell) while
   docs/secrets run once in `quality`; package job depends on both.

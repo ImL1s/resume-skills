@@ -1,0 +1,3 @@
+{"sessionId":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","projectHash":"f630ad93b344dd6bd04d44ecde70b128e7e77f9ecc28ee90b62b018734a7e8c4","startTime":"2024-01-01T12:00:05.000Z","lastUpdated":"2024-01-01T12:00:05.000Z","kind":"subagent"}
+{"id":"msg-su","timestamp":"2024-01-01T12:00:05.000Z","type":"user","content":[{"text":"subagent should hide from default list"}]}
+{"id":"msg-sa","timestamp":"2024-01-01T12:00:05.000Z","type":"gemini","content":[{"text":"subagent reply"}]}

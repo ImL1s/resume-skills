@@ -99,6 +99,79 @@ FIXTURES: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
             "synthetic assistant reply on the active branch",
         ),
     ),
+    "openclaw": (
+        "tests/fixtures/openclaw/s-oc-01-basic",
+        "/tmp/project",
+        "main:sess-basic-0001",
+        (
+            "Resume context from /tmp/project",
+            "Synthetic assistant reply",
+        ),
+    ),
+    "goose": (
+        "tests/fixtures/goose/s-go-01-user-basic",
+        "/tmp/project",
+        "go000101-0101-4101-8101-010101010101",
+        (
+            "synthetic goose user prompt",
+            "synthetic goose assistant reply",
+        ),
+    ),
+    "crush": (
+        "tests/fixtures/crush/s-cr-01-user-basic",
+        "/tmp/project",
+        "cr000101-0101-4101-8101-010101010101",
+        (
+            "synthetic crush user prompt",
+            "synthetic crush assistant reply",
+        ),
+    ),
+    "cline": (
+        "tests/fixtures/cline/s-cl-01-user-basic",
+        "/tmp/project",
+        "cl000101-0101-4101-8101-010101010101",
+        (
+            "synthetic cline user prompt",
+            "synthetic cline assistant reply",
+        ),
+    ),
+    "openhands": (
+        "tests/fixtures/openhands/s-oh-01-user-basic",
+        "/tmp/project",
+        "oh000101010141018101010101010101",
+        (
+            "synthetic openhands user prompt",
+            "synthetic openhands assistant reply",
+        ),
+    ),
+    "hermes": (
+        "tests/fixtures/hermes/s-hm-01-user-basic",
+        "/tmp/project",
+        "hm000101-0101-4101-8101-010101010101",
+        (
+            "synthetic hermes user prompt",
+            "synthetic hermes assistant reply",
+        ),
+    ),
+    "gemini": (
+        "tests/fixtures/gemini/s-gm-01-user-basic",
+        "/tmp/project",
+        "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        (
+            "synthetic gemini user prompt",
+            "synthetic gemini assistant reply",
+        ),
+    ),
+    "github-copilot": (
+        "tests/fixtures/github-copilot/s-gcp-01-user-basic",
+        "/tmp/project",
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        (
+            "synthetic copilot user prompt",
+            "synthetic copilot assistant reply",
+            "bash",
+        ),
+    ),
 }
 
 
@@ -259,7 +332,6 @@ def main(argv: list[str] | None = None) -> int:
                     str(home),
                     "--root",
                     skill_root,
-                    "--json",
                 ],
                 env=env,
             )
@@ -278,6 +350,10 @@ def main(argv: list[str] | None = None) -> int:
             for source in SOURCES:
                 _fixture_rel, cwd, session_id, contents = FIXTURES[source]
                 fixture = fixtures[source]
+                # Crush binds cwd from project layout (<project>/.crush/crush.db);
+                # align smoke query.cwd with the synthetic project root.
+                if source == "crush":
+                    cwd = str(fixture.resolve())
                 runner = Path(skill_root) / f"resume-{source}" / "scripts" / "run_reader.py"
                 if not runner.is_file():
                     cells.append(

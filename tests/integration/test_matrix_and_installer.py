@@ -17,7 +17,12 @@ import portable_resume.install.cli as install_cli_module
 from portable_resume.install.cli import run as install_cli_run
 from portable_resume.install.catalog import HOST_KEYS, HOST_PROFILES, matrix_cells, resolve_skill_root
 from portable_resume.install.manifest import claim_key
-from portable_resume.install.render import frontmatter_keys, materialize_plan, render_skill_markdown
+from portable_resume.install.render import (
+    frontmatter_keys,
+    materialize_plan,
+    package_identity,
+    render_skill_markdown,
+)
 import portable_resume.install.transaction as transaction_module
 from portable_resume.install.transaction import (
     execute_install,
@@ -32,6 +37,10 @@ from portable_resume.registry import matrix_dimensions
 
 
 class MatrixTests(unittest.TestCase):
+    def test_all_hosts_share_one_package_identity(self) -> None:
+        identities = {package_identity(materialize_plan(host)) for host in HOST_KEYS}
+        self.assertEqual(len(identities), 1)
+
     def test_all_cells_and_strict_frontmatter(self) -> None:
         cells = matrix_cells()
         expected = matrix_dimensions()["cells"]
@@ -52,7 +61,9 @@ class MatrixTests(unittest.TestCase):
             self.assertNotIn("web search", text.lower())
             self.assertNotIn("URL-fetch", text)
             self.assertIn("owned reader must remain offline", text)
-            self.assertIn(HOST_PROFILES[host].profile_id, text)
+            # #25: host profile IDs stay in the catalog, not the portable Skill body.
+            self.assertNotIn(HOST_PROFILES[host].profile_id, text)
+            self.assertIn("host-neutral", text)
             body = materialize_plan(host)
             skill_md = body[f"resume-{source}/SKILL.md"].decode("utf-8")
             self.assertEqual(skill_md, text)
@@ -91,8 +102,13 @@ class InstallerTests(unittest.TestCase):
         self.project = Path(self._tmpdir.name) / "project"
         self.home.mkdir()
         self.project.mkdir()
+        # Isolate #34 global discovery project scan from the developer repo CWD
+        # (which may already hold .grok/skills etc.).
+        self._old_cwd = os.getcwd()
+        os.chdir(self.project)
 
     def tearDown(self) -> None:
+        os.chdir(self._old_cwd)
         self._tmpdir.cleanup()
 
     def _root(self, host: str, scope: str = "project") -> str:
@@ -182,7 +198,7 @@ class InstallerTests(unittest.TestCase):
         result = execute_install(plan, force_with_backup=True)
         self.assertTrue(result["ok"])
         self.assertNotEqual(target.read_text(encoding="utf-8"), "user owned skill\n")
-        backups = list((Path(root) / ".portable-resume" / "backups").rglob("SKILL.md"))
+        backups = list((Path(root) / ".portable-resume" / ".state" / "backups").rglob("SKILL.md"))
         self.assertTrue(backups)
         self.assertEqual(backups[0].read_text(encoding="utf-8"), "user owned skill\n")
         verify_root(root)
@@ -222,8 +238,9 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "E_VERIFY_MISMATCH")
 
     def test_all_hosts_project_install_matrix(self) -> None:
-        # Use distinct explicit roots: codex and antigravity share the natural
-        # project path `.agents/skills` but host-specific bodies are not byte-identical.
+        # Host-neutral Skill payloads (#25): natural shared roots (e.g. codex +
+        # antigravity `.agents/skills`) are byte-identical. Distinct roots still
+        # exercise every host profile's install path.
         for host in sorted(HOST_KEYS):
             root = str(self.project / "skills-roots" / host)
             plan = plan_install(host=host, scope="project", root=root)
@@ -235,14 +252,31 @@ class InstallerTests(unittest.TestCase):
                 self.assertTrue(path.is_file(), f"{host}/{source}")
                 self.assertEqual(frontmatter_keys(path.read_text(encoding="utf-8")), ["name", "description"])
 
-    def test_shared_natural_root_with_divergent_hosts_conflicts(self) -> None:
+    def test_codex_antigravity_share_natural_project_root(self) -> None:
+        """#25: compatible hosts claim one physical `.agents/skills` tree."""
         root = self._root("codex")  # .agents/skills
         execute_install(plan_install(host="codex", scope="project", root=root))
-        with self.assertRaises(DiagnosticError) as ctx:
-            plan_install(host="antigravity", scope="project", root=root)
-        self.assertEqual(ctx.exception.code, "E_INSTALL_CONFLICT")
+        execute_install(plan_install(host="antigravity", scope="project", root=root))
+        manifest = load_manifest(root)
+        self.assertIsNotNone(manifest)
+        assert manifest is not None
+        claims = list(manifest.claims)
+        self.assertEqual(len(claims), 2)
+        skill = Path(root) / "resume-codex" / "SKILL.md"
+        body = skill.read_text(encoding="utf-8")
+        self.assertNotIn("Host activation (codex-v1)", body)
+        self.assertNotIn("Host activation (antigravity-v1)", body)
+        self.assertIn("host-neutral", body)
+        verify_root(root, claim=claim_key(host="codex", scope="project", root=root))
+        verify_root(root, claim=claim_key(host="antigravity", scope="project", root=root))
+        un = uninstall_claim(host="codex", scope="project", root=root)
+        self.assertTrue(un["ok"])
+        # Shared files remain for the surviving claim.
+        self.assertTrue(skill.is_file())
+        verify_root(root, claim=claim_key(host="antigravity", scope="project", root=root))
 
-    def test_all_host_install_preflights_shared_realpath_before_mutation(self) -> None:
+    def test_all_host_install_shared_realpath_with_identical_payloads(self) -> None:
+        """Symlinked global roots succeed when payload bytes match (#25)."""
         shared = self.home / ".claude" / "skills"
         shared.mkdir(parents=True)
         antigravity_parent = self.home / ".gemini" / "config"
@@ -261,16 +295,13 @@ class InstallerTests(unittest.TestCase):
                     "global",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
 
-        self.assertEqual(code, 6)
-        diagnostic = json.loads(stderr.getvalue())
-        self.assertEqual(diagnostic["code"], "E_INSTALL_CONFLICT")
-        self.assertEqual(set(diagnostic["family"]), {"antigravity", "claude"})
-        self.assertFalse((shared / ".portable-resume").exists())
-        self.assertFalse(any(shared.glob("resume-*")))
+        self.assertEqual(code, 0, stderr.getvalue())
+        self.assertTrue((shared / ".portable-resume" / ".state" / "manifest.json").is_file())
+        self.assertTrue(any(shared.glob("resume-*")))
+        verify_root(str(shared))
 
     def test_quick_install_defaults_to_safe_global_roots(self) -> None:
         stdout = StringIO()
@@ -282,14 +313,16 @@ class InstallerTests(unittest.TestCase):
                     "qwen",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
 
         self.assertEqual(code, 0, stderr.getvalue())
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["plan"]["host"], "qwen")
-        self.assertEqual(payload["plan"]["scope"], "global")
+        self.assertEqual(payload["schema_version"], "portable-resume/install-result-v1")
+        self.assertEqual(payload["command"], "install")
+        result = payload["results"][0]
+        self.assertEqual(result["plan"]["host"], "qwen")
+        self.assertEqual(result["plan"]["scope"], "global")
         root = Path(self._root("qwen", scope="global"))
         self.assertTrue((root / "resume-qwen" / "SKILL.md").is_file())
         verify_root(
@@ -315,7 +348,6 @@ class InstallerTests(unittest.TestCase):
                     "global",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
 
@@ -329,21 +361,21 @@ class InstallerTests(unittest.TestCase):
         earlier_root = Path(self._root("claude", scope="global"))
         execute_install(plan_install(host="claude", scope="global", root=str(earlier_root)))
         before = self._file_bytes(earlier_root)
-        original_execute = install_cli_module.execute_install
+        original_execute = transaction_module.execute_install
         calls = 0
 
-        def fail_later_root(plan, *, force_with_backup=False):
+        def fail_later_root(plan, *, force_with_backup=False, lock=None):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise OSError("injected later-root failure")
-            return original_execute(plan, force_with_backup=force_with_backup)
+            return original_execute(plan, force_with_backup=force_with_backup, lock=lock)
 
         stdout = StringIO()
         stderr = StringIO()
         with (
             mock.patch.object(install_cli_module, "_hosts", return_value=["claude", "grok"]),
-            mock.patch.object(install_cli_module, "execute_install", side_effect=fail_later_root),
+            mock.patch.object(transaction_module, "execute_install", side_effect=fail_later_root),
             redirect_stdout(stdout),
             redirect_stderr(stderr),
         ):
@@ -356,31 +388,39 @@ class InstallerTests(unittest.TestCase):
                     "global",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
 
         self.assertEqual(code, 8)
         self.assertEqual(json.loads(stderr.getvalue())["code"], "E_INVARIANT")
-        self.assertEqual(self._file_bytes(earlier_root), before)
+        # Installer lock metadata is process-owned and may be rewritten while
+        # multi-root holds exclusive locks (#23); compare payload+manifest only.
+        def without_lock(tree: dict[str, bytes]) -> dict[str, bytes]:
+            return {
+                path: data
+                for path, data in tree.items()
+                if not path.endswith("install.lock")
+            }
+
+        self.assertEqual(without_lock(self._file_bytes(earlier_root)), without_lock(before))
         verify_root(str(earlier_root))
 
     def test_all_host_later_failure_removes_earlier_fresh_install(self) -> None:
         earlier_root = Path(self._root("claude", scope="global"))
         self.assertEqual(self._file_bytes(earlier_root), {})
-        original_execute = install_cli_module.execute_install
+        original_execute = transaction_module.execute_install
         calls = 0
 
-        def fail_later_root(plan, *, force_with_backup=False):
+        def fail_later_root(plan, *, force_with_backup=False, lock=None):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise OSError("injected later-root failure")
-            return original_execute(plan, force_with_backup=force_with_backup)
+            return original_execute(plan, force_with_backup=force_with_backup, lock=lock)
 
         with (
             mock.patch.object(install_cli_module, "_hosts", return_value=["claude", "grok"]),
-            mock.patch.object(install_cli_module, "execute_install", side_effect=fail_later_root),
+            mock.patch.object(transaction_module, "execute_install", side_effect=fail_later_root),
             redirect_stdout(StringIO()),
             redirect_stderr(StringIO()),
         ):
@@ -393,30 +433,36 @@ class InstallerTests(unittest.TestCase):
                     "global",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
 
         self.assertEqual(code, 8)
-        self.assertEqual(self._file_bytes(earlier_root), {})
+        # Exclusive install.lock may remain while multi-root releases locks
+        # after compensation (#23); payload/manifest must be gone.
+        remaining = {
+            path: data
+            for path, data in self._file_bytes(earlier_root).items()
+            if not path.endswith("install.lock")
+        }
+        self.assertEqual(remaining, {})
 
     def test_all_host_reports_partial_state_when_compensation_fails(self) -> None:
-        original_execute = install_cli_module.execute_install
+        original_execute = transaction_module.execute_install
         calls = 0
 
-        def fail_later_root(plan, *, force_with_backup=False):
+        def fail_later_root(plan, *, force_with_backup=False, lock=None):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise OSError("injected later-root failure")
-            return original_execute(plan, force_with_backup=force_with_backup)
+            return original_execute(plan, force_with_backup=force_with_backup, lock=lock)
 
         stderr = StringIO()
         with (
             mock.patch.object(install_cli_module, "_hosts", return_value=["claude", "grok"]),
-            mock.patch.object(install_cli_module, "execute_install", side_effect=fail_later_root),
+            mock.patch.object(transaction_module, "execute_install", side_effect=fail_later_root),
             mock.patch.object(
-                install_cli_module,
+                transaction_module,
                 "restore_install_checkpoint",
                 side_effect=DiagnosticError("E_RECOVERY_REQUIRED"),
             ),
@@ -432,7 +478,6 @@ class InstallerTests(unittest.TestCase):
                     "global",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
 
@@ -461,7 +506,6 @@ class InstallerTests(unittest.TestCase):
                     "global",
                     "--home",
                     str(self.home),
-                    "--json",
                 ]
             )
         self.assertEqual(code, 7)

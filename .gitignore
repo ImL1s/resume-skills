@@ -31,3 +31,8 @@ host-packages/
 .env
 .env.*
 !.env.example
+
+# local agent artifacts
+.playwright-mcp/
+codex-code-review.png
+codex-environments.png

@@ -1,0 +1,10 @@
+{
+  "case": "s-cl-03-unsupported-messages",
+  "expected_code": 5,
+  "expected_operation": "error",
+  "expected_warnings": [],
+  "format_id": "cline-session-json-v1",
+  "provenance_ref": "docs/source-formats.md#cline-session-json-v1",
+  "source": "cline",
+  "synthetic": true
+}

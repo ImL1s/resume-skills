@@ -4,8 +4,8 @@
 
 | Layer | What it proves | Status |
 |---|---|---|
-| Packaging matrix | Enabled destinations × sources render safely (currently **9×9** on `main`) | **81/81** on this release (published `0.3.3` remains historical **64/64**) |
-| Installed runner | Installed `run_reader` list/show works on fixtures | **81/81** on this release (published `0.3.3` remains historical **64/64**) |
+| Packaging matrix | Enabled destinations × sources render safely (currently **17×18** on `main`) | **306/306** on current main (published `0.3.4` remains historical **81/81**) |
+| Installed runner | Installed `run_reader` list/show works on fixtures | **306/306** on current main (published `0.3.4` remains historical **81/81**) |
 | Native package install | Host CLI/TUI accepts the generated local plugin/extension | **7/7 tested on v0.3.2** |
 | Host-native headless activation | Host discovers/invokes the Skill and runs its owned reader | **8/8 tested** in v0.3.2-era evidence; fresh v0.3.4 host activation and Pi native activation **not-run** |
 | Public marketplace install | Host installs a published listing | **6/6 compatible hosts tested on v0.3.2**; fresh v0.3.4 reinstall **not-run** |
@@ -98,3 +98,11 @@ the six public installation rows and two picker rows above satisfy only those
 scoped v0.3.2 claims. A green filesystem/runner matrix (historical 64-cell or
 current 81-cell) is not substitute evidence for a host picker, a public catalog,
 or a vendor-curated directory.
+
+| crush | not-run | filesystem install only; native picker not-run |
+| cline | not-run | filesystem install only; native picker not-run |
+| openhands | not-run | filesystem install only; native picker not-run |
+| hermes | not-run | filesystem install only; native picker not-run |
+| github-copilot | not-run | source events.jsonl supported offline; destination filesystem install; native plugins/picker not-run |
+| gemini | not-run | compat filesystem install; not Antigravity; native picker not-run |
+| kilo | not-run | destination-only filesystem install; marketplace/UI not-run |

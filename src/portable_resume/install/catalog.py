@@ -19,6 +19,10 @@ MANIFEST_SCHEMA = "portable-resume/install-manifest-v1"
 SKILL_DIR_LAYOUT = "<skill-name>/SKILL.md + scripts/run_reader.py"
 
 
+# Compatible hosts with the same profile render byte-identical direct Skill trees (#25).
+SKILL_PAYLOAD_PORTABLE_V1 = "agent-skills-portable-v1"
+
+
 @dataclass(frozen=True, slots=True)
 class HostProfile:
     key: str
@@ -39,6 +43,21 @@ class HostProfile:
     activation_examples: tuple[str, ...] = ()
     caveats: tuple[str, ...] = ()
     evidence_notes: str = ""
+    # When set, global scope prefers $ENV/<global_env_rel> over $HOME/<global_rel>
+    # unless isolation --home is used (#24). Only destination-documented homes.
+    global_home_env: str | None = None
+    global_env_rel: str = "skills"
+    # Direct Skill tree compatibility group (#25). Same profile ⇒ same package bytes.
+    skill_payload_profile: str = SKILL_PAYLOAD_PORTABLE_V1
+
+
+@dataclass(frozen=True, slots=True)
+class SkillRootResolution:
+    """Resolved install root plus provenance for plans/hosts report (#24)."""
+
+    path: str
+    root_source: str
+    profile_id: str
 
 
 HOST_PROFILES: dict[str, HostProfile] = {
@@ -276,7 +295,7 @@ HOST_PROFILES: dict[str, HostProfile] = {
         ),
         arguments_note="No invented slash-command argv channel is claimed for this host.",
         caveats=(
-            "Project .agents/skills collides with Codex — use distinct --root when both hosts need divergent skill bodies.",
+            "Project `.agents/skills` is shared with Codex; host-neutral Skill payloads (#25) allow both claims on one tree.",
             "AGY / AGY CLI / AGY IDE may scan different global paths; ~/.gemini/config/skills is the cross-product global default here.",
             "Gemini CLI uses ~/.gemini/skills and .gemini/skills with .agents/skills alias precedence — not identical to Antigravity defaults.",
         ),
@@ -392,7 +411,7 @@ HOST_PROFILES: dict[str, HostProfile] = {
     ),
     "kimi": HostProfile(
         key="kimi",
-        profile_id="kimi-code-v1",
+        profile_id="kimi-code-v2",
         project_rel=".kimi-code/skills",
         global_rel=".kimi-code/skills",
         display_name="Kimi Code CLI",
@@ -433,12 +452,16 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "Current and legacy plugin manifests are incompatible.",
             "Plugins can execute tools; direct SKILL.md installation is the lower-trust default.",
             "Visual picker interaction and public marketplace publication are separate evidence claims.",
+            "Global install honors $KIMI_CODE_HOME/skills when set; isolation --home ignores host env overrides.",
         ),
         evidence_notes=(
             "Official Kimi Code docs: .kimi-code/skills, cross-tool .agents roots, "
             "/skill:<name>, kimi.plugin.json, ZIP/GitHub plugin installs, and custom "
-            "marketplace catalogs (checked 2026-07-24)."
+            "marketplace catalogs (checked 2026-07-24). Destination root policy: "
+            "KIMI_CODE_HOME (#24, profile kimi-code-v2)."
         ),
+        global_home_env="KIMI_CODE_HOME",
+        global_env_rel="skills",
     ),
     "pi": HostProfile(
         key="pi",
@@ -482,6 +505,427 @@ HOST_PROFILES: dict[str, HostProfile] = {
         ),
         evidence_level="verified-filesystem",
     ),
+    "openclaw": HostProfile(
+        key="openclaw",
+        profile_id="openclaw-v1",
+        project_rel="skills",
+        global_rel=".openclaw/skills",
+        display_name="OpenClaw",
+        official_docs=(
+            "https://github.com/openclaw/openclaw/blob/main/docs/tools/skills.md",
+        ),
+        project_layout="<workspace>/skills/<name>/SKILL.md",
+        global_layout="~/.openclaw/skills/<name>/SKILL.md",
+        alternate_project_roots=(".agents/skills",),
+        alternate_global_roots=("~/.agents/skills",),
+        install_methods=(
+            "This installer: install-resume-skills install --host openclaw --scope project|global",
+            "Manual: copy each resume-*/ folder into workspace skills/ or ~/.openclaw/skills/",
+            "Also: openclaw skills install <local-skill-directory> [--global] (native route; not-run here)",
+        ),
+        activation_help=(
+            "Load resume-<source> from the workspace skills/ or ~/.openclaw/skills tree. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-openclaw with ref latest",
+            "Use skill resume-claude with ref main:sess-…",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (composite agentId:sessionId, native session id when unique, "
+            "or latest). Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
+        ),
+        caveats=(
+            "Default project root is workspace skills/ (first-class Agent Skills root); "
+            ".agents/skills is compatibility-only for this installer.",
+            "Does not start Gateway, ClawHub, or messaging transports.",
+            "Native openclaw skills install / picker activation evidence remains not-run.",
+        ),
+        evidence_notes=(
+            "OpenClaw Skills docs: workspace skills/, .agents/skills, ~/.agents/skills, "
+            "~/.openclaw/skills (checked 2026-07-26). Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+    ),
+    "goose": HostProfile(
+        key="goose",
+        profile_id="goose-v1",
+        project_rel=".goose/skills",
+        global_rel=".config/goose/skills",
+        display_name="goose",
+        official_docs=(
+            "https://github.com/aaif-goose/goose/blob/main/documentation/docs/guides/context-engineering/using-skills.md",
+        ),
+        project_layout="<project>/.goose/skills/<name>/SKILL.md",
+        global_layout="~/.config/goose/skills/<name>/SKILL.md",
+        alternate_project_roots=(".agents/skills",),
+        alternate_global_roots=("~/.agents/skills",),
+        install_methods=(
+            "This installer: install-resume-skills install --host goose --scope project|global",
+            "Manual: copy each resume-*/ folder into .goose/skills/ or ~/.config/goose/skills/",
+        ),
+        activation_help=(
+            "Load resume-<source> from the goose skills tree. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-goose with ref latest",
+            "Use skill resume-goose with a session id",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (native session id or latest). "
+            "Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
+        ),
+        caveats=(
+            "SQLite sessions.db is the only supported source store; legacy JSONL is out of scope.",
+            "Does not invoke goose CLI/Desktop, Chat Recall, MCP, or ACP.",
+            "Native goose UI / picker activation evidence remains not-run.",
+        ),
+        evidence_notes=(
+            "goose Agent Skills docs + sessions.db schema v15 fixtures (checked 2026-07-26). "
+            "Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+    ),
+    "crush": HostProfile(
+        key="crush",
+        profile_id="crush-v1",
+        project_rel=".crush/skills",
+        global_rel=".config/crush/skills",
+        display_name="Crush",
+        official_docs=(
+            "https://github.com/charmbracelet/crush",
+        ),
+        project_layout="<project>/.crush/skills/<name>/SKILL.md",
+        global_layout="~/.config/crush/skills/<name>/SKILL.md",
+        alternate_project_roots=(".agents/skills",),
+        alternate_global_roots=("~/.agents/skills", "~/.claude/skills"),
+        install_methods=(
+            "This installer: install-resume-skills install --host crush --scope project|global",
+            "Manual: copy each resume-*/ folder into .crush/skills/ or ~/.config/crush/skills/",
+        ),
+        activation_help=(
+            "Load resume-<source> from the Crush skills tree. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-crush with ref latest",
+            "Use skill resume-crush with a session id",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (native session id or latest). "
+            "Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
+        ),
+        caveats=(
+            "Per-project .crush/crush.db is the supported store; no recursive home scan.",
+            "Does not invoke Crush CLI/TUI, crush serve, migrations, MCP, or providers.",
+            "Native Crush UI / picker activation evidence remains not-run.",
+        ),
+        evidence_notes=(
+            "Crush crush.db goose_db_version=7 fixtures + Agent Skills roots "
+            "(checked 2026-07-30). Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+    ),
+    "cline": HostProfile(
+        key="cline",
+        profile_id="cline-v1",
+        project_rel=".cline/skills",
+        global_rel=".cline/skills",
+        display_name="Cline",
+        official_docs=(
+            "https://docs.cline.bot/customization/skills",
+        ),
+        project_layout="<project>/.cline/skills/<name>/SKILL.md",
+        global_layout="~/.cline/skills/<name>/SKILL.md",
+        alternate_project_roots=(".clinerules/skills", ".claude/skills"),
+        alternate_global_roots=(),
+        install_methods=(
+            "This installer: install-resume-skills install --host cline --scope project|global",
+            "Manual: copy each resume-*/ folder into .cline/skills/ or ~/.cline/skills/",
+        ),
+        activation_help=(
+            "Load resume-<source> from the Cline skills tree via use_skill or slash command. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-cline with ref latest",
+            "Use skill resume-cline with a session id",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (native session id or latest). "
+            "Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
+        ),
+        caveats=(
+            "SQLite index is discovery-only; messages JSON is authoritative for transcripts.",
+            "Does not invoke Cline CLI/hub/SDK, connectors, or migrations.",
+            "Native Cline UI / picker activation evidence remains not-run.",
+        ),
+        evidence_notes=(
+            "Cline sessions.db + messages.json v1 fixtures + Skills docs "
+            "(checked 2026-07-30). Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+    ),
+    "openhands": HostProfile(
+        key="openhands",
+        profile_id="openhands-v1",
+        project_rel=".agents/skills",
+        global_rel=".openhands/skills",
+        display_name="OpenHands",
+        official_docs=(
+            "https://docs.openhands.dev/overview/skills",
+            "https://docs.openhands.dev/overview/skills/adding",
+        ),
+        project_layout="<project>/.agents/skills/<name>/SKILL.md",
+        global_layout="~/.openhands/skills/<name>/SKILL.md",
+        alternate_project_roots=(),
+        alternate_global_roots=(),
+        install_methods=(
+            "This installer: install-resume-skills install --host openhands --scope project|global",
+            "Manual: copy each resume-*/ folder into .agents/skills/ or ~/.openhands/skills/",
+        ),
+        activation_help=(
+            "Load resume-<source> from the OpenHands skills tree. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-openhands with ref latest",
+            "Use skill resume-openhands with a conversation id",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (native conversation id or latest). "
+            "Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
+        ),
+        caveats=(
+            "Local CLI event-file store only; does not query OpenHands Cloud or ACP.",
+            "Does not invoke openhands CLI/SDK, register default tools, or load org skills.",
+            "Native OpenHands UI / picker activation evidence remains not-run.",
+        ),
+        evidence_notes=(
+            "OpenHands CLI LocalFileStore event-*.json fixtures + Skills docs "
+            "(checked 2026-07-31). Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+    ),
+    "hermes": HostProfile(
+        key="hermes",
+        profile_id="hermes-v1",
+        project_rel=".hermes/skills",
+        global_rel=".hermes/skills",
+        display_name="Hermes Agent",
+        official_docs=(
+            "https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/skills.md",
+        ),
+        project_layout="<project>/.hermes/skills/<name>/SKILL.md",
+        global_layout="$HERMES_HOME/skills/<name>/SKILL.md (default ~/.hermes/skills/)",
+        alternate_project_roots=(),
+        alternate_global_roots=(),
+        install_methods=(
+            "This installer: install-resume-skills install --host hermes --scope project|global",
+            "Manual: copy each resume-*/ folder into $HERMES_HOME/skills or ~/.hermes/skills/",
+        ),
+        activation_help=(
+            "Load resume-<source> from the Hermes skills tree via slash command. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-hermes with ref latest",
+            "Use skill resume-hermes with a session id",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (native session id or latest). "
+            "Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
+        ),
+        caveats=(
+            "SQLite state.db schema 23 is the supported store; legacy JSONL is out of scope.",
+            "Does not invoke Hermes CLI/gateway, Skill hub, taps, or messaging platforms.",
+            "Native Hermes UI / picker activation evidence remains not-run.",
+            "Global installs honor HERMES_HOME when set (absolute path).",
+        ),
+        evidence_notes=(
+            "Hermes state.db schema 23 fixtures + Skills docs "
+            "(checked 2026-07-31). Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+        global_home_env="HERMES_HOME",
+        global_env_rel="skills",
+    ),
+    "github-copilot": HostProfile(
+        key="github-copilot",
+        profile_id="github-copilot-v1",
+        project_rel=".github/skills",
+        global_rel=".copilot/skills",
+        display_name="GitHub Copilot CLI",
+        official_docs=(
+            "https://docs.github.com/en/copilot/concepts/agents/about-agent-skills",
+            "https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills",
+            "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference",
+        ),
+        project_layout="<project>/.github/skills/<name>/SKILL.md",
+        global_layout="$COPILOT_HOME/skills/<name>/SKILL.md (default ~/.copilot/skills/)",
+        alternate_project_roots=(".agents/skills", ".claude/skills"),
+        alternate_global_roots=("~/.agents/skills",),
+        install_methods=(
+            "This installer: install-resume-skills install --host github-copilot --scope project|global",
+            "Manual: copy each resume-*/ folder into .github/skills/ or $COPILOT_HOME/skills/",
+            "Also: copilot plugins install --skill <local-dir> (native route; not-run here)",
+        ),
+        activation_help=(
+            "Load resume-<source> from the Copilot CLI skills tree via slash name / skills list. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-claude with ref latest",
+            "/skills list",
+            "/skills reload",
+        ),
+        arguments_note=(
+            "Pass the session <ref> for resume-github-copilot (UUID, latest, or exact events.jsonl path). "
+            "Destination install uses .github/skills (project) or $COPILOT_HOME/skills (global)."
+        ),
+        caveats=(
+            "Source: local events.jsonl only (copilot-cli-events-jsonl-v1); session-store.db is not authority.",
+            "Does not invoke copilot CLI, plugins network install, Chronicle reindex, or GitHub cloud session sync.",
+            "Native copilot plugins install / picker activation evidence remains not-run.",
+            "Global installs honor COPILOT_HOME when set (absolute path).",
+        ),
+        evidence_notes=(
+            "GitHub Agent Skills docs: project .github/skills + personal $COPILOT_HOME/skills "
+            "(checked 2026-07-31). Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+        global_home_env="COPILOT_HOME",
+        global_env_rel="skills",
+    ),
+    "gemini": HostProfile(
+        key="gemini",
+        profile_id="gemini-v1",
+        project_rel=".gemini/skills",
+        global_rel=".gemini/skills",
+        display_name="Gemini CLI",
+        official_docs=(
+            "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/session-management.md",
+            "https://developers.google.com/gemini-code-assist/docs/deprecations/code-assist-individuals",
+        ),
+        project_layout="<project>/.gemini/skills/<name>/SKILL.md",
+        global_layout="$GEMINI_CLI_HOME/.gemini/skills or ~/.gemini/skills/<name>/SKILL.md",
+        alternate_project_roots=(".agents/skills",),
+        alternate_global_roots=("~/.agents/skills",),
+        install_methods=(
+            "This installer: install-resume-skills install --host gemini --scope project|global",
+            "Manual: copy each resume-*/ folder into .gemini/skills/ or ~/.gemini/skills/",
+            "Also: gemini skills install <local-path> (native route; not-run here)",
+        ),
+        activation_help=(
+            "Load resume-<source> from the Gemini CLI skills tree. "
+            "Recovered text is inert/untrusted handoff only. "
+            "Independent of Antigravity (agy) profile."
+        ),
+        activation_examples=(
+            "Use skill resume-gemini with ref latest",
+            "Use skill resume-gemini with a session id",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (native session UUID or latest). "
+            "Consumer Login-with-Google for Gemini CLI ended 2026-06-18; "
+            "Standard/Enterprise/API environments remain in scope."
+        ),
+        caveats=(
+            "Compatibility profile — not a replacement for antigravity/agy.",
+            "Session store is ~/.gemini/tmp/<projectHash>/chats/session-*.jsonl (JSONL).",
+            "Does not invoke gemini CLI, Google APIs, auth, MCP, or Antigravity.",
+            "Native gemini skills install / picker activation evidence remains not-run.",
+            "Global installs honor GEMINI_CLI_HOME when set (absolute path).",
+        ),
+        evidence_notes=(
+            "Gemini CLI session-management docs + chatRecordingTypes JSONL fixtures "
+            "(checked 2026-07-31). Filesystem install only."
+        ),
+        evidence_level="verified-filesystem",
+        global_home_env="GEMINI_CLI_HOME",
+        global_env_rel=".gemini/skills",
+    ),
+    "kilo": HostProfile(
+        key="kilo",
+        profile_id="kilo-v1",
+        project_rel=".kilocode/skills",
+        global_rel=".config/kilo/skills",
+        display_name="Kilo CLI",
+        official_docs=(
+            "https://github.com/Kilo-Org/kilocode/releases/tag/v7.4.17",
+            "https://github.com/Kilo-Org/kilocode/blob/"
+            "a0364858a6e1b69a2e2dc5434a82d5cefbe79ea7/packages/opencode/src/skill/index.ts#L24-L31",
+            "https://github.com/Kilo-Org/kilocode/blob/"
+            "a0364858a6e1b69a2e2dc5434a82d5cefbe79ea7/packages/opencode/src/skill/index.ts#L195-L302",
+            "https://github.com/Kilo-Org/kilocode/blob/"
+            "a0364858a6e1b69a2e2dc5434a82d5cefbe79ea7/packages/opencode/src/config/paths.ts#L23-L40",
+            "https://github.com/Kilo-Org/kilocode/blob/"
+            "a0364858a6e1b69a2e2dc5434a82d5cefbe79ea7/packages/core/src/global.ts#L12-L87",
+        ),
+        project_layout="<project>/.kilocode/skills/<name>/SKILL.md",
+        global_layout="$KILO_CONFIG_DIR/skills or ~/.config/kilo/skills/<name>/SKILL.md",
+        alternate_project_roots=(
+            ".kilocode/skill",
+            ".kilo/skills",
+            ".kilo/skill",
+            ".agents/skills",
+            ".claude/skills",
+        ),
+        alternate_global_roots=(
+            "~/.config/kilo/skill",
+            "~/.kilocode/skills",
+            "~/.kilocode/skill",
+            "~/.kilo/skills",
+            "~/.kilo/skill",
+            "~/.agents/skills",
+            "~/.claude/skills",
+        ),
+        install_methods=(
+            "This installer: install-resume-skills install --host kilo --scope project|global",
+            "Manual: copy each resume-*/ folder into .kilocode/skills/ or ~/.config/kilo/skills/",
+            "Also: Kilo Marketplace / remote skill URLs (native route; not-run here)",
+        ),
+        activation_help=(
+            "Load resume-<source> from the Kilo CLI skills tree (.kilocode/skills or "
+            "~/.config/kilo/skills). Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use the resume-claude skill with ref latest",
+            "Confirm the visible skill tool loaded resume-claude from .kilocode/skills",
+        ),
+        arguments_note=(
+            "Pass the session <ref> for a *supported* source skill (resume-<source>). "
+            "Kilo is destination-only in this release; no kilo source adapter yet."
+        ),
+        caveats=(
+            "Destination-only: no kilo source adapter until core/effect SQLite session schema is fixture-pinned (#46 Track B).",
+            "Do not point the OpenCode adapter at a guessed kilo.db — Kilo is a fork with independent storage evolution.",
+            "Does not invoke kilo CLI, marketplace network install, VS Code/JetBrains, or cloud sync.",
+            "Native kilo skill picker / marketplace activation evidence remains not-run.",
+            "Keep normal permission prompts; do not use --auto or dangerously-skip-permissions for activation evidence.",
+            "Global installs honor KILO_CONFIG_DIR when set (absolute path → <dir>/skills).",
+            "The installer default is $HOME/.config/kilo/skills; set KILO_CONFIG_DIR for a non-default XDG config root.",
+        ),
+        evidence_notes=(
+            "Pinned 2026-07-31 to Kilo CLI v7.4.17 / "
+            "a0364858a6e1b69a2e2dc5434a82d5cefbe79ea7: release source scans project "
+            ".kilocode/.kilo with {skill,skills}/**/SKILL.md; global XDG config app `kilo` → "
+            "~/.config/kilo plus home .kilocode/.kilo; compat .agents/skills + .claude/skills unless disabled. "
+            "The installer itself uses $HOME/.config/kilo/skills unless KILO_CONFIG_DIR is set; it does not resolve XDG_CONFIG_HOME. "
+            "Primary installer root remains plural skills/; singular skill/ is discovery/shadow only. "
+            "Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+        global_home_env="KILO_CONFIG_DIR",
+        global_env_rel="skills",
+    ),
 }
 
 SOURCE_TITLES = {
@@ -493,6 +937,14 @@ SOURCE_TITLES = {
     "grok": "Grok Build",
     "kimi": "Kimi CLI / Kimi Code CLI",
     "pi": "Pi agent",
+    "openclaw": "OpenClaw",
+    "goose": "goose",
+    "crush": "Crush",
+    "cline": "Cline",
+    "openhands": "OpenHands",
+    "hermes": "Hermes Agent",
+    "gemini": "Gemini CLI",
+    "github-copilot": "GitHub Copilot CLI",
     "qwen": "Qwen Code",
 }
 
@@ -517,23 +969,137 @@ def matrix_cells(hosts: Iterable[str] | None = None) -> list[tuple[str, str]]:
     return rectangular_cells(sources=enabled_source_keys(), destinations=destinations)
 
 
+def _is_isolation_home(home_dir: str) -> bool:
+    """True when --home is not the process real user home (tests/isolation)."""
+
+    import os
+
+    try:
+        return os.path.realpath(home_dir) != os.path.realpath(os.path.expanduser("~"))
+    except OSError:
+        return True
+
+
+def _validate_env_home(raw: str, *, env_name: str) -> str:
+    """Reject empty/relative/NUL host config homes (#24)."""
+
+    import os
+
+    if "\x00" in raw:
+        raise ValueError(f"invalid {env_name}: contains NUL")
+    stripped = raw.strip()
+    if not stripped:
+        raise ValueError(f"invalid {env_name}: empty")
+    expanded = os.path.expanduser(stripped)
+    if not os.path.isabs(expanded):
+        raise ValueError(f"invalid {env_name}: must be an absolute path")
+    return os.path.realpath(expanded)
+
+
+def resolve_skill_root_info(
+    *,
+    host: str,
+    scope: str,
+    project_dir: str | None,
+    home_dir: str,
+    environ: dict[str, str] | None = None,
+    isolation: bool | None = None,
+) -> SkillRootResolution:
+    """Resolve Skill root and provenance for install/verify/uninstall/hosts (#24).
+
+    Precedence for global scope:
+    1. Host env home (e.g. ``KIMI_CODE_HOME``) + ``global_env_rel`` when the env
+       is set and isolation is false (default: isolation when ``home_dir`` is not
+       the real user home / explicit test ``--home``)
+    2. ``home_dir`` + ``global_rel``
+
+    Explicit CLI ``--root`` is applied by callers before this resolver.
+    """
+
+    import os
+
+    profile = HOST_PROFILES[host]
+    env = environ if environ is not None else os.environ
+    if isolation is None:
+        isolation = _is_isolation_home(home_dir)
+    if scope == "project":
+        if not project_dir:
+            raise ValueError("project scope requires --project")
+        path = os.path.join(os.path.realpath(project_dir), profile.project_rel)
+        return SkillRootResolution(
+            path=path,
+            root_source="project",
+            profile_id=profile.profile_id,
+        )
+    if scope == "global":
+        if profile.global_home_env and not isolation and profile.global_home_env in env:
+            base = _validate_env_home(
+                env[profile.global_home_env],
+                env_name=profile.global_home_env,
+            )
+            path = os.path.join(base, profile.global_env_rel)
+            return SkillRootResolution(
+                path=path,
+                root_source=f"env:{profile.global_home_env}",
+                profile_id=profile.profile_id,
+            )
+        path = os.path.join(os.path.realpath(home_dir), profile.global_rel)
+        return SkillRootResolution(
+            path=path,
+            root_source="home",
+            profile_id=profile.profile_id,
+        )
+    raise ValueError(f"unknown scope: {scope}")
+
+
 def resolve_skill_root(
     *,
     host: str,
     scope: str,
     project_dir: str | None,
     home_dir: str,
+    environ: dict[str, str] | None = None,
+    isolation: bool | None = None,
 ) -> str:
-    import os
+    return resolve_skill_root_info(
+        host=host,
+        scope=scope,
+        project_dir=project_dir,
+        home_dir=home_dir,
+        environ=environ,
+        isolation=isolation,
+    ).path
 
-    profile = HOST_PROFILES[host]
-    if scope == "project":
-        if not project_dir:
-            raise ValueError("project scope requires --project")
-        return os.path.join(os.path.realpath(project_dir), profile.project_rel)
-    if scope == "global":
-        return os.path.join(os.path.realpath(home_dir), profile.global_rel)
-    raise ValueError(f"unknown scope: {scope}")
+
+def _installer_command_pair(
+    *argv_tail: str,
+) -> dict[str, Any]:
+    """Primary installed console entrypoint + optional source-checkout form (#66).
+
+    JSON prefers argv arrays for automation; human text uses display strings.
+    Placeholders such as ``<PROJECT>`` stay unquoted tokens.
+    """
+
+    installed_argv = ["install-resume-skills", *argv_tail]
+    source_argv = [
+        "python3",
+        "scripts/install-resume-skills",
+        *argv_tail,
+    ]
+    return {
+        "installed_argv": installed_argv,
+        "installed": " ".join(installed_argv),
+        "source_checkout_argv": ["env", "PYTHONPATH=src", *source_argv],
+        "source_checkout": "PYTHONPATH=src " + " ".join(source_argv),
+    }
+
+
+def _discovery_roots_payload(host: str) -> list[dict[str, Any]]:
+    """Lazy import avoids catalog↔discovery import cycle at module load."""
+
+    from .discovery import discovery_roots_for_host
+
+    return [entry.to_dict() for entry in discovery_roots_for_host(host)]
 
 
 def host_install_record(
@@ -548,21 +1114,25 @@ def host_install_record(
     profile = HOST_PROFILES[host]
     home = home_dir if home_dir is not None else os.path.expanduser("~")
     project = project_dir if project_dir is not None else os.getcwd()
-    project_root = resolve_skill_root(
+    project_res = resolve_skill_root_info(
         host=host, scope="project", project_dir=project, home_dir=home
     )
-    global_root = resolve_skill_root(
+    global_res = resolve_skill_root_info(
         host=host, scope="global", project_dir=None, home_dir=home
     )
     return {
         "host": host,
         "profile_id": profile.profile_id,
+        "skill_payload_profile": profile.skill_payload_profile,
         "display_name": profile.display_name or host,
         "installer_defaults": {
             "project_rel": profile.project_rel,
             "global_rel": profile.global_rel,
-            "project_root_resolved": project_root,
-            "global_root_resolved": global_root,
+            "project_root_resolved": project_res.path,
+            "global_root_resolved": global_res.path,
+            "project_root_source": project_res.root_source,
+            "global_root_source": global_res.root_source,
+            "global_home_env": profile.global_home_env,
             "skill_layout": SKILL_DIR_LAYOUT,
         },
         "official_layouts": {
@@ -571,31 +1141,65 @@ def host_install_record(
         },
         "alternate_project_roots": list(profile.alternate_project_roots),
         "alternate_global_roots": list(profile.alternate_global_roots),
+        # Executable discovery policy (#34); supersedes prose-only alternate lists.
+        "discovery_roots": _discovery_roots_payload(host),
         "install_methods": list(profile.install_methods),
+        # #32: install/verify/uninstall always emit install-result-v1 JSON (no --json flag).
         "installer_commands": {
-            "project_dry_run": (
-                f"PYTHONPATH=src python3 scripts/install-resume-skills install "
-                f"--host {host} --scope project --project <PROJECT> --dry-run --json"
+            "project_dry_run": _installer_command_pair(
+                "install",
+                "--host",
+                host,
+                "--scope",
+                "project",
+                "--project",
+                "<PROJECT>",
+                "--dry-run",
             ),
-            "project": (
-                f"PYTHONPATH=src python3 scripts/install-resume-skills install "
-                f"--host {host} --scope project --project <PROJECT> --json"
+            "project": _installer_command_pair(
+                "install",
+                "--host",
+                host,
+                "--scope",
+                "project",
+                "--project",
+                "<PROJECT>",
             ),
-            "global": (
-                f"PYTHONPATH=src python3 scripts/install-resume-skills install "
-                f"--host {host} --scope global --json"
+            "global": _installer_command_pair(
+                "install",
+                "--host",
+                host,
+                "--scope",
+                "global",
             ),
-            "custom_root": (
-                f"PYTHONPATH=src python3 scripts/install-resume-skills install "
-                f"--host {host} --scope project --project <PROJECT> --root <DISTINCT_ROOT> --json"
+            "custom_root": _installer_command_pair(
+                "install",
+                "--host",
+                host,
+                "--scope",
+                "project",
+                "--project",
+                "<PROJECT>",
+                "--root",
+                "<DISTINCT_ROOT>",
             ),
-            "verify": (
-                f"PYTHONPATH=src python3 scripts/install-resume-skills verify "
-                f"--host {host} --scope project --project <PROJECT> --json"
+            "verify": _installer_command_pair(
+                "verify",
+                "--host",
+                host,
+                "--scope",
+                "project",
+                "--project",
+                "<PROJECT>",
             ),
-            "uninstall": (
-                f"PYTHONPATH=src python3 scripts/install-resume-skills uninstall "
-                f"--host {host} --scope project --project <PROJECT> --json"
+            "uninstall": _installer_command_pair(
+                "uninstall",
+                "--host",
+                host,
+                "--scope",
+                "project",
+                "--project",
+                "<PROJECT>",
             ),
         },
         "activation_help": profile.activation_help,
@@ -621,16 +1225,22 @@ def hosts_report(
         host_install_record(host, project_dir=project_dir, home_dir=home_dir)
         for host in selected
     ]
-    return {
-        "ok": True,
-        "host_count": len(records),
-        "shared_root_pairs": [
+    shared_root_pairs: list[dict[str, Any]] = []
+    # Only emit when the selected set includes both conflicting hosts (#66).
+    if "codex" in selected and "antigravity" in selected:
+        shared_root_pairs.append(
             {
                 "hosts": ["codex", "antigravity"],
                 "path": ".agents/skills",
-                "note": "Divergent skill bodies → E_INSTALL_CONFLICT unless --root is distinct.",
+                "note": (
+                    "Divergent skill bodies → E_INSTALL_CONFLICT unless --root is distinct."
+                ),
             }
-        ],
+        )
+    return {
+        "ok": True,
+        "host_count": len(records),
+        "shared_root_pairs": shared_root_pairs,
         "hosts": records,
         "docs": "docs/install-hosts.md",
     }

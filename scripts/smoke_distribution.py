@@ -68,6 +68,17 @@ def _json_stdout(completed: subprocess.CompletedProcess[str], stage: str) -> dic
     return value
 
 
+def _install_result_payload(doc: dict[str, Any]) -> dict[str, Any]:
+    """Unwrap portable-resume/install-result-v1 envelope (#32)."""
+
+    if doc.get("schema_version") == "portable-resume/install-result-v1":
+        results = doc.get("results") or []
+        if not results or not isinstance(results[0], dict):
+            raise RuntimeError("install-result-v1 missing results[0]")
+        return results[0]
+    return doc
+
+
 def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="portable-resume-dist-") as temporary:
         base = Path(temporary)
@@ -159,14 +170,15 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
                 f"installed self-check did not prove the {EXPECTED_MATRIX_CELLS}-cell matrix"
             )
 
-        matrix = _json_stdout(
+        matrix_doc = _json_stdout(
             _run(
-                [str(_console(venv_root, "install-resume-skills")), "matrix", "--json"],
+                [str(_console(venv_root, "install-resume-skills")), "matrix"],
                 cwd=base,
                 env=environment,
             ),
             "installed matrix",
         )
+        matrix = _install_result_payload(matrix_doc)
         if not matrix.get("ok") or matrix.get("cell_count") != EXPECTED_MATRIX_CELLS:
             raise RuntimeError(
                 f"installed matrix did not contain {EXPECTED_MATRIX_CELLS} successful cells"
@@ -174,7 +186,7 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
 
         home = base / "home"
         home.mkdir()
-        quick = _json_stdout(
+        quick_doc = _json_stdout(
             _run(
                 [
                     str(_console(venv_root, "install-resume-skills")),
@@ -182,21 +194,22 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
                     "qwen",
                     "--home",
                     str(home),
-                    "--json",
                 ],
                 cwd=base,
                 env=environment,
             ),
             "installed quick-install",
         )
+        quick = _install_result_payload(quick_doc)
         plan = quick.get("plan", {})
         if (
-            not quick.get("ok")
+            not quick_doc.get("ok")
+            or not quick.get("ok")
             or plan.get("host") != "qwen"
             or plan.get("scope") != "global"
         ):
             raise RuntimeError("installed quick-install returned the wrong plan")
-        verified = _json_stdout(
+        verified_doc = _json_stdout(
             _run(
                 [
                     str(_console(venv_root, "install-resume-skills")),
@@ -207,14 +220,14 @@ def smoke_artifact(artifact: Path, *, version: str) -> dict[str, Any]:
                     "global",
                     "--home",
                     str(home),
-                    "--json",
                 ],
                 cwd=base,
                 env=environment,
             ),
             "installed quick-install verify",
         )
-        if not verified.get("ok"):
+        verified = _install_result_payload(verified_doc)
+        if not verified_doc.get("ok") or not verified.get("ok"):
             raise RuntimeError("installed quick-install did not verify")
 
         return {

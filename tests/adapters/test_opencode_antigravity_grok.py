@@ -653,6 +653,28 @@ class AntigravityAdapterTests(unittest.TestCase):
                 adapter.list(query("antigravity", root, "conv-one"), ReadBudget())
             self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
 
+    def test_exact_show_survives_oversized_optional_index(self) -> None:
+        """Exact transcript path must not require rediscovering brain/index.json (#15)."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copytree(fixture_root("antigravity", "s-ant-01"), root, dirs_exist_ok=True)
+            index = root / "brain" / "index.json"
+            # Oversized index would E_LIMIT_EXCEEDED if required for show.
+            index.write_bytes(b'{"format":"antigravity-index-v1","conversations":[' + b"x" * 100 + b"]}")
+            adapter = AntigravityAdapter(root=str(root))
+            current = query("antigravity", root, "conv-one")
+            transcript = root / "brain" / "conv-one" / ".system_generated" / "logs" / "transcript.jsonl"
+            ref = ResolvedRef(
+                session_id="conv-one",
+                source_path=str(transcript),
+                provider=ANT_FORMAT,
+            )
+            session = adapter.show(ref, current, ReadBudget())
+            self.assertEqual(session.session_id, "conv-one")
+            self.assertTrue(session.turns)
+            self.assertIn("W_STALE_INDEX", session.warnings)
+
 
 class GrokAdapterTests(unittest.TestCase):
     def test_encoded_cwd_summary_and_public_updates_normalize(self) -> None:
@@ -693,6 +715,7 @@ class GrokAdapterTests(unittest.TestCase):
         self.assertIn("Grok prompt", text)
 
     def test_interior_corruption_and_essential_timeline_event_fail_closed(self) -> None:
+        # List is metadata-first (#15); show still fail-closed on corrupt/essential events.
         for payload in (
             '{"timestamp":\n',
             json.dumps(
@@ -713,9 +736,25 @@ class GrokAdapterTests(unittest.TestCase):
                 updates = root / "sessions" / "%2Fworkspace%2Fproject" / "grok-one" / "updates.jsonl"
                 updates.write_text(payload + updates.read_text())
                 adapter = GrokAdapter(root=str(root))
+                values = adapter.list(query("grok", root, "grok-one"), ReadBudget())
+                self.assertEqual([item.session_id for item in values], ["grok-one"])
                 with self.assertRaises(DiagnosticError) as caught:
-                    adapter.list(query("grok", root, "grok-one"), ReadBudget())
+                    adapter.show(resolve(values, "grok-one"), query("grok", root, "grok-one"), ReadBudget())
                 self.assertIn(caught.exception.code, {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"})
+
+    def test_list_does_not_parse_updates_when_summary_is_complete(self) -> None:
+        """Metadata-first list must not open updates.jsonl when summary.json is enough (#15)."""
+
+        root = fixture_root("grok", "s-gro-01")
+        adapter = GrokAdapter(root=str(root))
+        with mock.patch.object(
+            adapter,
+            "_parse_updates",
+            side_effect=AssertionError("list must not full-parse updates when summary exists"),
+        ):
+            values = adapter.list(query("grok", root, "grok-one"), ReadBudget())
+        self.assertEqual([item.session_id for item in values], ["grok-one"])
+        self.assertEqual(values[0].cwd, CWD)
 
     def test_hash_cwd_marker_is_stable_read_and_exact_path_selects(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

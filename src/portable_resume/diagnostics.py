@@ -36,6 +36,7 @@ ERROR_EXIT_CODES: dict[str, ExitCode] = {
     "E_INVARIANT": ExitCode.INVARIANT,
     "E_INSTALL_BUSY": ExitCode.UNSAFE_OR_BUSY,
     "E_INSTALL_CONFLICT": ExitCode.UNSAFE_OR_BUSY,
+    "E_INSTALL_SHADOW": ExitCode.UNSAFE_OR_BUSY,
     "E_INSTALL_UNSUPPORTED_PLATFORM": ExitCode.UNSUPPORTED,
     "E_RECOVERY_REQUIRED": ExitCode.UNSAFE_OR_BUSY,
     "E_VERIFY_MISMATCH": ExitCode.CORRUPT_OR_LIMIT,
@@ -55,6 +56,8 @@ WARNING_CODES = frozenset(
         "W_UNKNOWN_RECORD_SKIPPED",
         "W_HOST_DISCOVERY_UNPROVEN",
         "W_LIVE_SMOKE_NOT_RUN",
+        "W_SKILL_SHADOW",
+        "W_SKILL_DUPLICATE",
     }
 )
 
@@ -72,6 +75,9 @@ _DEFAULT_MESSAGES = {
     "E_INVARIANT": "An internal contract invariant failed.",
     "E_INSTALL_BUSY": "Another install operation holds the destination root lock.",
     "E_INSTALL_CONFLICT": "A destination path conflicts with a non-owned or incompatible file.",
+    "E_INSTALL_SHADOW": (
+        "A higher-precedence discovery root already holds a divergent Portable Resume Skill."
+    ),
     "E_INSTALL_UNSUPPORTED_PLATFORM": (
         "Mutating installer operations are not supported on this platform."
     ),

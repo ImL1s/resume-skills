@@ -1,0 +1,28 @@
+{
+  "agent": "lead",
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "synthetic cline user prompt",
+          "type": "text"
+        }
+      ],
+      "id": "m1",
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "synthetic cline assistant reply",
+          "type": "text"
+        }
+      ],
+      "id": "m2",
+      "role": "assistant"
+    }
+  ],
+  "sessionId": "cl000101-0101-4101-8101-010101010101",
+  "updated_at": "2024-01-01T12:00:00Z",
+  "version": 1
+}

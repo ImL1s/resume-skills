@@ -48,12 +48,19 @@ class HostPackageBuilderTests(unittest.TestCase):
                 set(report["package_surfaces"]),
                 set(enabled_package_keys()),
             )
+            self.assertEqual(report["schema_version"], "portable-resume/host-packages-v2")
             self.assertEqual(report["live_host_installation"], "not-run")
+            self.assertEqual(report["native_package_activation"], "not-run")
+            self.assertIn("package_contracts_schema", report)
+            self.assertIn("contracts", report)
             self.assertEqual(
                 {item["file"]: item["sha256"] for item in report["artifacts"]},
                 {item["file"]: item["sha256"] for item in repeated["artifacts"]},
             )
             for item in report["artifacts"]:
+                self.assertIn("contract_id", item)
+                self.assertEqual(item["offline_validation"], "pass")
+                self.assertEqual(item["native_evidence_status"], "not-run")
                 archive = first / item["file"]
                 self.assertEqual(
                     hashlib.sha256(archive.read_bytes()).hexdigest(),
@@ -208,6 +215,18 @@ class HostPackageBuilderTests(unittest.TestCase):
                         for name in zipped.namelist()
                     )
                 )
+
+    def test_offline_contract_rejects_archive_missing_manifest(self) -> None:
+        from portable_resume.install.package_contracts import validate_archive_bytes
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("skills/resume-claude/SKILL.md", b"---\nname: x\n---\n")
+        report = validate_archive_bytes(buf.getvalue(), package_type="grok-plugin")
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("missing required member" in f for f in report["failures"]))
 
 
 if __name__ == "__main__":

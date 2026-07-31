@@ -1,0 +1,18 @@
+{
+  "agent": "lead",
+  "messages": [
+    {
+      "content": "parent user text",
+      "id": "p1",
+      "role": "user"
+    },
+    {
+      "content": "parent assistant text",
+      "id": "p2",
+      "role": "assistant"
+    }
+  ],
+  "sessionId": "cl000101-0101-4101-8101-010101010101",
+  "updated_at": "2024-01-01T12:00:00Z",
+  "version": 1
+}

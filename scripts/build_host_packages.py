@@ -18,6 +18,12 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from portable_resume import __version__  # noqa: E402
+from portable_resume.install.package_contracts import (  # noqa: E402
+    PACKAGE_CONTRACTS_SCHEMA,
+    contract_for_package_type,
+    contracts_report,
+    validate_archive_bytes,
+)
 from portable_resume.install.render import materialize_plan  # noqa: E402
 from portable_resume.registry import (  # noqa: E402
     PACKAGE_SURFACES,
@@ -240,12 +246,38 @@ def _write_zip(path: Path, files: dict[str, bytes]) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _validated_zip(
+    path: Path,
+    files: dict[str, bytes],
+    *,
+    package_type: str,
+) -> tuple[str, dict[str, Any]]:
+    """Write zip, run offline contract validation (#27), return digest + report."""
+
+    digest = _write_zip(path, files)
+    validation = validate_archive_bytes(path.read_bytes(), package_type=package_type)
+    if not validation["ok"]:
+        raise ValueError(
+            f"package contract failed for {package_type}: {validation['failures'][:8]}"
+        )
+    contract = contract_for_package_type(package_type)
+    return digest, {
+        "contract_id": contract.contract_id,
+        "package_contracts_schema": PACKAGE_CONTRACTS_SCHEMA,
+        "native_evidence_status": contract.native_evidence_status,
+        "last_native_evidence_ref": contract.last_native_evidence_ref,
+        "offline_validation": "pass",
+    }
+
+
 def build(output: Path) -> dict[str, Any]:
     """Build direct-skill zips for every enabled destination + registry package surfaces.
 
     Direct Skills and native packages are independent axes (#36): destinations
     without a package surface still get a direct zip; package surfaces without
-    ``buildable`` are skipped.
+    ``buildable`` are skipped. Each artifact is offline-validated against a
+    versioned package contract (#27); native host install remains ``not-run``
+    unless separately recorded.
     """
 
     output.mkdir(parents=True, exist_ok=True)
@@ -258,14 +290,18 @@ def build(output: Path) -> dict[str, Any]:
         direct_name = f"portable-resume-{__version__}-{host}-skills.zip"
         direct_path = output / direct_name
         direct_files = materialize_plan(host)
+        digest, meta = _validated_zip(
+            direct_path, direct_files, package_type="direct-skills"
+        )
         artifacts.append(
             {
                 "host": host,
                 "type": "direct-skills",
                 "file": direct_name,
-                "sha256": _write_zip(direct_path, direct_files),
+                "sha256": digest,
                 "members": len(direct_files),
                 "install": "extract into the host skill root documented in docs/install-hosts.md",
+                **meta,
             }
         )
     for surface_key in package_keys:
@@ -280,26 +316,32 @@ def build(output: Path) -> dict[str, Any]:
             )
         name = f"portable-resume-{__version__}-{kind}.zip"
         path = output / name
+        digest, meta = _validated_zip(path, files, package_type=kind)
         artifacts.append(
             {
                 "host": surface.destination,
                 "type": kind,
                 "package_surface": surface.key,
                 "file": name,
-                "sha256": _write_zip(path, files),
+                "sha256": digest,
                 "members": len(files),
                 "install": install,
+                **meta,
             }
         )
     report = {
-        "schema_version": "portable-resume/host-packages-v1",
+        "schema_version": "portable-resume/host-packages-v2",
         "version": __version__,
+        "package_contracts_schema": PACKAGE_CONTRACTS_SCHEMA,
         "host_count": len(hosts),
         "direct_package_count": len(hosts),
         "plugin_package_count": len(package_keys),
         "package_surfaces": list(package_keys),
         "artifacts": artifacts,
+        # Honest native-layer status: offline contracts are not host CLI proof.
         "live_host_installation": "not-run",
+        "native_package_activation": "not-run",
+        "contracts": contracts_report()["contracts"],
     }
     (output / "host-packages.json").write_bytes(_json_bytes(report))
     return report

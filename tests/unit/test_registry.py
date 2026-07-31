@@ -23,7 +23,7 @@ from portable_resume.registry import (
 
 
 class RegistryInvariantTests(unittest.TestCase):
-    def test_current_nine_sources_and_nine_destinations(self) -> None:
+    def test_current_seventeen_sources_and_eighteen_destinations(self) -> None:
         self.assertEqual(
             enabled_source_keys(),
             frozenset(
@@ -31,10 +31,18 @@ class RegistryInvariantTests(unittest.TestCase):
                     "antigravity",
                     "claude",
                     "codex",
+                    "cline",
+                    "openhands",
+                    "hermes",
+                    "gemini",
+                    "github-copilot",
+                    "crush",
                     "cursor",
+                    "goose",
                     "grok",
                     "kimi",
                     "opencode",
+                    "openclaw",
                     "pi",
                     "qwen",
                 }
@@ -47,19 +55,28 @@ class RegistryInvariantTests(unittest.TestCase):
                     "antigravity",
                     "claude",
                     "codex",
+                    "cline",
+                    "openhands",
+                    "hermes",
+                    "github-copilot",
+                    "gemini",
+                    "kilo",
+                    "crush",
                     "cursor",
+                    "goose",
                     "grok",
                     "kimi",
                     "opencode",
+                    "openclaw",
                     "pi",
                     "qwen",
                 }
             ),
         )
         dims = matrix_dimensions()
-        self.assertEqual(dims["sources"], 9)
-        self.assertEqual(dims["destinations"], 9)
-        self.assertEqual(dims["cells"], 81)
+        self.assertEqual(dims["sources"], 17)
+        self.assertEqual(dims["destinations"], 18)
+        self.assertEqual(dims["cells"], 306)
 
     def test_source_and_destination_sets_are_independent_types(self) -> None:
         # Adding a destination-only key must not invent a source.
@@ -154,9 +171,16 @@ class RegistryInvariantTests(unittest.TestCase):
         self.assertGreaterEqual(len(enabled_package_keys()), 7)
         self.assertIn("claude-marketplace", enabled_package_keys())
         self.assertNotIn("pi", {PACKAGE_SURFACES[k].destination for k in PACKAGE_SURFACES})
-        # Direct Skills for pi/opencode without inventing a package surface.
+        self.assertNotIn("openclaw", {PACKAGE_SURFACES[k].destination for k in PACKAGE_SURFACES})
+        # Direct Skills for pi/opencode/openclaw without inventing a package surface.
         self.assertIsNone(DESTINATION_PROFILES["pi"].native_package_profile)
         self.assertIsNone(DESTINATION_PROFILES["opencode"].native_package_profile)
+        self.assertIsNone(DESTINATION_PROFILES["openclaw"].native_package_profile)
+        self.assertIsNone(DESTINATION_PROFILES["goose"].native_package_profile)
+        self.assertIsNone(DESTINATION_PROFILES["crush"].native_package_profile)
+        self.assertIsNone(DESTINATION_PROFILES["cline"].native_package_profile)
+        self.assertIsNone(DESTINATION_PROFILES["openhands"].native_package_profile)
+        self.assertIsNone(DESTINATION_PROFILES["hermes"].native_package_profile)
         for key, dest in DESTINATION_PROFILES.items():
             if dest.native_package_profile is None:
                 continue
@@ -177,6 +201,14 @@ class RegistryInvariantTests(unittest.TestCase):
                 msg=str(path),
             )
             self.assertIn("pi", enum_values)
+            self.assertIn("openclaw", enum_values)
+            self.assertIn("goose", enum_values)
+            self.assertIn("crush", enum_values)
+            self.assertIn("cline", enum_values)
+            self.assertIn("openhands", enum_values)
+            self.assertIn("hermes", enum_values)
+            self.assertIn("gemini", enum_values)
+            self.assertIn("github-copilot", enum_values)
 
     def test_planned_profiles_excluded_from_enabled_sets(self) -> None:
         for profile in SOURCE_PROFILES.values():
@@ -219,6 +251,33 @@ class RegistryInvariantTests(unittest.TestCase):
             self.assertEqual(dest.payload_profile, host.profile_id, msg=key)
 
 
+    def test_github_copilot_source_and_destination_enabled(self) -> None:
+        """#44 Track B: events.jsonl source enabled; destination remains."""
+        self.assertIn("github-copilot", enabled_destination_keys())
+        self.assertIn("github-copilot", enabled_source_keys())
+        self.assertEqual(SOURCE_PROFILES["github-copilot"].status, "supported")
+        self.assertEqual(
+            SOURCE_PROFILES["github-copilot"].format_ids,
+            ("copilot-cli-events-jsonl-v1",),
+        )
+
+    def test_kilo_destination_without_enabled_source(self) -> None:
+        """#46 Track A: destination-only kilo; source stays research."""
+        self.assertIn("kilo", enabled_destination_keys())
+        self.assertNotIn("kilo", enabled_source_keys())
+        self.assertEqual(SOURCE_PROFILES["kilo"].status, "research")
+        self.assertEqual(SOURCE_PROFILES["kilo"].format_ids, ())
+        dims = matrix_dimensions()
+        self.assertEqual(dims["sources"], 17)
+        self.assertEqual(dims["destinations"], 18)
+        self.assertEqual(dims["cells"], 306)
+
+    def test_research_source_has_no_format_ids(self) -> None:
+        profile = SOURCE_PROFILES["kilo"]
+        self.assertEqual(profile.format_ids, ())
+        self.assertNotIn("kilo", enabled_source_keys())
+
+
 class DynamicMatrixTests(unittest.TestCase):
     def test_matrix_cells_match_dimensions(self) -> None:
         from portable_resume.install.catalog import matrix_cells
@@ -226,7 +285,7 @@ class DynamicMatrixTests(unittest.TestCase):
         cells = matrix_cells()
         dims = matrix_dimensions()
         self.assertEqual(len(cells), dims["cells"])
-        self.assertEqual(len(cells), 81)
+        self.assertEqual(len(cells), 306)
 
     def test_destination_only_expands_rectangle(self) -> None:
         from portable_resume.registry import rectangular_cells

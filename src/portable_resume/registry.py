@@ -46,10 +46,19 @@ _DESTINATION_PAYLOAD_PROFILES: dict[str, str] = {
     "codex": "codex-v1",
     "cursor": "cursor-v1",
     "grok": "grok-v1",
-    "kimi": "kimi-code-v1",
+    "kimi": "kimi-code-v2",
     "opencode": "opencode-v1",
     "qwen": "qwen-v1",
     "pi": "pi-v1",
+    "openclaw": "openclaw-v1",
+    "goose": "goose-v1",
+    "crush": "crush-v1",
+    "cline": "cline-v1",
+    "openhands": "openhands-v1",
+    "hermes": "hermes-v1",
+    "github-copilot": "github-copilot-v1",
+    "gemini": "gemini-v1",
+    "kilo": "kilo-v1",
 }
 
 _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
@@ -62,6 +71,15 @@ _DESTINATION_ROOTS: dict[str, tuple[str, str]] = {
     "opencode": (".opencode/skills", ".config/opencode/skills"),
     "qwen": (".qwen/skills", ".qwen/skills"),
     "pi": (".pi/skills", ".pi/agent/skills"),
+    "openclaw": ("skills", ".openclaw/skills"),
+    "goose": (".goose/skills", ".config/goose/skills"),
+    "crush": (".crush/skills", ".config/crush/skills"),
+    "cline": (".cline/skills", ".cline/skills"),
+    "openhands": (".agents/skills", ".openhands/skills"),
+    "hermes": (".hermes/skills", ".hermes/skills"),
+    "github-copilot": (".github/skills", ".copilot/skills"),
+    "gemini": (".gemini/skills", ".gemini/skills"),
+    "kilo": (".kilocode/skills", ".config/kilo/skills"),
 }
 
 
@@ -118,6 +136,80 @@ SOURCE_PROFILES["pi"] = SourceProfile(
     fixture_profile="pi-session-jsonl-v3",
 )
 
+SOURCE_PROFILES["openclaw"] = SourceProfile(
+    key="openclaw",
+    adapter_module="portable_resume.adapters.openclaw",
+    format_ids=("openclaw-agent-sqlite-v1",),
+    status="supported",
+    fixture_profile="openclaw-agent-sqlite-v1",
+)
+
+SOURCE_PROFILES["goose"] = SourceProfile(
+    key="goose",
+    adapter_module="portable_resume.adapters.goose",
+    format_ids=("goose-sessions-sqlite-v15",),
+    status="supported",
+    fixture_profile="goose-sessions-sqlite-v15",
+)
+
+SOURCE_PROFILES["crush"] = SourceProfile(
+    key="crush",
+    adapter_module="portable_resume.adapters.crush",
+    format_ids=("crush-sqlite-v1",),
+    status="supported",
+    fixture_profile="crush-sqlite-v1",
+)
+
+SOURCE_PROFILES["cline"] = SourceProfile(
+    key="cline",
+    adapter_module="portable_resume.adapters.cline",
+    format_ids=("cline-session-json-v1",),
+    status="supported",
+    fixture_profile="cline-session-json-v1",
+)
+
+SOURCE_PROFILES["openhands"] = SourceProfile(
+    key="openhands",
+    adapter_module="portable_resume.adapters.openhands",
+    format_ids=("openhands-cli-events-v1",),
+    status="supported",
+    fixture_profile="openhands-cli-events-v1",
+)
+
+SOURCE_PROFILES["hermes"] = SourceProfile(
+    key="hermes",
+    adapter_module="portable_resume.adapters.hermes",
+    format_ids=("hermes-state-sqlite-v1",),
+    status="supported",
+    fixture_profile="hermes-state-sqlite-v1",
+)
+
+SOURCE_PROFILES["github-copilot"] = SourceProfile(
+    key="github-copilot",
+    adapter_module="portable_resume.adapters.github_copilot",
+    format_ids=("copilot-cli-events-jsonl-v1",),
+    status="supported",
+    fixture_profile="copilot-cli-events-jsonl-v1",
+)
+
+SOURCE_PROFILES["gemini"] = SourceProfile(
+    key="gemini",
+    adapter_module="portable_resume.adapters.gemini",
+    format_ids=("gemini-cli-session-jsonl-v1",),
+    status="supported",
+    fixture_profile="gemini-cli-session-jsonl-v1",
+)
+
+# Destination lands first (#46 Track A). Source stays research until core/effect
+# SQLite session schema is fixture-pinned (do not alias OpenCode by assumption).
+SOURCE_PROFILES["kilo"] = SourceProfile(
+    key="kilo",
+    adapter_module="portable_resume.adapters.kilo",
+    format_ids=(),
+    status="research",
+    fixture_profile=None,
+)
+
 # Native package surface key per destination (independent of direct Skills).
 # Hosts with only direct-skill install leave this unset (opencode, pi, …).
 _NATIVE_PACKAGE_BY_DESTINATION: dict[str, str] = {
@@ -150,6 +242,96 @@ DESTINATION_PROFILES["pi"] = DestinationProfile(
     direct_skill=True,
     project_rel=".pi/skills",
     global_rel=".pi/agent/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["openclaw"] = DestinationProfile(
+    key="openclaw",
+    payload_profile="openclaw-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel="skills",
+    global_rel=".openclaw/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["goose"] = DestinationProfile(
+    key="goose",
+    payload_profile="goose-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".goose/skills",
+    global_rel=".config/goose/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["crush"] = DestinationProfile(
+    key="crush",
+    payload_profile="crush-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".crush/skills",
+    global_rel=".config/crush/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["cline"] = DestinationProfile(
+    key="cline",
+    payload_profile="cline-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".cline/skills",
+    global_rel=".cline/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["openhands"] = DestinationProfile(
+    key="openhands",
+    payload_profile="openhands-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".agents/skills",
+    global_rel=".openhands/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["hermes"] = DestinationProfile(
+    key="hermes",
+    payload_profile="hermes-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".hermes/skills",
+    global_rel=".hermes/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["github-copilot"] = DestinationProfile(
+    key="github-copilot",
+    payload_profile="github-copilot-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".github/skills",
+    global_rel=".copilot/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["gemini"] = DestinationProfile(
+    key="gemini",
+    payload_profile="gemini-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".gemini/skills",
+    global_rel=".gemini/skills",
+    native_package_profile=None,
+)
+
+DESTINATION_PROFILES["kilo"] = DestinationProfile(
+    key="kilo",
+    payload_profile="kilo-v1",
+    status="supported",
+    direct_skill=True,
+    project_rel=".kilocode/skills",
+    global_rel=".config/kilo/skills",
     native_package_profile=None,
 )
 

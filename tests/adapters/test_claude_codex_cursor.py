@@ -485,6 +485,257 @@ class ClaudeAdapterTests(unittest.TestCase):
                 claude.ADAPTER.list(self.query(), ReadBudget())
         self.assertEqual(busy.exception.code, "E_SOURCE_BUSY")
 
+    def test_issue19_exact_path_skips_project_enumeration(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        _, path = self.session(
+            [self.turn("user", user_id, None, "exact path", 0, sessionId=session_id)],
+            identifier=session_id,
+            project=slug,
+        )
+        with mock.patch.object(
+            claude,
+            "_project_dirs",
+            side_effect=AssertionError("_project_dirs must not run for exact path"),
+        ):
+            values = claude.ADAPTER.list(
+                self.query(ref=str(path.resolve())),
+                ReadBudget(),
+            )
+        self.assertEqual([item.session_id for item in values], [session_id])
+        self.assertEqual(Path(values[0].source_path), path)
+
+    def test_issue19_missing_under_root_is_no_match_outside_stays_unsafe(self) -> None:
+        slug = claude._slugify_cwd(str(self.cwd))
+        project = self.root / "projects" / slug
+        project.mkdir(parents=True, exist_ok=True)
+        for _ in range(2_050):
+            (project / f"{uuid.uuid4()}.jsonl").write_text("{}\n", encoding="utf-8")
+        missing = project / f"{uuid.uuid4()}.jsonl"
+        with self.assertRaises(DiagnosticError) as missing_err:
+            claude.ADAPTER.list(self.query(ref=str(missing)), ReadBudget())
+        self.assertEqual(missing_err.exception.code, "E_NO_MATCH")
+        # probe must not fall through into sibling enumeration after missing path
+        report = claude.ADAPTER.probe(self.query(ref=str(missing)))
+        self.assertEqual(report.state, "supported")
+        outside = Path(tempfile.gettempdir()) / f"portable-resume-outside-{uuid.uuid4()}.jsonl"
+        with self.assertRaises(DiagnosticError) as outside_err:
+            claude.ADAPTER.list(self.query(ref=str(outside)), ReadBudget())
+        self.assertEqual(outside_err.exception.code, "E_UNSAFE_PATH")
+
+    def test_issue19_missing_leaf_under_symlink_parent_stays_unsafe(self) -> None:
+        real = self.root / "real-project"
+        real.mkdir(parents=True)
+        projects = self.root / "projects"
+        projects.mkdir(parents=True, exist_ok=True)
+        link = projects / "linked-slug"
+        link.symlink_to(real, target_is_directory=True)
+        missing = link / f"{uuid.uuid4()}.jsonl"
+        with self.assertRaises(DiagnosticError) as err:
+            claude.ADAPTER.list(self.query(ref=str(missing)), ReadBudget())
+        self.assertEqual(err.exception.code, "E_UNSAFE_PATH")
+
+    def test_issue19_missing_non_session_layout_under_root_stays_unsafe(self) -> None:
+        # Inside root but not projects/<slug>/<uuid>.jsonl — keep fail-closed unsafe.
+        weird = self.root / "not-projects" / "file.jsonl"
+        with self.assertRaises(DiagnosticError) as err:
+            claude.ADAPTER.list(self.query(ref=str(weird)), ReadBudget())
+        self.assertEqual(err.exception.code, "E_UNSAFE_PATH")
+
+    def test_issue19_probe_exact_uuid_survives_large_slug_dir(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        project = self.root / "projects" / slug
+        project.mkdir(parents=True, exist_ok=True)
+        for _ in range(2_050):
+            (project / f"{uuid.uuid4()}.jsonl").write_text("{}\n", encoding="utf-8")
+        # UUID lives outside the noisy slug dir.
+        _, path = self.session(
+            [self.turn("user", user_id, None, "elsewhere", 0, sessionId=session_id)],
+            identifier=session_id,
+            project="other-bucket",
+        )
+        report = claude.ADAPTER.probe(self.query(ref=session_id))
+        self.assertEqual(report.state, "supported")
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [session_id])
+        self.assertEqual(Path(values[0].source_path), path)
+
+    def test_issue19_exact_uuid_under_cwd_slug_survives_thousands_of_projects(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        projects = self.root / "projects"
+        for index in range(2_100):
+            (projects / f"noise-{index:04d}").mkdir(parents=True, exist_ok=True)
+        _, path = self.session(
+            [self.turn("user", user_id, None, "needle", 0, sessionId=session_id)],
+            identifier=session_id,
+            project=slug,
+        )
+        # Broad enumeration of 2100 project dirs would raise E_LIMIT_EXCEEDED
+        # (_PROJECT_DIR_LIMIT is 1024). Direct slug candidate must win first.
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [session_id])
+        self.assertEqual(Path(values[0].source_path), path)
+        session = claude.ADAPTER.show(
+            ResolvedRef.from_summary(values[0]),
+            self.query(ref=session_id),
+            ReadBudget(),
+        )
+        self.assertEqual([turn.content for turn in session.turns], ["needle"])
+
+    def test_issue19_direct_slug_file_rejects_mismatched_recorded_cwd(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        other_cwd = self.root / "other-repo"
+        other_cwd.mkdir()
+        # File lives under the query cwd slug, but records a different primary cwd.
+        path = self.root / "projects" / slug / f"{session_id}.jsonl"
+        write_jsonl(
+            path,
+            [
+                {
+                    "type": "user",
+                    "uuid": user_id,
+                    "parentUuid": None,
+                    "sessionId": session_id,
+                    "cwd": str(other_cwd),
+                    "timestamp": stamp(0),
+                    "message": {"role": "user", "content": "wrong bucket"},
+                }
+            ],
+        )
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual(values, [])
+
+    def test_issue19_cwd_mismatched_direct_still_finds_relocated_eligible_copy(self) -> None:
+        """Codex P2: slug-file present but wrong cwd must not hide a good copy."""
+        session_id = str(uuid.uuid4())
+        user_bad, user_good = str(uuid.uuid4()), str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        other_cwd = self.root / "other-repo"
+        other_cwd.mkdir()
+        write_jsonl(
+            self.root / "projects" / slug / f"{session_id}.jsonl",
+            [
+                {
+                    "type": "user",
+                    "uuid": user_bad,
+                    "parentUuid": None,
+                    "sessionId": session_id,
+                    "cwd": str(other_cwd),
+                    "timestamp": stamp(0),
+                    "message": {"role": "user", "content": "stale slug hit"},
+                }
+            ],
+        )
+        good_path = self.root / "projects" / "relocated-bucket" / f"{session_id}.jsonl"
+        write_jsonl(
+            good_path,
+            [
+                {
+                    "type": "user",
+                    "uuid": user_good,
+                    "parentUuid": None,
+                    "sessionId": session_id,
+                    "cwd": str(self.cwd),
+                    "timestamp": stamp(1),
+                    "message": {"role": "user", "content": "relocated good"},
+                }
+            ],
+        )
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual(len(values), 1)
+        self.assertEqual(Path(values[0].source_path), good_path)
+        session = claude.ADAPTER.show(
+            ResolvedRef(session_id, None),
+            self.query(ref=session_id),
+            ReadBudget(),
+        )
+        self.assertEqual([turn.content for turn in session.turns], ["relocated good"])
+        self.assertEqual(Path(session.source_path), good_path)
+
+    def test_issue19_exact_uuid_falls_back_when_slug_candidate_missing(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        # Stored under a non-slug project dir; cwd slug dir is absent.
+        _, path = self.session(
+            [self.turn("user", user_id, None, "relocated", 0, sessionId=session_id)],
+            identifier=session_id,
+            project="foreign-bucket",
+        )
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [session_id])
+        self.assertEqual(Path(values[0].source_path), path)
+
+    def test_issue19_duplicate_uuid_across_buckets_does_not_pick_wrong_cwd(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_a, user_b = str(uuid.uuid4()), str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        other_cwd = self.root / "other-repo"
+        other_cwd.mkdir()
+        other_slug = claude._slugify_cwd(str(other_cwd))
+        # Same UUID basename in two project buckets; only our cwd is eligible.
+        write_jsonl(
+            self.root / "projects" / other_slug / f"{session_id}.jsonl",
+            [
+                {
+                    "type": "user",
+                    "uuid": user_a,
+                    "parentUuid": None,
+                    "sessionId": session_id,
+                    "cwd": str(other_cwd),
+                    "timestamp": stamp(0),
+                    "message": {"role": "user", "content": "other"},
+                }
+            ],
+        )
+        write_jsonl(
+            self.root / "projects" / slug / f"{session_id}.jsonl",
+            [
+                {
+                    "type": "user",
+                    "uuid": user_b,
+                    "parentUuid": None,
+                    "sessionId": session_id,
+                    "cwd": str(self.cwd),
+                    "timestamp": stamp(1),
+                    "message": {"role": "user", "content": "mine"},
+                }
+            ],
+        )
+        values = claude.ADAPTER.list(self.query(ref=session_id), ReadBudget())
+        self.assertEqual(len(values), 1)
+        self.assertEqual(Path(values[0].source_path).parent.name, slug)
+        session = claude.ADAPTER.show(ResolvedRef.from_summary(values[0]), self.query(ref=session_id), ReadBudget())
+        self.assertEqual([turn.content for turn in session.turns], ["mine"])
+
+    def test_issue19_exact_path_survives_two_thousand_sibling_jsonl(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        slug = claude._slugify_cwd(str(self.cwd))
+        project = self.root / "projects" / slug
+        project.mkdir(parents=True, exist_ok=True)
+        for index in range(2_050):
+            sibling = project / f"{uuid.uuid4()}.jsonl"
+            sibling.write_text("{}\n", encoding="utf-8")
+            del sibling, index
+        _, path = self.session(
+            [self.turn("user", user_id, None, "among siblings", 0, sessionId=session_id)],
+            identifier=session_id,
+            project=slug,
+        )
+        values = claude.ADAPTER.list(self.query(ref=str(path.resolve())), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [session_id])
+        # reader.probe runs before list/show — exact path must keep capability supported
+        # even when the project dir has > scanned_records siblings.
+        report = claude.ADAPTER.probe(self.query(ref=str(path.resolve())))
+        self.assertEqual(report.state, "supported")
+
 
 class CodexAdapterTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -656,7 +907,9 @@ class CodexAdapterTests(unittest.TestCase):
                 )
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
-    def test_rollout_stable_read_uses_remaining_source_budget(self) -> None:
+    def test_rollout_stream_honors_remaining_source_budget(self) -> None:
+        """Plain show streams via stable_scan_lines; second file still respects remaining budget (#8)."""
+
         _, first = self.rollout()
         _, second = self.rollout()
         remaining = second.stat().st_size - 1
@@ -669,13 +922,109 @@ class CodexAdapterTests(unittest.TestCase):
 
         with mock.patch.object(
             codex,
-            "stable_read_bytes",
-            wraps=codex.stable_read_bytes,
-        ) as stable_read:
+            "stable_scan_lines",
+            wraps=codex.stable_scan_lines,
+        ) as scan:
             with self.assertRaises(DiagnosticError) as caught:
                 codex._read_rollout(str(second), str(self.root), budget)
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
-        self.assertEqual(stable_read.call_args.kwargs["max_bytes"], remaining)
+        self.assertTrue(scan.called)
+
+    def test_plain_show_does_not_whole_file_stable_read(self) -> None:
+        identifier, path = self.rollout()
+        with mock.patch.object(
+            codex,
+            "stable_read_bytes",
+            side_effect=AssertionError("plain show must not whole-file stable_read_bytes"),
+        ):
+            session = codex.ADAPTER.show(
+                ResolvedRef(identifier, str(path)),
+                self.query(),
+                ReadBudget(),
+            )
+        self.assertEqual(session.session_id, identifier)
+        self.assertEqual(session.last_user_request, "Build feature")
+
+    def test_large_plain_rollout_show_under_default_bounds(self) -> None:
+        """~20 MiB synthetic rollout show succeeds without whole-file buffer (#8)."""
+
+        identifier = str(uuid.uuid4())
+        path = (
+            self.root
+            / "sessions"
+            / "2026"
+            / "07"
+            / "20"
+            / f"rollout-2026-07-20T00-00-00-{identifier}.jsonl"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # ~18 MiB with ~3 KiB lines keeps line count under transcript_records (50k).
+        target = 18 * 1024 * 1024
+        written = 0
+        with path.open("wb") as handle:
+            meta = {
+                "type": "session_meta",
+                "timestamp": stamp(-3),
+                "payload": {
+                    "id": identifier,
+                    "cwd": str(self.cwd),
+                    "source": "cli",
+                    "git": {"branch": "main"},
+                },
+            }
+            line = (json.dumps(meta, separators=(",", ":")) + "\n").encode("utf-8")
+            handle.write(line)
+            written += len(line)
+            # One real user turn, then bulk skipped world_state lines (no normalized turns).
+            seed = {
+                "type": "response_item",
+                "timestamp": stamp(-2),
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "seed request"}],
+                },
+            }
+            line = (json.dumps(seed, separators=(",", ":")) + "\n").encode("utf-8")
+            handle.write(line)
+            written += len(line)
+            pad = "x" * 2800
+            index = 0
+            while written < target:
+                record = {
+                    "type": "world_state",
+                    "payload": {"padding": pad, "index": index},
+                }
+                line = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
+                handle.write(line)
+                written += len(line)
+                index += 1
+            # Final distinctive user turn for assertions.
+            final = {
+                "type": "response_item",
+                "timestamp": stamp(-1),
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "large rollout complete"}],
+                },
+            }
+            handle.write((json.dumps(final, separators=(",", ":")) + "\n").encode("utf-8"))
+        self.assertGreaterEqual(path.stat().st_size, 17 * 1024 * 1024)
+        self.assertLess(index + 3, DEFAULT_BOUNDS.transcript_records)
+        with mock.patch.object(
+            codex,
+            "stable_read_bytes",
+            side_effect=AssertionError("large plain show must stream"),
+        ):
+            session = codex.ADAPTER.show(
+                ResolvedRef(identifier, str(path)),
+                self.query(),
+                ReadBudget(),
+            )
+        self.assertEqual(session.session_id, identifier)
+        self.assertEqual(session.last_user_request, "large rollout complete")
+        self.assertEqual([turn.content for turn in session.turns], ["seed request", "large rollout complete"])
 
     def test_s_cod_03_archive_hidden_by_default_exact_id_selectable(self) -> None:
         active, active_path = self.rollout()
@@ -716,8 +1065,12 @@ class CodexAdapterTests(unittest.TestCase):
             capability = codex.ADAPTER.probe(self.query())
             values = codex.ADAPTER.list(self.query(), ReadBudget())
 
-        self.assertEqual(capability.state, "supported")
         self.assertEqual(capability.format_id, codex.SQLITE_FORMAT)
+        if codex._trusted_zstd() is None:
+            self.assertEqual(capability.state, "partial")
+            self.assertIn("W_OPTIONAL_ZSTD_UNAVAILABLE", capability.warnings)
+        else:
+            self.assertEqual(capability.state, "supported")
         self.assertEqual([item.session_id for item in values], [identifier])
         self.assertEqual(before, tree_snapshot(self.root))
 
@@ -789,15 +1142,135 @@ class CodexAdapterTests(unittest.TestCase):
         decoder.assert_called_once_with(encoded, max_bytes=len(encoded))
         self.assertEqual(session.session_id, identifier)
 
-    def test_supported_database_empty_result_does_not_scan_rollouts(self) -> None:
-        self.rollout()
+    def test_sparse_database_recovers_sessions_via_fs_head_fallback(self) -> None:
+        """Recognized but under-filled SQLite activates read-only FS head scan (#7)."""
+
+        identifier, _path = self.rollout()
         self.database(9, [])
+        values = codex.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+        self.assertEqual(values[0].provider, codex.ROLLOUT_FORMAT)
+
+    def test_stale_database_path_recovers_via_fs_head_fallback(self) -> None:
+        """SQL rows whose rollout path cannot resolve still recover from sessions/ (#7)."""
+
+        identifier, path = self.rollout()
+        missing = path.parent / f"rollout-2026-07-20T00-00-00-{identifier}-missing.jsonl"
+        self.database(9, [self.db_row(identifier, missing)])
+        values = codex.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+        self.assertEqual(values[0].source_path, str(path))
+
+    def test_probe_does_not_full_walk_sessions_tree(self) -> None:
+        """Probe samples sessions/ with a soft cap; never calls full _rollout_paths (#7)."""
+
+        self.rollout()
         with mock.patch.object(
             codex,
             "_rollout_paths",
-            side_effect=AssertionError("supported database is authoritative"),
+            side_effect=AssertionError("probe must not full-walk sessions/"),
         ):
-            self.assertEqual(codex.ADAPTER.list(self.query(), ReadBudget()), [])
+            capability = codex.ADAPTER.probe(self.query())
+        self.assertEqual(capability.state, "supported")
+        self.assertEqual(capability.format_id, codex.ROLLOUT_FORMAT)
+
+    def test_probe_head_uses_byte_window_not_whole_file_scan(self) -> None:
+        """Large plain rollouts are discovered from a head window only (#7)."""
+
+        identifier, path = self.rollout()
+        # Append a large body after the metadata head so whole-file scanners would
+        # pay multi-MB I/O; head window must still recognize the session.
+        with path.open("ab") as handle:
+            handle.write(b'{"type":"response_item","payload":{"type":"message","role":"assistant","content":"' + (b"x" * 400_000) + b'"}}\n')
+        with mock.patch.object(
+            codex,
+            "stable_scan_lines",
+            side_effect=AssertionError("head discovery must not whole-file scan"),
+        ):
+            capability = codex.ADAPTER.probe(self.query())
+            values = codex.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual(capability.state, "supported")
+        self.assertEqual(capability.format_id, codex.ROLLOUT_FORMAT)
+        self.assertEqual([item.session_id for item in values], [identifier])
+
+    def test_exact_id_db_hit_survives_large_sessions_tree(self) -> None:
+        """Verified exact-ID DB rows must not be lost if FS soft-cap stops (#7)."""
+
+        identifier, path = self.rollout()
+        self.database(9, [self.db_row(identifier, path)])
+        with mock.patch.object(
+            codex,
+            "_rollout_paths",
+            side_effect=AssertionError("exact-ID verified DB hit must skip underfilled FS"),
+        ):
+            values = codex.ADAPTER.list(self.query(identifier), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+
+    def test_exact_id_absent_from_sqlite_still_fs_falls_back(self) -> None:
+        """Exact UUID missing from a recognized DB still recovers from sessions/ (#7)."""
+
+        identifier, _path = self.rollout()
+        other, other_path = self.rollout()
+        self.database(9, [self.db_row(other, other_path)])
+        values = codex.ADAPTER.list(self.query(identifier), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+
+    def test_list_fs_soft_limit_keeps_db_rows(self) -> None:
+        """Soft FS fallback cap must merge, not raise away, verified DB rows (#7)."""
+
+        identifier, path = self.rollout()
+        self.database(9, [self.db_row(identifier, path)])
+        # Force sparse FS path with soft_limit; hard walk would raise.
+        with mock.patch.object(
+            codex,
+            "_walk_rollouts",
+            side_effect=lambda *args, **kwargs: (_ for _ in ()).throw(
+                DiagnosticError.limit_exceeded()
+            )
+            if not kwargs.get("soft_limit")
+            else [],
+        ):
+            # underfilled with no exact ref → FS soft path returns [] and keeps DB.
+            values = codex.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+
+    def test_probe_sample_processes_names_at_visit_cap(self) -> None:
+        """Visit-budget exhaustion mid-listing still processes collected names (#7)."""
+
+        day = self.root / "sessions" / "2026" / "07" / "20"
+        day.mkdir(parents=True)
+        # 129 rollouts in one day directory: more than default visit cap.
+        identifiers: list[str] = []
+        for index in range(codex._PROBE_VISIT_CAP + 1):
+            identifier = str(uuid.uuid4())
+            identifiers.append(identifier)
+            path = day / f"rollout-2026-07-20T12-00-00-{identifier}.jsonl"
+            write_jsonl(
+                path,
+                [
+                    {
+                        "type": "session_meta",
+                        "timestamp": stamp(-1),
+                        "payload": {
+                            "id": identifier,
+                            "cwd": str(self.cwd),
+                            "source": "cli",
+                        },
+                    }
+                ],
+            )
+        sample = codex._sample_rollout_paths(
+            str(self.root),
+            max_visits=codex._PROBE_VISIT_CAP,
+            max_files=8,
+        )
+        self.assertGreaterEqual(len(sample), 1)
+        self.assertTrue(
+            any(codex._rollout_id(path) in identifiers for path in sample),
+            "capped day-dir listing must still yield rollouts from collected names",
+        )
+        capability = codex.ADAPTER.probe(self.query())
+        self.assertEqual(capability.state, "supported")
 
     def test_unknown_database_schema_falls_back_and_retains_rollout_warning(self) -> None:
         identifier = str(uuid.uuid4())
@@ -871,8 +1344,9 @@ class CodexAdapterTests(unittest.TestCase):
         with self.assertRaises(DiagnosticError) as corrupt:
             codex.ADAPTER.list(self.query(), ReadBudget())
         self.assertEqual(corrupt.exception.code, "E_CORRUPT_RECORD")
+        # Discovery heads charge scanned_records (#7), not full transcript_records.
         with self.assertRaises(DiagnosticError) as bounded:
-            codex.ADAPTER.list(self.query(), ReadBudget(Bounds(transcript_records=1)))
+            codex.ADAPTER.list(self.query(), ReadBudget(Bounds(scanned_records=1)))
         self.assertEqual(bounded.exception.code, "E_LIMIT_EXCEEDED")
         marker = self.root / "owned"
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -882,7 +1356,13 @@ class CodexAdapterTests(unittest.TestCase):
             stderr=stderr,
         )
         self.assertFalse(marker.exists())
-        with mock.patch.object(codex, "stable_read_bytes", side_effect=DiagnosticError.source_busy()):
+        with mock.patch.object(
+            codex, "stable_read_bytes", side_effect=DiagnosticError.source_busy()
+        ), mock.patch.object(
+            codex, "stable_scan_lines", side_effect=DiagnosticError.source_busy()
+        ), mock.patch.object(
+            codex, "stable_read_windows", side_effect=DiagnosticError.source_busy()
+        ):
             with self.assertRaises(DiagnosticError) as busy:
                 codex.ADAPTER.list(self.query(identifier), ReadBudget())
         self.assertEqual(busy.exception.code, "E_SOURCE_BUSY")

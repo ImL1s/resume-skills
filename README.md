@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <em>Offline, local-only context migration · 9 sources × 9 hosts (derived from registries) · inert handoff, not live restore</em>
+  <em>Offline, local-only context migration · 17 sources × 18 hosts (derived from registries) · inert handoff, not live restore</em>
 </p>
 
 [English](docs/i18n/en.md) · [繁體中文](docs/i18n/zh-TW.md) · [简体中文](docs/i18n/zh-CN.md) · [日本語](docs/i18n/ja.md) · [한국어](docs/i18n/ko.md) · [Español](docs/i18n/es.md) · [Português](docs/i18n/pt-BR.md) · [Français](docs/i18n/fr.md) · [Deutsch](docs/i18n/de.md) · [Русский](docs/i18n/ru.md) · [العربية](docs/i18n/ar.md) · [हिन्दी](docs/i18n/hi.md) · [All languages](docs/i18n/README.md)
@@ -13,13 +13,14 @@
 Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
 **Current release:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
-· [PyPI](https://pypi.org/project/portable-resume/0.3.4/) · **81/81** packaging and
-installed-runner cells (9 sources × 9 destinations, including Pi filesystem
-install). Separate **v0.3.2-era** host evidence records 7/7 exact native local
+· [PyPI](https://pypi.org/project/portable-resume/0.3.4/) · **306/306** packaging and
+installed-runner cells on current `main` (17 sources × 18 destinations, including
+Pi + OpenClaw + goose + Crush + Cline + OpenHands + Hermes + GitHub Copilot CLI (destination) + Gemini CLI (compat) filesystem install; published `0.3.4` remains historical 81).
+Separate **v0.3.2-era** host evidence records 7/7 exact native local
 plugin/extension installs, 8/8 host-native headless Skill invocations, and 6/6
 compatible public marketplace installs, including Cursor and Kimi marketplace
-pickers. Fresh **v0.3.4** host-by-host reinstall and picker flows, other visual
-Skill pickers, and **Pi native UI / picker** remain separate **not-run** claims.
+pickers. Fresh **v0.3.4** host reinstall/picker flows and **Pi/OpenClaw native
+UI** remain separate **not-run** claims.
 
 ## Sources and destinations
 
@@ -34,8 +35,16 @@ Skill pickers, and **Pi native UI / picker** remain separate **not-run** claims.
 | `resume-qwen` | Qwen Code chat JSONL, including archived chats |
 | `resume-kimi` | Current Kimi Code wire JSONL + legacy Kimi CLI context JSONL |
 | `resume-pi` | Pi agent versioned tree JSONL (`agent/sessions/--cwd-slug--/`) |
+| `resume-openclaw` | OpenClaw per-agent SQLite (`agents/<id>/agent/openclaw-agent.sqlite`) |
+| `resume-goose` | goose sessions.db SQLite (`sessions/sessions.db`, schema v15) |
+| `resume-crush` | Crush project SQLite (`crush.db`, goose_db_version 7) |
+| `resume-cline` | Cline sessions index + messages JSON (`~/.cline/data`) |
+| `resume-openhands` | OpenHands CLI conversation events (`~/.openhands/conversations`) |
+| `resume-hermes` | Hermes Agent state.db sessions (`~/.hermes/state.db`) |
+| `resume-gemini` | Gemini CLI session JSONL (`~/.gemini/tmp/.../chats`) — not Antigravity |
+| `resume-github-copilot` | GitHub Copilot CLI local `session-state/<id>/events.jsonl` |
 
-Destination profiles: Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI, and Pi agent.
+Destination profiles: Claude Code, Codex, Cursor, OpenCode, Antigravity, Grok Build, Qwen Code, Kimi Code CLI, Pi agent, OpenClaw, goose, Crush, Cline, OpenHands, Hermes Agent, GitHub Copilot CLI, Gemini CLI (compat, not Antigravity), and Kilo CLI (destination-only).
 
 ## Requirements
 
@@ -81,12 +90,12 @@ The lower-level transactional command remains available for previews, custom
 roots, verification, and uninstall:
 
 ```bash
-# Inspect capabilities and the registry-derived matrix (currently 9×9)
+# Inspect capabilities and the registry-derived matrix (currently 17×18)
 PYTHONPATH=src python3 scripts/portable-resume --version
 PYTHONPATH=src python3 scripts/install-resume-skills --version
 PYTHONPATH=src python3 scripts/portable-resume self-check --json
-PYTHONPATH=src python3 scripts/install-resume-skills matrix --json
-PYTHONPATH=src python3 scripts/install-resume-skills hosts
+PYTHONPATH=src python3 scripts/install-resume-skills matrix
+PYTHONPATH=src python3 scripts/install-resume-skills hosts --json
 
 # Read a synthetic Claude fixture
 PYTHONPATH=src python3 scripts/portable-resume claude show latest \
@@ -96,11 +105,11 @@ PYTHONPATH=src python3 scripts/portable-resume claude show latest \
 
 # Preview, install, verify, and uninstall one destination
 PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host qwen --scope project --project "$PWD" --dry-run --json
+  --host qwen --scope project --project "$PWD" --dry-run
 PYTHONPATH=src python3 scripts/install-resume-skills install \
-  --host qwen --scope project --project "$PWD" --json
+  --host qwen --scope project --project "$PWD"
 PYTHONPATH=src python3 scripts/install-resume-skills verify \
-  --host qwen --scope project --project "$PWD" --json
+  --host qwen --scope project --project "$PWD"
 ```
 
 Full roots, activation grammar, direct archives, and marketplace/plugin routes are in [`docs/install-hosts.md`](docs/install-hosts.md). Release assets are generated with:
