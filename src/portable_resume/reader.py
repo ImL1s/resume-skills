@@ -124,7 +124,14 @@ def runtime_install_identity() -> dict[str, object]:
             and all(character in "0123456789abcdef" for character in package_identity)
         ):
             result["package_identity"] = package_identity
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        TypeError,
+        ValueError,
+    ):
         # Runtime identity is advisory only: it must never alter the exit code.
         return result
     return result

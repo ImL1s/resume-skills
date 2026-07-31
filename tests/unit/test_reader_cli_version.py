@@ -5,7 +5,6 @@ import sys
 import unittest
 from pathlib import Path
 
-import portable_resume
 from portable_resume.build_identity import build_identity
 from portable_resume.reader import _runtime_version_report
 

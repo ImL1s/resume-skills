@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import unittest
 from pathlib import Path
+from types import ModuleType
+from typing import ClassVar
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -18,6 +20,8 @@ def _load_smoke_module():
 
 
 class DistributionSmokeVersionTests(unittest.TestCase):
+    smoke: ClassVar[ModuleType]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.smoke = _load_smoke_module()

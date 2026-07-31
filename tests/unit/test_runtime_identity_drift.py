@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from typing import Any
 from unittest import mock
 from pathlib import Path
 
@@ -161,6 +162,24 @@ class RuntimeIdentityDriftTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn(WARNING, json.loads(completed.stdout)["warnings"])
 
+    def test_deeply_nested_bounded_manifest_warns_but_never_blocks(self) -> None:
+        manifest = self.installed / ".portable-resume" / ".state" / "manifest.json"
+        depth = 300_000
+        raw = (
+            b'{"claims":{"synthetic":{"root":'
+            + (b"[" * depth)
+            + b"null"
+            + (b"]" * depth)
+            + b"}}}"
+        )
+        self.assertLess(len(raw), 1024 * 1024)
+        manifest.write_bytes(raw)
+
+        completed = self._list(self.installed)
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(WARNING, json.loads(completed.stdout)["warnings"])
+
     def test_runtime_identity_hot_path_reads_at_most_one_file(self) -> None:
         manifest = self.installed / ".portable-resume" / ".state" / "manifest.json"
         runtime_reader = (
@@ -173,9 +192,17 @@ class RuntimeIdentityDriftTests(unittest.TestCase):
         real_open = reader.os.open
         opened: list[object] = []
 
-        def tracking_open(path: object, flags: int) -> int:
+        def tracking_open(
+            path: Any,
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
             opened.append(path)
-            return real_open(path, flags)
+            if dir_fd is None:
+                return real_open(path, flags, mode)
+            return real_open(path, flags, mode, dir_fd=dir_fd)
 
         with mock.patch.object(reader, "__file__", str(runtime_reader)), mock.patch.object(
             reader.os, "open", side_effect=tracking_open
