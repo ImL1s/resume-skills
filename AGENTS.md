@@ -22,7 +22,7 @@ Scripts under `scripts/` inject `src` onto `sys.path`. Unittest still needs `PYT
 
 ## Honesty gates
 
-- **Installed-runner smoke** (registry-derived cell count; currently 121): `smoke_installed_matrix.py` — packaging + installed `run_reader` only.
+- **Installed-runner smoke** (registry-derived cell count; currently **16×18=288**): `smoke_installed_matrix.py` — packaging + installed `run_reader` only.
 - **Host UI NL/picker activation**: stay `not-run` until rows exist in `docs/host-ui-smoke.md` NL table.
 - **Dual-OS release claim**: archive Actions URL + SHA in `docs/evidence-summary.md` / `docs/release-claim.md`.
 - **Cursor full bubble graph**: not claimed; multi-turn composerData is best-effort only.

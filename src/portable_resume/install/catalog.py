@@ -865,8 +865,22 @@ HOST_PROFILES: dict[str, HostProfile] = {
         ),
         project_layout="<project>/.kilocode/skills/<name>/SKILL.md",
         global_layout="$KILO_CONFIG_DIR/skills or ~/.config/kilo/skills/<name>/SKILL.md",
-        alternate_project_roots=(".kilo/skills", ".agents/skills"),
-        alternate_global_roots=("~/.kilo/skills", "~/.agents/skills"),
+        alternate_project_roots=(
+            ".kilocode/skill",
+            ".kilo/skills",
+            ".kilo/skill",
+            ".agents/skills",
+            ".claude/skills",
+        ),
+        alternate_global_roots=(
+            "~/.config/kilo/skill",
+            "~/.kilocode/skills",
+            "~/.kilocode/skill",
+            "~/.kilo/skills",
+            "~/.kilo/skill",
+            "~/.agents/skills",
+            "~/.claude/skills",
+        ),
         install_methods=(
             "This installer: install-resume-skills install --host kilo --scope project|global",
             "Manual: copy each resume-*/ folder into .kilocode/skills/ or ~/.config/kilo/skills/",
@@ -892,9 +906,11 @@ HOST_PROFILES: dict[str, HostProfile] = {
             "Global installs honor KILO_CONFIG_DIR when set (absolute path → <dir>/skills).",
         ),
         evidence_notes=(
-            "Pinned 2026-07-31 from Kilo-Org/kilocode: project .kilocode/.kilo config dirs with "
-            "{skill,skills}/**/SKILL.md; global XDG app name `kilo` → ~/.config/kilo; "
-            "compat .agents/skills (+ optional .claude). Filesystem install only in this release."
+            "Pinned 2026-07-31 from Kilo-Org/kilocode main (skill/index.ts + core/global.ts): "
+            "project .kilocode/.kilo with {skill,skills}/**/SKILL.md; global XDG app `kilo` → "
+            "~/.config/kilo; compat .agents/skills + .claude/skills unless disabled. "
+            "Primary installer root remains plural skills/; singular skill/ is discovery/shadow only. "
+            "Filesystem install only in this release."
         ),
         evidence_level="verified-filesystem",
         global_home_env="KILO_CONFIG_DIR",
