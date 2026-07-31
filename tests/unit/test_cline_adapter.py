@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from portable_resume.adapters.base import ResolvedRef
 from portable_resume.adapters.cline import ADAPTER, FORMAT_ID
@@ -32,6 +33,180 @@ def query(root: Path, ref: str | None = None, **kwargs: object) -> Query:
 
 
 class ClineAdapterTests(unittest.TestCase):
+    def test_exact_indexless_selection_propagates_unsafe_messages_read(self) -> None:
+        root = fixture_root("s-cl-01-user-basic")
+        sessions_only = root / "data" / "sessions"
+        current = Query(
+            source="cline",
+            ref=BASIC_ID,
+            cwd=CWD,
+            source_root=str(sessions_only),
+            within_min=0,
+        )
+
+        with mock.patch(
+            "portable_resume.adapters.cline._load_messages_payload",
+            side_effect=DiagnosticError.unsafe_path(),
+        ):
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.list(current, ReadBudget())
+
+        self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+    def test_indexless_listing_propagates_busy_messages_read(self) -> None:
+        root = fixture_root("s-cl-01-user-basic")
+        sessions_only = root / "data" / "sessions"
+        current = Query(
+            source="cline",
+            cwd=CWD,
+            source_root=str(sessions_only),
+            within_min=0,
+        )
+
+        with mock.patch(
+            "portable_resume.adapters.cline._load_messages_payload",
+            side_effect=DiagnosticError.source_busy(),
+        ):
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.list(current, ReadBudget())
+
+        self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+
+    def test_indexless_listing_propagates_unknown_messages_diagnostic(self) -> None:
+        root = fixture_root("s-cl-01-user-basic")
+        sessions_only = root / "data" / "sessions"
+        current = Query(
+            source="cline",
+            cwd=CWD,
+            source_root=str(sessions_only),
+            within_min=0,
+        )
+
+        with mock.patch(
+            "portable_resume.adapters.cline._load_messages_payload",
+            side_effect=DiagnosticError("E_INVARIANT"),
+        ):
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.list(current, ReadBudget())
+
+        self.assertEqual(caught.exception.code, "E_INVARIANT")
+
+    def test_indexless_listing_propagates_manifest_budget_exhaustion(self) -> None:
+        from portable_resume.bounds import Bounds
+
+        root = fixture_root("s-cl-01-user-basic")
+        sessions_only = root / "data" / "sessions"
+        messages_path = sessions_only / BASIC_ID / f"{BASIC_ID}.messages.json"
+        budget = ReadBudget(
+            limits=Bounds(source_read_bytes=messages_path.stat().st_size)
+        )
+        current = Query(
+            source="cline",
+            cwd=CWD,
+            source_root=str(sessions_only),
+            within_min=0,
+        )
+
+        with self.assertRaises(DiagnosticError) as caught:
+            ADAPTER.list(current, budget)
+
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_indexless_listing_keeps_session_with_corrupt_manifest(self) -> None:
+        import tempfile
+
+        from tests.fixtures.cline import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            sessions_dir = Path(temporary) / "sessions"
+            bf._write_session_files(
+                sessions_dir,
+                session_id=BASIC_ID,
+                messages=[
+                    {"id": "u", "role": "user", "content": "kept user"},
+                    {"id": "a", "role": "assistant", "content": "kept reply"},
+                ],
+            )
+            manifest_path = sessions_dir / BASIC_ID / f"{BASIC_ID}.json"
+            manifest_path.write_text("{not-json", encoding="utf-8")
+            current = Query(
+                source="cline",
+                cwd=None,
+                source_root=str(sessions_dir),
+                within_min=0,
+            )
+
+            summaries = ADAPTER.list(current, ReadBudget())
+
+        self.assertEqual([item.session_id for item in summaries], [BASIC_ID])
+        self.assertIsNone(summaries[0].title)
+
+    def test_show_propagates_busy_manifest_read(self) -> None:
+        from portable_resume.adapters import cline as cline_mod
+
+        root = fixture_root("s-cl-01-user-basic")
+        sessions_only = root / "data" / "sessions"
+        current = Query(
+            source="cline",
+            ref=BASIC_ID,
+            cwd=CWD,
+            source_root=str(sessions_only),
+            within_min=0,
+        )
+        original_read = cline_mod.stable_read_bytes
+
+        def busy_manifest(path: str, **kwargs: object) -> object:
+            if path.endswith(f"/{BASIC_ID}.json"):
+                raise DiagnosticError.source_busy()
+            return original_read(path, **kwargs)
+
+        with mock.patch(
+            "portable_resume.adapters.cline.stable_read_bytes",
+            side_effect=busy_manifest,
+        ):
+            with self.assertRaises(DiagnosticError) as caught:
+                ADAPTER.show(
+                    ResolvedRef(session_id=BASIC_ID, source_path=""),
+                    current,
+                    ReadBudget(),
+                )
+
+        self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+
+    def test_show_keeps_session_with_corrupt_manifest(self) -> None:
+        import tempfile
+
+        from tests.fixtures.cline import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            sessions_dir = Path(temporary) / "sessions"
+            messages_path = bf._write_session_files(
+                sessions_dir,
+                session_id=BASIC_ID,
+                messages=[
+                    {"id": "u", "role": "user", "content": "kept user"},
+                    {"id": "a", "role": "assistant", "content": "kept reply"},
+                ],
+            )
+            manifest_path = sessions_dir / BASIC_ID / f"{BASIC_ID}.json"
+            manifest_path.write_text("{not-json", encoding="utf-8")
+            current = Query(
+                source="cline",
+                ref=BASIC_ID,
+                cwd=None,
+                source_root=str(sessions_dir),
+                within_min=0,
+            )
+
+            session = ADAPTER.show(
+                ResolvedRef(session_id=BASIC_ID, source_path=str(messages_path)),
+                current,
+                ReadBudget(),
+            )
+
+        self.assertEqual(session.session_id, BASIC_ID)
+        self.assertEqual([turn.content for turn in session.turns], ["kept user", "kept reply"])
+
     def test_list_and_show_basic(self) -> None:
         root = fixture_root("s-cl-01-user-basic")
         before = tree_snapshot(root)
@@ -104,7 +279,6 @@ class ClineAdapterTests(unittest.TestCase):
 
     def test_prompt_only_without_messages_not_listed(self) -> None:
         import tempfile
-        import sqlite3
         from tests.fixtures.cline import build_fixtures as bf
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -123,7 +297,7 @@ class ClineAdapterTests(unittest.TestCase):
             )
             # Older valid session should win latest.
             other = "cl000199-0101-4101-8101-010101010199"
-            path = bf._write_session_files(
+            bf._write_session_files(
                 sessions_dir,
                 session_id=other,
                 messages=[
@@ -213,7 +387,7 @@ class ClineAdapterTests(unittest.TestCase):
                 messages_path="",
                 updated_at="2024-06-02T12:00:00.000000Z",
             )
-            path = bf._write_session_files(
+            bf._write_session_files(
                 sessions_dir,
                 session_id=good_id,
                 messages=[
@@ -353,7 +527,6 @@ class ClineAdapterTests(unittest.TestCase):
         import json
         import tempfile
         from portable_resume.adapters import cline as cline_mod
-        from tests.fixtures.cline import build_fixtures as bf
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -415,7 +588,7 @@ class ClineAdapterTests(unittest.TestCase):
                 (early, "2024-01-01T12:00:00.000000Z", "older early id"),
                 (late, "2024-06-01T12:00:00.000000Z", "newer late id"),
             ):
-                path = bf._write_session_files(
+                bf._write_session_files(
                     sessions_dir,
                     session_id=session_id,
                     messages=[

@@ -488,7 +488,8 @@ def _session_has_extractable(
     During ordinary listing (``raise_on_bad=False``):
     - corrupt / unsupported candidates are skipped so older valid rows can win
     - multi-MB files use a soft bounded check (no full JSON decode, no role-in-window)
-    Explicit selection / show still full-loads and raises.
+    Unsafe, busy, and exhausted-budget diagnostics always propagate. Explicit
+    selection full-loads and also raises for corrupt / unsupported candidates.
     """
 
     if messages_path is None:
@@ -525,13 +526,13 @@ def _session_has_extractable(
             max_bytes=list_cap if not raise_on_bad else None,
         )
     except DiagnosticError as error:
+        if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY", "E_LIMIT_EXCEEDED"}:
+            raise
         if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
             if raise_on_bad:
                 raise
             return False
-        if error.code == "E_LIMIT_EXCEEDED" and not raise_on_bad:
-            return False
-        return False
+        raise
     for message in messages[: min(64, budget.limits.transcript_records or 64)]:
         budget.consume_records()
         if _turn_from_message(message) is not None:
@@ -661,7 +662,11 @@ def _list_from_sessions_dir(
                             or is_sub in (1, True)
                         ):
                             continue
-            except (DiagnosticError, json.JSONDecodeError, _DuplicateKey, UnicodeDecodeError):
+            except DiagnosticError as error:
+                if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY", "E_LIMIT_EXCEEDED"}:
+                    raise
+                # Corrupt/unsupported manifest metadata is optional.
+            except (json.JSONDecodeError, _DuplicateKey, UnicodeDecodeError):
                 pass
         item = _row_summary(
             session_id=session_id,
@@ -1046,12 +1051,15 @@ class ClineAdapter:
                         updated_at = updated_at or manifest.get("updated_at") or manifest.get(
                             "started_at"
                         )
-                except (
-                    DiagnosticError,
-                    json.JSONDecodeError,
-                    _DuplicateKey,
-                    UnicodeDecodeError,
-                ):
+                except DiagnosticError as error:
+                    if error.code in {
+                        "E_UNSAFE_PATH",
+                        "E_SOURCE_BUSY",
+                        "E_LIMIT_EXCEEDED",
+                    }:
+                        raise
+                    # Corrupt/unsupported manifest metadata is optional.
+                except (json.JSONDecodeError, _DuplicateKey, UnicodeDecodeError):
                     pass
 
         msg_path = _messages_path_for(
