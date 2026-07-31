@@ -17,31 +17,46 @@ from portable_resume.reader import run
 from tests.security.test_source_immutability import FIXTURES
 
 
+SOURCE_CLI_EXECUTABLE_ALIASES: dict[str, tuple[str, ...]] = {
+    "antigravity": ("antigravity", "agy"),
+    "claude": ("claude",),
+    "cline": ("cline",),
+    "codex": ("codex",),
+    "crush": ("crush",),
+    "cursor": ("cursor",),
+    "gemini": ("gemini",),
+    "github-copilot": ("github-copilot", "copilot"),
+    "goose": ("goose",),
+    "grok": ("grok",),
+    "hermes": ("hermes",),
+    "kimi": ("kimi",),
+    "openclaw": ("openclaw",),
+    "opencode": ("opencode",),
+    "openhands": ("openhands",),
+    "pi": ("pi",),
+    "qwen": ("qwen",),
+}
+
+
 class NoSourceCliExecTests(unittest.TestCase):
     def test_path_shim_binaries_never_run_during_list_show(self) -> None:
+        self.assertEqual(set(SOURCE_CLI_EXECUTABLE_ALIASES), set(SOURCE_KEYS))
+        self.assertTrue(
+            all(source in aliases for source, aliases in SOURCE_CLI_EXECUTABLE_ALIASES.items())
+        )
         with tempfile.TemporaryDirectory() as temporary:
             bin_dir = Path(temporary) / "bin"
             bin_dir.mkdir()
             marker = Path(temporary) / "CALLED"
-            for name in sorted(SOURCE_KEYS):
+            shim_names = {
+                executable
+                for aliases in SOURCE_CLI_EXECUTABLE_ALIASES.values()
+                for executable in aliases
+            }
+            for name in sorted(shim_names):
                 path = bin_dir / name
                 path.write_text(f"#!/bin/sh\necho {name} >> '{marker}'\nexit 99\n", encoding="utf-8")
                 path.chmod(0o755)
-            # also common launcher names
-            for name in (
-                "claude",
-                "codex",
-                "cursor",
-                "opencode",
-                "agy",
-                "grok",
-                "kimi",
-                "qwen",
-            ):
-                path = bin_dir / name
-                if not path.exists():
-                    path.write_text(f"#!/bin/sh\necho {name} >> '{marker}'\nexit 99\n", encoding="utf-8")
-                    path.chmod(0o755)
             env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
             with mock.patch.dict(os.environ, env, clear=False):
                 for source, (root_s, cwd) in sorted(FIXTURES.items()):
