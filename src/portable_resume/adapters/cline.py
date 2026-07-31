@@ -372,6 +372,13 @@ def _load_messages_payload(
     # stable_read_bytes rejects max_bytes above sqlite_snapshot_bytes.
     limit = min(limit, DEFAULT_BOUNDS.sqlite_snapshot_bytes)
     try:
+        # Fail closed on oversize before allocating a full buffer when possible.
+        size = os.lstat(path).st_size
+    except OSError as error:
+        raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
+    if size > limit:
+        raise DiagnosticError.limit_exceeded()
+    try:
         read = stable_read_bytes(
             path,
             root=root,
@@ -386,7 +393,8 @@ def _load_messages_payload(
     if len(raw) > budget.limits.source_read_bytes:
         raise DiagnosticError.limit_exceeded()
     try:
-        payload = json.loads(raw.decode("utf-8"), object_pairs_hook=_object)
+        # json.loads accepts bytes — avoid an extra full-string decode copy.
+        payload = json.loads(raw, object_pairs_hook=_object)
     except (
         json.JSONDecodeError,
         _DuplicateKey,
@@ -411,18 +419,26 @@ def _load_messages_payload(
     return [m for m in messages if isinstance(m, Mapping)]
 
 
-def _list_messages_head_ok(
+def _window_text(data: bytes) -> str:
+    """Decode a byte window; incomplete boundary code points become U+FFFD."""
+
+    if not data:
+        return ""
+    return data.decode("utf-8", errors="replace")
+
+
+def _list_messages_soft_ok(
     path: str,
     root: str,
     budget: ReadBudget,
     *,
     expected_session_id: str,
 ) -> bool:
-    """Bounded structural check for oversized list candidates (no full decode).
+    """Bounded list eligibility for oversized messages (no full decode).
 
-    Envelope keys may sit after a large ``messages`` array when writers use
-    ``sort_keys=True`` (``messages`` < ``sessionId`` < ``version``), so inspect
-    both head and tail windows (Codex P1).
+    Path already binds ``session_id`` via ``{id}/{id}.messages.json``. Windows only
+    reject clear envelope mismatches (wrong version / wrong sessionId). Public
+    roles may live in the unsampled middle — show validates turns fully.
     """
 
     head_limit = min(_LIST_ELIGIBILITY_BYTES, 4 * 1024 * 1024)
@@ -438,27 +454,23 @@ def _list_messages_head_ok(
             require_size_within_max=False,
         )
     except DiagnosticError:
+        # Path + size already accepted; IO glitch during soft check → skip.
         return False
-    parts = [windows.head]
+    text = _window_text(windows.head)
     if windows.tail and windows.tail != windows.head:
-        parts.append(windows.tail)
-    if not any(parts):
+        text = text + "\n" + _window_text(windows.tail)
+    if not text.strip():
         return False
-    try:
-        text = b"\n".join(parts).decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    if not re.search(r'"version"\s*:\s*1\b', text):
-        return False
-    if not re.search(
-        rf'"sessionId"\s*:\s*"{re.escape(expected_session_id)}"',
-        text,
-    ):
-        return False
-    if not re.search(r'"messages"\s*:\s*\[', text):
-        return False
-    if not re.search(r'"role"\s*:\s*"(?:user|assistant|tool)"', text):
-        return False
+    # Reject only unambiguous envelope mismatches visible in the windows.
+    if re.search(r'"version"\s*:\s*(\d+)', text):
+        if not re.search(r'"version"\s*:\s*1\b', text):
+            return False
+    if re.search(r'"sessionId"\s*:\s*"', text):
+        if not re.search(
+            rf'"sessionId"\s*:\s*"{re.escape(expected_session_id)}"',
+            text,
+        ):
+            return False
     budget.consume_records()
     return True
 
@@ -475,7 +487,7 @@ def _session_has_extractable(
 
     During ordinary listing (``raise_on_bad=False``):
     - corrupt / unsupported candidates are skipped so older valid rows can win
-    - multi-MB files use a bounded head check instead of full JSON decode
+    - multi-MB files use a soft bounded check (no full JSON decode, no role-in-window)
     Explicit selection / show still full-loads and raises.
     """
 
@@ -498,7 +510,7 @@ def _session_has_extractable(
         _LIST_ELIGIBILITY_BYTES,
     )
     if not raise_on_bad and size > list_cap:
-        return _list_messages_head_ok(
+        return _list_messages_soft_ok(
             messages_path,
             root,
             budget,
