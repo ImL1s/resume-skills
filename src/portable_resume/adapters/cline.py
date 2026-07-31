@@ -418,41 +418,45 @@ def _list_messages_head_ok(
     *,
     expected_session_id: str,
 ) -> bool:
-    """Bounded structural check for oversized list candidates (no full decode)."""
+    """Bounded structural check for oversized list candidates (no full decode).
+
+    Envelope keys may sit after a large ``messages`` array when writers use
+    ``sort_keys=True`` (``messages`` < ``sessionId`` < ``version``), so inspect
+    both head and tail windows (Codex P1).
+    """
 
     head_limit = min(_LIST_ELIGIBILITY_BYTES, 4 * 1024 * 1024)
+    tail_limit = min(64 * 1024, head_limit)
     try:
         windows = stable_read_windows(
             path,
             root=root,
             head_bytes=head_limit,
-            tail_bytes=0,
+            tail_bytes=tail_limit,
             max_bytes=min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes),
             budget=budget,
             require_size_within_max=False,
         )
     except DiagnosticError:
         return False
-    head = windows.head
-    if not head:
+    parts = [windows.head]
+    if windows.tail and windows.tail != windows.head:
+        parts.append(windows.tail)
+    if not any(parts):
         return False
     try:
-        text = head.decode("utf-8")
+        text = b"\n".join(parts).decode("utf-8")
     except UnicodeDecodeError:
         return False
-    # Envelope fields appear near the start of the written messages file.
     if not re.search(r'"version"\s*:\s*1\b', text):
         return False
-    if f'"sessionId":"{expected_session_id}"' not in text.replace(" ", ""):
-        # Allow spaced JSON: "sessionId" : "id"
-        if not re.search(
-            rf'"sessionId"\s*:\s*"{re.escape(expected_session_id)}"',
-            text,
-        ):
-            return False
+    if not re.search(
+        rf'"sessionId"\s*:\s*"{re.escape(expected_session_id)}"',
+        text,
+    ):
+        return False
     if not re.search(r'"messages"\s*:\s*\[', text):
         return False
-    # Prefer evidence of at least one public role in the head window.
     if not re.search(r'"role"\s*:\s*"(?:user|assistant|tool)"', text):
         return False
     budget.consume_records()
@@ -910,17 +914,34 @@ class ClineAdapter:
             )
         values: list[SessionSummary] = []
         if database is not None:
-            with _open_connection(database, root, budget) as connection:
-                _require_index_schema(connection)
-                values = _list_from_index(
-                    connection,
-                    database=database,
-                    sessions_dir=sessions_dir,
-                    root=root,
-                    query=list_query,
-                    exact_id=exact,
-                    budget=budget,
-                )
+            try:
+                with _open_connection(database, root, budget) as connection:
+                    _require_index_schema(connection)
+                    values = _list_from_index(
+                        connection,
+                        database=database,
+                        sessions_dir=sessions_dir,
+                        root=root,
+                        query=list_query,
+                        exact_id=exact,
+                        budget=budget,
+                    )
+            except DiagnosticError as error:
+                # Optional index: corrupt/unsupported schema must not block
+                # authoritative JSON recovery when sessions_dir is present.
+                if (
+                    error.code in {"E_UNSUPPORTED_FORMAT", "E_CORRUPT_RECORD"}
+                    and sessions_dir is not None
+                ):
+                    values = _list_from_sessions_dir(
+                        sessions_dir=sessions_dir,
+                        root=root,
+                        query=list_query,
+                        exact_id=exact,
+                        budget=budget,
+                    )
+                else:
+                    raise
         elif sessions_dir is not None:
             values = _list_from_sessions_dir(
                 sessions_dir=sessions_dir,
@@ -961,26 +982,31 @@ class ClineAdapter:
         source_path = database or ""
 
         if database is not None:
-            with _open_connection(database, root, budget) as connection:
-                _require_index_schema(connection)
-                rows = connection.execute(
-                    """
-                    SELECT prompt, cwd, workspace_root, messages_path, started_at, updated_at
-                    FROM sessions WHERE session_id = ?
-                    LIMIT 2
-                    """,
-                    (session_id,),
-                ).fetchall()
-                if len(rows) == 1:
-                    (
-                        prompt,
-                        cwd_value,
-                        workspace_root,
-                        messages_path_col,
-                        started_at,
-                        updated_at,
-                    ) = rows[0]
-                    source_path = database
+            try:
+                with _open_connection(database, root, budget) as connection:
+                    _require_index_schema(connection)
+                    rows = connection.execute(
+                        """
+                        SELECT prompt, cwd, workspace_root, messages_path, started_at, updated_at
+                        FROM sessions WHERE session_id = ?
+                        LIMIT 2
+                        """,
+                        (session_id,),
+                    ).fetchall()
+                    if len(rows) == 1:
+                        (
+                            prompt,
+                            cwd_value,
+                            workspace_root,
+                            messages_path_col,
+                            started_at,
+                            updated_at,
+                        ) = rows[0]
+                        source_path = database
+            except DiagnosticError as error:
+                if error.code not in {"E_UNSUPPORTED_FORMAT", "E_CORRUPT_RECORD"}:
+                    raise
+                # Fall through to sessions_dir / messages JSON authority.
 
         # Index-absent path: recover metadata from the session manifest when present.
         if (

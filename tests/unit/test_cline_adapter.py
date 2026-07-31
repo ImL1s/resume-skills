@@ -307,6 +307,98 @@ class ClineAdapterTests(unittest.TestCase):
             self.assertEqual(session.session_id, missing)
             self.assertIn("json-only exact", session.turns[0].content)
 
+    def test_corrupt_index_falls_back_to_sessions_json(self) -> None:
+        """Unsupported/corrupt sessions.db must not block JSON recovery (Codex P1)."""
+        import sqlite3
+        import tempfile
+        from tests.fixtures.cline import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data = root / "data"
+            db_path = data / "db" / "sessions.db"
+            sessions_dir = data / "sessions"
+            db_path.parent.mkdir(parents=True)
+            # Valid JSON sessions.
+            bf._write_session_files(
+                sessions_dir,
+                session_id=BASIC_ID,
+                messages=[
+                    {"id": "u", "role": "user", "content": "from json only"},
+                    {"id": "a", "role": "assistant", "content": "json reply"},
+                ],
+            )
+            # Corrupt/unsupported index (empty DB, no sessions table).
+            conn = sqlite3.connect(db_path)
+            conn.execute("CREATE TABLE other (id INTEGER)")
+            conn.commit()
+            conn.close()
+            current = Query(
+                source="cline",
+                cwd=CWD,
+                source_root=str(root),
+                within_min=0,
+            )
+            report = ADAPTER.probe(current)
+            self.assertIn(report.state, {"partial", "supported"})
+            summaries = ADAPTER.list(current, ReadBudget())
+            self.assertEqual([item.session_id for item in summaries], [BASIC_ID])
+            session = ADAPTER.show(
+                ResolvedRef.from_summary(summaries[0]), current, ReadBudget()
+            )
+            self.assertIn("from json only", session.turns[0].content)
+
+    def test_large_messages_list_uses_tail_for_envelope(self) -> None:
+        """Oversized sort_keys JSON keeps sessionId/version in the tail (Codex P1)."""
+        import json
+        import tempfile
+        from portable_resume.adapters import cline as cline_mod
+        from tests.fixtures.cline import build_fixtures as bf
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sessions_dir = root / "data" / "sessions"
+            session_id = BASIC_ID
+            session_dir = sessions_dir / session_id
+            session_dir.mkdir(parents=True)
+            # Build a payload larger than list eligibility with sort_keys so
+            # version/sessionId sit after the messages array.
+            filler = "x" * (cline_mod._LIST_ELIGIBILITY_BYTES + 8_000)
+            payload = {
+                "agent": "lead",
+                "messages": [
+                    {"id": "u", "role": "user", "content": filler},
+                    {"id": "a", "role": "assistant", "content": "large reply"},
+                ],
+                "sessionId": session_id,
+                "updated_at": "2024-01-01T12:00:00.000000Z",
+                "version": 1,
+            }
+            (session_dir / f"{session_id}.messages.json").write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            manifest = {
+                "version": 1,
+                "session_id": session_id,
+                "cwd": CWD,
+                "workspace_root": CWD,
+                "prompt": "large",
+                "started_at": "2024-01-01T12:00:00.000000Z",
+                "updated_at": "2024-01-01T12:00:00.000000Z",
+            }
+            (session_dir / f"{session_id}.json").write_text(
+                json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+            )
+            current = Query(
+                source="cline",
+                cwd=CWD,
+                source_root=str(sessions_dir),
+                within_min=0,
+            )
+            summaries = ADAPTER.list(current, ReadBudget())
+            self.assertEqual([item.session_id for item in summaries], [session_id])
+
     def test_indexless_scan_does_not_prefer_early_id_over_newer(self) -> None:
         """Indexless list must not truncate alphabetically before recency sort (Codex P1)."""
         import tempfile
