@@ -70,6 +70,14 @@ class OpenHandsAdapterTests(unittest.TestCase):
         summaries = ADAPTER.list(query(root, ref=BASIC_ID), ReadBudget())
         self.assertEqual([item.session_id for item in summaries], [BASIC_ID])
 
+    def test_source_root_conversation_dir_pins_id(self) -> None:
+        root = fixture_root("s-oh-01-user-basic") / BASIC_ID
+        current = query(root)
+        summaries = ADAPTER.list(current, ReadBudget())
+        self.assertEqual([item.session_id for item in summaries], [BASIC_ID])
+        session = ADAPTER.show(ResolvedRef.from_summary(summaries[0]), current, ReadBudget())
+        self.assertEqual(session.session_id, BASIC_ID)
+
 
 if __name__ == "__main__":
     unittest.main()

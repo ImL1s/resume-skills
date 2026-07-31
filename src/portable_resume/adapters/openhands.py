@@ -223,6 +223,28 @@ def _event_names(events_dir: str, *, scan_limit: int) -> list[str]:
     return names
 
 
+def _file_identity(path: str) -> tuple[int, int, int, int]:
+    st = os.lstat(path)
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _preferred_session_from_root(query: Query) -> str | None:
+    """When source_root is an exact conversation directory, pin that id."""
+
+    if not query.source_root:
+        return None
+    candidate = os.path.abspath(query.source_root)
+    if not os.path.isdir(candidate):
+        return None
+    events = os.path.join(candidate, "events")
+    if not os.path.isdir(events):
+        return None
+    name = os.path.basename(candidate.rstrip(os.sep))
+    if _CONV_ID_RE.fullmatch(name):
+        return name
+    return None
+
+
 def _load_event_json(
     path: str,
     root: str,
@@ -483,7 +505,7 @@ class OpenHandsAdapter:
                 "E_CAPABILITY_UNAVAILABLE", source=self.key, provider=FORMAT_ID
             )
         conversations, root = layout
-        exact = _exact_ref(query.ref)
+        exact = _exact_ref(query.ref) or _preferred_session_from_root(query)
         scan_limit = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
         list_limit = min(budget.limits.listed_sessions, DEFAULT_BOUNDS.listed_sessions)
         if exact is None and list_limit <= 0:
@@ -577,26 +599,46 @@ class OpenHandsAdapter:
         _conv_dir, events_dir = paths
         # No durable cwd in events v1 — ignore query.cwd rather than fail closed.
 
-        scan_limit = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
-        names = _event_names(events_dir, scan_limit=scan_limit)
+        # Show uses transcript_records for membership (control events are many files).
+        membership_limit = min(
+            budget.limits.transcript_records, DEFAULT_BOUNDS.transcript_records
+        )
+        names = _event_names(events_dir, scan_limit=membership_limit)
         if not names:
             raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
 
-        # Stable set: capture membership, read, re-check names.
+        # Stable set: pin name order + per-file identity before/after reads.
         membership = tuple(names)
+        pinned: list[tuple[str, tuple[int, int, int, int]]] = []
+        for name in membership:
+            path = os.path.join(events_dir, name)
+            if not _regular_file(path, root):
+                raise DiagnosticError(
+                    "E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID
+                )
+            try:
+                pinned.append((name, _file_identity(path)))
+            except OSError as error:
+                raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
+
         turns: list[Turn] = []
         warnings: list[str] = []
         created_at: str | None = None
         updated_at: str | None = None
         title: str | None = None
         turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
-        transcript_limit = budget.limits.transcript_records
+        transcript_limit = membership_limit
         count = 0
         seen_ids: set[str] = set()
-        for name in membership:
+        for name, before_id in pinned:
             path = os.path.join(events_dir, name)
             if not _regular_file(path, root):
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+            try:
+                if _file_identity(path) != before_id:
+                    raise DiagnosticError.source_busy(provider=FORMAT_ID)
+            except OSError as error:
+                raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
             count += 1
             if count > transcript_limit:
                 raise DiagnosticError.limit_exceeded()
@@ -630,10 +672,17 @@ class OpenHandsAdapter:
                 budget.consume_turns()
                 turns.append(turn)
 
-        # Revalidate membership after scan (stable set).
-        after = tuple(_event_names(events_dir, scan_limit=scan_limit))
+        # Revalidate full membership + identities after scan (stable set).
+        after = tuple(_event_names(events_dir, scan_limit=membership_limit))
         if after != membership:
             raise DiagnosticError.source_busy(provider=FORMAT_ID)
+        for name, before_id in pinned:
+            path = os.path.join(events_dir, name)
+            try:
+                if not _regular_file(path, root) or _file_identity(path) != before_id:
+                    raise DiagnosticError.source_busy(provider=FORMAT_ID)
+            except OSError as error:
+                raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
 
         if not turns:
             raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
