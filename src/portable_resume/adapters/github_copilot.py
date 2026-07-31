@@ -274,25 +274,39 @@ def _discover_session_dirs(
                 return [(prefer_id, events_raw)]
         # Fall through only when the preferred id is absent.
 
-    names = _safe_listdir(state_dir)
     ranked: list[tuple[float, str, str]] = []
-    for name in names:
-        if not _SESSION_ID_RE.fullmatch(name):
-            continue
-        session_dir = os.path.join(state_dir, name)
-        if not _regular_dir(session_dir, root):
-            continue
-        events = os.path.join(session_dir, "events.jsonl")
-        if not _regular_file(events, root):
-            continue
-        try:
-            mtime = float(os.lstat(events).st_mtime)
-        except OSError:
-            mtime = 0.0
-        ranked.append((mtime, name, events))
-        if len(ranked) > scan_limit * 4 and len(ranked) > 8_000:
-            # Soft cap on ranking work for pathological homes.
-            break
+    examined = 0
+    examine_cap = max(scan_limit * 8, 512)
+    try:
+        iterator = os.scandir(state_dir)
+    except OSError:
+        return []
+    with iterator:
+        for entry in iterator:
+            examined += 1
+            if examined > examine_cap:
+                break
+            name = entry.name
+            if not _SESSION_ID_RE.fullmatch(name):
+                continue
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+            except OSError:
+                continue
+            session_dir = entry.path
+            if not _regular_dir(session_dir, root):
+                continue
+            events = os.path.join(session_dir, "events.jsonl")
+            if not _regular_file(events, root):
+                continue
+            try:
+                mtime = float(os.lstat(events).st_mtime)
+            except OSError:
+                mtime = 0.0
+            ranked.append((mtime, name, events))
+            if len(ranked) >= max(scan_limit * 4, scan_limit):
+                break
     ranked.sort(key=lambda item: (-item[0], item[1]))
     return [(name, events) for _mtime, name, events in ranked[:scan_limit]]
 
@@ -365,6 +379,31 @@ def _active_lineage_ids(
     return active
 
 
+def _note_cwd(meta: dict[str, Any], cwd: str) -> None:
+    text = cwd.strip()
+    if not text:
+        return
+    meta["cwd"] = text
+    seen = meta.setdefault("cwd_seen", [])
+    if isinstance(seen, list) and text not in seen:
+        seen.append(text)
+
+
+def _cwd_matches(meta: Mapping[str, Any], query_cwd: str | None) -> bool:
+    if query_cwd is None:
+        return True
+    seen = meta.get("cwd_seen")
+    candidates: list[str] = []
+    if isinstance(seen, list):
+        candidates.extend(item for item in seen if isinstance(item, str))
+    cwd = meta.get("cwd")
+    if isinstance(cwd, str):
+        candidates.append(cwd)
+    if not candidates:
+        return False
+    return any(same_cwd(item, query_cwd) for item in candidates)
+
+
 def _apply_session_control(
     event_type: str,
     data: Mapping[str, Any],
@@ -386,14 +425,14 @@ def _apply_session_control(
         if isinstance(ctx, Mapping):
             cwd = ctx.get("cwd")
             if isinstance(cwd, str) and cwd.strip():
-                meta["cwd"] = cwd.strip()
+                _note_cwd(meta, cwd)
             branch = ctx.get("branch")
             if isinstance(branch, str) and branch.strip():
                 meta["branch"] = branch.strip()
     elif event_type == "session.context_changed":
         cwd = data.get("cwd")
         if isinstance(cwd, str) and cwd.strip():
-            meta["cwd"] = cwd.strip()
+            _note_cwd(meta, cwd)
     return created_at
 
 
@@ -449,6 +488,10 @@ def _parse_metadata_line(
         raise DiagnosticError(
             "E_CORRUPT_RECORD", source="github-copilot", provider=FORMAT_ID
         )
+    # Sub-agent rows share the parent stream; skip for list metadata too.
+    agent_id = record.get("agentId")
+    if agent_id is not None and agent_id != "":
+        return created_at, updated_at
     created_at = _apply_session_control(
         event_type, payload, meta, created_at=created_at
     )
@@ -675,10 +718,9 @@ def _session_summary_from_path(
         return None
     if not meta.get("has_user"):
         return None
+    if not _cwd_matches(meta, query.cwd):
+        return None
     cwd = meta.get("cwd") if isinstance(meta.get("cwd"), str) else None
-    if query.cwd is not None:
-        if cwd is None or not same_cwd(cwd, query.cwd):
-            return None
     # Prefer content stamps; file mtime covers long sessions past the head window.
     stamp = updated_at or created_at or _stamp_iso(meta.get("startTime"))
     mtime_stamp = _file_mtime_iso(path)
@@ -878,10 +920,9 @@ class GitHubCopilotAdapter:
             budget,
             strict_unknown=True,
         )
+        if not _cwd_matches(meta, query.cwd):
+            raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
         cwd = meta.get("cwd") if isinstance(meta.get("cwd"), str) else None
-        if query.cwd is not None:
-            if cwd is None or not same_cwd(cwd, query.cwd):
-                raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
 
         turns: list[Turn] = []
         warnings: list[str] = []
