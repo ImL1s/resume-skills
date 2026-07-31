@@ -893,7 +893,10 @@ class OpenClawAdapter:
                 raise
             # Bound per agent, but never stop scanning other agents before the
             # global timestamp sort (Codex P1 multi-agent latest).
-            values.extend(items[:list_limit])
+            if session_filter is not None:
+                values.extend(items)
+            else:
+                values.extend(items[:list_limit])
         if not values and not any_supported and paths:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
         # Newest first; ascending session_id tie-break (stable sort).

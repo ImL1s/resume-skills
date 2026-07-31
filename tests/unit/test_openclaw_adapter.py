@@ -198,6 +198,36 @@ class OpenClawAdapterTests(unittest.TestCase):
                 )
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
+    def test_exact_ref_bypasses_zero_ordinary_listing_cap(self) -> None:
+        root = fixture_root("s-oc-01-basic")
+        budget = ReadBudget(
+            Bounds(listed_sessions=0, scanned_records=5, source_read_bytes=1024)
+        )
+
+        summaries = ADAPTER.list(query(root, ref="main:sess-basic-0001"), budget)
+
+        self.assertEqual([item.session_id for item in summaries], ["main:sess-basic-0001"])
+
+    def test_show_without_source_path_bypasses_zero_ordinary_listing_cap(self) -> None:
+        root = fixture_root("s-oc-01-basic")
+        budget = ReadBudget(
+            Bounds(
+                listed_sessions=0,
+                scanned_records=5,
+                transcript_records=5,
+                source_read_bytes=1024,
+            )
+        )
+
+        session = ADAPTER.show(
+            ResolvedRef(session_id="main:sess-basic-0001"),
+            query(root),
+            budget,
+        )
+
+        self.assertEqual(session.session_id, "main:sess-basic-0001")
+        self.assertEqual(len(session.turns), 2)
+
     def test_lowered_snapshot_limit_selects_query_only_live_connection(self) -> None:
         from portable_resume.adapters import openclaw as oc
 
