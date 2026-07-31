@@ -53,6 +53,7 @@ _RUNTIME_MODULES = (
     "adapters/crush.py",
     "adapters/cline.py",
     "adapters/openhands.py",
+    "adapters/hermes.py",
     "adapters/opencode.py",
     "adapters/openclaw.py",
     "adapters/pi.py",

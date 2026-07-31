@@ -144,6 +144,15 @@ FIXTURES: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
             "synthetic openhands assistant reply",
         ),
     ),
+    "hermes": (
+        "tests/fixtures/hermes/s-hm-01-user-basic",
+        "/tmp/project",
+        "hm000101-0101-4101-8101-010101010101",
+        (
+            "synthetic hermes user prompt",
+            "synthetic hermes assistant reply",
+        ),
+    ),
 }
 
 

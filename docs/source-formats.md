@@ -151,3 +151,14 @@ Do not copy real transcripts, credentials, developer home paths, or `~/.grok/bun
 - **Roots:** `OPENHANDS_CONVERSATIONS_DIR` / `OPENHANDS_PERSISTENCE_DIR/conversations` / `~/.openhands/conversations`
 - **Out of scope:** Cloud, GUI, ACP, SDK tool registration, organization skills
 
+## hermes-state-sqlite-v1
+
+- **Store:** `$HERMES_HOME/state.db` or `~/.hermes/state.db` (WAL SQLite)
+- **Schema:** `schema_version` max = **23**; tables `sessions`, `messages` (+ optional FTS unused)
+- **Authority:** SQLite only; legacy JSONL under `sessions/` is out of scope
+- **List:** root sessions (`parent_session_id` empty, not archived); hide child/subagent by default
+- **Show:** public `user`/`assistant`/`tool` message `content`; omit system_prompt, reasoning*, platform IDs
+- **Privacy:** never surface `user_id`, `chat_id`, phone/channel tokens in summaries
+- **Roots:** `HERMES_HOME` (absolute), `~/.hermes`, exact `state.db`, or `--source-root`
+- **Out of scope:** Hermes CLI/gateway, Skill hub/taps, messaging retrieval, FTS search, migrations
+

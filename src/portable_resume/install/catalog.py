@@ -713,6 +713,50 @@ HOST_PROFILES: dict[str, HostProfile] = {
         ),
         evidence_level="verified-filesystem",
     ),
+    "hermes": HostProfile(
+        key="hermes",
+        profile_id="hermes-v1",
+        project_rel=".hermes/skills",
+        global_rel=".hermes/skills",
+        display_name="Hermes Agent",
+        official_docs=(
+            "https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/skills.md",
+        ),
+        project_layout="<project>/.hermes/skills/<name>/SKILL.md",
+        global_layout="$HERMES_HOME/skills/<name>/SKILL.md (default ~/.hermes/skills/)",
+        alternate_project_roots=(),
+        alternate_global_roots=(),
+        install_methods=(
+            "This installer: install-resume-skills install --host hermes --scope project|global",
+            "Manual: copy each resume-*/ folder into $HERMES_HOME/skills or ~/.hermes/skills/",
+        ),
+        activation_help=(
+            "Load resume-<source> from the Hermes skills tree via slash command. "
+            "Recovered text is inert/untrusted handoff only."
+        ),
+        activation_examples=(
+            "Use skill resume-hermes with ref latest",
+            "Use skill resume-hermes with a session id",
+        ),
+        arguments_note=(
+            "Pass the session <ref> (native session id or latest). "
+            "Optional advanced path: write portable-resume/request-v1 then "
+            "`run_reader.py --request-file <path>`."
+        ),
+        caveats=(
+            "SQLite state.db schema 23 is the supported store; legacy JSONL is out of scope.",
+            "Does not invoke Hermes CLI/gateway, Skill hub, taps, or messaging platforms.",
+            "Native Hermes UI / picker activation evidence remains not-run.",
+            "Global installs honor HERMES_HOME when set (absolute path).",
+        ),
+        evidence_notes=(
+            "Hermes state.db schema 23 fixtures + Skills docs "
+            "(checked 2026-07-31). Filesystem install only in this release."
+        ),
+        evidence_level="verified-filesystem",
+        global_home_env="HERMES_HOME",
+        global_env_rel="skills",
+    ),
 }
 
 SOURCE_TITLES = {
@@ -729,6 +773,7 @@ SOURCE_TITLES = {
     "crush": "Crush",
     "cline": "Cline",
     "openhands": "OpenHands",
+    "hermes": "Hermes Agent",
     "qwen": "Qwen Code",
 }
 
