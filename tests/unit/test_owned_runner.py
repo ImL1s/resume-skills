@@ -40,7 +40,18 @@ def _load_force(source: str = "codex") -> types.ModuleType:
         spec = importlib.util.spec_from_file_location(f"owned_runner_{source}", path)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        saved_modules = {
+            name: value
+            for name, value in sys.modules.items()
+            if name == "portable_resume" or name.startswith("portable_resume.")
+        }
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            for name in tuple(sys.modules):
+                if name == "portable_resume" or name.startswith("portable_resume."):
+                    sys.modules.pop(name, None)
+            sys.modules.update(saved_modules)
         return module
 
 
@@ -150,8 +161,20 @@ class OwnedRunnerRuntimeFailureTests(unittest.TestCase):
         runner.write_bytes(rendered)
         return runner
 
+    def _write_owned_runtime(self, root: Path) -> None:
+        for relative, content in materialize_plan("claude").items():
+            if not relative.startswith(".portable-resume/runtime/"):
+                continue
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+
     def _run(
-        self, runner: Path, *, pythonpath: Path | None = None
+        self,
+        runner: Path,
+        *,
+        pythonpath: Path | None = None,
+        argv: tuple[str, ...] = ("list", "--cwd", "/tmp"),
     ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         if pythonpath is None:
@@ -159,7 +182,7 @@ class OwnedRunnerRuntimeFailureTests(unittest.TestCase):
         else:
             env["PYTHONPATH"] = str(pythonpath)
         return subprocess.run(
-            [sys.executable, str(runner), "list", "--cwd", "/tmp"],
+            [sys.executable, str(runner), *argv],
             check=False,
             capture_output=True,
             text=True,
@@ -167,15 +190,23 @@ class OwnedRunnerRuntimeFailureTests(unittest.TestCase):
             cwd=str(runner.parents[2]),
         )
 
-    def _write_hostile_package(self, root: Path, marker: Path) -> Path:
+    def _write_hostile_package(
+        self, root: Path, marker: Path, *, main_marker: Path | None = None
+    ) -> Path:
         package = root / "portable_resume"
         package.mkdir(parents=True)
         (package / "__init__.py").write_text(
             f"from pathlib import Path\nPath({str(marker)!r}).write_text('imported')\n",
             encoding="utf-8",
         )
+        main_effect = ""
+        if main_marker is not None:
+            main_effect = (
+                "    from pathlib import Path\n"
+                f"    Path({str(main_marker)!r}).write_text('executed')\n"
+            )
         (package / "reader.py").write_text(
-            "def main(argv=None):\n    return 0\n", encoding="utf-8"
+            f"def main(argv=None):\n{main_effect}    return 0\n", encoding="utf-8"
         )
         (package / "model.py").write_text("SOURCE_KEYS = ('claude',)\n", encoding="utf-8")
         return package
@@ -240,6 +271,27 @@ class OwnedRunnerRuntimeFailureTests(unittest.TestCase):
             self.assertFalse(marker.exists())
 
         self._assert_missing_runtime_diagnostic(completed)
+
+    def test_preloaded_foreign_runtime_is_not_reused(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            self._write_owned_runtime(root)
+            import_marker = root / "foreign-imported"
+            main_marker = root / "foreign-main-executed"
+            foreign = root / "foreign"
+            self._write_hostile_package(
+                foreign, import_marker, main_marker=main_marker
+            )
+            (foreign / "sitecustomize.py").write_text(
+                "import portable_resume.reader\n", encoding="utf-8"
+            )
+            completed = self._run(runner, pythonpath=foreign, argv=("--help",))
+            self.assertTrue(import_marker.exists())
+            self.assertFalse(main_marker.exists())
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("usage:", completed.stdout)
 
     def test_present_runtime_missing_reader_is_not_swallowed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -48,6 +48,11 @@ def _owned_runtime_package_available() -> bool:
 
 if not _owned_runtime_package_available():
     _runtime_unavailable()
+
+for _module_name in tuple(sys.modules):
+    if _module_name == "portable_resume" or _module_name.startswith("portable_resume."):
+        sys.modules.pop(_module_name, None)
+
 if _RUNTIME not in sys.path:
     sys.path.insert(0, _RUNTIME)
 
