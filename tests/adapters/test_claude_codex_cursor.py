@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import unittest
 import uuid
+from collections import Counter
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,16 +36,20 @@ def write_jsonl(path: Path, records: list[object], *, trailing: bytes = b"") -> 
 
 
 class AdapterFixtureManifestTests(unittest.TestCase):
-    def test_all_28_lane_manifests_are_strict_synthetic(self) -> None:
+    def test_lane_manifests_are_strict_synthetic(self) -> None:
+        lane_sources = {"claude", "codex", "cursor"}
         values = [
             value
             for value in validate_fixture_tree("tests/fixtures")
-            if value.source in {"claude", "codex", "cursor"}
+            if value.source in lane_sources
         ]
-        self.assertEqual(len(values), 28)
-        self.assertEqual(sum(value.source == "claude" for value in values), 8)
-        self.assertEqual(sum(value.source == "codex" for value in values), 12)
-        self.assertEqual(sum(value.source == "cursor" for value in values), 8)
+        fixture_sources = Counter(
+            path.parents[1].name
+            for path in Path("tests/fixtures").rglob("fixture.json")
+            if path.parents[1].name in lane_sources
+        )
+
+        self.assertEqual(Counter(value.source for value in values), fixture_sources)
         self.assertTrue(all(value.synthetic for value in values))
 
 
@@ -61,7 +66,7 @@ class ClaudeAdapterTests(unittest.TestCase):
 
     def issue167_query(self, cwd: str) -> Query:
         root = Path(
-            "tests/fixtures/claude/s-cla-08-unmatched-cwd-bounds/root"
+            "tests/fixtures/claude/s-cla-09-unmatched-cwd-bounds/root"
         ).resolve()
         return Query("claude", cwd=cwd, source_root=str(root))
 
