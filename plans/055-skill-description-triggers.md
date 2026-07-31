@@ -142,10 +142,19 @@ expectations.
 ### Step 4: Add a guard test
 
 Assert that every generated description (a) is within the recorded length
-bound, (b) contains the source title, (c) contains at least one trigger word
-from a small list (`resume`, `continue`, `previous`), and (d) does **not**
-contain "restore" in a sense implying live restoration — a simple substring
-check plus a comment explaining the product boundary.
+bound, (b) contains the source title, and (c) contains at least one trigger
+word from a small list (`resume`, `continue`, `previous`).
+
+For the product boundary, do **not** use a bare substring check against
+"restore" — the proposed wording deliberately *contains* that word in a
+negated statement ("never restores a live process"), so a naive guard would
+reject the very sentence that preserves the boundary (raised as P2 in
+review). Test the **affirmative claim** instead: assert the description does
+not match an affirmative live-restore pattern (e.g. `restores your session`,
+`resumes the live`, `restarts the process`) while explicitly permitting a
+negated form. A small regex over the sentence containing the word — requiring
+a preceding negation such as "never" or "not" — is the honest shape. Comment
+the intent so a future editor understands what the guard protects.
 
 **Verify**: the guard passes; deliberately break one condition → it fails;
 restore.
@@ -169,7 +178,7 @@ be evaluated live — see Maintenance notes.
 
 - [ ] Wording proposal recorded with the host length constraint; confirmed before commit
 - [ ] `description_for` emits trigger-first text for all 17 sources, within bounds
-- [ ] Guard test enforces triggers, title, length, and the no-live-restore boundary
+- [ ] Guard test enforces triggers, title, length, and rejects **affirmative** live-restore claims while permitting the negated boundary sentence (the proposed wording passes its own guard)
 - [ ] Packaging identity expectations updated; installed matrix green
 - [ ] CHANGELOG notes the identity change
 - [ ] Full suite + gates green; `plans/README.md` updated

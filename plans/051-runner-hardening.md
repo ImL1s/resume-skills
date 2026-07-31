@@ -167,15 +167,35 @@ report so 053's author expects it.
 
 ### Step 3 (Part B): Guard the runtime import
 
-Wrap the two imports in `try/except ImportError`. In the failure path, write a
-literal diagnostic document to **stderr** and exit with a stable code — do not
-re-raise, do not print a traceback:
+Wrap the two imports in a guard that catches **only the missing-runtime
+case**. Catching every `ImportError` would also swallow failures raised
+*transitively* while importing an otherwise-present runtime — a missing
+internal symbol, a circular import, a corrupt module — and misreport a broken
+runtime as "capability unavailable", concealing the very defect the guard is
+meant to surface (raised as P2 in review).
+
+The in-repo precedent is `_load_adapter` in `src/portable_resume/reader.py`,
+which narrows on the module name:
+
+```python
+    except ModuleNotFoundError as error:
+        if error.name != profile.adapter_module:
+            raise
+```
+
+Apply the same discipline: catch `ModuleNotFoundError`, and re-raise unless
+`error.name` is the top-level `portable_resume` package (i.e. the runtime
+tree itself is absent). Anything else propagates unchanged. In the
+missing-runtime path, write a literal diagnostic document to **stderr** and
+exit with a stable code — do not re-raise, do not print a traceback:
 
 ```python
 try:
     from portable_resume.reader import main  # noqa: E402
     from portable_resume.model import SOURCE_KEYS  # noqa: E402
-except ImportError:
+except ModuleNotFoundError as error:
+    if (error.name or "").split(".")[0] != "portable_resume":
+        raise
     sys.stderr.write(
         '{"schema_version":"portable-resume/diagnostic-v1",'
         '"code":"E_CAPABILITY_UNAVAILABLE",'
@@ -204,6 +224,12 @@ exit code is the one you chose (not 1), and `python3 -c "import json,sys; json.l
 2. Missing runtime: render the template to a temp dir **without** the runtime,
    run it as a subprocess, assert the exit code, empty stdout, and that stderr
    parses as JSON with the expected `code`/`exit_code`.
+2b. **Broken runtime is NOT swallowed**: place a runtime tree that exists but
+   fails to import for an unrelated reason (e.g. a `portable_resume/` package
+   whose `reader.py` imports a module that does not exist), run the runner as
+   a subprocess, and assert it does **not** emit the capability-unavailable
+   diagnostic — the underlying `ModuleNotFoundError` must surface. This pins
+   the narrowing from Step 3.
 3. Regression: `--expected-source qwen` against a claude-bound runner still
    returns claude rows (the passing behavior above).
 
@@ -229,6 +255,7 @@ failure.
 - [ ] Bare `run_reader.py` produces a bounded listing (byte count recorded, ≪ 157 KB)
 - [ ] `show latest` and bare-ref shorthand unchanged
 - [ ] Missing runtime → parseable `diagnostic-v1` JSON on stderr, empty stdout, stable exit code (never 1, never a traceback)
+- [ ] A runtime that exists but fails to import for another reason is **not** misreported as capability-unavailable (test-pinned)
 - [ ] Hostile `--expected-source` override still ignored
 - [ ] Template `$` escaping intact (`smoke_installed_matrix.py` green proves rendering)
 - [ ] Full suite + gates green; `plans/README.md` updated

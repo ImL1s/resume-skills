@@ -87,6 +87,22 @@ stdout at all, and it misdirects recovery.
   `# Portable Resume No Match` document on stdout with exit 3
   (`E_NO_MATCH`) — that path already works and is what an agent can act on.
 
+- **HARD CONSTRAINT — there is no warning channel for an empty result**
+  (raised as P1 in review; verify it yourself before designing):
+  `src/portable_resume/adapters/base.py` declares
+  `def list(self, query: Query, budget: ReadBudget) -> list[SessionSummary]`,
+  and warnings ride on `SessionSummary.warnings` — so a scan that returns
+  **zero** summaries has nowhere to attach "this listing is incomplete".
+  `src/portable_resume/reader.py` seeds `envelope_warnings` from
+  `capability.warnings` (the probe) and extends it per-summary via
+  `sanitize_summary`.
+  **Consequence**: silently converting an exhausted scan into an empty
+  listing would make the reader assert "no session exists here" when the
+  truth is "we stopped looking". That is a worse failure than today's
+  misleading exit 7. Any design that returns an empty listing after an
+  incomplete scan **must** first establish a channel that marks the listing
+  incomplete.
+
 ## Commands you will need
 
 | Purpose | Command | Expected |
@@ -136,29 +152,56 @@ operator's real store.
 
 ### Step 2: Choose the bounding strategy (record the choice)
 
-Two candidates — pick ONE, state it, and justify it against the intentional
-fallback comment:
+**The non-negotiable invariant**: the reader must never present an empty (or
+partial) listing as authoritative when the scan did not finish. Read the HARD
+CONSTRAINT in "Current state" first — an empty result has no warning carrier
+today, so "return empty + a warning" is *not* implementable as-is.
 
-**A. Separate budget for the fallback scan** (preferred): give the
-broad-listing fallback its own `ReadBudget` (or a sub-budget derived from the
-caller's limits) and, when that budget is exhausted, return the summaries
-gathered so far plus a `W_TRUNCATED`-style warning — never raise. Preserves
-relocated-bucket discovery, degrades honestly.
+Three candidates — pick ONE, state it, and justify it against both the
+intentional fallback comment and that invariant:
 
-**B. Skip the fallback when the slug directory is absent**: cheapest, but
+**A. Establish an incomplete-listing channel, then degrade** (best outcome,
+largest change): give the fallback its own sub-budget and, on exhaustion,
+return what was gathered **plus a machine-readable incompleteness signal**.
+Since `list()` cannot carry one today, you must first add a channel — the
+cheapest honest options are (i) surface it through the adapter's
+`CapabilityReport.warnings` (already seeded into `envelope_warnings` before
+listing), or (ii) let the adapter record a `W_*` code on a mutable accumulator
+passed alongside the budget. Do **not** invent a new return type for
+`SourceAdapter.list` without saying so explicitly — that changes the adapter
+contract for all 17 sources.
+
+**B. Complete the scan cheaply instead of truncating it** (preferred if the
+numbers work): the fallback only needs each session's *recorded cwd*, not its
+full body. Measure whether a metadata-only pass (the direction plan 014
+already took) lets a realistic store — the audit machine had 1056 sessions —
+finish inside `scanned_records`. If it does, an empty listing becomes
+*genuinely* authoritative and no new channel is needed. Report the measured
+records-per-session before and after.
+
+**C. Skip the fallback when the slug directory is absent**: cheapest, but
 loses relocated-bucket discovery entirely. Only acceptable if you can show
-that capability is already covered elsewhere (e.g. by the exact-UUID path) —
-and if you take B, a fixture proving relocated buckets still resolve is
+that capability is already covered elsewhere (e.g. by the exact-UUID path);
+if you take C, a fixture proving relocated buckets still resolve is
 mandatory.
 
-**Verify**: choice and justification recorded before code changes.
+**Explicitly rejected**: swallowing `E_LIMIT_EXCEEDED` into an empty listing
+with no incompleteness signal. If none of A–C is achievable, **keep raising**
+— a misleading-but-honest failure beats a confident false negative — and
+report that outcome rather than shipping the swallow.
+
+**Verify**: choice and justification recorded before code changes, including
+(for B) the measured scan cost.
 
 ### Step 3: Implement
 
 Apply the chosen strategy so that, for an unmatched cwd on a large store:
-- `list` exits **0** with an empty (or partial + warned) session array;
-- `show latest` exits **3** (`E_NO_MATCH`) with the existing rendered no-match
-  document on **stdout**;
+- when the scan **completed** (nothing matched): `list` exits **0** with an
+  empty session array, and `show latest` exits **3** (`E_NO_MATCH`) with the
+  existing rendered no-match document on **stdout**;
+- when the scan **did not complete**: the result is never presented as
+  authoritative — either it carries the incompleteness signal from your chosen
+  channel (option A), or it still raises (the rejected-swallow rule);
 - a genuinely oversized *matched* scan still fails closed with
   `E_LIMIT_EXCEEDED` — the safety property must survive (test it).
 
@@ -173,8 +216,13 @@ registered `format_id`, provenance anchor) — large enough to cross a
 **lowered** budget rather than the full 2000-record default, so the test is
 fast. Then assert:
 
-1. Unmatched cwd + over-ceiling store → `list` exit 0, empty listing (plus
-   the warning if you chose A).
+1. Unmatched cwd, scan **completes** → `list` exit 0, empty listing, and
+   (assert explicitly) **no** incompleteness signal.
+1b. Unmatched cwd, scan **exhausts the budget** → the listing is not
+   authoritative: assert either the incompleteness signal is present
+   (option A) or the call still raises (options B/C when the store outgrows
+   even the cheap pass). This is the case that must never silently look like
+   "no sessions".
 2. Unmatched cwd → `show latest` exit 3 with the no-match document on stdout
    (assert stdout is non-empty).
 3. **Relocated bucket still discoverable**: a session whose bucket name
@@ -207,7 +255,8 @@ bounded; the still-fails-closed case is the guard for the safety property.
 
 ## Done criteria
 
-- [ ] `list --cwd <unmatched>` on a large store exits 0 with an empty listing
+- [ ] `list --cwd <unmatched>` exits 0 with an empty listing **when the scan completed**
+- [ ] An incomplete scan is never presented as an authoritative empty listing (test-pinned, both directions)
 - [ ] `show latest --cwd <unmatched>` exits 3 with a non-empty stdout document
 - [ ] Relocated-bucket discovery still works (test-pinned)
 - [ ] Oversized *matched* scans still raise `E_LIMIT_EXCEEDED` (test-pinned)

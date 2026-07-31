@@ -38,6 +38,27 @@ output cannot distinguish them either.
 skill roots are on the host's discovery path. When that happens the agent
 silently executes old adapter code while everything looks current.
 
+### What is and is not detectable from inside the loaded tree
+
+This distinction was raised as a **P1 in review** and is the load-bearing
+constraint on the whole plan — an earlier draft proposed comparing the
+sibling manifest's `bundle_version` against the runtime's `__version__`,
+which **cannot work**: a complete old installation contains an old manifest
+*and* an old runtime whose versions agree, and relocating both trees together
+preserves that agreement. Self-comparison of a consistent tree provides false
+assurance.
+
+| Failure | Detectable from inside the tree? | How |
+|---|---|---|
+| Tree was copied/moved away from where it was installed | **Yes** | `build_manifest` records `"root": os.path.realpath(root)` per claim (`src/portable_resume/install/manifest.py`, around line 145). Compare it to the tree's actual realpath at runtime. This is exactly the audit's reproduction. |
+| Payload no longer matches its own manifest (tampering, partial sync, hand-edited files) | **Yes** | Recompute the loaded tree's identity and compare with the manifest's `package_identity`. Costs I/O. |
+| An intact **older** install shadowing a newer one elsewhere | **No** | An internally consistent 0.3.3 tree at its original root knows nothing about 0.4.0. Only a cross-root comparison sees this — which is what the installer's `audit-host` discovery already does. The runtime's honest contribution is to *report* its identity so a human, an agent, or `audit-host` can compare. |
+
+Design accordingly: the runtime can **detect** relocation and
+self-inconsistency, and can **report** identity for external comparison. It
+cannot detect staleness on its own, and no done criterion in this plan may
+assume otherwise.
+
 ## Current state
 
 - **No runtime identity check exists.** Both greps return zero:
@@ -118,21 +139,29 @@ Determine, and write up:
    `__version__`, without re-hashing) may be enough to catch the realistic
    failure — a *stale* copy — even though it cannot catch a tampered one.
 
-Then present two or three options with their trade-offs:
+Then present the options with their trade-offs. Only these three are sound
+given the detectability table above (a `bundle_version`-vs-`__version__`
+self-comparison is **not** among them — it cannot fail on a consistent tree):
 
-- **A. Cheap version cross-check** on every run: compare the sibling
-  manifest's `bundle_version` against the loaded runtime's `__version__`;
-  warn on mismatch. Catches stale copies; no hashing; near-zero cost.
-- **B. Full payload verification** on every run: recompute the identity of the
-  loaded tree and compare to the manifest. Catches tampering too; costs I/O
-  per invocation.
-- **C. Opt-in only**: report identity in `--version` (and/or a `self-check`
-  addition) but do nothing on normal runs. Zero hot-path cost; relies on the
-  agent to ask.
+- **A. Recorded-root check** on every run: compare the manifest claim's
+  recorded `root` against the tree's actual realpath; warn on mismatch.
+  Catches relocation — the audit's reproduction — at the cost of one small
+  file read, no hashing. Must stay silent when no manifest exists.
+- **B. Full payload verification** on every run: recompute the loaded tree's
+  identity and compare with the manifest's `package_identity`. Additionally
+  catches tampering and partial syncs; costs I/O proportional to the payload
+  (~75 files) on every invocation — measure it before recommending.
+- **C. Report-only**: surface the loaded tree's identity and recorded root in
+  `--version` (and/or `self-check`) and do nothing on normal runs. Zero
+  hot-path cost. This is the **only** mechanism that helps with the
+  shadowing-an-older-install case, since that comparison must happen outside
+  the tree.
 
-**Recommendation to present**: A as the default with C's richer reporting in
-`--version` — the realistic failure is a stale copy, and per-invocation
-hashing on a tool that runs inside a session is hard to justify.
+**Recommendation to present**: **A + C** — A catches the failure the audit
+actually reproduced, C makes the undetectable case diagnosable by
+`audit-host` or by an agent that asks. Take B only if the measured cost is
+negligible on a real install; per-invocation hashing inside a session is hard
+to justify otherwise.
 
 **Verify**: the write-up exists, with measured timings for B. **STOP here for
 maintainer confirmation** unless already authorized.
@@ -167,13 +196,20 @@ distinguishable identity information.
 
 ### Step 4: Tests
 
-1. Pristine temp install → no drift warning; exit unchanged.
-2. Manifest edited to a different `bundle_version` → warning present, exit
-   code unchanged, output otherwise identical.
-3. No manifest → no warning, no error.
-4. (If option B) payload byte modified → warning present.
-5. Hot-path cost: assert the check does not read more than N files (or assert
-   a timing bound loose enough not to be flaky — prefer counting reads).
+1. Pristine temp install → no warning; exit unchanged.
+2. **Relocated tree** (copy `resume-<source>/` **and** `.portable-resume/` to
+   another directory, run from there) → warning present, exit code unchanged,
+   stdout otherwise identical. This is the audit's reproduction and the
+   primary regression guard.
+3. No manifest → no warning, no error (direct-ZIP and hand-copied installs
+   are supported).
+4. (If option B) a payload byte modified in place → warning present.
+5. **Negative control**: an intact tree whose recorded root matches, but which
+   is "old" relative to some other install, produces **no** warning — assert
+   this explicitly so nobody later mistakes the check for staleness detection
+   (see the detectability table).
+6. Hot-path cost: assert the check does not read more than N files (prefer
+   counting reads over timing, which is flaky in CI).
 
 **Verify**: all pass; full suite OK.
 
@@ -192,17 +228,23 @@ in-process.
 ## Done criteria
 
 - [ ] Options written up with measured cost; decision recorded
-- [ ] A stale/foreign copy produces a warning through an existing channel
+- [ ] A **relocated** copy produces a warning through an existing channel (test-pinned)
+- [ ] An intact tree at its recorded root produces no warning, even when older than another install elsewhere (negative control, test-pinned)
 - [ ] Exit codes and stdout content are unchanged by the check (test-pinned)
 - [ ] Missing manifest is silent (test-pinned)
-- [ ] `--version` distinguishes two copies
+- [ ] `--version` reports the loaded tree's identity and recorded root, so an external comparison can distinguish two copies
 - [ ] Runtime still does not import `install/**` (allowlist test green)
 - [ ] Full suite + smoke matrix + gates green; `plans/README.md` updated
 
 ## STOP conditions
 
-- The installed tree does not contain a manifest the runtime can read — report
-  it; the plan's premise fails and option C is the only viable one.
+- The installed tree does not contain a manifest the runtime can read, or the
+  manifest does not record an install root — report it; options A and B both
+  collapse and C is the only viable one.
+- You find yourself designing a check that compares the tree only against
+  itself (e.g. manifest `bundle_version` vs runtime `__version__`) — STOP:
+  that cannot fail on a consistent tree and is the flaw this plan exists to
+  avoid.
 - Implementing the check requires importing anything from
   `portable_resume.install` — STOP; that breaks the runtime allowlist (plan
   025) deliberately.
