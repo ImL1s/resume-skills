@@ -24,8 +24,24 @@ CHECKLIST = (
     "- [ ] Re-confirm credentials, permissions, and external side-effect boundaries.",
 )
 
-_TRUNCATION_NOTICE = (
-    "> `[W_TRUNCATED]` recovered display content was reduced to fit the handoff output budget."
+HANDOFF_WARNING_EXPLANATIONS: dict[str, str] = {
+    "W_TRUNCATED": "recovered content was reduced to fit configured safety or output bounds.",
+    "W_PARTIAL_TAIL": "the source ended with an incomplete record; newest content may be missing.",
+    "W_BROKEN_CHAIN": "parent links were unresolvable; turn order may be wrong.",
+    "W_MISSING_BLOB": "referenced persisted content was unavailable; recovered context is incomplete.",
+    "W_STALE_INDEX": "persisted metadata may be stale or inconsistent with recovered content.",
+    "W_OPTIONAL_ZSTD_UNAVAILABLE": "optional compressed content could not be decoded.",
+    "W_METADATA_REDACTED": "potentially sensitive metadata was removed.",
+    "W_CONTROLS_REMOVED": "unsafe or invisible control characters were removed.",
+    "W_BINARY_OMITTED": "binary content was omitted from the text handoff.",
+    "W_UNKNOWN_RECORD_SKIPPED": "an unrecognized persisted record was skipped.",
+}
+
+_TURN_DROP_WARNING_NOTICE = (
+    "> `[W_TRUNCATED]` earlier transcript turns were omitted to fit the output budget."
+)
+_BODY_TRUNCATION_NOTICE = (
+    "> `[W_TRUNCATED]` one or more recovered text bodies were shortened before display."
 )
 
 
@@ -56,7 +72,14 @@ def _quote(text: str | None) -> list[str]:
 
 def _warning_lines(warnings: Iterable[str]) -> list[str]:
     stable = tuple(dict.fromkeys(warnings))
-    return [f"> - `{_value(warning)}`" for warning in stable] if stable else ["> - none"]
+    lines: list[str] = []
+    for warning in stable:
+        code = _value(warning)
+        explanation = HANDOFF_WARNING_EXPLANATIONS.get(warning)
+        lines.append(
+            f"> - `{code}` — {explanation}" if explanation else f"> - `{code}`"
+        )
+    return lines if lines else ["> - none"]
 
 
 def _utf8_size(text: str) -> int:
@@ -88,8 +111,10 @@ def _quote_budgeted(text: str | None, *, maximum_bytes: int) -> list[str]:
     if maximum_bytes <= 0:
         return []
     if not text:
-        lines = ["> _(not persisted)_"]
-        return lines if _utf8_size("\n".join(lines)) <= maximum_bytes else []
+        empty_lines = ["> _(not persisted)_"]
+        return (
+            empty_lines if _utf8_size("\n".join(empty_lines)) <= maximum_bytes else []
+        )
 
     lines: list[str] = []
     used = 0
@@ -149,15 +174,25 @@ def _header(session: Session) -> list[str]:
     ]
 
 
-def _footer(warnings: Iterable[str], *, output_truncated: bool) -> list[str]:
+def _warning_block(
+    warnings: Iterable[str],
+    *,
+    dropped_turns: int,
+    body_truncated: bool,
+) -> list[str]:
     values = list(dict.fromkeys(warnings))
-    if output_truncated and "W_TRUNCATED" not in values:
+    if (dropped_turns or body_truncated) and "W_TRUNCATED" not in values:
         values.append("W_TRUNCATED")
     lines = ["", "## Warnings", *_warning_lines(values)]
-    if output_truncated:
-        lines.append(_TRUNCATION_NOTICE)
-    lines.extend(("", "## Required current checks (unchecked)", *CHECKLIST))
+    if dropped_turns:
+        lines.extend((">", _TURN_DROP_WARNING_NOTICE))
+    if body_truncated:
+        lines.extend((">", _BODY_TRUNCATION_NOTICE))
     return lines
+
+
+def _footer() -> list[str]:
+    return ["", "## Required current checks (unchecked)", *CHECKLIST]
 
 
 def _turn_block(turn: Turn) -> list[str]:
@@ -175,7 +210,7 @@ def _assemble(
     user_text: str | None,
     assistant_text: str | None,
     turns: tuple[Turn, ...],
-    output_truncated: bool,
+    body_truncated: bool,
     user_lines: list[str] | None = None,
     assistant_lines: list[str] | None = None,
 ) -> str:
@@ -186,20 +221,30 @@ def _assemble(
     lines.append("")
     lines.append("### Latest assistant action")
     lines.extend(assistant_lines if assistant_lines is not None else _quote(assistant_text))
+    dropped_turns = max(0, len(session.turns) - len(turns))
+    body_truncated = body_truncated or any(turn.truncated for turn in turns)
+    warnings = tuple(session.warnings) + tuple(envelope_warnings)
+    lines.extend(
+        _warning_block(
+            warnings,
+            dropped_turns=dropped_turns,
+            body_truncated=body_truncated,
+        )
+    )
     lines.append("")
     lines.append("### Bounded transcript evidence")
+    if dropped_turns:
+        lines.append(
+            f"> _({dropped_turns} earlier turns omitted to fit the output budget; newest turns kept)_"
+        )
     if not turns:
-        if session.turns:
-            lines.append("> `[W_TRUNCATED]`")
-            output_truncated = True
-        else:
+        if not session.turns:
             lines.append("> _(no safe persisted turns)_")
     else:
         for turn in turns:
             lines.append("")
             lines.extend(_turn_block(turn))
-    warnings = tuple(session.warnings) + tuple(envelope_warnings)
-    lines.extend(_footer(warnings, output_truncated=output_truncated))
+    lines.extend(_footer())
     return _document(lines)
 
 
@@ -221,7 +266,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
         user_text=session.last_user_request,
         assistant_text=session.last_assistant_action,
         turns=session.turns,
-        output_truncated=False,
+        body_truncated=False,
     )
     if _utf8_size(full) <= maximum:
         return full
@@ -239,7 +284,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
             user_text=session.last_user_request,
             assistant_text=session.last_assistant_action,
             turns=kept,
-            output_truncated=True,
+            body_truncated=False,
         )
         if _utf8_size(candidate) <= maximum:
             best_turns = kept
@@ -254,7 +299,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
             user_text=session.last_user_request,
             assistant_text=session.last_assistant_action,
             turns=best_turns,
-            output_truncated=True,
+            body_truncated=False,
         )
         if _utf8_size(fitted) <= maximum:
             return fitted
@@ -265,26 +310,21 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
         user_text=session.last_user_request,
         assistant_text=session.last_assistant_action,
         turns=(),
-        output_truncated=True,
+        body_truncated=False,
     )
     if _utf8_size(empty_turns) <= maximum:
         return empty_turns
 
     # Shrink user/assistant quoted bodies while keeping section structure.
-    header = _header(session)
-    footer = _footer(tuple(session.warnings) + env_warnings, output_truncated=True)
-    structure = _document(
-        header
-        + [
-            "",
-            "### Latest explicit user request",
-            "",
-            "### Latest assistant action",
-            "",
-            "### Bounded transcript evidence",
-            "> `[W_TRUNCATED]`",
-        ]
-        + footer
+    structure = _assemble(
+        session,
+        envelope_warnings=env_warnings,
+        user_text=None,
+        assistant_text=None,
+        turns=(),
+        body_truncated=True,
+        user_lines=[],
+        assistant_lines=[],
     )
     structure_size = _utf8_size(structure)
     if structure_size > maximum:
@@ -294,7 +334,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
             user_text=None,
             assistant_text=None,
             turns=(),
-            output_truncated=True,
+            body_truncated=True,
             user_lines=["> `[W_TRUNCATED]`"],
             assistant_lines=["> `[W_TRUNCATED]`"],
         )
@@ -318,7 +358,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
         user_text=session.last_user_request,
         assistant_text=session.last_assistant_action,
         turns=(),
-        output_truncated=True,
+        body_truncated=True,
         user_lines=user_lines,
         assistant_lines=assistant_lines,
     )
@@ -329,7 +369,7 @@ def render_session(session: Session, *, envelope_warnings: Iterable[str] = ()) -
             user_text=None,
             assistant_text=None,
             turns=(),
-            output_truncated=True,
+            body_truncated=True,
             user_lines=["> `[W_TRUNCATED]`"],
             assistant_lines=["> `[W_TRUNCATED]`"],
         )
