@@ -959,8 +959,10 @@ def description_for(source: str) -> str:
     """
 
     title = SOURCE_TITLES[source]
+    # Keep YAML frontmatter safe: no bare "key: value" sequences (colon+space)
+    # inside an unquoted scalar — hosts parse this with real YAML loaders.
     return (
-        f"Resume or continue the last {title} session: pick up previous work, "
+        f"Resume or continue the last {title} session — pick up previous work, "
         f"import inert offline handoff context into a fresh session "
         f"(never live process restore)."
     )
