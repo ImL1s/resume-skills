@@ -33,16 +33,23 @@ class ReleaseToolingTests(unittest.TestCase):
 
     def test_metadata_only_release_check_rejects_current_development_version(self) -> None:
         result = self.run_check(f"v{portable_resume.__version__}")
-        self.assertEqual(result.returncode, 1, result.stderr)
         payload = json.loads(result.stdout)
-        self.assertFalse(payload["ok"])
         self.assertEqual(payload["version"], portable_resume.__version__)
-        self.assertFalse(payload["git"]["checked"])
-        self.assertIn("development versions cannot be released", payload["errors"])
         self.assertEqual(
             payload["build_identity"]["base_version"],
             portable_resume.__version__,
         )
+        if re.search(r"\.dev\d+", portable_resume.__version__):
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertFalse(payload["ok"])
+            self.assertFalse(payload["git"]["checked"])
+            self.assertIn("development versions cannot be released", payload["errors"])
+        else:
+            # Stable pin is metadata-valid; git-gated release proof is separate.
+            self.assertNotIn(
+                "development versions cannot be released",
+                payload["errors"],
+            )
 
     def test_release_check_rejects_mismatched_or_non_semver_tag(self) -> None:
         for tag in ("v999.0.0", "latest", "v01.2.3"):

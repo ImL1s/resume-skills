@@ -1,8 +1,8 @@
-<!-- portable-resume-i18n: hi v0.4.0.dev0 -->
+<!-- portable-resume-i18n: hi v0.4.0 -->
 <!-- portable-resume-counts: sources=17 destinations=18 -->
 # Portable Resume — हिन्दी त्वरित शुरुआत
 
-**वर्तमान प्रकाशित संस्करण:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
+**वर्तमान प्रकाशित संस्करण:** [`0.4.0`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.0)
 
 Portable Resume, Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen या Kimi के सीमित स्थानीय context को एक **नई** coding-agent session में ले जाता है। यह चलती process या session को restore नहीं करता। reader offline और केवल Python standard library पर चलता है, source CLI कभी नहीं चलाता, तथा मिले हुए text को inert और untrusted चिह्नित करता है।
 
@@ -31,7 +31,7 @@ install-resume-skills quick-install qwen --project "$PWD"
 `main` पर सक्षम destination हैं Antigravity / agy, Claude Code, Cline, Codex CLI / IDE, Crush, Cursor Agent, Gemini CLI, GitHub Copilot CLI, goose, Grok Build, Hermes Agent, Kilo CLI, Kimi Code CLI, OpenClaw, OpenCode, OpenHands, Pi agent और Qwen Code।
 <!-- portable-resume-current-registry:end -->
 
-प्रकाशित `0.3.4` में Pi (filesystem install; native UI not-run) सहित नौ destinations हैं। सही direct Skill, extension, plugin और marketplace commands के लिए [installation guide](../install-hosts.md) देखें। किसी plugin पर भरोसा करने से पहले उसकी सामग्री और release SHA-256 जाँचें।
+प्रकाशित `0.4.0` में Pi (filesystem install; native UI not-run) सहित नौ destinations हैं। सही direct Skill, extension, plugin और marketplace commands के लिए [installation guide](../install-hosts.md) देखें। किसी plugin पर भरोसा करने से पहले उसकी सामग्री और release SHA-256 जाँचें।
 
 ## सार्वजनिक marketplace
 
@@ -62,7 +62,7 @@ destination host की documented syntax से `resume-<source>` सक्र�
 
 वर्तमान host smoke में 8/8 CLI invocation और 7/7 सटीक local native package installation सफल रहे। सार्वजनिक marketplace installation 6/6 संगत hosts पर सफल रहा; Cursor और Kimi marketplace picker भी सफल रहे। अन्य visual Skill picker और vendor-curated directories को पूर्ण होने का दावा नहीं किया गया है।
 
-ये host-स्तरीय परिणाम v0.3.2 के समय के प्रमाण हैं। v0.3.4 के लिए प्रत्येक host पर पुनः इंस्टॉल और picker flow अभी भी **not-run** हैं।
+ये host-स्तरीय परिणाम v0.3.2 के समय के प्रमाण हैं। v0.4.0 के लिए प्रत्येक host पर पुनः इंस्टॉल और picker flow अभी भी **not-run** हैं।
 <!-- portable-resume-evidence-scope: v0.3.2-hosts v0.3.4-host-reinstall-not-run -->
 
 सत्यापित दावों और अभी न चले UI／release gates के लिए [project status](../STATUS.md) देखें।

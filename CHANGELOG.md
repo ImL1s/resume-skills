@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.4.0] — 2026-08-01
+
 - Codex busy/hot SQLite degrade (#196, #199): when `state_*.sqlite` is busy or has
   a hot journal, probe/list no longer hard-fail the whole source as
   `unsafe` / total `E_SOURCE_BUSY`. Capability falls through to bounded plain

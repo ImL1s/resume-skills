@@ -121,12 +121,10 @@ separate and require their own rows in
 
 ### Current state
 
-- Unreleased `main` release-integrity work from #118 is complete at merge
-  `ff119f16f2af76468e848a828bde51433d968754`: one embedded v2 identity is
-  cross-verified across artifact families, and repository ruleset
-  [`20148806`](https://github.com/ImL1s/resume-skills/rules/20148806) actively
-  blocks `v*` updates/deletion with no bypass actors. This is pre-release
-  evidence only; `0.4.0` is not published.
+- `0.4.0` release candidate: version pin and CHANGELOG heading prepared on `main`
+  for annotated tag `v0.4.0` (includes #118 identity gates, Codex busy-SQLite
+  degrade #196/#199, expanded source/destination matrix 17×18=306). Publication
+  evidence is owned by the `release.yml` run for that tag.
 - `v0.3.4`: **published** from annotated tag object
   `f952856476dbf7742d16c0f42638497c0a930b28` at commit
   `fa1344bf62eb26332baea7b7ef4540a1a37acba8`.

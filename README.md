@@ -12,30 +12,23 @@
 
 Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
-**Current release:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
-· [PyPI](https://pypi.org/project/portable-resume/0.3.4/) · **306/306** packaging and
-installed-runner cells on current `main` (17 sources × 18 destinations, including
-Pi + OpenClaw + goose + Crush + Cline + OpenHands + Hermes + GitHub Copilot CLI (destination) + Gemini CLI (compat) filesystem install; published `0.3.4` remains historical 81).
+**Current release:** [`0.4.0`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.0)
+· [PyPI](https://pypi.org/project/portable-resume/0.4.0/) · **306/306** packaging and
+installed-runner cells (17 sources × 18 destinations, including
+Pi + OpenClaw + goose + Crush + Cline + OpenHands + Hermes + GitHub Copilot CLI + Gemini CLI (compat) + Kilo destination filesystem install; published `v0.3.4` remains historical 81).
 
 **Host evidence boundary:** v0.3.2-era checks cover 7/7 exact native local
 plugin/extension installs, 8/8 host-native headless Skill invocations, 6/6
 compatible public marketplace installs, and Cursor/Kimi pickers. Fresh v0.3.4
 host reinstall/picker flows and Pi/OpenClaw native UI remain **not-run**.
 
-**Current `main` development version:** `0.4.0.dev0`. Explicit build/release
-reports add `+g<commit>[.dirty]` while package metadata keeps the PEP 440 base.
-Artifact builds pin one canonical identity before producing bytes and embed its
-exact canonical JSON in the wheel, sdist, all direct-host ZIPs, and all native
-package ZIPs. Installed reader/installer runtimes read only that fixed packaged
-resource—never an environment-selected path and never Git—while an unpackaged
-source checkout retains the deterministic base/null-commit fallback. Every
-identity binds the enabled capability registry, runtime source, and
-artifact-producing build-input digests without exposing local paths.
-Repository-level immutable `v*` tag enforcement is active and independently
-read back as [ruleset `20148806`](https://github.com/ImL1s/resume-skills/rules/20148806):
-it targets `refs/tags/v*`, blocks updates and deletion, and has no bypass
-actors. This completes the repository-policy gate from #118; no `0.4.0`
-release is claimed.
+**Release candidate on `main`:** exact package version `0.4.0` (tag `v0.4.0`).
+Build/release reports still add `+g<commit>[.dirty]` only for dirty/dev checkouts;
+this release pin uses the clean exact version. Artifact builds pin one canonical
+identity before producing bytes and embed its exact canonical JSON in the wheel,
+sdist, all direct-host ZIPs, and all native package ZIPs. Installed reader/installer
+runtimes read only that fixed packaged resource. Repository-level immutable `v*`
+tag enforcement remains active ([ruleset `20148806`](https://github.com/ImL1s/resume-skills/rules/20148806)).
 
 ## Sources and destinations
 

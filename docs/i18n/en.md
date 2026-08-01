@@ -1,8 +1,8 @@
-<!-- portable-resume-i18n: en v0.4.0.dev0 -->
+<!-- portable-resume-i18n: en v0.4.0 -->
 <!-- portable-resume-counts: sources=17 destinations=18 -->
 # Portable Resume — English quick start
 
-**Current published release:** [`0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
+**Current published release:** [`0.4.0`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.0)
 
 Portable Resume moves bounded local context from Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, or Kimi into a **fresh** coding-agent session. It is not live-session restore. Readers are offline, stdlib-only, never invoke a source CLI, and label recovered text as inert and untrusted.
 
@@ -31,7 +31,7 @@ install-resume-skills quick-install qwen --project "$PWD"
 Enabled destinations on `main` are Antigravity / agy, Claude Code, Cline, Codex CLI / IDE, Crush, Cursor Agent, Gemini CLI, GitHub Copilot CLI, goose, Grok Build, Hermes Agent, Kilo CLI, Kimi Code CLI, OpenClaw, OpenCode, OpenHands, Pi agent, and Qwen Code.
 <!-- portable-resume-current-registry:end -->
 
-Published `0.3.4` ships nine destinations including Pi (filesystem install; native UI not-run). Exact direct-Skill, extension, plugin, and marketplace commands are in the [host installation guide](../install-hosts.md). Inspect third-party plugin archives and verify release checksums before trusting them.
+Published `0.4.0` ships nine destinations including Pi (filesystem install; native UI not-run). Exact direct-Skill, extension, plugin, and marketplace commands are in the [host installation guide](../install-hosts.md). Inspect third-party plugin archives and verify release checksums before trusting them.
 
 ## Public marketplace
 
