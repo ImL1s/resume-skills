@@ -155,26 +155,86 @@ def _runtime_version_report(identity: dict[str, object], *, prog: str) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = DiagnosticArgumentParser(prog="portable-resume", description="Read inert local session context without invoking a source CLI.")
+    parser = DiagnosticArgumentParser(
+        prog="portable-resume",
+        description="Read inert local session context without invoking a source CLI.",
+        epilog="""examples:
+  portable-resume claude list --cwd "$PWD"
+  portable-resume claude show latest --cwd "$PWD" --format handoff
+  portable-resume self-check        # packaging/runtime health (always JSON)""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--version",
         action="store_true",
+        help="print version and runtime identity details, then exit",
     )
     parser.add_argument(
         "source",
         nargs="?",
         help="one of: " + "|".join(sorted(SOURCE_KEYS)),
     )
-    parser.add_argument("action", nargs="?", help="list|show")
+    parser.add_argument(
+        "action",
+        nargs="?",
+        help="list|show; run 'portable-resume self-check' for a health report",
+    )
     parser.add_argument("ref", nargs="?", help="latest, exact ID, approved exact path, or bounded text")
-    parser.add_argument("--cwd")
-    parser.add_argument("--within-min", type=int)
-    parser.add_argument("--format", choices=("json", "handoff", "table"))
-    parser.add_argument("--json", action="store_true", dest="json_alias")
-    parser.add_argument("--max-tool-chars", type=int, default=DEFAULT_BOUNDS.tool_output_chars)
-    parser.add_argument("--source-root")
-    parser.add_argument("--request-file")
-    parser.add_argument("--expected-source", choices=tuple(sorted(SOURCE_KEYS)))
+    parser.add_argument(
+        "--cwd",
+        help="project directory used for session matching (default: current directory)",
+    )
+    parser.add_argument(
+        "--within-min",
+        type=int,
+        help=(
+            "only consider sessions updated within this many minutes "
+            "(0..5256000; 0 disables the age filter; default: adapter listing window)"
+        ),
+    )
+    parser.add_argument(
+        "--format",
+        choices=("json", "handoff", "table"),
+        help="output format; default: handoff for show, table for list; show rejects table",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_alias",
+        help="alias for --format json (conflicts with an explicit non-json --format)",
+    )
+    parser.add_argument(
+        "--max-tool-chars",
+        type=int,
+        default=DEFAULT_BOUNDS.tool_output_chars,
+        help=(
+            f"per-tool-output character cap, 0..{DEFAULT_BOUNDS.tool_output_chars} "
+            f"(default: {DEFAULT_BOUNDS.tool_output_chars})"
+        ),
+    )
+    parser.add_argument(
+        "--source-root",
+        help=(
+            "override the approved source store root "
+            "(file or directory pinned by the adapter)"
+        ),
+    )
+    parser.add_argument(
+        "--request-file",
+        help=(
+            "read a portable-resume/request-v1 JSON file instead of positional args; "
+            "requires --expected-source; excludes "
+            "source/action/ref/--cwd/--within-min"
+        ),
+    )
+    parser.add_argument(
+        "--expected-source",
+        choices=tuple(sorted(SOURCE_KEYS)),
+        help=(
+            "assert the source key this invocation must resolve to "
+            "(required with --request-file)"
+        ),
+    )
     return parser
 
 

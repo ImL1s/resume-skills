@@ -107,8 +107,8 @@ only), i18n translation quality beyond counts, live host CLI activation.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 029 | Reader `--help` teaches the CLI (+ self-check visibility) | P1 | S | — | TODO |
-| 030 | Installer arg validation (`E_INVALID_INPUT`, `--host` choices, family dedupe) | P1 | S | — | DONE |
+| 029 | Reader `--help` teaches the CLI (+ self-check visibility) | P1 | S | — | **DONE** |
+| 030 | Installer arg validation (`E_INVALID_INPUT`, `--host` choices, family dedupe) | P1 | S | — | TODO |
 | 031 | `E_INSTALL_SHADOW` static hint + upgrade docs | P1 | M | 030 | TODO |
 | 032 | `docs/diagnostics.md` exit-code reference + gate | P1 | S | — | DONE |
 | 033 | README dual-path quick start; thirteen/nine/alt/CHANGELOG fixes | P1 | S | — | DONE |
