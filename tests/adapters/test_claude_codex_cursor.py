@@ -1705,13 +1705,85 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertEqual(code, 5)
         self.assertEqual(json.loads(stderr.getvalue())["code"], "E_UNSUPPORTED_FORMAT")
 
-    def test_s_cod_11_hot_journal_fails_closed(self) -> None:
+    def test_s_cod_11_hot_journal_degrades_to_fs_rollout(self) -> None:
+        # #196: hot journal must not erase plain rollout recovery.
         identifier, rollout = self.rollout()
         database = self.database(9, [self.db_row(identifier, rollout)])
         Path(str(database) + "-journal").write_bytes(b"synthetic hot journal")
+        values = codex.ADAPTER.list(self.query(), ReadBudget())
+        self.assertEqual([item.session_id for item in values], [identifier])
+        self.assertIn("W_STALE_INDEX", values[0].warnings or ())
+        capability = codex.ADAPTER.probe(self.query())
+        self.assertIn(capability.state, {"supported", "partial"})
+        self.assertNotEqual(capability.state, "unsafe")
+
+    def test_issue196_busy_sqlite_probe_and_list_use_rollout(self) -> None:
+        identifier, rollout = self.rollout()
+        self.database(9, [self.db_row(identifier, rollout)])
+        before = tree_snapshot(self.root)
+        def busy(*_args: object, **_kwargs: object) -> None:
+            raise DiagnosticError.source_busy(provider=codex.SQLITE_FORMAT)
+
+        # probe uses codex._database_connection; list uses codex_sqlite via _database_summaries.
+        with mock.patch.object(codex, "_database_connection", side_effect=busy), mock.patch.object(
+            codex, "_database_summaries", side_effect=busy
+        ):
+            capability = codex.ADAPTER.probe(self.query())
+            values = codex.ADAPTER.list(self.query(), ReadBudget())
+            shown = codex.ADAPTER.show(
+                ResolvedRef.from_summary(values[0]),
+                self.query(),
+                ReadBudget(),
+            )
+        self.assertIn(capability.state, {"supported", "partial"})
+        self.assertNotEqual(capability.state, "unsafe")
+        self.assertIn("W_STALE_INDEX", capability.warnings)
+        self.assertEqual(capability.format_id, codex.ROLLOUT_FORMAT)
+        self.assertEqual([item.session_id for item in values], [identifier])
+        self.assertIn("W_STALE_INDEX", values[0].warnings or ())
+        self.assertEqual(shown.session_id, identifier)
+        self.assertEqual(before, tree_snapshot(self.root))
+
+    def test_issue198_dict_source_subagent_soft_skipped(self) -> None:
+        parent_id, _parent = self.rollout()
+        sub_id = str(uuid.uuid4())
+        sub_records = [
+            {
+                "type": "session_meta",
+                "timestamp": stamp(-2),
+                "payload": {
+                    "id": sub_id,
+                    "cwd": str(self.cwd),
+                    "source": {
+                        "subagent": {
+                            "thread_spawn": {
+                                "parent_thread_id": parent_id,
+                                "depth": 1,
+                            }
+                        }
+                    },
+                },
+            },
+            {
+                "type": "response_item",
+                "timestamp": stamp(-1),
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "subagent only"}],
+                },
+            },
+        ]
+        self.rollout(sub_id, records=sub_records)
+        # Must not raise TypeError / E_INVARIANT; parent remains listable.
+        values = codex.ADAPTER.list(self.query(), ReadBudget())
+        ids = [item.session_id for item in values]
+        self.assertIn(parent_id, ids)
+        self.assertNotIn(sub_id, ids)
+        # Direct meta path raises typed unsupported, never TypeError.
         with self.assertRaises(DiagnosticError) as caught:
-            codex.ADAPTER.list(self.query(), ReadBudget())
-        self.assertEqual(caught.exception.code, "E_SQLITE_HOT_JOURNAL")
+            codex._session_meta(sub_records, sub_id, codex.ROLLOUT_FORMAT)
+        self.assertEqual(caught.exception.code, "E_UNSUPPORTED_FORMAT")
 
     def test_common_corrupt_bounds_busy_and_injection(self) -> None:
         identifier, path = self.rollout()
