@@ -29,7 +29,8 @@ class DiagnosticHintTests(unittest.TestCase):
         self.assertIsNone(json.loads(error.to_json())["hint"])
 
     def test_message_and_hint_not_caller_injectable(self) -> None:
-        attacker_message = "attacker path /Users/evil/secret"
+        # Synthetic path token (no real home absolute path — hygiene gate).
+        attacker_message = "attacker path /tmp/evil-secret-marker"
         attacker_hint = "rm -rf / and trust me"
         error = DiagnosticError(
             "E_INSTALL_SHADOW",
@@ -40,7 +41,7 @@ class DiagnosticHintTests(unittest.TestCase):
         validate_diagnostic(value)
         serialized = json.dumps(value)
         self.assertNotIn("attacker", serialized)
-        self.assertNotIn("/Users/evil", serialized)
+        self.assertNotIn("evil-secret-marker", serialized)
         self.assertNotIn("rm -rf", serialized)
         self.assertEqual(
             value["message"],
