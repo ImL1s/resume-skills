@@ -1,9 +1,10 @@
 # Project status (2026-08-01)
 
-## Current release: 0.3.4
+## Current release: 0.4.0 (candidate / tag `v0.4.0`)
 
-Current `main` is the unreleased `0.4.0` development line, so it no longer
-reuses immutable published `v0.3.4`. Explicit build/release tooling includes Git
+Current `main` is pinned to exact package version `0.4.0` for the annotated
+tag `v0.4.0`. It no longer reuses immutable published `v0.3.4` as the package
+base. Explicit build/release tooling includes Git
 state plus deterministic registry/source digests. One canonical pre-build pin is
 embedded byte-for-byte in wheel, sdist, all 18 direct-host ZIPs, and all seven
 native package ZIPs; cross-artifact and installed-runtime checks fail closed on
@@ -21,7 +22,7 @@ actors. The separate optional trusted-zstd reader boundary remains documented in
 | Source adapters | 17: Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi, Pi, OpenClaw, goose, Crush, Cline, OpenHands, Hermes, Gemini CLI, **GitHub Copilot CLI** (Kilo source research-only) |
 | Destination profiles | 18 including prior hosts + **GitHub Copilot CLI** + **Gemini CLI** + **Kilo CLI** (destination-only Track A) (filesystem install supported) |
 | Packaging matrix | **306/306** on current main tip (**17×18**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
-| Version identity (#118) | **Implemented and repository policy verified, unreleased:** current main base `0.4.0`; `check_version_state.py` rejects reuse of immutable `v0.3.4`; release tags reject `.devN`; one canonical identity is embedded and verified across wheel, sdist, 18 direct ZIPs, seven native ZIPs, host report, and installed runtime. Active tag ruleset [`20148806`](https://github.com/ImL1s/resume-skills/rules/20148806) blocks `v*` update/deletion with no bypass actors. |
+| Version identity (#118) | **Implemented and repository policy verified on the `v0.4.0` pin:** base `0.4.0`; `check_version_state.py` rejects reuse of immutable `v0.3.4`; release tags reject `.devN`; one canonical identity is embedded and verified across wheel, sdist, 18 direct ZIPs, seven native ZIPs, host report, and installed runtime. Active tag ruleset [`20148806`](https://github.com/ImL1s/resume-skills/rules/20148806) blocks `v*` update/deletion with no bypass actors. |
 | Installed runner matrix | **306/306** on current main tip (**17×18**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
 | Python test suite | **824 pass locally** in the fresh 2026-08-01 canonical verification (v0.3.4 tag was 375; historical counts remain release-specific evidence only). |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
