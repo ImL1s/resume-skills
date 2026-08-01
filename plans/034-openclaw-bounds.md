@@ -219,13 +219,13 @@ bounds tests. All fixtures synthetic, no absolute home paths.
 
 ## Done criteria
 
-- [ ] `_list_nodes` SQL contains `LIMIT ?`; post-check retained
-- [ ] `_exact_session_summaries` accepts and charges the budget (exact-ref test proves)
-- [ ] `_open_connection` passes `bounds=limits`
-- [ ] No budget-relevant bare `DEFAULT_BOUNDS.` reads remain in openclaw.py (grep proves; structural exceptions listed in report)
-- [ ] New bounds tests pass; full suite + smoke matrix + gates green
-- [ ] Existing fixture outputs unchanged (no golden-output diffs)
-- [ ] `plans/README.md` updated
+- [x] `_list_nodes` SQL contains `LIMIT ?`; post-check retained
+- [x] `_exact_session_summaries` accepts and charges the budget (exact-ref test proves)
+- [x] `_open_connection` passes `bounds=limits`
+- [x] No budget-relevant bare `DEFAULT_BOUNDS.` reads remain in openclaw.py (grep proves; structural exceptions listed in report)
+- [x] New bounds tests pass; full suite + smoke matrix + gates green
+- [x] Existing fixture outputs unchanged (no golden-output diffs)
+- [x] `plans/README.md` updated
 
 ## STOP conditions
 

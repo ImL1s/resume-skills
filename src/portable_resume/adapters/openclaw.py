@@ -17,7 +17,7 @@ import sqlite3
 import stat
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
@@ -181,18 +181,20 @@ def _cwd_from_entry(entry_json: str | None) -> str | None:
         return None
 
 
-def _agent_db_paths(root: str) -> list[tuple[str, str]]:
+def _agent_db_paths(root: str, budget: ReadBudget | None = None) -> list[tuple[str, str]]:
     """Return ``(agent_id, db_path)`` under ``agents/*/agent/openclaw-agent.sqlite``."""
 
+    limits = budget.limits if budget is not None else DEFAULT_BOUNDS
+    scan_limit = min(limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
     agents = os.path.join(root, "agents")
     if not _regular_dir(agents, root):
         return []
     values: list[tuple[str, str]] = []
     try:
         with os.scandir(agents) as entries:
-            names = []
+            names: list[str] = []
             for entry in entries:
-                if len(names) >= DEFAULT_BOUNDS.scanned_records:
+                if len(names) >= scan_limit:
                     raise DiagnosticError.limit_exceeded()
                 names.append(entry.name)
     except DiagnosticError:
@@ -212,7 +214,7 @@ def _agent_db_paths(root: str) -> list[tuple[str, str]]:
         database = os.path.join(agent_sub, DB_BASENAME)
         if _regular_db_file(database, root):
             values.append((name, database))
-            if len(values) > DEFAULT_BOUNDS.scanned_records:
+            if len(values) > scan_limit:
                 raise DiagnosticError.limit_exceeded()
     return values
 
@@ -225,7 +227,7 @@ def _open_connection(database: str, root: str, budget: ReadBudget | None = None)
         raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
     if size > limits.sqlite_snapshot_bytes:
         return query_only_live_sqlite(database, root=root, provider=FORMAT_ID)
-    return private_sqlite_connection(database, root=root, provider=FORMAT_ID)
+    return private_sqlite_connection(database, root=root, bounds=limits, provider=FORMAT_ID)
 
 
 def _require_schema(connection: sqlite3.Connection, *, expected_agent: str | None = None) -> str:
@@ -317,6 +319,48 @@ def _row_to_summary(
     )
 
 
+def _entry_prefix_bytes(budget: ReadBudget) -> int:
+    """Return a sentinel-inclusive prefix cap for the remaining read budget."""
+
+    record_limit = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
+    source_limit = min(
+        budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes
+    )
+    remaining = max(0, source_limit - budget.bytes_read)
+    return min(record_limit, remaining) + 1
+
+
+def _decode_bounded_entry_json(
+    storage_type: object,
+    byte_length: object,
+    prefix: object,
+    budget: ReadBudget,
+) -> str:
+    """Validate and decode a SQL-bounded ``entry_json`` projection."""
+
+    budget.consume_records()
+    if storage_type != "text":
+        raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
+    if type(byte_length) is not int or not isinstance(prefix, bytes):
+        raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
+    record_limit = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
+    source_limit = min(
+        budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes
+    )
+    remaining = max(0, source_limit - budget.bytes_read)
+    if byte_length < 0 or byte_length > record_limit or byte_length > remaining:
+        raise DiagnosticError.limit_exceeded()
+    if len(prefix) != byte_length:
+        raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
+    budget.consume_bytes(byte_length)
+    try:
+        return prefix.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise DiagnosticError(
+            "E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID
+        ) from error
+
+
 def _exact_session_summaries(
     connection: sqlite3.Connection,
     *,
@@ -324,31 +368,42 @@ def _exact_session_summaries(
     database: str,
     session_filter: str,
     query: Query,
+    budget: ReadBudget,
 ) -> list[SessionSummary]:
     """Resolve exact composite/native ids before the normal listing cap."""
 
     values: list[SessionSummary] = []
+    scan_limit = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
+    entry_prefix_bytes = _entry_prefix_bytes(budget)
     nodes = connection.execute(
         """
         SELECT
-          current_session_id, entry_json, updated_at, created_at, display_name,
+          current_session_id,
+          typeof(entry_json), length(CAST(entry_json AS BLOB)),
+          substr(CAST(entry_json AS BLOB), 1, ?),
+          updated_at, created_at, display_name,
           last_interaction_at, archived_at, created_via
         FROM session_nodes
         WHERE current_session_id = ?
-        LIMIT 4
+        LIMIT ?
         """,
-        (session_filter,),
-    ).fetchall()
+        (entry_prefix_bytes, session_filter, scan_limit + 1),
+    )
+    node_count = 0
     for row in nodes:
+        node_count += 1
+        if node_count > scan_limit:
+            raise DiagnosticError.limit_exceeded()
+        entry_json = _decode_bounded_entry_json(row[1], row[2], row[3], budget)
         item = _row_to_summary(
             agent_id=agent_id,
             database=database,
             session_id=row[0],
-            entry_json=row[1],
-            updated_at=row[2],
-            created_at=row[3],
-            display_name=row[4],
-            last_interaction_at=row[5],
+            entry_json=entry_json,
+            updated_at=row[4],
+            created_at=row[5],
+            display_name=row[6],
+            last_interaction_at=row[7],
             query=query,
             require_age=False,
         )
@@ -361,7 +416,8 @@ def _exact_session_summaries(
         """
         SELECT
           w.session_id,
-          n.entry_json,
+          typeof(n.entry_json), length(CAST(n.entry_json AS BLOB)),
+          substr(CAST(n.entry_json AS BLOB), 1, ?),
           w.updated_at,
           w.created_at,
           COALESCE(w.display_name, n.display_name),
@@ -369,20 +425,25 @@ def _exact_session_summaries(
         FROM session_windows w
         LEFT JOIN session_nodes n ON n.session_key = w.session_key
         WHERE w.session_id = ?
-        LIMIT 4
+        LIMIT ?
         """,
-        (session_filter,),
-    ).fetchall()
+        (_entry_prefix_bytes(budget), session_filter, scan_limit + 1),
+    )
+    window_count = 0
     for row in windows:
+        window_count += 1
+        if window_count > scan_limit:
+            raise DiagnosticError.limit_exceeded()
+        entry_json = _decode_bounded_entry_json(row[1], row[2], row[3], budget)
         item = _row_to_summary(
             agent_id=agent_id,
             database=database,
             session_id=row[0],
-            entry_json=row[1],
-            updated_at=row[2],
-            created_at=row[3],
-            display_name=row[4],
-            last_interaction_at=row[5],
+            entry_json=entry_json,
+            updated_at=row[4],
+            created_at=row[5],
+            display_name=row[6],
+            last_interaction_at=row[7],
             query=query,
             require_age=False,
         )
@@ -398,13 +459,19 @@ def _list_nodes(
     database: str,
     query: Query,
     include_internal: bool,
+    budget: ReadBudget,
 ) -> list[SessionSummary]:
+    scan_limit = min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records)
+    list_limit = min(budget.limits.listed_sessions, DEFAULT_BOUNDS.listed_sessions)
+    if list_limit <= 0:
+        return []
     rows = connection.execute(
         """
         SELECT
           session_key,
           current_session_id,
-          entry_json,
+          typeof(entry_json), length(CAST(entry_json AS BLOB)),
+          substr(CAST(entry_json AS BLOB), 1, ?),
           updated_at,
           created_at,
           created_via,
@@ -413,16 +480,22 @@ def _list_nodes(
           last_interaction_at
         FROM session_nodes
         ORDER BY COALESCE(last_interaction_at, updated_at, created_at) DESC, current_session_id ASC
-        """
-    ).fetchall()
-    if len(rows) > DEFAULT_BOUNDS.scanned_records:
-        raise DiagnosticError.limit_exceeded()
+        LIMIT ?
+        """,
+        (_entry_prefix_bytes(budget), scan_limit + 1),
+    )
     values: list[SessionSummary] = []
+    row_count = 0
     for row in rows:
+        row_count += 1
+        if row_count > scan_limit:
+            raise DiagnosticError.limit_exceeded()
         (
             _session_key,
             session_id,
-            entry_json,
+            entry_storage_type,
+            entry_byte_length,
+            entry_prefix,
             updated_at,
             created_at,
             created_via,
@@ -430,6 +503,11 @@ def _list_nodes(
             archived_at,
             last_interaction_at,
         ) = row
+        entry_json = _decode_bounded_entry_json(
+            entry_storage_type, entry_byte_length, entry_prefix, budget
+        )
+        if len(values) >= list_limit:
+            continue
         if archived_at is not None and not include_internal:
             continue
         if (
@@ -453,8 +531,6 @@ def _list_nodes(
         if item is None:
             continue
         values.append(item)
-        if len(values) >= DEFAULT_BOUNDS.listed_sessions:
-            break
     return values
 
 
@@ -600,15 +676,18 @@ def _show_session(
     query: Query,
     budget: ReadBudget,
 ) -> Session:
+    entry_prefix_bytes = _entry_prefix_bytes(budget)
     node = connection.execute(
         """
-        SELECT session_key, current_session_id, entry_json, updated_at, created_at,
-               display_name, last_interaction_at
+        SELECT session_key, current_session_id,
+               typeof(entry_json), length(CAST(entry_json AS BLOB)),
+               substr(CAST(entry_json AS BLOB), 1, ?),
+               updated_at, created_at, display_name, last_interaction_at
         FROM session_nodes
         WHERE current_session_id = ?
         LIMIT 2
         """,
-        (session_id,),
+        (entry_prefix_bytes, session_id),
     ).fetchall()
     if len(node) != 1:
         # Historical window reached by exact id (not current): allow window-only show.
@@ -624,13 +703,27 @@ def _show_session(
         if len(window) != 1:
             raise DiagnosticError("E_NO_MATCH", source="openclaw", provider=FORMAT_ID)
         session_id_w, session_key, display_name, created_at, updated_at = window[0]
-        entry_json = None
         parent = connection.execute(
-            "SELECT entry_json, last_interaction_at FROM session_nodes WHERE session_key = ? LIMIT 1",
-            (session_key,),
+            """
+            SELECT typeof(entry_json), length(CAST(entry_json AS BLOB)),
+                   substr(CAST(entry_json AS BLOB), 1, ?), last_interaction_at
+            FROM session_nodes
+            WHERE session_key = ?
+            LIMIT 1
+            """,
+            (entry_prefix_bytes, session_key),
         ).fetchone()
-        last_interaction_at = parent[1] if parent else None
-        entry_json = parent[0] if parent else None
+        last_interaction_at = parent[3] if parent else None
+        entry_json = (
+            _decode_bounded_entry_json(
+                parent[0],
+                parent[1],
+                parent[2],
+                budget,
+            )
+            if parent
+            else None
+        )
         title = display_name if isinstance(display_name, str) else None
         stamp = _ms_stamp(last_interaction_at if last_interaction_at is not None else updated_at)
         created = _ms_stamp(created_at)
@@ -638,12 +731,20 @@ def _show_session(
         (
             _session_key,
             session_id_w,
-            entry_json,
+            entry_storage_type,
+            entry_byte_length,
+            entry_prefix,
             updated_at,
             created_at,
             display_name,
             last_interaction_at,
         ) = node[0]
+        entry_json = _decode_bounded_entry_json(
+            entry_storage_type,
+            entry_byte_length,
+            entry_prefix,
+            budget,
+        )
         title = display_name if isinstance(display_name, str) else None
         stamp = _ms_stamp(last_interaction_at if last_interaction_at is not None else updated_at)
         created = _ms_stamp(created_at)
@@ -652,7 +753,8 @@ def _show_session(
     if query.cwd is not None and (cwd is None or not same_cwd(cwd, query.cwd)):
         raise DiagnosticError("E_NO_MATCH", source="openclaw", provider=FORMAT_ID)
 
-    limit = budget.limits.transcript_records + 1
+    transcript_limit = min(budget.limits.transcript_records, DEFAULT_BOUNDS.transcript_records)
+    limit = transcript_limit + 1
     cursor = connection.execute(
         """
         SELECT seq, event_json, created_at
@@ -666,14 +768,14 @@ def _show_session(
     turns: list[Turn] = []
     warnings: list[str] = []
     seen_seq: set[int] = set()
-    total_bytes = 0
     decoded: list[Mapping[str, Any]] = []
     turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
     row_count = 0
     for seq, event_json, _created in cursor:
         row_count += 1
-        if row_count > budget.limits.transcript_records:
+        if row_count > transcript_limit:
             raise DiagnosticError.limit_exceeded()
+        budget.consume_transcript_records()
         if not isinstance(seq, int):
             raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
         if seq in seen_seq:
@@ -682,11 +784,9 @@ def _show_session(
         if not isinstance(event_json, str):
             raise DiagnosticError("E_CORRUPT_RECORD", source="openclaw", provider=FORMAT_ID)
         encoded = event_json.encode("utf-8")
-        if len(encoded) > budget.limits.record_bytes:
+        if len(encoded) > min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes):
             raise DiagnosticError.limit_exceeded()
-        total_bytes += len(encoded)
-        if total_bytes > budget.limits.source_read_bytes:
-            raise DiagnosticError.limit_exceeded()
+        budget.consume_bytes(len(encoded))
         event = _decode_event(event_json)
         if event["type"] in {"custom", "session"}:
             continue
@@ -830,7 +930,9 @@ class OpenClawAdapter:
             )
         values: list[SessionSummary] = []
         any_supported = False
-        for agent_id, database in _agent_db_paths(root):
+        paths = _agent_db_paths(root, budget)
+        list_limit = min(budget.limits.listed_sessions, DEFAULT_BOUNDS.listed_sessions)
+        for agent_id, database in paths:
             if agent_filter is not None and agent_id != agent_filter:
                 continue
             try:
@@ -844,6 +946,7 @@ class OpenClawAdapter:
                             database=database,
                             session_filter=session_filter,
                             query=list_query,
+                            budget=budget,
                         )
                     else:
                         items = _list_nodes(
@@ -852,6 +955,7 @@ class OpenClawAdapter:
                             database=database,
                             query=list_query,
                             include_internal=include_internal,
+                            budget=budget,
                         )
                 any_supported = True
             except DiagnosticError as error:
@@ -860,8 +964,11 @@ class OpenClawAdapter:
                 raise
             # Bound per agent, but never stop scanning other agents before the
             # global timestamp sort (Codex P1 multi-agent latest).
-            values.extend(items[: DEFAULT_BOUNDS.listed_sessions])
-        if not values and not any_supported and _agent_db_paths(root):
+            if session_filter is not None:
+                values.extend(items)
+            else:
+                values.extend(items[:list_limit])
+        if not values and not any_supported and paths:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
         # Newest first; ascending session_id tie-break (stable sort).
         values.sort(key=lambda item: item.session_id)
@@ -873,7 +980,7 @@ class OpenClawAdapter:
         values.sort(key=lambda item: item.updated_at is None)
         if session_filter is not None:
             return values
-        return values[: DEFAULT_BOUNDS.listed_sessions]
+        return values[:list_limit]
 
     def show(self, ref: ResolvedRef, query: Query, budget: ReadBudget) -> Session:
         root = _existing_root(query)
@@ -885,21 +992,32 @@ class OpenClawAdapter:
             agent_id, session_id = None, ref.session_id
         database = ref.source_path
         if database is None:
-            matches = self.list(
-                Query(
-                    source=query.source,
-                    ref=ref.session_id,
-                    cwd=query.cwd,
-                    within_min=0,
-                    source_root=query.source_root,
-                    max_tool_chars=query.max_tool_chars,
-                ),
-                budget,
-            )
+            matches: list[Session] = []
+            for candidate_agent, candidate_database in _agent_db_paths(root, budget):
+                if agent_id is not None and candidate_agent != agent_id:
+                    continue
+                try:
+                    with _open_connection(candidate_database, root, budget) as connection:
+                        _require_schema(connection, expected_agent=candidate_agent)
+                        matches.append(
+                            _show_session(
+                                connection,
+                                agent_id=candidate_agent,
+                                session_id=session_id,
+                                database=candidate_database,
+                                query=query,
+                                budget=budget,
+                            )
+                        )
+                except DiagnosticError as error:
+                    if error.code in {"E_NO_MATCH", "E_UNSUPPORTED_FORMAT"}:
+                        continue
+                    raise
+                if agent_id is not None:
+                    return matches[0]
             if len(matches) != 1:
                 raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
-            database = matches[0].source_path
-            agent_id, session_id = _parse_ref(matches[0].session_id)
+            return matches[0]
         if database is None or not _regular_db_file(database, root):
             raise DiagnosticError.unsafe_path()
         # Resolve agent from path when composite was incomplete.
