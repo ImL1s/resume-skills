@@ -146,6 +146,30 @@ class InstallerTransactionTests(unittest.TestCase):
         self.assertIsNotNone(load_manifest(root_b))
         verify_root(root_b)
 
+    def test_verify_materializes_and_hashes_once_per_host(self) -> None:
+        shared_root = str(self.project / "shared-skills")
+        execute_install(plan_install(host="claude", scope="global", root=shared_root))
+        execute_install(plan_install(host="claude", scope="project", root=shared_root))
+
+        original_materialize = transaction_module.materialize_plan
+        original_identity = transaction_module.package_identity
+        with (
+            mock.patch.object(
+                transaction_module,
+                "materialize_plan",
+                wraps=original_materialize,
+            ) as materialize,
+            mock.patch.object(
+                transaction_module,
+                "package_identity",
+                wraps=original_identity,
+            ) as identity,
+        ):
+            verify_root(shared_root)
+
+        self.assertEqual(materialize.call_count, 1)
+        self.assertEqual(identity.call_count, 1)
+
     def test_manifest_path_escape_rejected_on_load_and_uninstall(self) -> None:
         execute_install(plan_install(host="claude", scope="project", root=self.root))
         outside = Path(self._tmpdir.name) / "escape-target.txt"

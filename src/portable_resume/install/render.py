@@ -24,6 +24,7 @@ from .catalog import (
 _PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 _RESOURCES = _PACKAGE_ROOT / "resources"
 _RUNTIME_SRC = _PACKAGE_ROOT
+_PLAN_CACHE: dict[str, dict[str, bytes]] = {}
 
 # Keep the installed reader runtime explicit and reviewable. Adding a new
 # runtime dependency must update this list and the installed-runner smoke; the
@@ -108,6 +109,11 @@ def materialize_plan(
         raise KeyError(host)
     selected_identity = runtime_identity() if identity is None else identity
     assert_identity_matches_package(selected_identity, package_root=_PACKAGE_ROOT)
+    identity_bytes = identity_json_bytes(selected_identity)
+    cache_key = identity_bytes.decode("utf-8")
+    cached = _PLAN_CACHE.get(cache_key)
+    if cached is not None:
+        return dict(cached)
     files: dict[str, bytes] = {}
     # support resources
     policy = (_RESOURCES / "handoff-policy.md").read_bytes()
@@ -126,13 +132,19 @@ def materialize_plan(
         files[dest.as_posix()] = path.read_bytes()
     files[
         ".portable-resume/runtime/portable_resume/resources/build-identity.json"
-    ] = identity_json_bytes(selected_identity)
+    ] = identity_bytes
     # one skill for every supported source
     for source in sorted(SOURCE_KEYS):
         skill = skill_name_for(source)
         files[f"{skill}/SKILL.md"] = render_skill_markdown(source=source, host=host).encode("utf-8")
         files[f"{skill}/scripts/run_reader.py"] = render_run_reader(source=source).encode("utf-8")
-    return files
+    _PLAN_CACHE[cache_key] = files
+    return dict(files)
+
+
+def _reset_plan_cache() -> None:
+    """Clear process-lifetime materialization state for isolated tests."""
+    _PLAN_CACHE.clear()
 
 
 def _iter_runtime_files() -> Iterable[Path]:
