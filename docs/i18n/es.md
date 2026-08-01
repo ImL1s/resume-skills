@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: es v0.4.0 -->
+<!-- portable-resume-i18n: es v0.4.1.dev0 -->
 <!-- portable-resume-counts: sources=17 destinations=18 -->
 # Portable Resume — inicio rápido en español
 
