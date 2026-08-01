@@ -86,6 +86,16 @@ _DEFAULT_MESSAGES = {
     "E_VERIFY_MISMATCH": "Installed files do not match the owned manifest.",
 }
 
+# Static, content-free remediation hints (plan 031). Callers cannot inject
+# paths or user data; only codes listed here emit a hint.
+_DEFAULT_HINTS: dict[str, str] = {
+    "E_INSTALL_SHADOW": (
+        "Run 'install-resume-skills audit-host --host <host> --scope <scope>' "
+        "to locate the conflicting root; then uninstall the stale claim or "
+        "re-run install with --project/--root."
+    ),
+}
+
 
 @dataclass(slots=True)
 class DiagnosticError(Exception):
@@ -97,6 +107,7 @@ class DiagnosticError(Exception):
     provider: str | None = None
     attempts: int | None = None
     family: tuple[str, ...] = ()
+    hint: str | None = None
 
     def __post_init__(self) -> None:
         if self.code not in ERROR_EXIT_CODES:
@@ -105,6 +116,9 @@ class DiagnosticError(Exception):
         # recovered text can therefore never leak through an exception message.
         self.message = _bounded_message(_DEFAULT_MESSAGES[self.code])
         self.family = tuple(_safe_family_name(name) for name in self.family[: DEFAULT_BOUNDS.family_members])
+        # Hints are map-only (never caller-supplied).
+        raw_hint = _DEFAULT_HINTS.get(self.code)
+        self.hint = _bounded_message(raw_hint) if raw_hint is not None else None
         Exception.__init__(self, self.message)
 
     @property
@@ -121,6 +135,8 @@ class DiagnosticError(Exception):
             "provider": _bounded_identifier(self.provider),
             "attempts": self.attempts if isinstance(self.attempts, int) and self.attempts >= 0 else None,
             "family": list(self.family),
+            # Always present so validate_diagnostic keeps a closed key set.
+            "hint": self.hint,
         }
 
     def to_json(self) -> str:

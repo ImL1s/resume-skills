@@ -7,7 +7,7 @@ Portable Resume exposes stable process exit codes and machine-readable diagnosti
 For example, an invalid source or action emits:
 
 ```json
-{"attempts":null,"code":"E_INVALID_INPUT","exit_code":2,"family":[],"message":"The request is invalid.","provider":null,"schema_version":"portable-resume/diagnostic-v1","source":null}
+{"attempts":null,"code":"E_INVALID_INPUT","exit_code":2,"family":[],"hint":null,"message":"The request is invalid.","provider":null,"schema_version":"portable-resume/diagnostic-v1","source":null}
 ```
 
 | Field | Meaning |
@@ -20,8 +20,9 @@ For example, an invalid source or action emits:
 | `provider` | Bounded provider or format identifier; otherwise `null`. |
 | `attempts` | Non-negative stable-read attempt count when relevant; otherwise `null`. |
 | `family` | Bounded basename-like family member identifiers; otherwise an empty array. |
+| `hint` | Optional static remediation string selected by `code`; otherwise `null`. Never paths or user data. |
 
-Messages are fixed English prose selected by code. Recovered text, filesystem paths, and user data never appear in diagnostic messages. Optional identifiers are bounded and sanitized before serialization.
+Messages and hints are fixed English prose selected by code. Recovered text, filesystem paths, and user data never appear in diagnostic messages or hints. Optional identifiers are bounded and sanitized before serialization.
 
 ## Exit codes
 

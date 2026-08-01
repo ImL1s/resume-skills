@@ -19,7 +19,8 @@ _OWNED_INIT = os.path.join(_OWNED_PACKAGE, "__init__.py")
 def _runtime_unavailable() -> None:
     sys.stderr.write(
         '{"attempts":null,"code":"E_CAPABILITY_UNAVAILABLE","exit_code":5,'
-        '"family":[],"message":"The requested source capability is unavailable.",'
+        '"family":[],"hint":null,'
+        '"message":"The requested source capability is unavailable.",'
         '"provider":null,"schema_version":"portable-resume/diagnostic-v1","source":null}\n'
     )
     raise SystemExit(5)

@@ -140,6 +140,12 @@ class DuplicateScanTests(unittest.TestCase):
                 selected_scope="global",
             )
         self.assertEqual(ctx.exception.code, "E_INSTALL_SHADOW")
+        self.assertIsNotNone(ctx.exception.hint)
+        self.assertIn("audit-host", ctx.exception.hint or "")
+        self.assertEqual(
+            ctx.exception.to_dict()["hint"],
+            DiagnosticError("E_INSTALL_SHADOW").to_dict()["hint"],
+        )
 
     def test_identical_full_package_allows(self) -> None:
         from portable_resume.install.render import materialize_plan
@@ -616,7 +622,15 @@ class CliAuditAndInstallGateTests(unittest.TestCase):
         finally:
             sys.stderr = old_err
         self.assertEqual(code, 6)
-        self.assertIn("E_INSTALL_SHADOW", err.getvalue())
+        stderr = err.getvalue()
+        self.assertIn("E_INSTALL_SHADOW", stderr)
+        payload = json.loads(stderr.strip().splitlines()[-1])
+        self.assertEqual(payload["code"], "E_INSTALL_SHADOW")
+        self.assertEqual(
+            payload["hint"],
+            DiagnosticError("E_INSTALL_SHADOW").to_dict()["hint"],
+        )
+        self.assertIn("audit-host", payload["hint"])
 
     def test_install_succeeds_without_shadow(self) -> None:
         plan_install(

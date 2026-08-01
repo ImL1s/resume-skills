@@ -40,7 +40,17 @@ CANDIDATE_KEYS = frozenset(
 )
 REQUEST_KEYS = frozenset({"schema_version", "source", "action", "resume_ref", "cwd"})
 DIAGNOSTIC_KEYS = frozenset(
-    {"schema_version", "code", "message", "exit_code", "source", "provider", "attempts", "family"}
+    {
+        "schema_version",
+        "code",
+        "message",
+        "exit_code",
+        "source",
+        "provider",
+        "attempts",
+        "family",
+        "hint",
+    }
 )
 
 _RFC3339 = re.compile(
@@ -210,6 +220,14 @@ def validate_diagnostic(value: object) -> None:
         isinstance(diagnostic["family"], list)
         and len(diagnostic["family"]) <= DEFAULT_BOUNDS.family_members
         and all(isinstance(item, str) and _safe_inline(item) for item in diagnostic["family"])
+    )
+    _invariant(
+        diagnostic["hint"] is None
+        or (
+            isinstance(diagnostic["hint"], str)
+            and len(diagnostic["hint"]) <= DEFAULT_BOUNDS.diagnostic_chars
+            and _safe_inline(diagnostic["hint"])
+        )
     )
 
 

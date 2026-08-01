@@ -153,6 +153,7 @@ class ModelContractTests(unittest.TestCase):
         self.assertNotIn("sk-", json.dumps(value))
         self.assertEqual(value["provider"], "fmt....bad")
         self.assertEqual(value["family"], ["db-wal"])
+        self.assertIsNone(value["hint"])
 
     def test_schema_file_declares_closed_nested_objects(self) -> None:
         schema = json.loads(Path("schemas/portable-resume-v1.schema.json").read_text())

@@ -108,16 +108,16 @@ only), i18n translation quality beyond counts, live host CLI activation.
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
 | 029 | Reader `--help` teaches the CLI (+ self-check visibility) | P1 | S | — | **DONE** |
-| 030 | Installer arg validation (`E_INVALID_INPUT`, `--host` choices, family dedupe) | P1 | S | — | TODO |
-| 031 | `E_INSTALL_SHADOW` static hint + upgrade docs | P1 | M | 030 | TODO |
+| 030 | Installer arg validation (`E_INVALID_INPUT`, `--host` choices, family dedupe) | P1 | S | — | **DONE** |
+| 031 | `E_INSTALL_SHADOW` static hint + upgrade docs | P1 | M | 030 | **DONE** |
 | 032 | `docs/diagnostics.md` exit-code reference + gate | P1 | S | — | DONE |
 | 033 | README dual-path quick start; thirteen/nine/alt/CHANGELOG fixes | P1 | S | — | DONE |
-| 034 | openclaw bounds in SQL + caller-limit threading | P1 | S | — | TODO |
-| 035 | cline diagnostic propagation (unsafe/busy/budget) | P1 | S | — | TODO |
+| 034 | openclaw bounds in SQL + caller-limit threading | P1 | S | — | **DONE** |
+| 035 | cline diagnostic propagation (unsafe/busy/budget) | P1 | S | — | **DONE** |
 | 036 | discovery no-follow retry removal + real `matches_expected` | P1 | S | — | **DONE** |
 | 037 | Archive member read caps + codex no-op affinity cleanup | P2 | S | — | DONE |
-| 038 | `materialize_plan` memoize + verify-loop hoist | P1 | S | — | TODO |
-| 039 | Registry-driven immutability/isolation security tests | P1 | S | before 034/035 preferred | TODO |
+| 038 | `materialize_plan` memoize + verify-loop hoist | P1 | S | — | **DONE** |
+| 039 | Registry-driven immutability/isolation security tests | P1 | S | before 034/035 preferred | **DONE** |
 | 040 | Packaging-tier test split (26 s out of unit tier) | P2 | S | — | DONE |
 | 041 | CONTRIBUTING fast-loop docs (`--profile`, `-e .`, pytest) | P2 | S | — | TODO |
 | 042 | Registry-generated host docs + count gates (root-cause) | P1 | M–L | 033 | DONE |

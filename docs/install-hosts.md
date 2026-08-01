@@ -218,6 +218,40 @@ Cursor `.cursor/skills` vs `.agents/skills`) warn on divergent payloads but do
 not block. Shared physical roots with multi-claim ownership are not treated as
 harmful duplicates.
 
+## Upgrading and resolving E_INSTALL_SHADOW
+
+After a package upgrade, `install-resume-skills quick-install all` (or a lower-level
+`install`) can fail with exit code **6** and empty stdout when a
+**higher-precedence** discovery root already holds a divergent Portable Resume
+Skill (for example an older project-scope install while you target user-global).
+Stderr is a single `portable-resume/diagnostic-v1` JSON line with code
+`E_INSTALL_SHADOW` and a static remediation `hint`.
+
+1. **Diagnose** the conflicting root (read-only):
+
+```bash
+install-resume-skills audit-host --host <key> --scope <scope> [--project <dir>]
+```
+
+Use the host key and scope you intended to install (for example `grok` /
+`project`, or `cursor` / `global`). Add `--project` when scanning project roots.
+
+2. **Resolve** by removing the stale claim, or by installing to an explicit root:
+
+```bash
+# Uninstall the stale higher-precedence claim, then re-install
+install-resume-skills uninstall --host <key> --scope <scope> [--project <dir>] [--home <dir>]
+install-resume-skills install --host <key> --scope <scope> [--project <dir>] [--home <dir>]
+
+# Or install to an explicit project / root so discovery order no longer blocks
+install-resume-skills quick-install <profile> --project <other-dir>
+install-resume-skills install --host <key> --scope project --project <dir>
+```
+
+3. **Failure shape**: exit **6**, **empty stdout**, structured diagnostic on
+stderr only. Paths and user data never appear in the diagnostic; use
+`audit-host` to locate the root on disk.
+
 ## Evidence boundary
 
 Current `main` claims registry-derived **17×18=306** packaging and installed-runner
