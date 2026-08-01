@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
+import subprocess
+import sys
 import tempfile
 import types
 import unittest
 from pathlib import Path
 
+from portable_resume.diagnostics import DiagnosticError
+from portable_resume.handoff import UNTRUSTED_BANNER
 from portable_resume.install.render import materialize_plan, render_skill_markdown
 from portable_resume.model import SOURCE_KEYS
 
@@ -19,19 +25,34 @@ def _load_force(source: str = "codex") -> types.ModuleType:
     key = f"resume-{source}/scripts/run_reader.py"
     text = body[key].decode("utf-8")
     with tempfile.TemporaryDirectory() as temporary:
-        path = Path(temporary) / "run_reader.py"
+        root = Path(temporary)
+        path = root / f"resume-{source}" / "scripts" / "run_reader.py"
+        path.parent.mkdir(parents=True)
         path.write_text(text, encoding="utf-8")
+        package = root / ".portable-resume" / "runtime" / "portable_resume"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "reader.py").write_text(
+            "def main(argv=None):\n    return 0\n", encoding="utf-8"
+        )
+        (package / "model.py").write_text(
+            f"SOURCE_KEYS = {tuple(SOURCE_KEYS)!r}\n", encoding="utf-8"
+        )
         spec = importlib.util.spec_from_file_location(f"owned_runner_{source}", path)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
-        import portable_resume.reader as reader_mod
-
-        original_main = reader_mod.main
-        reader_mod.main = lambda argv=None: 0  # type: ignore[assignment]
+        saved_modules = {
+            name: value
+            for name, value in sys.modules.items()
+            if name == "portable_resume" or name.startswith("portable_resume.")
+        }
         try:
             spec.loader.exec_module(module)
         finally:
-            reader_mod.main = original_main
+            for name in tuple(sys.modules):
+                if name == "portable_resume" or name.startswith("portable_resume."):
+                    sys.modules.pop(name, None)
+            sys.modules.update(saved_modules)
         return module
 
 
@@ -84,9 +105,19 @@ class OwnedRunnerArgvTests(unittest.TestCase):
         out = self.force(["sess-abc"])
         self.assertEqual(out, ["codex", "show", "sess-abc", "--expected-source", "codex"])
 
-    def test_empty_argv_defaults_show_latest(self) -> None:
+    def test_empty_argv_defaults_to_list(self) -> None:
         out = self.force([])
-        self.assertEqual(out, ["codex", "show", "latest", "--expected-source", "codex"])
+        self.assertEqual(
+            out,
+            [
+                "codex",
+                "list",
+                "--format",
+                "handoff",
+                "--expected-source",
+                "codex",
+            ],
+        )
 
     def test_request_file_lane_no_positional_source_injection(self) -> None:
         out = self.force(["--request-file", "/tmp/r.json", "--format", "handoff"])
@@ -129,6 +160,261 @@ class OwnedRunnerArgvTests(unittest.TestCase):
         self.assertIn("_strip_expected_source", runner)
         self.assertIn("SOURCE_KEYS", runner)
         self.assertIn('_BOUND_SOURCE = "claude"', runner)
+        # Bare probe must default list to handoff (UNTRUSTED banner), not table.
+        self.assertIn(
+            'return [_BOUND_SOURCE, "list", "--format", "handoff", "--expected-source", _BOUND_SOURCE]',
+            runner,
+        )
+
+
+class OwnedRunnerRuntimeFailureTests(unittest.TestCase):
+    def _write_runner(self, root: Path) -> Path:
+        runner = root / "resume-claude" / "scripts" / "run_reader.py"
+        runner.parent.mkdir(parents=True)
+        rendered = materialize_plan("claude")[
+            "resume-claude/scripts/run_reader.py"
+        ]
+        runner.write_bytes(rendered)
+        return runner
+
+    def _write_owned_runtime(self, root: Path) -> None:
+        for relative, content in materialize_plan("claude").items():
+            if not relative.startswith(".portable-resume/runtime/"):
+                continue
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+
+    def _run(
+        self,
+        runner: Path,
+        *,
+        pythonpath: Path | str | None = None,
+        argv: tuple[str, ...] = ("list", "--cwd", "/tmp"),
+    ) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        if pythonpath is None:
+            env.pop("PYTHONPATH", None)
+        else:
+            env["PYTHONPATH"] = str(pythonpath)
+        return subprocess.run(
+            [sys.executable, str(runner), *argv],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(runner.parents[2]),
+        )
+
+    def _write_hostile_package(
+        self, root: Path, marker: Path, *, main_marker: Path | None = None
+    ) -> Path:
+        package = root / "portable_resume"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text(
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('imported')\n",
+            encoding="utf-8",
+        )
+        main_effect = ""
+        if main_marker is not None:
+            main_effect = (
+                "    from pathlib import Path\n"
+                f"    Path({str(main_marker)!r}).write_text('executed')\n"
+            )
+        (package / "reader.py").write_text(
+            f"def main(argv=None):\n{main_effect}    return 0\n", encoding="utf-8"
+        )
+        (package / "model.py").write_text("SOURCE_KEYS = ('claude',)\n", encoding="utf-8")
+        return package
+
+    def _assert_missing_runtime_diagnostic(
+        self, completed: subprocess.CompletedProcess[str]
+    ) -> None:
+        self.assertEqual(completed.returncode, 5)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(
+            completed.stderr,
+            DiagnosticError("E_CAPABILITY_UNAVAILABLE").to_json() + "\n",
+        )
+
+    def test_missing_runtime_emits_stable_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            completed = self._run(self._write_runner(Path(temporary)))
+
+        self._assert_missing_runtime_diagnostic(completed)
+        payload = json.loads(completed.stderr)
+        self.assertEqual(payload["schema_version"], "portable-resume/diagnostic-v1")
+        self.assertEqual(payload["code"], "E_CAPABILITY_UNAVAILABLE")
+        self.assertEqual(payload["exit_code"], 5)
+        self.assertNotIn("Traceback", completed.stderr)
+
+    def test_missing_owned_package_rejects_later_pythonpath_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            marker = root / "foreign-imported"
+            foreign = root / "foreign"
+            self._write_hostile_package(foreign, marker)
+            completed = self._run(runner, pythonpath=foreign)
+            self.assertFalse(marker.exists())
+
+        self._assert_missing_runtime_diagnostic(completed)
+
+    def test_namespace_owned_package_rejects_later_pythonpath_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            owned_package = root / ".portable-resume" / "runtime" / "portable_resume"
+            owned_package.mkdir(parents=True)
+            marker = root / "foreign-imported"
+            foreign = root / "foreign"
+            self._write_hostile_package(foreign, marker)
+            completed = self._run(runner, pythonpath=foreign)
+            self.assertFalse(marker.exists())
+
+        self._assert_missing_runtime_diagnostic(completed)
+
+    def test_owned_package_symlink_outside_runtime_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            marker = root / "foreign-imported"
+            foreign_package = self._write_hostile_package(root / "foreign", marker)
+            owned_package = root / ".portable-resume" / "runtime" / "portable_resume"
+            owned_package.parent.mkdir(parents=True)
+            owned_package.symlink_to(foreign_package, target_is_directory=True)
+            completed = self._run(runner)
+            self.assertFalse(marker.exists())
+
+        self._assert_missing_runtime_diagnostic(completed)
+
+    def test_preloaded_foreign_runtime_is_not_reused(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            self._write_owned_runtime(root)
+            import_marker = root / "foreign-imported"
+            main_marker = root / "foreign-main-executed"
+            foreign = root / "foreign"
+            self._write_hostile_package(
+                foreign, import_marker, main_marker=main_marker
+            )
+            (foreign / "sitecustomize.py").write_text(
+                "import portable_resume.reader\n", encoding="utf-8"
+            )
+            completed = self._run(runner, pythonpath=foreign, argv=("--help",))
+            self.assertTrue(import_marker.exists())
+            self.assertFalse(main_marker.exists())
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("usage:", completed.stdout)
+
+
+    def test_reader_symlink_outside_package_is_rejected(self) -> None:
+        """Owned package dir is real, but reader.py escapes via symlink (#179 P1)."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            self._write_owned_runtime(root)
+            marker = root / "foreign-main-executed"
+            foreign = root / "foreign"
+            self._write_hostile_package(foreign, root / "foreign-imported", main_marker=marker)
+            owned_reader = (
+                root / ".portable-resume" / "runtime" / "portable_resume" / "reader.py"
+            )
+            owned_reader.unlink()
+            owned_reader.symlink_to(foreign / "portable_resume" / "reader.py")
+            completed = self._run(runner, argv=("--help",))
+            self.assertFalse(marker.exists())
+
+        self._assert_missing_runtime_diagnostic(completed)
+
+    def test_bare_invocation_list_emits_handoff_untrusted_banner(self) -> None:
+        """No-arg owned runner probe must emit handoff, not a plain table (#179 P1)."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            self._write_owned_runtime(root)
+            # Isolate HOME so CI runners without a live ~/.claude still hit list
+            # (empty candidates) rather than E_CAPABILITY_UNAVAILABLE.
+            home = root / "home"
+            (home / ".claude" / "projects").mkdir(parents=True)
+            env = os.environ.copy()
+            env.pop("PYTHONPATH", None)
+            env["HOME"] = str(home)
+            env["USERPROFILE"] = str(home)
+            completed = subprocess.run(
+                [sys.executable, str(runner)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=str(root),
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(UNTRUSTED_BANNER, completed.stdout)
+        self.assertIn("Portable Resume Candidate Selection", completed.stdout)
+
+    def test_owned_runtime_is_repositioned_before_foreign_pythonpath(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            self._write_owned_runtime(root)
+            import_marker = root / "foreign-imported"
+            main_marker = root / "foreign-main-executed"
+            foreign = root / "foreign"
+            self._write_hostile_package(
+                foreign, import_marker, main_marker=main_marker
+            )
+            owned_runtime = Path(
+                os.path.realpath(root / ".portable-resume" / "runtime")
+            )
+            completed = self._run(
+                runner,
+                pythonpath=f"{foreign}{os.pathsep}{owned_runtime}",
+                argv=("--help",),
+            )
+            self.assertFalse(import_marker.exists())
+            self.assertFalse(main_marker.exists())
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("usage:", completed.stdout)
+
+    def test_present_runtime_missing_reader_is_not_swallowed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            package = root / ".portable-resume" / "runtime" / "portable_resume"
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            completed = self._run(runner)
+
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("No module named 'portable_resume.reader'", completed.stderr)
+        self.assertIn("Traceback", completed.stderr)
+        self.assertNotIn("E_CAPABILITY_UNAVAILABLE", completed.stderr)
+
+    def test_present_runtime_missing_internal_module_is_not_swallowed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            package = root / ".portable-resume" / "runtime" / "portable_resume"
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            (package / "reader.py").write_text(
+                "import portable_resume.does_not_exist\n", encoding="utf-8"
+            )
+            completed = self._run(runner)
+
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn(
+            "No module named 'portable_resume.does_not_exist'", completed.stderr
+        )
+        self.assertIn("Traceback", completed.stderr)
+        self.assertNotIn("E_CAPABILITY_UNAVAILABLE", completed.stderr)
 
 
 class OwnedSkillMarkdownTests(unittest.TestCase):
