@@ -159,7 +159,8 @@ def _force_expected_source(argv: list[str]) -> list[str]:
 
     if not cleaned:
         # A bare invocation is the cheap, bounded discovery step.
-        return [_BOUND_SOURCE, "list", "--expected-source", _BOUND_SOURCE]
+        # Use handoff so probes emit the UNTRUSTED banner (not a plain table).
+        return [_BOUND_SOURCE, "list", "--format", "handoff", "--expected-source", _BOUND_SOURCE]
 
     if cleaned[0] in {"list", "show"}:
         return [_BOUND_SOURCE, *cleaned, "--expected-source", _BOUND_SOURCE]

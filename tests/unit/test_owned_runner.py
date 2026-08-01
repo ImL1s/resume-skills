@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 from portable_resume.diagnostics import DiagnosticError
+from portable_resume.handoff import UNTRUSTED_BANNER
 from portable_resume.install.render import materialize_plan, render_skill_markdown
 from portable_resume.model import SOURCE_KEYS
 
@@ -106,7 +107,17 @@ class OwnedRunnerArgvTests(unittest.TestCase):
 
     def test_empty_argv_defaults_to_list(self) -> None:
         out = self.force([])
-        self.assertEqual(out, ["codex", "list", "--expected-source", "codex"])
+        self.assertEqual(
+            out,
+            [
+                "codex",
+                "list",
+                "--format",
+                "handoff",
+                "--expected-source",
+                "codex",
+            ],
+        )
 
     def test_request_file_lane_no_positional_source_injection(self) -> None:
         out = self.force(["--request-file", "/tmp/r.json", "--format", "handoff"])
@@ -149,6 +160,11 @@ class OwnedRunnerArgvTests(unittest.TestCase):
         self.assertIn("_strip_expected_source", runner)
         self.assertIn("SOURCE_KEYS", runner)
         self.assertIn('_BOUND_SOURCE = "claude"', runner)
+        # Bare probe must default list to handoff (UNTRUSTED banner), not table.
+        self.assertIn(
+            'return [_BOUND_SOURCE, "list", "--format", "handoff", "--expected-source", _BOUND_SOURCE]',
+            runner,
+        )
 
 
 class OwnedRunnerRuntimeFailureTests(unittest.TestCase):
@@ -312,6 +328,19 @@ class OwnedRunnerRuntimeFailureTests(unittest.TestCase):
             self.assertFalse(marker.exists())
 
         self._assert_missing_runtime_diagnostic(completed)
+
+    def test_bare_invocation_list_emits_handoff_untrusted_banner(self) -> None:
+        """No-arg owned runner probe must emit handoff, not a plain table (#179 P1)."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            self._write_owned_runtime(root)
+            completed = self._run(runner, argv=())
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(UNTRUSTED_BANNER, completed.stdout)
+        self.assertIn("Portable Resume Candidate Selection", completed.stdout)
 
     def test_owned_runtime_is_repositioned_before_foreign_pythonpath(self) -> None:
 
