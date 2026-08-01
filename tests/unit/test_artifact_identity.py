@@ -33,7 +33,22 @@ class ArtifactIdentityTests(unittest.TestCase):
         package = root / "src" / "portable_resume"
         (package / "resources").mkdir(parents=True)
         (package / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
-        return package, build_identity(package_root=package)
+        # Stable package versions require an exact-tag release identity before
+        # artifact resolve; development bases may use the source-archive fallback.
+        from portable_resume import __version__ as package_version
+        import re
+
+        if re.fullmatch(r"\d+\.\d+\.\d+", package_version):
+            identity = build_identity(
+                package_root=package,
+                commit_sha="a" * 40,
+                dirty=False,
+                exact_tag=True,
+                build_inputs_sha256="b" * 64,
+            )
+        else:
+            identity = build_identity(package_root=package)
+        return package, identity
 
     def test_explicit_pin_requires_hash_and_resolves_exact_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
