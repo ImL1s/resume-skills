@@ -890,7 +890,9 @@ def _session_meta(records: list[dict[str, Any]], expected_id: str, provider: str
     if chosen is None:
         raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider)
     source = chosen.get("source")
-    if source not in {"cli", "vscode"}:
+    # Live subagent rollouts store structured objects (dict), not "cli"/"vscode".
+    # Non-string sources must soft-fail as unsupported parents — never TypeError (#198).
+    if not isinstance(source, str) or source not in {"cli", "vscode"}:
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
     return chosen
 
@@ -1110,7 +1112,10 @@ class CodexAdapter:
             root = _existing_root(query)
             if root is None:
                 return CapabilityReport(self.key, None, "unavailable")
+            index_degraded = False
             # 1) Recognized SQLite signature is enough — never walk sessions/ (#7).
+            # Busy/hot journal must NOT erase rollout capability (#196): continue
+            # to the bounded plain-rollout sample instead of returning hard-unsafe.
             for database in _state_databases(root):
                 try:
                     with _database_connection(database, root) as connection:
@@ -1132,7 +1137,10 @@ class CodexAdapter:
                                 warnings=warnings,
                             )
                 except DiagnosticError as error:
-                    if error.code in {"E_SQLITE_HOT_JOURNAL", "E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
+                    if error.code in {"E_SQLITE_HOT_JOURNAL", "E_SOURCE_BUSY"}:
+                        index_degraded = True
+                        continue
+                    if error.code == "E_UNSAFE_PATH":
                         return CapabilityReport(self.key, SQLITE_FORMAT, "unsafe", root=root)
                     raise
             # 2) Bounded plain rollout head — sample only, never full sessions walk (#7).
@@ -1150,34 +1158,63 @@ class CodexAdapter:
                         max_records=_PROBE_HEAD_RECORDS,
                     )
                     _session_meta(records, identifier, provider)
+                    warnings = list(record_warnings)
+                    if index_degraded:
+                        warnings.append("W_STALE_INDEX")
                     return CapabilityReport(
                         self.key,
                         ROLLOUT_FORMAT,
-                        "partial" if record_warnings else "supported",
+                        "partial" if warnings else "supported",
                         root=root,
                         evidence=(ROLLOUT_FORMAT,),
-                        warnings=record_warnings,
+                        warnings=tuple(dict.fromkeys(warnings)),
                     )
                 except DiagnosticError as error:
-                    if error.code in {"E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
+                    if error.code == "E_UNSAFE_PATH":
                         return CapabilityReport(self.key, ROLLOUT_FORMAT, "unsafe", root=root)
-                    if error.code not in {"E_UNSUPPORTED_FORMAT", "E_CORRUPT_RECORD", "E_LIMIT_EXCEEDED"}:
+                    # Busy on a single rollout sample is not total source death when
+                    # other plain heads may exist; try remaining capability tiers.
+                    if error.code in {"E_SOURCE_BUSY", "E_UNSUPPORTED_FORMAT", "E_CORRUPT_RECORD", "E_LIMIT_EXCEEDED"}:
+                        pass
+                    else:
                         raise
             # 3) Compressed presence from same bounded sample; decoder policy only.
             zstd = [path for path in paths if path.endswith(".zst")]
             if zstd and _trusted_zstd() is None:
+                warnings = ["W_OPTIONAL_ZSTD_UNAVAILABLE"]
+                if index_degraded:
+                    warnings.append("W_STALE_INDEX")
                 return CapabilityReport(
                     self.key,
                     ZSTD_FORMAT,
                     "partial",
                     root=root,
-                    warnings=("W_OPTIONAL_ZSTD_UNAVAILABLE",),
+                    warnings=tuple(dict.fromkeys(warnings)),
                 )
             if zstd:
-                return CapabilityReport(self.key, ZSTD_FORMAT, "supported", root=root, evidence=(ZSTD_FORMAT,))
+                warnings = ("W_STALE_INDEX",) if index_degraded else ()
+                return CapabilityReport(
+                    self.key,
+                    ZSTD_FORMAT,
+                    "partial" if warnings else "supported",
+                    root=root,
+                    evidence=(ZSTD_FORMAT,),
+                    warnings=warnings,
+                )
+            if index_degraded and _state_databases(root):
+                # DB files exist but every open was busy/hot and no rollout sample
+                # established capability — report partial degraded index, not unsafe
+                # path escape (#196). List/show still try FS recovery.
+                return CapabilityReport(
+                    self.key,
+                    SQLITE_FORMAT,
+                    "partial",
+                    root=root,
+                    warnings=("W_STALE_INDEX",),
+                )
             return CapabilityReport(self.key, None, "unsupported" if _state_databases(root) else "unavailable", root=root)
         except DiagnosticError as error:
-            state = "unsafe" if error.code in {"E_SOURCE_BUSY", "E_UNSAFE_PATH", "E_SQLITE_HOT_JOURNAL"} else "unsupported"
+            state = "unsafe" if error.code in {"E_UNSAFE_PATH"} else "unsupported"
             return CapabilityReport(self.key, None, state)
 
     def list(self, query: Query, budget: ReadBudget) -> list[SessionSummary]:
@@ -1188,8 +1225,16 @@ class CodexAdapter:
         database_supported = False
         stale_dropped = False
         unresolved_paths = 0
+        index_degraded = False
         for database in _state_databases(root):
-            supported, rows, unresolved = _database_summaries(database, root, query, budget)
+            try:
+                supported, rows, unresolved = _database_summaries(database, root, query, budget)
+            except DiagnosticError as error:
+                # Hot/busy SQLite must not erase FS rollout recovery (#196).
+                if error.code in {"E_SOURCE_BUSY", "E_SQLITE_HOT_JOURNAL"}:
+                    index_degraded = True
+                    continue
+                raise
             if supported:
                 database_supported = True
                 unresolved_paths = unresolved
@@ -1237,9 +1282,10 @@ class CodexAdapter:
                     )
                 values = verified
                 break
-        # FS head fallback (#7): missing schema, unresolved/stale rows, or under-filled
-        # recognized DB (sparse index). Skip only when an exact UUID was already verified
-        # from SQLite so a huge sessions/ tree cannot raise away a good match.
+        # FS head fallback (#7 / #196): missing schema, busy/hot index, unresolved/stale
+        # rows, or under-filled recognized DB (sparse index). Skip only when an exact
+        # UUID was already verified from SQLite so a huge sessions/ tree cannot raise
+        # away a good match.
         exact_ref = _exact_uuid_ref(query.ref)
         exact_hit = exact_ref is not None and any(item.session_id == exact_ref for item in values)
         # Always soft-FS when the recognized DB did not fully settle the query:
@@ -1247,6 +1293,7 @@ class CodexAdapter:
         # sessions). Skip only after an exact UUID was verified from SQLite.
         need_fs = (
             not database_supported
+            or index_degraded
             or stale_dropped
             or unresolved_paths > 0
             or (database_supported and not exact_hit)
@@ -1303,7 +1350,13 @@ class CodexAdapter:
             # Empty + truncated: exact/cwd filters may exclude the soft prefix.
             # Fail closed so callers do not treat an incomplete scan as no-match.
             raise DiagnosticError.limit_exceeded()
+        extra_warnings: list[str] = []
         if fs_truncated:
+            extra_warnings.append("W_TRUNCATED")
+        if index_degraded:
+            # Index was busy/hot; summaries came from FS rollouts only (#196).
+            extra_warnings.append("W_STALE_INDEX")
+        if extra_warnings:
             ranked = [
                 SessionSummary(
                     source=item.source,
@@ -1315,7 +1368,7 @@ class CodexAdapter:
                     created_at=item.created_at,
                     updated_at=item.updated_at,
                     provider=item.provider,
-                    warnings=tuple(dict.fromkeys((*(item.warnings or ()), "W_TRUNCATED"))),
+                    warnings=tuple(dict.fromkeys((*(item.warnings or ()), *extra_warnings))),
                 )
                 for item in ranked
             ]
