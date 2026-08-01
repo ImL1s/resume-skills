@@ -6,6 +6,7 @@ import importlib.util
 import re
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -36,10 +37,26 @@ class SelfVerifyProfileTests(unittest.TestCase):
         # Compat still carries the expensive suite exactly once per cell.
         self.assertIn("unit", compat)
         self.assertIn("compile", compat)
+        self.assertNotIn("packaging", compat)
+        self.assertIn("packaging", self_verify_module.STAGE_NAMES)
         # Local remains the full set.
         self.assertEqual(
             tuple(self_verify_module.PROFILES["local"]),
             self_verify_module.STAGE_NAMES,
+        )
+        completed = mock.Mock(returncode=0, stderr="", stdout="")
+        with mock.patch.object(self_verify_module, "run", return_value=completed) as run:
+            code, _ = self_verify_module._stage_unit()
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [call.args[0][5] for call in run.call_args_list],
+            [
+                "tests/adapters",
+                "tests/e2e",
+                "tests/integration",
+                "tests/security",
+                "tests/unit",
+            ],
         )
 
     def test_resolve_stages_rejects_unknown_names(self) -> None:
@@ -70,6 +87,10 @@ class CiWorkflowDedupeTests(unittest.TestCase):
         self.assertIn("smoke_installed_matrix.py", matrix_block)
         # Package waits on both axes.
         self.assertRegex(text, re.compile(r"needs:\s*\[test,\s*quality\]"))
+        packaging_command = "python scripts/self_verify.py --only packaging"
+        package_block = text.split("\n  package:", 1)[1]
+        self.assertNotIn(packaging_command, matrix_block)
+        self.assertEqual(package_block.count(packaging_command), 1)
 
 
 if __name__ == "__main__":
