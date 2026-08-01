@@ -72,19 +72,45 @@ def _loads(data: bytes, *, optional: bool = False) -> Any:
     return value
 
 
-def _shape(value: Any, depth: int = 0) -> None:
+def _shape(
+    value: Any,
+    depth: int = 0,
+    *,
+    path: tuple[str, ...] = (),
+    ignored_list_cardinality: bool = False,
+) -> None:
     if depth > 32:
         raise DiagnosticError.limit_exceeded()
     if isinstance(value, Mapping):
         if len(value) > 512:
             raise DiagnosticError.limit_exceeded()
-        for item in value.values():
-            _shape(item, depth + 1)
+        for key, item in value.items():
+            child_path = (*path, str(key))
+            # ``rawOutput`` is provider-private and never normalized. Its JSONL
+            # record is already byte-bounded, while depth and map-width checks
+            # still recurse through it. Do not borrow the discovery-row ceiling
+            # for ignored provider arrays (#178).
+            child_ignored = ignored_list_cardinality or child_path == (
+                "params",
+                "update",
+                "rawOutput",
+            )
+            _shape(
+                item,
+                depth + 1,
+                path=child_path,
+                ignored_list_cardinality=child_ignored,
+            )
     elif isinstance(value, list):
-        if len(value) > DEFAULT_BOUNDS.scanned_records:
+        if not ignored_list_cardinality and len(value) > DEFAULT_BOUNDS.scanned_records:
             raise DiagnosticError.limit_exceeded()
         for item in value:
-            _shape(item, depth + 1)
+            _shape(
+                item,
+                depth + 1,
+                path=path,
+                ignored_list_cardinality=ignored_list_cardinality,
+            )
 
 
 def _identifier(value: object) -> str:
@@ -538,7 +564,8 @@ class GrokAdapter:
             if not isinstance(kind, str):
                 raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
             kind = kind.casefold()
-            if _contains_encrypted(update):
+            public_update = {key: item for key, item in update.items() if key != "rawOutput"}
+            if _contains_encrypted(public_update):
                 recognized += 1
                 continue
             if kind in _ESSENTIAL_UNSUPPORTED:

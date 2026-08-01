@@ -112,6 +112,11 @@
   remains not-run.
 
 ### Fixed
+- Grok ignored provider arrays (#178): exact show no longer applies the
+  discovery `scanned_records` ceiling to non-public `rawOutput` list
+  cardinality. Physical-line bytes, duplicate keys, nesting depth, map width,
+  public allowlisted arrays, rewind, and compaction remain fail-closed; ignored
+  provider payloads are never normalized into turns or handoffs.
 - Claude exact-reference discovery (#19): absolute approved
   `projects/<slug>/<uuid>.jsonl` paths are validated/read without enumerating
   unrelated project directories; exact UUID + concrete cwd constructs the

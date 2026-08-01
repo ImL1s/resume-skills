@@ -22,7 +22,8 @@ from portable_resume.adapters.opencode import (
 )
 from portable_resume.bounds import Bounds, DEFAULT_BOUNDS, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
-from portable_resume.model import Query
+from portable_resume.handoff import render_handoff
+from portable_resume.model import Envelope, Query
 from portable_resume.select import AmbiguousSelection, select_session
 from tests.helpers.core import tree_snapshot
 from tests.helpers.fixture_manifest import validate_fixture_tree
@@ -677,6 +678,180 @@ class AntigravityAdapterTests(unittest.TestCase):
 
 
 class GrokAdapterTests(unittest.TestCase):
+    def test_exact_show_ignores_large_nonpublic_raw_output_array(self) -> None:
+        """Ignored provider deltas must not borrow the discovery-record ceiling (#178)."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session_dir = root / "sessions" / "%2Fworkspace%2Fproject" / "grok-raw-output"
+            session_dir.mkdir(parents=True)
+            updates = session_dir / "updates.jsonl"
+            ignored_marker = "ignored-provider-delta"
+            record = {
+                "timestamp": 1,
+                "method": "session/update",
+                "params": {
+                    "sessionId": "grok-raw-output",
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "synthetic-tool",
+                        "content": "public tool result",
+                        "rawOutput": {
+                            "output_delta": [
+                                {"signature": ignored_marker},
+                                *([ignored_marker] * 2_872),
+                            ],
+                        },
+                    },
+                },
+            }
+            encoded = json.dumps(record, separators=(",", ":")).encode("utf-8")
+            self.assertLess(len(encoded), DEFAULT_BOUNDS.record_bytes)
+            updates.write_bytes(encoded + b"\n")
+            before = tree_snapshot(root)
+
+            adapter = GrokAdapter(root=str(root))
+            current = query("grok", root, "grok-raw-output", within_min=0)
+            values = adapter.list(current, ReadBudget())
+            session = adapter.show(resolve(values, "grok-raw-output"), current, ReadBudget())
+
+            self.assertEqual([turn.content for turn in session.turns], ["public tool result"])
+            normalized = json.dumps(session.to_dict(), sort_keys=True)
+            handoff = render_handoff(
+                Envelope.create(
+                    operation="show",
+                    query=current,
+                    sessions=(session,),
+                    generated_at="2026-08-01T00:00:00Z",
+                )
+            )
+            self.assertNotIn("rawOutput", normalized)
+            self.assertNotIn(ignored_marker, normalized)
+            self.assertNotIn(ignored_marker, handoff)
+            self.assertEqual(tree_snapshot(root), before)
+
+    def test_grok_public_and_physical_record_bounds_remain_fail_closed(self) -> None:
+        def show_record(encoded: bytes, budget: ReadBudget, *, max_tool_chars: int = 8_000):
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                session_dir = root / "sessions" / "%2Fworkspace%2Fproject" / "grok-bounds"
+                session_dir.mkdir(parents=True)
+                updates = session_dir / "updates.jsonl"
+                updates.write_bytes(encoded + b"\n")
+                return GrokAdapter(root=str(root)).show(
+                    ResolvedRef(
+                        session_id="grok-bounds",
+                        source_path=str(updates),
+                        provider=GROK_FORMAT,
+                    ),
+                    query(
+                        "grok",
+                        root,
+                        "grok-bounds",
+                        within_min=0,
+                        max_tool_chars=max_tool_chars,
+                    ),
+                    budget,
+                )
+
+        public_array = {
+            "timestamp": 1,
+            "method": "session/update",
+            "params": {
+                "sessionId": "grok-bounds",
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "content": [{"type": "text", "text": "x"}] * 2_001,
+                },
+            },
+        }
+        public_encoded = json.dumps(public_array, separators=(",", ":")).encode("utf-8")
+        with self.assertRaises(DiagnosticError) as public_error:
+            show_record(public_encoded, ReadBudget())
+        self.assertEqual(public_error.exception.code, "E_LIMIT_EXCEEDED")
+
+        valid_record = {
+            "timestamp": 1,
+            "method": "session/update",
+            "params": {
+                "sessionId": "grok-bounds",
+                "update": {"sessionUpdate": "tool_call_update", "content": "bounded"},
+            },
+        }
+        valid_encoded = json.dumps(valid_record, separators=(",", ":")).encode("utf-8")
+        truncated = show_record(valid_encoded, ReadBudget(), max_tool_chars=4)
+        self.assertEqual(truncated.turns[0].content, "boun")
+        self.assertTrue(truncated.turns[0].truncated)
+        self.assertIn("W_TRUNCATED", truncated.warnings)
+        with self.assertRaises(DiagnosticError) as physical_error:
+            show_record(
+                valid_encoded,
+                ReadBudget(Bounds(record_bytes=len(valid_encoded) - 1)),
+            )
+        self.assertEqual(physical_error.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_grok_ignored_raw_output_retains_structural_guards(self) -> None:
+        def show_update(update: object) -> None:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                session_dir = root / "sessions" / "%2Fworkspace%2Fproject" / "grok-shape"
+                session_dir.mkdir(parents=True)
+                updates = session_dir / "updates.jsonl"
+                record = {
+                    "timestamp": 1,
+                    "method": "session/update",
+                    "params": {"sessionId": "grok-shape", "update": update},
+                }
+                updates.write_text(json.dumps(record, separators=(",", ":")) + "\n")
+                GrokAdapter(root=str(root)).show(
+                    ResolvedRef(
+                        session_id="grok-shape",
+                        source_path=str(updates),
+                        provider=GROK_FORMAT,
+                    ),
+                    query("grok", root, "grok-shape", within_min=0),
+                    ReadBudget(),
+                )
+
+        nested: object = "leaf"
+        for _ in range(34):
+            nested = [nested]
+        cases = {
+            "depth": {
+                "sessionUpdate": "tool_call_update",
+                "content": "bounded",
+                "rawOutput": nested,
+            },
+            "map-width": {
+                "sessionUpdate": "tool_call_update",
+                "content": "bounded",
+                "rawOutput": {f"k{index}": index for index in range(513)},
+            },
+        }
+        for name, update in cases.items():
+            with self.subTest(name=name), self.assertRaises(DiagnosticError) as caught:
+                show_update(update)
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+        duplicate = (
+            b'{"timestamp":1,"method":"session/update","params":{"sessionId":"grok-shape",'
+            b'"update":{"sessionUpdate":"tool_call_update","content":"one","content":"two"}}}'
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session_dir = root / "sessions" / "%2Fworkspace%2Fproject" / "grok-shape"
+            session_dir.mkdir(parents=True)
+            updates = session_dir / "updates.jsonl"
+            updates.write_bytes(duplicate + b"\n")
+            adapter = GrokAdapter(root=str(root))
+            with self.assertRaises(DiagnosticError) as duplicate_error:
+                adapter.show(
+                    ResolvedRef("grok-shape", str(updates), GROK_FORMAT),
+                    query("grok", root, "grok-shape", within_min=0),
+                    ReadBudget(),
+                )
+            self.assertEqual(duplicate_error.exception.code, "E_CORRUPT_RECORD")
+
     def test_encoded_cwd_summary_and_public_updates_normalize(self) -> None:
         root = fixture_root("grok", "s-gro-01")
         before = tree_snapshot(root)
@@ -718,17 +893,20 @@ class GrokAdapterTests(unittest.TestCase):
         # List is metadata-first (#15); show still fail-closed on corrupt/essential events.
         for payload in (
             '{"timestamp":\n',
-            json.dumps(
-                {
-                    "timestamp": 1,
-                    "method": "_x.ai/session/update",
-                    "params": {
-                        "sessionId": "grok-one",
-                        "update": {"sessionUpdate": "rewind_marker", "target_prompt_index": 0},
-                    },
-                }
-            )
-            + "\n",
+            *(
+                json.dumps(
+                    {
+                        "timestamp": 1,
+                        "method": "_x.ai/session/update",
+                        "params": {
+                            "sessionId": "grok-one",
+                            "update": {"sessionUpdate": kind, "target_prompt_index": 0},
+                        },
+                    }
+                )
+                + "\n"
+                for kind in ("rewind_marker", "compaction_checkpoint")
+            ),
         ):
             with self.subTest(payload=payload[:20]), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
