@@ -37,13 +37,42 @@ def _owned_runtime_package_available() -> bool:
     runtime = os.path.realpath(_RUNTIME)
     package = os.path.realpath(_OWNED_PACKAGE)
     package_init = os.path.realpath(_OWNED_INIT)
-    return (
+    if not (
         _is_contained(runtime, root)
         and _is_contained(package, runtime)
         and _is_contained(package_init, package)
         and os.path.isdir(_OWNED_PACKAGE)
         and os.path.isfile(_OWNED_INIT)
-    )
+    ):
+        return False
+    # Reject critical modules that exist but whose symlink/target escapes the package.
+    # Missing files are left for the import path so broken owned runtimes still surface
+    # as real ModuleNotFoundError / exit 1 rather than "unavailable".
+    for name in ("__init__.py", "reader.py", "model.py"):
+        candidate = os.path.join(_OWNED_PACKAGE, name)
+        if not os.path.lexists(candidate):
+            continue
+        try:
+            resolved = os.path.realpath(candidate)
+        except OSError:
+            return False
+        if not (_is_contained(resolved, package) and os.path.isfile(resolved)):
+            return False
+    return True
+
+
+def _module_origin_is_owned(module: object) -> bool:
+    """True only when an imported module's real file lives under the owned package."""
+
+    path = getattr(module, "__file__", None)
+    if not isinstance(path, str) or not path:
+        return False
+    try:
+        resolved = os.path.realpath(path)
+        package = os.path.realpath(_OWNED_PACKAGE)
+    except OSError:
+        return False
+    return _is_contained(resolved, package) and os.path.isfile(resolved)
 
 
 if not _owned_runtime_package_available():
@@ -59,9 +88,15 @@ sys.path.insert(0, _RUNTIME)
 try:
     from portable_resume.reader import main  # noqa: E402
     from portable_resume.model import SOURCE_KEYS  # noqa: E402
+    import portable_resume.model as _owned_model  # noqa: E402
+    import portable_resume.reader as _owned_reader  # noqa: E402
 except ModuleNotFoundError as error:
+    # Only the top-level package missing is "unavailable"; missing internals re-raise.
     if error.name != "portable_resume":
         raise
+    _runtime_unavailable()
+
+if not (_module_origin_is_owned(_owned_reader) and _module_origin_is_owned(_owned_model)):
     _runtime_unavailable()
 
 _BOUND_SOURCE = "${source_key}"

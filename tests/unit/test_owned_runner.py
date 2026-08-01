@@ -293,7 +293,28 @@ class OwnedRunnerRuntimeFailureTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("usage:", completed.stdout)
 
+
+    def test_reader_symlink_outside_package_is_rejected(self) -> None:
+        """Owned package dir is real, but reader.py escapes via symlink (#179 P1)."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = self._write_runner(root)
+            self._write_owned_runtime(root)
+            marker = root / "foreign-main-executed"
+            foreign = root / "foreign"
+            self._write_hostile_package(foreign, root / "foreign-imported", main_marker=marker)
+            owned_reader = (
+                root / ".portable-resume" / "runtime" / "portable_resume" / "reader.py"
+            )
+            owned_reader.unlink()
+            owned_reader.symlink_to(foreign / "portable_resume" / "reader.py")
+            completed = self._run(runner, argv=("--help",))
+            self.assertFalse(marker.exists())
+
+        self._assert_missing_runtime_diagnostic(completed)
+
     def test_owned_runtime_is_repositioned_before_foreign_pythonpath(self) -> None:
+
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             runner = self._write_runner(root)
