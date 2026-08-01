@@ -50,7 +50,12 @@ def build_parser() -> argparse.ArgumentParser:
         "install",
         help="install resume-* Skills into a destination host root (JSON stdout)",
     )
-    inst.add_argument("--host", required=True, help="host key or 'all'")
+    inst.add_argument(
+        "--host",
+        required=True,
+        choices=(*sorted(HOST_KEYS), "all"),
+        help="host key or 'all'",
+    )
     inst.add_argument("--scope", choices=("project", "global"), required=True)
     inst.add_argument("--project", help="project directory (required for project scope)")
     inst.add_argument("--root", help="explicit skill root override")
@@ -67,7 +72,12 @@ def build_parser() -> argparse.ArgumentParser:
         "verify",
         help="verify owned install under a host root (JSON stdout; always read-only)",
     )
-    ver.add_argument("--host", required=True, help="host key or 'all'")
+    ver.add_argument(
+        "--host",
+        required=True,
+        choices=(*sorted(HOST_KEYS), "all"),
+        help="host key or 'all'",
+    )
     ver.add_argument("--scope", choices=("project", "global"), required=True)
     ver.add_argument("--project")
     ver.add_argument("--root", help="explicit skill root override")
@@ -78,7 +88,12 @@ def build_parser() -> argparse.ArgumentParser:
         "uninstall",
         help="remove one ownership claim (JSON stdout)",
     )
-    un.add_argument("--host", required=True, help="host key or 'all'")
+    un.add_argument(
+        "--host",
+        required=True,
+        choices=(*sorted(HOST_KEYS), "all"),
+        help="host key or 'all'",
+    )
     un.add_argument("--scope", choices=("project", "global"), required=True)
     un.add_argument("--project")
     un.add_argument("--root", help="explicit skill root override")
@@ -143,7 +158,12 @@ def build_parser() -> argparse.ArgumentParser:
         "audit-host",
         help="read-only scan for duplicate/shadow Portable Resume Skills (#34; JSON stdout)",
     )
-    a.add_argument("--host", required=True, help="host key (not 'all')")
+    a.add_argument(
+        "--host",
+        required=True,
+        choices=tuple(sorted(HOST_KEYS)),
+        help="host key (not 'all')",
+    )
     a.add_argument("--scope", choices=("project", "global"), required=True)
     a.add_argument("--project", default=None, help="project dir for project scope / alt roots")
     a.add_argument("--root", help="explicit skill root override")
@@ -273,6 +293,12 @@ def run(argv: Sequence[str] | None = None) -> int:
         if ns.command == "quick-install":
             ns.command = "install"
             ns.scope = "project" if ns.project else "global"
+        if (
+            getattr(ns, "scope", None) == "project"
+            and not getattr(ns, "project", None)
+            and not getattr(ns, "root", None)
+        ):
+            raise DiagnosticError.invalid()
         if ns.command == "matrix":
             report = matrix_report()
             doc = _envelope(
