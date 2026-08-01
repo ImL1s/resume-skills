@@ -67,14 +67,17 @@ Rules:
   quoting). Never interpolate free text into a larger shell script.
 - **Lane A only:** empty / omitted / `latest` → newest session for the current
   working directory.
-- Free-text search may match `list` results; on ambiguity the reader exits with
-  candidates — never guess.
+- Discover with `list --match <text>` (case-insensitive substring over id /
+  title / cwd / branch within the bounded recent listing window). Empty match
+  results are an empty list (exit 0), not a transcript dump.
+- On `show` free-text ambiguity the reader exits with candidates — never guess.
 - Only actions are `list` and `show`. Any other bare word is treated as search
   text, so unexpected `E_NO_MATCH` may mean a typo'd verb.
 
 Optional argv flags (not with `--request-file`): `--within-min N`,
 `--max-tool-chars N` (ceiling 8000), `--source-root PATH`, `--format handoff|json|table`
-(`show` rejects `table`; default for `show` is handoff).
+(`show` rejects `table`; default for `show` is handoff),
+`list --match <text>` (list only; not with `show` or `--request-file`).
 
 ### B — Typed request-file (free text / multi-field)
 

@@ -21,7 +21,13 @@ from .model import Envelope, Query, SessionSummary
 from .paths import canonical_root, canonical_source_root, canonicalize_cwd, reject_controls
 from .request import load_request
 from .sanitize import sanitize_session, sanitize_summary, validate_structural_summary
-from .select import AmbiguousSelection, bounded_candidates, select_session, summary_sort_key
+from .select import (
+    AmbiguousSelection,
+    bounded_candidates,
+    select_session,
+    summary_matches,
+    summary_sort_key,
+)
 
 
 class DiagnosticArgumentParser(argparse.ArgumentParser):
@@ -160,7 +166,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="Read inert local session context without invoking a source CLI.",
         epilog="""examples:
   portable-resume claude list --cwd "$PWD"
+  portable-resume claude list --cwd "$PWD" --match keyword
   portable-resume claude show latest --cwd "$PWD" --format handoff
+  portable-resume sources           # which agents have local stores (presence)
   portable-resume self-check        # packaging/runtime health (always JSON)""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -224,7 +232,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "read a portable-resume/request-v1 JSON file instead of positional args; "
             "requires --expected-source; excludes "
-            "source/action/ref/--cwd/--within-min"
+            "source/action/ref/--cwd/--within-min/--match"
         ),
     )
     parser.add_argument(
@@ -233,6 +241,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "assert the source key this invocation must resolve to "
             "(required with --request-file)"
+        ),
+    )
+    parser.add_argument(
+        "--match",
+        help=(
+            "list only: filter the most recent bounded listing window by "
+            "case-insensitive substring over id/title/cwd/branch "
+            "(not full store history; not valid with show or --request-file)"
         ),
     )
     return parser
@@ -250,6 +266,30 @@ def build_self_check_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="accepted for compatibility; self-check always writes JSON",
+    )
+    return parser
+
+
+def build_sources_parser() -> argparse.ArgumentParser:
+    """Closed option set for ``sources`` presence sweep (plan 044)."""
+
+    parser = DiagnosticArgumentParser(
+        prog="portable-resume sources",
+        description=(
+            "Report which enabled source adapters have a local store "
+            "(presence probe only; no session listing)."
+        ),
+        epilog="exit 0 when the sweep completes; per-source unavailable/error rows are data",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--cwd",
+        help="project directory for cwd-scoped probes (default: current directory)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit compact portable-resume/sources-v1 JSON (default: table)",
     )
     return parser
 
@@ -276,17 +316,22 @@ def _load_adapter(source: str) -> SourceAdapter:
     return adapter
 
 
-def _resolve_invocation(namespace: argparse.Namespace) -> tuple[str, str, str | None, str, int | None]:
+def _resolve_invocation(
+    namespace: argparse.Namespace,
+) -> tuple[str, str, str | None, str, int | None, str | None]:
+    match_text = getattr(namespace, "match", None)
     if namespace.request_file:
         if namespace.source is not None or namespace.action is not None or namespace.ref is not None or namespace.cwd is not None:
             raise DiagnosticError.invalid()
         if namespace.expected_source is None:
             raise DiagnosticError.invalid()
-        # request-v1 does not carry within_min; accepting it would silently drop it.
+        # request-v1 does not carry within_min/match; accepting them would silently drop them.
         if namespace.within_min is not None:
             raise DiagnosticError.invalid()
+        if match_text is not None:
+            raise DiagnosticError.invalid()
         request = load_request(namespace.request_file, expected_source=namespace.expected_source)
-        return request.source, request.action, request.resume_ref, request.cwd, None
+        return request.source, request.action, request.resume_ref, request.cwd, None, None
     # Grok-build style: skill-bound runners may pass --expected-source with
     # positional `source action [ref]` (source injected by the wrapper).
     if namespace.expected_source is not None and namespace.source != namespace.expected_source:
@@ -295,12 +340,18 @@ def _resolve_invocation(namespace: argparse.Namespace) -> tuple[str, str, str | 
         raise DiagnosticError.invalid()
     if namespace.action == "list" and namespace.ref is not None:
         raise DiagnosticError.invalid(source=namespace.source)
+    if match_text is not None:
+        if namespace.action != "list":
+            raise DiagnosticError.invalid(source=namespace.source)
+        reject_controls(match_text)
+        if len(match_text) > DEFAULT_BOUNDS.ref_chars:
+            raise DiagnosticError.invalid(source=namespace.source)
     if namespace.ref is not None:
         reject_controls(namespace.ref)
         if len(namespace.ref) > DEFAULT_BOUNDS.ref_chars:
             raise DiagnosticError.invalid(source=namespace.source)
     cwd = canonicalize_cwd(namespace.cwd or os.getcwd())
-    return namespace.source, namespace.action, namespace.ref, cwd, namespace.within_min
+    return namespace.source, namespace.action, namespace.ref, cwd, namespace.within_min, match_text
 
 
 def _format(namespace: argparse.Namespace, action: str) -> str:
@@ -429,6 +480,61 @@ def self_check(*, stdout: Any = sys.stdout) -> int:
     return 0 if report["ok"] else ExitCode.CORRUPT_OR_LIMIT
 
 
+def sources_report(*, cwd: str | None = None) -> dict[str, Any]:
+    """Presence-only sweep across enabled sources (plan 044)."""
+
+    from .registry import SOURCE_PROFILES, enabled_source_keys
+
+    resolved_cwd = canonicalize_cwd(cwd or os.getcwd())
+    report: dict[str, Any] = {
+        "schema_version": "portable-resume/sources-v1",
+        "ok": True,
+        "cwd": resolved_cwd,
+        "sources": {},
+    }
+    for source in sorted(enabled_source_keys()):
+        profile = SOURCE_PROFILES.get(source)
+        supports_list = bool(profile.supports_list) if profile is not None else False
+        supports_show = bool(profile.supports_show) if profile is not None else False
+        row: dict[str, Any] = {
+            "state": "error",
+            "format_id": None,
+            "warnings": [],
+            "supports_list": supports_list,
+            "supports_show": supports_show,
+        }
+        try:
+            adapter = _load_adapter(source)
+            query = Query(source=source, ref=None, cwd=resolved_cwd)
+            capability = adapter.probe(query)
+            if capability.state not in CAPABILITY_STATES or capability.source != source:
+                row["state"] = "error"
+                row["code"] = "E_INVARIANT"
+            else:
+                warnings = [w for w in capability.warnings if w in WARNING_CODES]
+                row["state"] = capability.state
+                row["format_id"] = capability.format_id
+                row["warnings"] = list(warnings)
+        except DiagnosticError as error:
+            row["state"] = "error"
+            row["code"] = error.code
+        except Exception as error:  # noqa: BLE001 - sweep must not abort
+            row["state"] = "error"
+            row["exception"] = type(error).__name__
+        report["sources"][source] = row
+    return report
+
+
+def _sources_table(report: dict[str, Any]) -> str:
+    lines = ["SOURCE\tSTATE\tFORMAT\tWARNINGS"]
+    for key in sorted(report["sources"]):
+        row = report["sources"][key]
+        warnings = ",".join(row.get("warnings") or []) or "-"
+        fmt = row.get("format_id") or "-"
+        lines.append(f"{key}\t{row.get('state')}\t{fmt}\t{warnings}")
+    return "\n".join(lines) + "\n"
+
+
 def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: Any = sys.stderr) -> int:
     argv_list = list(sys.argv[1:] if argv is None else argv)
     if argv_list and argv_list[0] == "self-check":
@@ -440,6 +546,21 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
             return emit_diagnostic(error, stream=stderr)
         return self_check(stdout=stdout)
 
+    if argv_list and argv_list[0] == "sources":
+        sources_parser = build_sources_parser()
+        try:
+            sources_ns = sources_parser.parse_args(argv_list[1:])
+        except DiagnosticError as error:
+            return emit_diagnostic(error, stream=stderr)
+        report = sources_report(cwd=sources_ns.cwd)
+        if sources_ns.json:
+            stdout.write(
+                json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+            )
+        else:
+            stdout.write(_sources_table(report))
+        return 0
+
     install_identity = runtime_install_identity()
     parser = build_parser()
     source: str | None = None
@@ -448,7 +569,7 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
         if namespace.version:
             stdout.write(_runtime_version_report(install_identity, prog=parser.prog) + "\n")
             return 0
-        source, action, ref, cwd, within_min = _resolve_invocation(namespace)
+        source, action, ref, cwd, within_min, match_text = _resolve_invocation(namespace)
         output_format = _format(namespace, action)
         if within_min is not None and (within_min < 0 or within_min > 10 * 365 * 24 * 60):
             raise DiagnosticError.invalid(source=source)
@@ -458,6 +579,7 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
         source_root = (
             canonical_source_root(namespace.source_root) if namespace.source_root else None
         )
+        # Adapter Query.ref stays selection-only. list --match is reader-local.
         query = Query(
             source=source,
             ref=ref,
@@ -495,13 +617,22 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
                 raise DiagnosticError("E_INVARIANT", source=source)
             internal.append(validate_structural_summary(raw))
         ordered_internal_all = sorted(internal, key=summary_sort_key)
-        if len(ordered_internal_all) > DEFAULT_BOUNDS.listed_sessions:
+        window_truncated = len(ordered_internal_all) > DEFAULT_BOUNDS.listed_sessions
+        if window_truncated:
             envelope_warnings.append("W_TRUNCATED")
         ordered_internal = ordered_internal_all[: DEFAULT_BOUNDS.listed_sessions]
 
         if action == "list":
+            visible = ordered_internal
+            if match_text is not None:
+                needle = match_text.casefold()
+                visible = [row for row in ordered_internal if summary_matches(row, needle)]
+                # Truncation honesty: clipped pre-filter window must stay visible
+                # even when the filtered page is small or empty.
+                if window_truncated and "W_TRUNCATED" not in envelope_warnings:
+                    envelope_warnings.append("W_TRUNCATED")
             public_sessions: list[SessionSummary] = []
-            for raw in ordered_internal:
+            for raw in visible:
                 item, warnings = sanitize_summary(raw)
                 public_sessions.append(item)
                 envelope_warnings.extend(warnings)

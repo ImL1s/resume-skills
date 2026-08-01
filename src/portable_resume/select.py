@@ -52,6 +52,18 @@ def bounded_candidates(values: Iterable[SessionSummary]) -> tuple[Candidate, ...
     return tuple(candidates[: DEFAULT_BOUNDS.listed_sessions])
 
 
+def summary_matches(summary: SessionSummary, needle_casefold: str) -> bool:
+    """Casefolded substring match over list/show selection fields."""
+
+    fields = (
+        summary.session_id,
+        summary.title or "",
+        summary.cwd or "",
+        summary.branch or "",
+    )
+    return any(needle_casefold in field.casefold() for field in fields)
+
+
 def select_session(
     summaries: Iterable[SessionSummary],
     *,
@@ -140,8 +152,7 @@ def select_session(
     needle = normalized_ref.casefold()
     matches: list[SessionSummary] = []
     for value in eligible:
-        fields = (value.session_id, value.title or "", value.cwd or "", value.branch or "")
-        if any(needle in field.casefold() for field in fields):
+        if summary_matches(value, needle):
             matches.append(value)
     if not matches:
         raise DiagnosticError("E_NO_MATCH")
