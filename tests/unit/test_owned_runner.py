@@ -336,7 +336,22 @@ class OwnedRunnerRuntimeFailureTests(unittest.TestCase):
             root = Path(temporary)
             runner = self._write_runner(root)
             self._write_owned_runtime(root)
-            completed = self._run(runner, argv=())
+            # Isolate HOME so CI runners without a live ~/.claude still hit list
+            # (empty candidates) rather than E_CAPABILITY_UNAVAILABLE.
+            home = root / "home"
+            (home / ".claude" / "projects").mkdir(parents=True)
+            env = os.environ.copy()
+            env.pop("PYTHONPATH", None)
+            env["HOME"] = str(home)
+            env["USERPROFILE"] = str(home)
+            completed = subprocess.run(
+                [sys.executable, str(runner)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=str(root),
+            )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn(UNTRUSTED_BANNER, completed.stdout)
