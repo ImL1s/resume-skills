@@ -441,6 +441,29 @@ class OwnedSkillMarkdownTests(unittest.TestCase):
         self.assertIn("hard-binds `source=codex`", text)
         self.assertIn("Host skill metadata", text)
 
+    def test_skill_starts_with_start_here_and_handoff_default(self) -> None:
+        """Plan 053: agent-legible order and handoff-first examples."""
+
+        text = render_skill_markdown(host="claude", source="claude")
+        start = text.index("## Start here")
+        host = text.index("## Host activation")
+        first_fence = text.index("```bash")
+        self.assertLess(start, host)
+        self.assertLess(first_fence, 800)
+        self.assertLess(first_fence, host)
+        # Happy-path show must not force --json (handoff is the default).
+        show_line = [
+            line
+            for line in text.splitlines()
+            if "run_reader.py" in line and " show " in line and "--request-file" not in line
+        ][0]
+        self.assertNotIn("--json", show_line)
+        self.assertIn("handoff-policy.md", text)
+        self.assertIn("| 0 |", text)
+        self.assertIn("| 6 |", text)
+        self.assertIn("mutually exclusive", text)
+        self.assertNotIn("install-resume-skills hosts` and `docs/install-hosts.md`", text)
+
     def test_every_source_binds_own_key(self) -> None:
         for source in sorted(SOURCE_KEYS):
             text = render_skill_markdown(host="cursor", source=source)

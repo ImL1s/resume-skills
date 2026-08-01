@@ -11,6 +11,8 @@
 
 ## Status
 
+- **Completed**: 2026-08-01 on main (advisor residual track; wording authorized by goal「全部」)
+
 - **Priority**: P2
 - **Effort**: S (code) — the cost is coordination, not implementation
 - **Risk**: LOW–MED — changes installed skill bytes, moving `package_identity`; needs a coordinated release

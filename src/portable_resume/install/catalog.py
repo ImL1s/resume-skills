@@ -950,10 +950,19 @@ SOURCE_TITLES = {
 
 
 def description_for(source: str) -> str:
+    """Trigger-first frontmatter description (plan 055).
+
+    Hosts route Skills by this string. Prefer user vocabulary (resume /
+    continue / last session / handoff) over mechanism-first "request document"
+    wording. Still describes offline inert context migration only — never live
+    process or session restore.
+    """
+
     title = SOURCE_TITLES[source]
     return (
-        f"Import inert local {title} session context into a fresh session "
-        "using a validated request document."
+        f"Resume or continue the last {title} session: pick up previous work, "
+        f"import inert offline handoff context into a fresh session "
+        f"(never live process restore)."
     )
 
 

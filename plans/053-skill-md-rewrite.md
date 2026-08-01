@@ -11,6 +11,8 @@
 
 ## Status
 
+- **Completed**: 2026-08-01 on main (advisor residual track)
+
 - **Priority**: P1
 - **Effort**: M
 - **Risk**: MED — changes installed skill bytes, so `package_identity` moves and every packaging/identity test moves with it
@@ -278,13 +280,13 @@ install and read the rendered `SKILL.md` top to bottom once as a final check.
 
 ## Done criteria
 
-- [ ] First runnable command appears in the first ~25 lines
-- [ ] No example contradicts a later rule; `show` example has no `--json`
-- [ ] Failure-triage table covers all eight exit codes and states the stdout/stderr split
-- [ ] Lane B lists a closed option set and states the `resume_ref`/mode/`cwd` truths
-- [ ] Every referenced path exists in a real install or is explicitly conditional
-- [ ] Exactly one authoritative safety checklist; credential item retained
-- [ ] Full suite + installed matrix + gates green; `plans/README.md` updated
+- [x] First runnable command appears in the first ~25 lines
+- [x] No example contradicts a later rule; `show` example has no `--json`
+- [x] Failure-triage table covers all eight exit codes and states the stdout/stderr split
+- [x] Lane B lists a closed option set and states the `resume_ref`/mode/`cwd` truths
+- [x] Every referenced path exists in a real install or is explicitly conditional
+- [x] Exactly one authoritative safety checklist; credential item retained
+- [x] Full suite + installed matrix + gates green; `plans/README.md` updated
 
 ## STOP conditions
 

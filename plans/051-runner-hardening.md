@@ -261,13 +261,13 @@ failure.
 
 ## Done criteria
 
-- [ ] Bare `run_reader.py` produces a bounded listing (byte count recorded, ≪ 157 KB)
-- [ ] `show latest` and bare-ref shorthand unchanged
-- [ ] Missing runtime → parseable `diagnostic-v1` JSON on stderr, empty stdout, stable exit code (never 1, never a traceback)
-- [ ] A runtime that exists but fails to import for another reason is **not** misreported as capability-unavailable (test-pinned)
-- [ ] Hostile `--expected-source` override still ignored
-- [ ] Template `$` escaping intact (`smoke_installed_matrix.py` green proves rendering)
-- [ ] Full suite + gates green; `plans/README.md` updated
+- [x] Bare `run_reader.py` produces a bounded listing (byte count recorded, ≪ 157 KB)
+- [x] `show latest` and bare-ref shorthand unchanged
+- [x] Missing runtime → parseable `diagnostic-v1` JSON on stderr, empty stdout, stable exit code (never 1, never a traceback)
+- [x] A runtime that exists but fails to import for another reason is **not** misreported as capability-unavailable (test-pinned)
+- [x] Hostile `--expected-source` override still ignored
+- [x] Template `$` escaping intact (`smoke_installed_matrix.py` green proves rendering)
+- [x] Full suite + gates green; `plans/README.md` updated
 
 ## STOP conditions
 
