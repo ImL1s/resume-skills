@@ -167,6 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="store_true",
+        help="print version and runtime identity details, then exit",
     )
     parser.add_argument(
         "source",

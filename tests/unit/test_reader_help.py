@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import contextlib
 import io
 import unittest
@@ -28,10 +29,14 @@ class ReaderHelpTests(unittest.TestCase):
         self.assertIn("approved source store root", help_text)
         self.assertIn("portable-resume/request-v1", help_text)
         self.assertIn("required with --request-file", help_text)
+        self.assertIn("runtime identity details", help_text)
 
         for action in build_parser()._actions:
             with self.subTest(option=action.dest):
                 action_help = action.help
+                # argparse.SUPPRESS is allowed (hidden); every visible option must teach.
+                if action_help is argparse.SUPPRESS:
+                    continue
                 self.assertIsInstance(action_help, str)
                 self.assertTrue(cast(str, action_help).strip())
 
