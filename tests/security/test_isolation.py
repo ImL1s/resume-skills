@@ -12,7 +12,7 @@ from unittest import mock
 
 from portable_resume.adapters.base import CapabilityReport, ResolvedRef
 from portable_resume.bounds import ReadBudget
-from portable_resume.diagnostics import DiagnosticError
+from portable_resume.diagnostics import SOURCE_KEYS, DiagnosticError
 from portable_resume.model import Query, Session, SessionSummary, Turn
 from portable_resume.reader import run
 from portable_resume.sanitize import sanitize_text
@@ -50,7 +50,7 @@ class IsolationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             marker = root / "CALLED"
-            for source in ("claude", "codex", "cursor", "opencode", "antigravity", "grok"):
+            for source in sorted(SOURCE_KEYS):
                 executable = root / source
                 executable.write_text(f"#!/bin/sh\necho called >> '{marker}'\nexit 99\n")
                 executable.chmod(0o755)
