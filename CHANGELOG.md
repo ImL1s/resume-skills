@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Codex busy/hot SQLite degrade (#196, #199): when `state_*.sqlite` is busy or has
+  a hot journal, probe/list no longer hard-fail the whole source as
+  `unsafe` / total `E_SOURCE_BUSY`. Capability falls through to bounded plain
+  rollout discovery with envelope warning `W_STALE_INDEX`, so `/resume-codex`
+  can recover parent sessions while Codex is still writing WAL.
+- Codex `session_meta.source` dict hardening (#198, #199): non-string
+  `payload.source` (live subagent objects) is treated as
+  `E_UNSUPPORTED_FORMAT` instead of `TypeError` → opaque `E_INVARIANT`, so FS
+  head discovery can skip subagent rollouts cleanly.
 - Release identity hardening (#118): advance post-`v0.3.4` development to
   `0.4.0.dev0`; add a dependency-free build identity (commit/dirty state,
   registry digest, source digest, and non-package build-input digest), an

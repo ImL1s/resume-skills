@@ -101,6 +101,16 @@ The ordinary list/show warnings below are not stderr diagnostics. They ride insi
 - `W_UNKNOWN_RECORD_SKIPPED`
 <!-- generated:warning-codes-list:end (run scripts/render_docs.py --write) -->
 
+### Codex note: hot SQLite vs hard fail (#196)
+
+`E_SOURCE_BUSY` / `E_SQLITE_HOT_JOURNAL` remain exit 6 when a recovery path
+**requires** a hot SQLite family and cannot degrade. For Codex, a busy
+`state_*.sqlite` no longer erases rollout capability: `probe`/`list`/`show`
+fall through to bounded plain JSONL discovery under `sessions/` and surface
+`W_STALE_INDEX` on the stdout envelope when the index was skipped or stale.
+Callers should treat that warning as degraded metadata, not as a total hard
+fail, and prefer parent `cli`/`vscode` rollouts when present.
+
 ## Installer result exits
 
 Installer commands return versioned result documents on stdout. In addition to JSON diagnostics, `matrix` returns exit 7 when its result is not OK, while `audit-host` returns exit 6 for a blocking aggregate result. `verify` can emit `E_VERIFY_MISMATCH` with exit 7 when installed files do not match the owned manifest. Callers should therefore inspect both the process status and the command's stdout result document.
