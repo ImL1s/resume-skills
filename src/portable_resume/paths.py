@@ -30,7 +30,7 @@ def canonicalize_cwd(value: str | os.PathLike[str], *, base: str | os.PathLike[s
 
 
 def validate_canonical_absolute(value: str) -> str:
-    """Validate the stricter request-v1 cwd representation without rewriting it."""
+    """Validate request-v1's absolute/NFC grammar and return its canonical path."""
 
     if not isinstance(value, str):
         raise DiagnosticError.invalid()
@@ -38,10 +38,7 @@ def validate_canonical_absolute(value: str) -> str:
     normalized = normalize_unicode(value)
     if value != normalized or not os.path.isabs(value):
         raise DiagnosticError.invalid()
-    canonical = canonicalize_cwd(value)
-    if canonical != value:
-        raise DiagnosticError.invalid()
-    return value
+    return canonicalize_cwd(value)
 
 
 def canonical_root(root: str | os.PathLike[str]) -> str:
