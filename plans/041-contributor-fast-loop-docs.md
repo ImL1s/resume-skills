@@ -12,6 +12,7 @@
 ## Status
 
 - **Priority**: P2
+- **Status**: DONE
 - **Effort**: S
 - **Risk**: LOW (docs only)
 - **Depends on**: none
@@ -111,7 +112,7 @@ change touches; the full gate remains mandatory before opening the PR.
 ​```bash
 # Stage-scoped verification (same stages CI uses; see --help for the list)
 python3 scripts/self_verify.py --only unit          # just the unittest stage
-python3 scripts/self_verify.py --only docs          # after doc edits
+python3 scripts/self_verify.py --only docs          # localized quick-start docs gate
 python3 scripts/self_verify.py --profile ci-compat  # what one CI matrix cell runs
 
 # One test module / one test
@@ -165,10 +166,10 @@ report).
 
 ## Done criteria
 
-- [ ] CONTRIBUTING has the three subsections; all commands verified by running them
-- [ ] Full-gate block unchanged and still labeled mandatory pre-PR
-- [ ] pytest framed as optional; "no pytest-only constructs" sentence present
-- [ ] Gates green; `plans/README.md` updated
+- [x] CONTRIBUTING has the three subsections; all commands verified by running them
+- [x] Full-gate block unchanged and still labeled mandatory pre-PR
+- [x] pytest framed as optional; "no pytest-only constructs" sentence present
+- [x] Gates green; `plans/README.md` updated
 
 ## STOP conditions
 
