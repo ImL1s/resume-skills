@@ -23,7 +23,7 @@ actors. The separate optional trusted-zstd reader boundary remains documented in
 | Packaging matrix | **306/306** on current main tip (**17×18**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
 | Version identity (#118) | **Implemented and repository policy verified on the `v0.4.0` pin:** base `0.4.0`; `check_version_state.py` rejects reuse of immutable `v0.3.4`; release tags reject `.devN`; one canonical identity is embedded and verified across wheel, sdist, 18 direct ZIPs, seven native ZIPs, host report, and installed runtime. Active tag ruleset [`20148806`](https://github.com/ImL1s/resume-skills/rules/20148806) blocks `v*` update/deletion with no bypass actors. |
 | Installed runner matrix | **306/306** on current main tip (**17×18**, derived from registries; published `0.3.4` remains historical **9×9=81**) |
-| Python test suite | **824 pass locally** in the fresh 2026-08-01 canonical verification (v0.3.4 tag was 375; historical counts remain release-specific evidence only). |
+| Python test suite | **944 pass locally** at tip `18fe4ca` (2026-08-01 post-batch verification; v0.3.4 tag was 375; historical counts remain release-specific evidence only). |
 | Wheel + sdist smoke | **pass outside checkout**, including public PyPI installation |
 | Native local plugin/extension install | **7/7 pass** with exact 0.3.2 release assets |
 | Host-native headless Skill activation | **8/8 tested CLI surfaces pass** in v0.3.2-era evidence; fresh v0.3.4 host activation and Pi native activation **not-run** |
@@ -34,8 +34,8 @@ actors. The separate optional trusted-zstd reader boundary remains documented in
 | CI (v0.3.4 release commit @ `fa1344b`) | **pass**: [Ubuntu + macOS × Python 3.11–3.14 + dist smoke](https://github.com/ImL1s/resume-skills/actions/runs/30269684151) |
 | Phase 0 / Milestone N1 | **merged** [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c` |
 | `v0.3.4` release workflow | **pass**: [14 jobs through GitHub Release and PyPI](https://github.com/ImL1s/resume-skills/actions/runs/30269713516) |
-| Published release | **pass**: [GitHub Release v0.3.4](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4) |
-| Public PyPI installation | **pass for 0.3.4** ([portable-resume 0.3.4](https://pypi.org/project/portable-resume/0.3.4/), 81-cell artifact); prior `0.3.3` remains 64-cell historical |
+| Published release | **pass**: [GitHub Release v0.4.0](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.0) (prior [v0.3.4](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4) remains historical) |
+| Public PyPI installation | **pass for 0.4.0** ([portable-resume 0.4.0](https://pypi.org/project/portable-resume/0.4.0/), 306-cell artifact); prior `0.3.4` remains 81-cell historical |
 | Public marketplace catalog | **synced** [`portable-resume-marketplace@7833e4a`](https://github.com/ImL1s/portable-resume-marketplace/commit/7833e4a3628213f78eb8458f30e9873d43a95fa6) / [marketplace `v0.3.4`](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.4); fresh host reinstall **not-run** |
 | Cursor full bubble graph | **not claimed** |
 | Codex large-rollout budget + parent list filter (Issue #3) | **done on main** [PR #4](https://github.com/ImL1s/resume-skills/pull/4) merge `48746c4` — P0 hotfix (not full streaming) |
@@ -73,7 +73,7 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 | Issue #3 parent list + large rollout reject | **Closed** via PR #4 → `48746c4` | P0 on main. |
 | Discovery false unsupported / stale SQLite | [Issue #7](https://github.com/ImL1s/resume-skills/issues/7) + plan 026 | **Done (P1a / PR #93 → `7ff33eb`):** probe uses DB signature without sessions walk; soft-capped sample for plain/zstd; byte-bounded head; FS soft merge/rank with `W_TRUNCATED`. Show streaming plain path **done** via #8 / PR #94. |
 | Peak memory on large show | [Issue #8](https://github.com/ImL1s/resume-skills/issues/8) + plan 027 | **Done (plain):** PR #94 → `8ac5549` / pin `cba2e34` — `stable_scan_lines` + attempt-local reduce; ~20 MiB regression; updated_at pinned to scanned inode. Residual: zstd full decompress; collect-then-yield still residual with #10. |
-| Capability registries + dynamic matrix | [Issue #36](https://github.com/ImL1s/resume-skills/issues/36) | **Done (product axes):** independent source/destination/package registries; rectangular matrix derived from enabled sets (currently **12×12=144** on main; published `0.3.4` was **9×9=81**); package surfaces drive native zip builds; schema source enum matches enabled sources (incl. `pi`, `openclaw`, `goose`). Residual: auto-generated docs tables / planned-profile release gates still manual. |
+| Capability registries + dynamic matrix | [Issue #36](https://github.com/ImL1s/resume-skills/issues/36) | **Done (product axes):** independent source/destination/package registries; rectangular matrix derived from enabled sets (currently **17×18=306** on main; published `0.3.4` was **9×9=81**); package surfaces drive native zip builds; schema source enum matches enabled sources (incl. `pi`, `openclaw`, `goose`). Residual: auto-generated docs tables / planned-profile release gates still manual. |
 | Reader CLI option honesty (#65) | [Issue #65](https://github.com/ImL1s/resume-skills/issues/65) | **Done:** `self-check` closed parser (rejects unknown args); request-file rejects `--within-min`; explicit `--format table|json|handoff` with show rejecting table. |
 | CI stage de-duplication (#67) | [Issue #67](https://github.com/ImL1s/resume-skills/issues/67) | **Done:** `self_verify` named stages + profiles (`local` / `ci-compat` / `ci-quality`); matrix runs suite once; docs+secrets once in quality job; package needs both. |
 | Hosts command context (#66) | [Issue #66](https://github.com/ImL1s/resume-skills/issues/66) | **Done:** primary `install-resume-skills` argv/display; optional source-checkout labeled; shared-root warning only when codex+antigravity selected. |
@@ -177,7 +177,7 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 
 | Area | Status | Required evidence |
 |---|---|---|
-| Current local release gates | pass | **824 pass locally** + **306/306** registry-derived installed-runner (2026-08-01); the Wave 0 snapshot was 426 tests + 81/81 on 2026-07-28 |
+| Current local release gates | pass | **944 pass locally** at tip `18fe4ca` + **306/306** registry-derived installed-runner (2026-08-01 post-batch); the Wave 0 snapshot was 426 tests + 81/81 on 2026-07-28 |
 | `v0.3.4` dual-OS release | pass | [Actions run 30269713516](https://github.com/ImL1s/resume-skills/actions/runs/30269713516), commit `fa1344bf62eb26332baea7b7ef4540a1a37acba8` |
 | `v0.3.4` PyPI publication | pass | [portable-resume 0.3.4](https://pypi.org/project/portable-resume/0.3.4/), public isolated 81-cell self-check |
 | `v0.3.2` dual-OS release | pass | [Actions run 30093776529](https://github.com/ImL1s/resume-skills/actions/runs/30093776529), commit `284865a4dc8c1c3dca16ee40f5204053cabb3a92` |
@@ -194,8 +194,10 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 | Cursor graph completeness | not claimed | upstream schema/recovery work beyond current best effort |
 
 The latest published GitHub release is
-[`v0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4).
-The independent public marketplace is published separately at
+[`v0.4.0`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.0)
+([PyPI 0.4.0](https://pypi.org/project/portable-resume/0.4.0/)); prior
+[`v0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4) remains
+historical. The independent public marketplace is published separately at
 [`ImL1s/portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace).
 PyPI and marketplace evidence remain distinct claims.
 
