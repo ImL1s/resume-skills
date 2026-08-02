@@ -24,7 +24,7 @@ Related: [Issue #125](https://github.com/ImL1s/resume-skills/issues/125), [Issue
 1. Implement `WindowsFilesystemBackend.acquire_exclusive_lock` via `CreateFileW` + `LockFileEx` / `UnlockFileEx` (ctypes, stdlib-only). Prefer non-blocking exclusive flags (`LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY`). A lock *file’s existence* alone is not a lock.
 2. Advertise `exclusive_locking` / `handle_locking` capabilities **only when** the lock path is implemented and tested; do not claim product install support from capability bits alone.
 3. **Do not** change `require_mutating_install_platform()` — install/uninstall/recover remain Policy B fail-closed.
-4. **Phase 2 (future, not this decision’s ship):** wire `RootLock` / transaction paths to the primitive; reparse-safe relative mutation; evaluate `ReplaceFileW` / same-volume replace; adversarial tests on real `windows-latest`. Only then may product fail-closed be reconsidered.
+4. **Phase 2 (future, not this decision’s ship):** wire `RootLock` / transaction paths to the primitive; reparse-safe relative mutation **and lock-path reparse rejection** (open with reparse-aware flags / reject `FILE_ATTRIBUTE_REPARSE_POINT` on the lock leaf and parent chain — Phase 1 has a basic leaf check; Phase 2 must not drop it when wiring product); evaluate `ReplaceFileW` / same-volume replace; adversarial tests on real `windows-latest`. Only then may product fail-closed be reconsidered.
 
 Until Phase 2 lands with evidence, **do not claim** dual-OS mutating install complete, and **do not** close #125.
 

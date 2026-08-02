@@ -295,7 +295,12 @@ class PlatformFsContractTests(unittest.TestCase):
         self.assertFalse(win_backend.capabilities.relative_mutations)
 
     def test_windows_exclusive_lock_phase1_on_native_nt(self) -> None:
-        """Phase 1: real LockFileEx path when running on Windows."""
+        """Phase 1: real LockFileEx path when running on Windows.
+
+        Share mode allows concurrent CreateFile; exclusivity must come from
+        LockFileEx (second acquire returns E_INSTALL_BUSY). After context exit,
+        the lock is released and can be re-acquired.
+        """
         if os.name != "nt":
             self.skipTest("native Windows LockFileEx only")
         win_backend = WindowsFilesystemBackend()
@@ -309,6 +314,9 @@ class PlatformFsContractTests(unittest.TestCase):
                     with win_backend.acquire_exclusive_lock(lock_path):
                         pass
                 self.assertEqual(caught.exception.code, "E_INSTALL_BUSY")
+            # Unlock/close must release: reacquire after context exit.
+            with win_backend.acquire_exclusive_lock(lock_path) as fd2:
+                self.assertIsInstance(fd2, int)
 
 
 if __name__ == "__main__":

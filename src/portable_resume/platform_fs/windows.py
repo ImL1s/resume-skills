@@ -97,14 +97,105 @@ try:
 except (ImportError, AttributeError):
     _HAS_CTYPES = False
 
+# Win32 last-error codes used by lock/open paths.
+ERROR_SHARING_VIOLATION = 32
+ERROR_LOCK_VIOLATION = 33
+
+_kernel32_configured: object | None = None
+
+
+def _invalid_handle_value() -> int:
+    """Pointer-width INVALID_HANDLE_VALUE (-1 as HANDLE)."""
+    if not _HAS_CTYPES:
+        return -1
+    return int(ctypes.c_void_p(-1).value or -1)
+
+
+def _handle_is_invalid(handle: object) -> bool:
+    if handle is None:
+        return True
+    h_val = getattr(handle, "value", handle)
+    try:
+        as_int = int(h_val)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return True
+    if as_int in (0, -1):
+        return True
+    # Compare full pointer-width invalid value (not low-32 heuristic alone).
+    return as_int == _invalid_handle_value() or (as_int & 0xFFFFFFFF) == 0xFFFFFFFF
+
 
 def _get_kernel32() -> ctypes.WinDLL | None:
+    """Return kernel32 with declared Win32 prototypes (pointer-width HANDLE-safe)."""
+    global _kernel32_configured
     if not _HAS_CTYPES or os.name != "nt":
         return None
+    if _kernel32_configured is not None:
+        return _kernel32_configured  # type: ignore[return-value]
     try:
-        return ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     except Exception:
         return None
+
+    # CreateFileW
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    kernel32.GetFileInformationByHandle.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(BY_HANDLE_FILE_INFORMATION),
+    ]
+    kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+
+    kernel32.ReadFile.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.LPVOID,
+    ]
+    kernel32.ReadFile.restype = wintypes.BOOL
+
+    kernel32.SetFilePointer.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LONG,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    kernel32.SetFilePointer.restype = wintypes.DWORD
+
+    kernel32.LockFileEx.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(OVERLAPPED),
+    ]
+    kernel32.LockFileEx.restype = wintypes.BOOL
+
+    kernel32.UnlockFileEx.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(OVERLAPPED),
+    ]
+    kernel32.UnlockFileEx.restype = wintypes.BOOL
+
+    _kernel32_configured = kernel32
+    return kernel32
 
 
 def _filetime_to_ns(high: int, low: int) -> int:
@@ -565,6 +656,9 @@ class WindowsFilesystemBackend(FilesystemBackend):
         this primitive is the foundation for a future RootLock wire. Returns an
         integer file descriptor (``msvcrt.open_osfhandle``) while the lock is held.
         On non-Windows hosts (no kernel32) raises ``E_INSTALL_UNSUPPORTED_PLATFORM``.
+
+        Share mode allows concurrent open (``FILE_SHARE_READ|FILE_SHARE_WRITE``) so
+        exclusivity comes from ``LockFileEx``, not CreateFile share denial alone.
         """
         kernel32 = _get_kernel32()
         if kernel32 is None or not _HAS_CTYPES:
@@ -577,30 +671,50 @@ class WindowsFilesystemBackend(FilesystemBackend):
 
         target = os.path.abspath(os.fspath(lock_path))
         reject_controls(target)
+        # Device-namespace and ADS-style colons after drive letter.
+        if target.startswith("\\\\?\\") or target.startswith("\\\\.\\"):
+            raise DiagnosticError.unsafe_path()
+        if ":" in os.path.splitdrive(target)[1]:
+            raise DiagnosticError.unsafe_path()
         basename = os.path.basename(target.replace("/", "\\"))
         stem = basename.split(".")[0].upper()
         if stem in _WIN32_RESERVED_NAMES or ":" in basename:
-            raise DiagnosticError.invalid()
+            raise DiagnosticError.unsafe_path()
+        # Reject reserved components anywhere in the path (not basename-only).
+        for part in target.replace("/", "\\").split("\\"):
+            if not part or part.endswith(":") or part.endswith((" ", ".")):
+                # Skip drive letter tokens like "C:"; reject trailing space/dot names.
+                if part.endswith((" ", ".")) and not part.endswith(":"):
+                    raise DiagnosticError.unsafe_path()
+                continue
+            part_stem = part.split(".")[0].upper()
+            if part_stem in _WIN32_RESERVED_NAMES:
+                raise DiagnosticError.unsafe_path()
 
         parent = os.path.dirname(target)
         if parent and not os.path.isdir(parent):
             try:
                 os.makedirs(parent, exist_ok=True)
             except OSError as error:
-                raise DiagnosticError("E_INSTALL_BUSY") from error
+                raise DiagnosticError.invalid() from error
 
+        # OPEN_ALWAYS + OPEN_REPARSE_POINT: open the leaf itself if it is a reparse.
         handle = kernel32.CreateFileW(
             target,
             GENERIC_READ | GENERIC_WRITE,
-            FILE_SHARE_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
             None,
             OPEN_ALWAYS,
-            FILE_ATTRIBUTE_NORMAL,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
             None,
         )
-        h_val = getattr(handle, "value", handle) if handle is not None else -1
-        if h_val in (-1, 0) or (h_val & 0xFFFFFFFF) == 0xFFFFFFFF:
-            raise DiagnosticError("E_INSTALL_BUSY")
+        if _handle_is_invalid(handle):
+            err = ctypes.get_last_error()
+            if err in (ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION):
+                raise DiagnosticError("E_INSTALL_BUSY")
+            raise DiagnosticError("E_INSTALL_BUSY") from None
+
+        h_val = int(getattr(handle, "value", handle))
 
         def _unlock_handle(h: object) -> None:
             ov = OVERLAPPED()
@@ -618,6 +732,22 @@ class WindowsFilesystemBackend(FilesystemBackend):
             except Exception:
                 pass
 
+        # Reject lock leaf that is a reparse point (junction/symlink redirect).
+        try:
+            info = BY_HANDLE_FILE_INFORMATION()
+            if kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+                if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT:
+                    kernel32.CloseHandle(handle)
+                    raise DiagnosticError.unsafe_path()
+                if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY:
+                    kernel32.CloseHandle(handle)
+                    raise DiagnosticError.unsafe_path()
+        except DiagnosticError:
+            raise
+        except Exception:
+            # Attribute probe failure: continue; LockFileEx still gates exclusivity.
+            pass
+
         overlapped = OVERLAPPED()
         overlapped.Offset = 0
         overlapped.OffsetHigh = 0
@@ -634,11 +764,13 @@ class WindowsFilesystemBackend(FilesystemBackend):
                 ctypes.byref(overlapped),
             )
             if not ok:
-                raise DiagnosticError("E_INSTALL_BUSY")
+                err = ctypes.get_last_error()
+                raise DiagnosticError("E_INSTALL_BUSY") from None
             locked = True
             try:
-                # Transfer handle ownership to a CRT fd; os.close closes the handle.
-                fd = msvcrt.open_osfhandle(int(h_val), os.O_RDWR)
+                # Transfer handle ownership to a CRT fd; prefer non-inheritable.
+                open_flags = getattr(os, "O_NOINHERIT", 0)
+                fd = msvcrt.open_osfhandle(h_val, open_flags)
             except (OSError, ValueError, OverflowError) as error:
                 raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM") from error
             handle = None  # type: ignore[assignment]
