@@ -102,10 +102,10 @@ jobs:
           python scripts/portable-resume qwen list --cwd /workspace/project --source-root tests/fixtures/qwen/s-qwe-01/root --json
           python scripts/portable-resume grok list --cwd /workspace/project --source-root tests/fixtures/grok/s-gro-01/root --json
 
-      - name: Installed runner matrix
-        env:
-          PYTHONPATH: src
-        run: python scripts/smoke_installed_matrix.py
+      # Mutating install is fail-closed on Windows (#125). smoke_installed_matrix
+      # requires install into temp skill roots, so it is not a read-only gate.
+      - name: Note skipped mutating installed-runner matrix on Windows
+        run: python -c "print('skip smoke_installed_matrix on nt: mutating install fail-closed (#125)')"
 
   package:
     name: build and smoke distributions
