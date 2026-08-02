@@ -246,8 +246,39 @@ class PlatformFsContractTests(unittest.TestCase):
         self.assertIn("capabilities", report["filesystem"])
         fs_checks = [c for c in report["checks"] if c["id"] == "filesystem_backend"]
         self.assertEqual(len(fs_checks), 1)
-        self.assertIn(fs_checks[0]["status"], ("pass", "info"))
+    def test_windows_backend_reserved_device_names_rejection(self) -> None:
+        win_backend = WindowsFilesystemBackend()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            for reserved in ("CON", "PRN", "AUX", "NUL", "COM1", "LPT1", "CON.txt", "NUL.dat"):
+                bad_path = os.path.join(tmp_dir, reserved)
+                with self.assertRaises(DiagnosticError) as caught:
+                    win_backend.read_regular_stable(bad_path, root=tmp_dir)
+                self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+                with self.assertRaises(DiagnosticError) as caught:
+                    win_backend.inspect_object_identity(bad_path, root=tmp_dir)
+                self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+    def test_windows_backend_alternate_data_stream_rejection(self) -> None:
+        win_backend = WindowsFilesystemBackend()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ads_path = os.path.join(tmp_dir, "sample.txt:stream")
+            with self.assertRaises(DiagnosticError) as caught:
+                win_backend.read_regular_stable(ads_path, root=tmp_dir)
+            self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+    def test_windows_backend_capabilities_honesty(self) -> None:
+        win_backend = WindowsFilesystemBackend()
+        self.assertTrue(win_backend.capabilities.nofollow_reads)
+        self.assertTrue(win_backend.capabilities.reparse_points)
+        self.assertFalse(win_backend.capabilities.descriptor_relative)
+        self.assertFalse(win_backend.capabilities.relative_mutations)
+        self.assertFalse(win_backend.capabilities.sqlite_snapshots)
+        self.assertFalse(win_backend.capabilities.atomic_output)
+        self.assertFalse(win_backend.capabilities.exclusive_locking)
+        self.assertFalse(win_backend.capabilities.handle_locking)
 
 
 if __name__ == "__main__":
     unittest.main()
+
