@@ -325,7 +325,7 @@ class WindowsFilesystemBackend(FilesystemBackend):
                 )
                 h_val = getattr(h_file, "value", h_file) if h_file is not None else -1
                 if h_val == -1 or h_val == 0 or (h_val & 0xFFFFFFFF) == 0xFFFFFFFF:
-                    err = ctypes.GetLastError() if _HAS_CTYPES else 0
+                    err = kernel32.GetLastError() if kernel32 is not None else 0
                     if err in (32, 33):  # ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
                         continue
                     raise DiagnosticError.unsafe_path()
@@ -387,6 +387,20 @@ class WindowsFilesystemBackend(FilesystemBackend):
                     )
 
                     if stable:
+                        try:
+                            st_check = os.lstat(abs_path)
+                            if (
+                                stat.S_ISLNK(st_check.st_mode)
+                                or not stat.S_ISREG(st_check.st_mode)
+                                or bool(
+                                    getattr(st_check, "st_file_attributes", 0)
+                                    & FILE_ATTRIBUTE_REPARSE_POINT
+                                )
+                            ):
+                                continue
+                        except OSError:
+                            continue
+
                         if budget is not None:
                             budget.consume_bytes(len(data))
                         file_index = (info1.nFileIndexHigh << 32) | info1.nFileIndexLow
