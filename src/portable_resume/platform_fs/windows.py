@@ -96,12 +96,6 @@ def _filetime_to_ns(high: int, low: int) -> int:
     return (ft - 116444736000000000) * 100
 
 
-def _abs_win_path(path: str | os.PathLike[str]) -> str:
-    res = os.path.abspath(os.fspath(path))
-    if os.name == "nt" and len(res) >= 2 and res[1] == ":":
-        res = res[0].upper() + res[1:]
-    return res
-
 
 def _validate_win32_path(path: str | os.PathLike[str], root: str | os.PathLike[str]) -> None:
     path_str = os.fspath(path)
