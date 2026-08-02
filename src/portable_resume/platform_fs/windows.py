@@ -15,7 +15,7 @@ from ..diagnostics import DiagnosticError
 from ..output_write import write_output_bytes
 from ..paths import require_within
 from ..snapshot import AttemptHook, FileFingerprint, SQLiteSnapshot, StableRead
-from .api import FilesystemBackend, FilesystemCapabilities, FilesystemIdentity
+from .api import FilesystemBackend, FilesystemCapabilities, FilesystemIdentity, FilesystemObjectIdentity
 
 
 class WindowsFilesystemBackend(FilesystemBackend):
@@ -33,10 +33,10 @@ class WindowsFilesystemBackend(FilesystemBackend):
             descriptor_relative=False,
             nofollow_reads=False,
             relative_mutations=False,
-            sqlite_snapshots=True,
-            atomic_output=True,
+            sqlite_snapshots=False,
+            atomic_output=False,
             exclusive_locking=False,
-            reparse_points=True,
+            reparse_points=False,
             handle_locking=False,
         )
 
@@ -47,6 +47,36 @@ class WindowsFilesystemBackend(FilesystemBackend):
     @property
     def capabilities(self) -> FilesystemCapabilities:
         return self._capabilities
+
+    def inspect_object_identity(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        root: str | os.PathLike[str],
+    ) -> FilesystemObjectIdentity:
+        canonical_path = require_within(path, root)
+        try:
+            st = os.lstat(canonical_path)
+        except OSError as error:
+            raise DiagnosticError.unsafe_path() from error
+
+        if stat.S_ISLNK(st.st_mode):
+            obj_type = "symlink"
+        elif stat.S_ISREG(st.st_mode):
+            obj_type = "file"
+        elif stat.S_ISDIR(st.st_mode):
+            obj_type = "directory"
+        else:
+            obj_type = "other"
+
+        return FilesystemObjectIdentity(
+            object_type=obj_type,
+            stable_id=f"{st.st_dev}:{st.st_ino}",
+            volume_id=str(st.st_dev),
+            size=st.st_size,
+            mtime_ns=getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)),
+            digest=None,
+        )
 
     def read_regular_stable(
         self,
@@ -137,45 +167,7 @@ class WindowsFilesystemBackend(FilesystemBackend):
         root: str | os.PathLike[str],
         max_bytes: int = DEFAULT_BOUNDS.sqlite_snapshot_bytes,
     ) -> SQLiteSnapshot:
-        if max_bytes < 0 or max_bytes > DEFAULT_BOUNDS.sqlite_snapshot_bytes:
-            raise DiagnosticError.invalid()
-        canonical_db = require_within(database_path, root)
-        try:
-            st = os.lstat(canonical_db)
-            if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
-                raise DiagnosticError.unsafe_path()
-            if st.st_size > max_bytes:
-                raise DiagnosticError.limit_exceeded()
-        except DiagnosticError:
-            raise
-        except OSError as error:
-            raise DiagnosticError.unsafe_path() from error
-
-        temp_dir = tempfile.TemporaryDirectory(prefix="portable-resume-sqlite-")
-        try:
-            base_name = os.path.basename(canonical_db)
-            target_db = os.path.join(temp_dir.name, base_name)
-
-            shutil.copy2(canonical_db, target_db)
-            copied_family: list[str] = [base_name]
-
-            for ext in ("-wal", "-journal"):
-                sidecar = canonical_db + ext
-                if os.path.isfile(sidecar) and not os.path.islink(sidecar):
-                    shutil.copy2(sidecar, target_db + ext)
-                    copied_family.append(base_name + ext)
-
-            return SQLiteSnapshot(
-                directory=temp_dir.name,
-                database=target_db,
-                source_name="windows_sqlite_snapshot",
-                attempts=1,
-                family=tuple(copied_family),
-                _temporary=temp_dir,
-            )
-        except Exception:
-            temp_dir.cleanup()
-            raise
+        raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
 
     def atomic_replace_output(
         self,
@@ -184,7 +176,7 @@ class WindowsFilesystemBackend(FilesystemBackend):
         *,
         clobber: bool = False,
     ) -> str:
-        return write_output_bytes(path, data, clobber=clobber)
+        raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
 
     @contextlib.contextmanager
     def acquire_exclusive_lock(
@@ -192,3 +184,4 @@ class WindowsFilesystemBackend(FilesystemBackend):
         lock_path: str | os.PathLike[str],
     ) -> Iterator[int]:
         raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+        yield 0  # type: ignore[unreachable]

@@ -58,6 +58,7 @@ class RuntimePackageAllowlistTests(unittest.TestCase):
             "platform_fs/api.py",
             "platform_fs/posix.py",
             "platform_fs/select.py",
+            "platform_fs/unsupported.py",
             "platform_fs/windows.py",
         }
         self.assertEqual(set(_RUNTIME_MODULES), expected)

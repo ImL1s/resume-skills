@@ -19,7 +19,7 @@ from ..snapshot import (
     snapshot_sqlite_family,
     stable_read_bytes,
 )
-from .api import FilesystemBackend, FilesystemCapabilities, FilesystemIdentity
+from .api import FilesystemBackend, FilesystemCapabilities, FilesystemIdentity, FilesystemObjectIdentity
 
 
 class PosixFilesystemBackend(FilesystemBackend):
@@ -51,6 +51,36 @@ class PosixFilesystemBackend(FilesystemBackend):
     @property
     def capabilities(self) -> FilesystemCapabilities:
         return self._capabilities
+
+    def inspect_object_identity(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        root: str | os.PathLike[str],
+    ) -> FilesystemObjectIdentity:
+        canonical_path = require_within(path, root)
+        try:
+            st = os.lstat(canonical_path)
+        except OSError as error:
+            raise DiagnosticError.unsafe_path() from error
+
+        if stat.S_ISLNK(st.st_mode):
+            obj_type = "symlink"
+        elif stat.S_ISREG(st.st_mode):
+            obj_type = "file"
+        elif stat.S_ISDIR(st.st_mode):
+            obj_type = "directory"
+        else:
+            obj_type = "other"
+
+        return FilesystemObjectIdentity(
+            object_type=obj_type,
+            stable_id=f"{st.st_dev}:{st.st_ino}",
+            volume_id=str(st.st_dev),
+            size=st.st_size,
+            mtime_ns=getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)),
+            digest=None,
+        )
 
     def read_regular_stable(
         self,
@@ -152,12 +182,9 @@ class PosixFilesystemBackend(FilesystemBackend):
         root: str | os.PathLike[str],
         max_bytes: int = DEFAULT_BOUNDS.sqlite_snapshot_bytes,
     ) -> SQLiteSnapshot:
-        bounds = (
-            DEFAULT_BOUNDS
-            if max_bytes == DEFAULT_BOUNDS.sqlite_snapshot_bytes
-            else DEFAULT_BOUNDS.with_overrides(sqlite_snapshot_bytes=max_bytes)
-        )
-        return snapshot_sqlite_family(database_path, root=root, bounds=bounds)
+        if max_bytes < 0 or max_bytes > DEFAULT_BOUNDS.sqlite_snapshot_bytes:
+            raise DiagnosticError.invalid()
+        return snapshot_sqlite_family(database_path, root=root, bounds=DEFAULT_BOUNDS)
 
     def atomic_replace_output(
         self,

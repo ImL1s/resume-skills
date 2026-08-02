@@ -15,6 +15,8 @@ from portable_resume.platform_fs import (
     FilesystemBackend,
     FilesystemCapabilities,
     FilesystemIdentity,
+    FilesystemObjectIdentity,
+    UnsupportedFilesystemBackend,
     get_filesystem_backend,
 )
 from portable_resume.platform_fs.posix import PosixFilesystemBackend
@@ -40,6 +42,28 @@ class PlatformFsContractTests(unittest.TestCase):
             self.assertIsInstance(backend, PosixFilesystemBackend)
             self.assertTrue(backend.identity.is_posix)
             self.assertFalse(backend.identity.is_windows)
+
+    def test_unsupported_os_fails_closed_with_unsupported_backend(self) -> None:
+        """Unknown platforms must select UnsupportedFilesystemBackend and fail closed."""
+        with mock.patch("os.name", "unknown_os"), mock.patch("sys.platform", "unknown_os"):
+            _reset_backend_cache()
+            backend = get_filesystem_backend()
+            self.assertIsInstance(backend, UnsupportedFilesystemBackend)
+            self.assertFalse(backend.identity.is_posix)
+            self.assertFalse(backend.identity.is_windows)
+
+            d = backend.capabilities.to_dict()
+            self.assertTrue(all(v is False for v in d.values()))
+
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                file_path = os.path.join(tmp_dir, "test.txt")
+                with self.assertRaises(DiagnosticError) as caught:
+                    backend.read_regular_stable(file_path, root=tmp_dir)
+                self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+
+                with self.assertRaises(DiagnosticError) as caught:
+                    backend.inspect_object_identity(file_path, root=tmp_dir)
+                self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
 
     def test_backend_selection_anti_spoofing(self) -> None:
         """Environment variables must never alter backend selection or capabilities."""
@@ -100,10 +124,37 @@ class PlatformFsContractTests(unittest.TestCase):
         }
         self.assertEqual(set(d.keys()), expected_keys)
 
+    def test_filesystem_object_identity_closed_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            file_path = os.path.join(tmp_dir, "node.txt")
+            with open(file_path, "wb") as fp:
+                fp.write(b"content")
+
+            backend = get_filesystem_backend()
+            obj_ident = backend.inspect_object_identity(file_path, root=tmp_dir)
+            self.assertIsInstance(obj_ident, FilesystemObjectIdentity)
+            self.assertEqual(obj_ident.object_type, "file")
+            self.assertEqual(obj_ident.size, 7)
+            self.assertTrue(isinstance(obj_ident.stable_id, str))
+            self.assertTrue(isinstance(obj_ident.volume_id, str))
+
+            d = obj_ident.to_dict()
+            expected_keys = {
+                "object_type",
+                "stable_id",
+                "volume_id",
+                "size",
+                "mtime_ns",
+                "digest",
+            }
+            self.assertEqual(set(d.keys()), expected_keys)
+
     def test_windows_backend_fail_closed_policy(self) -> None:
         win_backend = WindowsFilesystemBackend()
         self.assertFalse(win_backend.capabilities.relative_mutations)
         self.assertFalse(win_backend.capabilities.exclusive_locking)
+        self.assertFalse(win_backend.capabilities.sqlite_snapshots)
+        self.assertFalse(win_backend.capabilities.atomic_output)
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             target_sub = os.path.join(tmp_dir, "sub")
@@ -130,7 +181,19 @@ class PlatformFsContractTests(unittest.TestCase):
                     pass
             self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
 
-    def test_windows_backend_read_and_output(self) -> None:
+            db_path = os.path.join(tmp_dir, "test.db")
+            with open(db_path, "wb") as fp:
+                fp.write(b"db")
+            with self.assertRaises(DiagnosticError) as caught:
+                win_backend.sqlite_family_snapshot(db_path, root=tmp_dir)
+            self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+
+            output_path = os.path.join(tmp_dir, "out.txt")
+            with self.assertRaises(DiagnosticError) as caught:
+                win_backend.atomic_replace_output(output_path, b"data")
+            self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+
+    def test_windows_backend_read(self) -> None:
         win_backend = WindowsFilesystemBackend()
         with tempfile.TemporaryDirectory() as tmp_dir:
             file_path = os.path.join(tmp_dir, "sample.txt")
@@ -140,12 +203,6 @@ class PlatformFsContractTests(unittest.TestCase):
 
             stable = win_backend.read_regular_stable(file_path, root=tmp_dir)
             self.assertEqual(stable.data, content)
-
-            output_path = os.path.join(tmp_dir, "output.txt")
-            written = win_backend.atomic_replace_output(output_path, b"output data")
-            self.assertTrue(os.path.exists(written))
-            with open(written, "rb") as fp:
-                self.assertEqual(fp.read(), b"output data")
 
     def test_windows_backend_read_charges_budget(self) -> None:
         from portable_resume.bounds import ReadBudget
@@ -162,14 +219,13 @@ class PlatformFsContractTests(unittest.TestCase):
 
     def test_sqlite_family_snapshot_max_bytes_limit(self) -> None:
         posix_backend = PosixFilesystemBackend()
-        win_backend = WindowsFilesystemBackend()
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = os.path.join(tmp_dir, "test.db")
             with open(db_path, "wb") as fp:
                 fp.write(b"sqlite data")
 
             with self.assertRaises(DiagnosticError) as caught:
-                win_backend.sqlite_family_snapshot(db_path, root=tmp_dir, max_bytes=-1)
+                posix_backend.sqlite_family_snapshot(db_path, root=tmp_dir, max_bytes=-1)
             self.assertEqual(caught.exception.code, "E_INVALID_INPUT")
 
     def test_posix_backend_selection_under_mock(self) -> None:

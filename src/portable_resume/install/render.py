@@ -78,6 +78,7 @@ _RUNTIME_MODULES = (
     "platform_fs/api.py",
     "platform_fs/posix.py",
     "platform_fs/select.py",
+    "platform_fs/unsupported.py",
     "platform_fs/windows.py",
 )
 

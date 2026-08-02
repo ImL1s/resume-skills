@@ -7,6 +7,7 @@ import sys
 
 from .api import FilesystemBackend
 from .posix import PosixFilesystemBackend
+from .unsupported import UnsupportedFilesystemBackend
 from .windows import WindowsFilesystemBackend
 
 _CACHED_BACKEND: FilesystemBackend | None = None
@@ -23,11 +24,11 @@ def get_filesystem_backend() -> FilesystemBackend:
         return _CACHED_BACKEND
 
     if os.name == "posix":
-        backend = PosixFilesystemBackend()
+        backend: FilesystemBackend = PosixFilesystemBackend()
     elif os.name == "nt" or sys.platform.startswith("win"):
         backend = WindowsFilesystemBackend()
     else:
-        backend = PosixFilesystemBackend()
+        backend = UnsupportedFilesystemBackend()
 
     _CACHED_BACKEND = backend
     return _CACHED_BACKEND

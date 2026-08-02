@@ -61,6 +61,28 @@ class FilesystemIdentity:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class FilesystemObjectIdentity:
+    """Typed, closed description of an individual filesystem object (file/node)."""
+
+    object_type: str  # "file", "directory", "symlink", "other"
+    stable_id: str  # POSIX: "dev:ino", Windows: "vol:file_id"
+    volume_id: str  # Volume / device identifier
+    size: int  # File size in bytes
+    mtime_ns: int  # Modification time in nanoseconds
+    digest: str | None = None  # Optional content hash / digest
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "object_type": self.object_type,
+            "stable_id": self.stable_id,
+            "volume_id": self.volume_id,
+            "size": self.size,
+            "mtime_ns": self.mtime_ns,
+            "digest": self.digest,
+        }
+
+
 class FilesystemBackend(abc.ABC):
     """Abstract cross-platform safe filesystem backend interface."""
 
@@ -73,6 +95,15 @@ class FilesystemBackend(abc.ABC):
     @abc.abstractmethod
     def capabilities(self) -> FilesystemCapabilities:
         """Return the immutable capability flags for this backend."""
+
+    @abc.abstractmethod
+    def inspect_object_identity(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        root: str | os.PathLike[str],
+    ) -> FilesystemObjectIdentity:
+        """Return typed object identity for a file node beneath root without following symlinks."""
 
     @abc.abstractmethod
     def read_regular_stable(
