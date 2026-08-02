@@ -229,15 +229,18 @@ class PlatformFsContractTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, "E_INVALID_INPUT")
 
     def test_posix_backend_selection_under_mock(self) -> None:
-        with mock.patch("os.name", "posix"):
+        try:
+            with mock.patch("os.name", "posix"):
+                _reset_backend_cache()
+                backend = get_filesystem_backend()
+                self.assertIsInstance(backend, PosixFilesystemBackend)
+                self.assertTrue(backend.identity.is_posix)
+                self.assertFalse(backend.identity.is_windows)
+                self.assertTrue(backend.capabilities.descriptor_relative)
+                self.assertFalse(backend.capabilities.relative_mutations)
+                self.assertTrue(backend.capabilities.exclusive_locking)
+        finally:
             _reset_backend_cache()
-            backend = get_filesystem_backend()
-            self.assertIsInstance(backend, PosixFilesystemBackend)
-            self.assertTrue(backend.identity.is_posix)
-            self.assertFalse(backend.identity.is_windows)
-            self.assertTrue(backend.capabilities.descriptor_relative)
-            self.assertFalse(backend.capabilities.relative_mutations)
-            self.assertTrue(backend.capabilities.exclusive_locking)
 
     def test_doctor_report_includes_filesystem_backend(self) -> None:
         report = doctor_report()

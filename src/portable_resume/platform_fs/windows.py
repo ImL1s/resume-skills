@@ -7,12 +7,14 @@ import hashlib
 import os
 import stat
 import sys
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
+
+if TYPE_CHECKING:
+    from ..snapshot import AttemptHook, FileFingerprint, SQLiteSnapshot, StableRead
 
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
 from ..paths import canonical_root, is_within, reject_controls
-from ..snapshot import AttemptHook, FileFingerprint, SQLiteSnapshot, StableRead
 from .api import FilesystemBackend, FilesystemCapabilities, FilesystemIdentity, FilesystemObjectIdentity
 
 _WIN32_RESERVED_NAMES = frozenset(
@@ -94,6 +96,13 @@ def _filetime_to_ns(high: int, low: int) -> int:
     return (ft - 116444736000000000) * 100
 
 
+def _abs_win_path(path: str | os.PathLike[str]) -> str:
+    res = os.path.abspath(os.fspath(path))
+    if os.name == "nt" and len(res) >= 2 and res[1] == ":":
+        res = res[0].upper() + res[1:]
+    return res
+
+
 def _validate_win32_path(path: str | os.PathLike[str], root: str | os.PathLike[str]) -> None:
     path_str = os.fspath(path)
     reject_controls(path_str)
@@ -114,14 +123,14 @@ def _validate_win32_path(path: str | os.PathLike[str], root: str | os.PathLike[s
             raise DiagnosticError.unsafe_path()
 
     base_root = canonical_root(root)
-    abs_path = os.path.abspath(path_str)
+    abs_path = _abs_win_path(path_str)
     if not is_within(abs_path, base_root):
         raise DiagnosticError.unsafe_path()
 
 
 def _check_reparse_components(path: str, root: str) -> None:
     base_root = canonical_root(root)
-    abs_path = os.path.abspath(path)
+    abs_path = _abs_win_path(path)
     if not is_within(abs_path, base_root):
         raise DiagnosticError.unsafe_path()
 
@@ -129,8 +138,9 @@ def _check_reparse_components(path: str, root: str) -> None:
     if rel == ".":
         return
 
+    norm_rel = rel.replace("/", os.sep).replace("\\", os.sep)
     current = base_root
-    for component in rel.split(os.sep):
+    for component in norm_rel.split(os.sep):
         if not component or component == ".":
             continue
         current = os.path.join(current, component)
@@ -185,7 +195,7 @@ class WindowsFilesystemBackend(FilesystemBackend):
     ) -> FilesystemObjectIdentity:
         _validate_win32_path(path, root)
         base_root = canonical_root(root)
-        abs_path = os.path.abspath(os.fspath(path))
+        abs_path = _abs_win_path(path)
         if not is_within(abs_path, base_root):
             raise DiagnosticError.unsafe_path()
 
@@ -266,6 +276,8 @@ class WindowsFilesystemBackend(FilesystemBackend):
         budget: ReadBudget | None = None,
         hook: AttemptHook | None = None,
     ) -> StableRead:
+        from ..snapshot import FileFingerprint, StableRead
+
         if (
             max_bytes < 0
             or max_bytes > DEFAULT_BOUNDS.sqlite_snapshot_bytes
@@ -275,7 +287,7 @@ class WindowsFilesystemBackend(FilesystemBackend):
 
         _validate_win32_path(path, root)
         base_root = canonical_root(root)
-        abs_path = os.path.abspath(os.fspath(path))
+        abs_path = _abs_win_path(path)
         if not is_within(abs_path, base_root):
             raise DiagnosticError.unsafe_path()
 

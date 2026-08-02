@@ -26,7 +26,10 @@ def canonicalize_cwd(value: str | os.PathLike[str], *, base: str | os.PathLike[s
     reject_controls(text)
     if not os.path.isabs(text):
         text = os.path.join(os.fspath(base) if base is not None else os.getcwd(), text)
-    return normalize_unicode(os.path.realpath(os.path.abspath(text)))
+    result = normalize_unicode(os.path.realpath(os.path.abspath(text)))
+    if os.name == "nt" and len(result) >= 2 and result[1] == ":":
+        result = result[0].upper() + result[1:]
+    return result
 
 
 def validate_canonical_absolute(value: str) -> str:
