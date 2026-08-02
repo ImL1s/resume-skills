@@ -9,12 +9,10 @@ mutations) is NOT claimed. Until that lands, the residual contract is:
   closed with E_INSTALL_UNSUPPORTED_PLATFORM and leave the filesystem unchanged.
 - require_mutating_install_platform and doctor_report must honestly report
   Windows mutating install as unsupported (os.name == "nt").
-- docs/STATUS.md must distinguish the closed #205-#208 read-only/CI slices from
-  the still-open #125 and #209 residual work.
 
 This module strengthens regression coverage so silent unlocked mutation or
 support-claim drift cannot land without breaking these assertions. Full Win32
-locking is out of scope.
+locking is out of scope; STATUS claim boundaries are enforced by check_docs.py.
 """
 
 from __future__ import annotations
@@ -33,8 +31,6 @@ from portable_resume.platform_fs import get_filesystem_backend
 from portable_resume.platform_fs.posix import PosixFilesystemBackend
 from portable_resume.platform_fs.select import _reset_backend_cache
 from portable_resume.platform_fs.windows import WindowsFilesystemBackend
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _stub_load_adapter(source: str):
@@ -116,7 +112,7 @@ class Issue125ResidualWindowsBackendContractTests(unittest.TestCase):
 
 
 class Issue125ResidualPlatformGateContractTests(unittest.TestCase):
-    """Installer platform gate + doctor/STATUS honesty for residual Policy B."""
+    """Installer platform gate + doctor honesty for residual Policy B."""
 
     def test_require_mutating_install_platform_raises_on_nt_mock(self) -> None:
         with mock.patch("portable_resume.install.transaction.os.name", "nt"):
@@ -137,24 +133,6 @@ class Issue125ResidualPlatformGateContractTests(unittest.TestCase):
         policy = next(c for c in report["checks"] if c["id"] == "windows_install_policy")
         self.assertEqual(policy["status"], "info")
         self.assertIn("fail-closed", policy["detail"])
-
-        status = (_REPO_ROOT / "docs" / "STATUS.md").read_text(encoding="utf-8")
-        track_lines = [line for line in status.splitlines() if line.startswith("**Cross-platform track")]
-        self.assertTrue(
-            len(track_lines) == 1,
-            msg=f"STATUS_CROSS_TRACK_COUNT expected=1 actual={len(track_lines)}",
-        )
-        track = track_lines[0]
-        checks = {
-            "CLOSED_START": "closed read-only/CI slices #205" in track,
-            "CLOSED_END": "#208" in track,
-            "OPEN_SET": "open residuals #125 and #209" in track,
-            "ISSUE_125_OPEN": "#125 remains OPEN" in track,
-            "ISSUE_209_OPEN": "#209 umbrella remains OPEN" in track,
-            "OLD_CLOSED_RANGE_REMOVED": "#205–#209" not in track,
-        }
-        missing = sorted(name for name, ok in checks.items() if not ok)
-        self.assertFalse(missing, msg=f"STATUS_CROSS_TRACK_CONTRACT missing={missing}")
 
 
 class Issue125ResidualRealHostContractTests(unittest.TestCase):
