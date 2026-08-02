@@ -15,6 +15,7 @@ from .bounds import DEFAULT_BOUNDS, ReadBudget
 from .diagnostics import DiagnosticError, WARNING_CODES
 from .model import Query, SessionSummary
 from .paths import canonicalize_cwd
+from .platform_fs import get_filesystem_backend
 from .registry import (
     DESTINATION_PROFILES,
     SOURCE_PROFILES,
@@ -369,6 +370,16 @@ def doctor_report(
             }
         )
 
+    # --- filesystem_backend ---
+    fs_backend = get_filesystem_backend()
+    checks.append(
+        {
+            "id": "filesystem_backend",
+            "status": "pass" if fs_backend.identity.is_posix else "info",
+            "detail": f"{fs_backend.identity.backend_name} ({fs_backend.identity.sys_platform})",
+        }
+    )
+
     destinations: dict[str, Any] = {}
     for key in sorted(enabled_destination_keys()):
         profile = DESTINATION_PROFILES[key]
@@ -395,6 +406,10 @@ def doctor_report(
         "platform": {
             "os_name": os.name,
             "windows_mutating_install": windows_mutating_install,
+        },
+        "filesystem": {
+            "identity": fs_backend.identity.to_dict(),
+            "capabilities": fs_backend.capabilities.to_dict(),
         },
         "sources": source_rows,
         "destinations": destinations,
