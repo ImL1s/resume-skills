@@ -45,6 +45,21 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertRegex(text, r"github\.com/ImL1s/resume-skills/issues/36")
         self.assertRegex(text, r"github\.com/ImL1s/resume-skills/issues/48")
 
+    def test_status_separates_closed_platform_slices_from_open_residuals(self) -> None:
+        text = Path("docs/STATUS.md").read_text(encoding="utf-8")
+        tracks = [
+            line
+            for line in text.splitlines()
+            if line.startswith("**Cross-platform track")
+        ]
+        self.assertEqual(len(tracks), 1)
+        track = tracks[0]
+        self.assertIn("closed read-only/CI slices #205–#208", track)
+        self.assertIn("open residuals #125 and #209", track)
+        self.assertIn("#125 remains OPEN", track)
+        self.assertIn("#209 umbrella remains OPEN", track)
+        self.assertNotIn("#205–#209", track)
+
     def test_agents_md_uses_registry_derived_matrix_language(self) -> None:
         text = Path("AGENTS.md").read_text(encoding="utf-8")
         lowered = text.lower()
