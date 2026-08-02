@@ -135,15 +135,46 @@ def _stage_unit_portable() -> tuple[int, str]:
     return 0, "".join(details)[-400:]
 
 
+def _content_free_reader_output(stdout: str, stderr: str) -> bool:
+    """True when stdout/stderr is inert list/show envelope or diagnostic-v1 JSON."""
+    for text in (stdout or "", stderr or ""):
+        text = text.strip()
+        if not text:
+            continue
+        # Prefer first JSON object if present.
+        start = text.find("{")
+        if start < 0:
+            continue
+        try:
+            payload = json.loads(text[start:])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        schema = str(payload.get("schema_version") or "")
+        if schema == "portable-resume/diagnostic-v1":
+            return True
+        if schema.startswith("portable-resume/") and payload.get("inert") is True:
+            return True
+        if schema.startswith("portable-resume/") and "code" in payload and "exit_code" in payload:
+            return True
+    return False
+
+
 def _stage_windows_source_fixtures() -> tuple[int, str]:
-    """List+show one fixture per enabled source (Windows read-only evidence)."""
+    """List+show one fixture per enabled source (Windows read-only evidence).
+
+    Hard gate: every enabled source must produce a real list result (exit 0 with
+    inert envelope) or a content-free diagnostic; show must likewise be
+    handoff/envelope success or content-free diagnostic. No majority soft-pass.
+    """
     fixtures_root = REPO / "tests" / "fixtures"
     # Prefer registry order when importable; fall back to fixtures/ dirs.
     try:
         sys.path.insert(0, str(REPO / "src"))
         from portable_resume.diagnostics import SOURCE_KEYS  # type: ignore
 
-        sources = list(SOURCE_KEYS)
+        sources = sorted(SOURCE_KEYS)
     except Exception:
         sources = sorted(
             p.name for p in fixtures_root.iterdir() if p.is_dir() and not p.name.startswith(".")
@@ -197,37 +228,50 @@ def _stage_windows_source_fixtures() -> tuple[int, str]:
                         "--json",
                     ]
                 )
-                if list_run.returncode == 0:
-                    show_run = run(
-                        [
-                            sys.executable,
-                            str(REPO / "scripts" / "portable-resume"),
-                            source,
-                            "show",
-                            "latest",
-                            "--cwd",
-                            cwd,
-                            "--source-root",
-                            str(root),
-                            "--format",
-                            "handoff",
-                        ]
+                list_out = (list_run.stdout or "") + (list_run.stderr or "")
+                list_ok = list_run.returncode == 0 or _content_free_reader_output(
+                    list_run.stdout or "", list_run.stderr or ""
+                )
+                if not list_ok:
+                    last = f"{fixture_name}:list={list_run.returncode}"
+                    continue
+                show_run = run(
+                    [
+                        sys.executable,
+                        str(REPO / "scripts" / "portable-resume"),
+                        source,
+                        "show",
+                        "latest",
+                        "--cwd",
+                        cwd,
+                        "--source-root",
+                        str(root),
+                        "--format",
+                        "handoff",
+                    ]
+                )
+                show_ok = show_run.returncode == 0 or _content_free_reader_output(
+                    show_run.stdout or "", show_run.stderr or ""
+                )
+                if show_ok:
+                    notes.append(
+                        f"{source}:list={list_run.returncode}:show={show_run.returncode}:ok"
                     )
-                    notes.append(f"{source}:list_ok:show={show_run.returncode}")
                     ok = True
                     break
-                last = f"{fixture_name}:list={list_run.returncode}"
+                last = (
+                    f"{fixture_name}:list={list_run.returncode}:"
+                    f"show={show_run.returncode}:not_content_free"
+                )
             if ok:
                 break
         if not ok:
             failures += 1
-            notes.append(f"{source}:{last or 'list_fail'}")
-    # Product gate: majority of enabled sources must list on fixtures under nt.
-    # Residual fixture-layout misses are reported but do not block when the
-    # core majority passes (self-check already proves adapter import health).
+            notes.append(f"{source}:{last or 'list_show_fail'}")
     total = max(len(sources), 1)
     ok_count = total - failures
-    code = 0 if ok_count >= max(10, (total * 2) // 3) else 1
+    # Hard gate: all enabled sources must pass list+show (or content-free diagnostic).
+    code = 0 if failures == 0 and total >= 17 else 1
     return code, f"ok={ok_count}/{total} failures={failures} " + " ".join(notes)
 
 
