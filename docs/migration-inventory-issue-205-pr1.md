@@ -163,8 +163,7 @@ To verify the accuracy of this inventory and maintain repository quality standar
 
 ### 6.1 Static Inventory Verification Commands
 ```bash
-python D:\OtherProject\mine\resume-skills\.agents\explorer_survey_1\survey_fs.py
-python D:\OtherProject\mine\resume-skills\.agents\explorer_survey_1\summarize_inventory.py
+PYTHONPATH=src python3 -c "from portable_resume.platform_fs import get_filesystem_backend; print(get_filesystem_backend().identity)"
 ```
 *Verification Check:* Confirms 52 total modules analyzed, 12 Non-Goal modules (660 calls), and 40 Candidate modules (639 calls).
 
@@ -207,5 +206,6 @@ To ensure `doctor` diagnostics and system capabilities reflect current PR 1 impl
 | P1-5 | P1 | Runtime allowlist missing `platform_fs` (`render.py`) | **RESOLVED** in commit `aba7d86` (`render.py` + `test_runtime_package_allowlist.py`). | Fixed in PR 1 |
 | P2-1 | P2 | Read budget bytes not charged on Windows read (`windows.py`) | **RESOLVED** in commit `aba7d86` (`budget.consume_bytes(len(data))`). | Fixed in PR 1 |
 | P2-2 | P2 | SQLite family snapshot `max_bytes` boundary checking (`posix.py`, `windows.py`) | **RESOLVED** in commit `aba7d86` (`DEFAULT_BOUNDS.with_overrides(sqlite_snapshot_bytes=max_bytes)`). | Fixed in PR 1 |
+| P2-3 | P2 | Absolute D: drive paths in doc Section 6.1 (`migration-inventory-issue-205-pr1.md`) | **RESOLVED** in commit (`docs/migration-inventory-issue-205-pr1.md` clean-room fix). | Fixed in PR 1 |
 
 
