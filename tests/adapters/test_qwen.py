@@ -74,7 +74,9 @@ class QwenAdapterTests(unittest.TestCase):
         current = query(root, ref="archived-one")
         summaries = adapter.list(current, ReadBudget())
         archived = next(item for item in summaries if item.session_id == "archived-one")
-        self.assertIn("/chats/archive/", archived.source_path or "")
+        # Path separators are OS-native on Windows (#206/#207).
+        source_path = (archived.source_path or "").replace("\\", "/")
+        self.assertIn("/chats/archive/", source_path)
 
         session = adapter.show(ResolvedRef.from_summary(archived), current, ReadBudget())
         self.assertEqual([turn.content for turn in session.turns], ["Archived prompt", "Archived public answer"])

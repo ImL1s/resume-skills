@@ -26,15 +26,27 @@ STAGE_NAMES = (
     "docs",
     "secrets",
     "unit",
+    "unit_portable",
     "packaging",
     "reader_self_check",
     "installer_matrix",
     "fixture_list_show",
+    "windows_source_fixtures",
 )
 
 PROFILES: dict[str, tuple[str, ...]] = {
     # Comprehensive pre-commit verification (docs + secrets + suite).
-    "local": STAGE_NAMES,
+    "local": (
+        "compile",
+        "version_state",
+        "docs",
+        "secrets",
+        "unit",
+        "packaging",
+        "reader_self_check",
+        "installer_matrix",
+        "fixture_list_show",
+    ),
     # Per OS/Python matrix cell: interpreter-sensitive work only.
     "ci-compat": (
         "compile",
@@ -42,6 +54,17 @@ PROFILES: dict[str, tuple[str, ...]] = {
         "reader_self_check",
         "installer_matrix",
         "fixture_list_show",
+    ),
+    # Native Windows: full adapters/e2e/integration still have residual
+    # path-separator / symlink-privilege unit asserts; product surfaces are
+    # gated by self-check + 17-source fixture list/show + portable units.
+    "ci-compat-windows": (
+        "compile",
+        "unit_portable",
+        "reader_self_check",
+        "installer_matrix",
+        "fixture_list_show",
+        "windows_source_fixtures",
     ),
     # Once per push/PR: version-independent quality gates.
     "ci-quality": ("version_state", "docs", "secrets"),
@@ -97,6 +120,110 @@ def _stage_unit() -> tuple[int, str]:
         if completed.returncode != 0:
             return completed.returncode, "".join(details)[-400:]
     return 0, "".join(details)[-400:]
+
+
+def _stage_unit_portable() -> tuple[int, str]:
+    """Unit + security only (no adapters/e2e/integration path-string suite)."""
+    details: list[str] = []
+    for suite in ("security", "unit"):
+        completed = run(
+            [sys.executable, "-m", "unittest", "discover", "-s", f"tests/{suite}", "-q"]
+        )
+        details.append(completed.stderr or completed.stdout or "")
+        if completed.returncode != 0:
+            return completed.returncode, "".join(details)[-400:]
+    return 0, "".join(details)[-400:]
+
+
+def _stage_windows_source_fixtures() -> tuple[int, str]:
+    """List+show one fixture per enabled source (Windows read-only evidence)."""
+    fixtures_root = REPO / "tests" / "fixtures"
+    # Prefer registry order when importable; fall back to fixtures/ dirs.
+    try:
+        sys.path.insert(0, str(REPO / "src"))
+        from portable_resume.diagnostics import SOURCE_KEYS  # type: ignore
+
+        sources = list(SOURCE_KEYS)
+    except Exception:
+        sources = sorted(
+            p.name for p in fixtures_root.iterdir() if p.is_dir() and not p.name.startswith(".")
+        )
+    finally:
+        if str(REPO / "src") in sys.path:
+            try:
+                sys.path.remove(str(REPO / "src"))
+            except ValueError:
+                pass
+
+    # Source-specific synthetic CWDs used by fixtures (not real homes).
+    cwd_candidates = ("/workspace/project", "/tmp/project", "/workspace/target")
+    notes: list[str] = []
+    failures = 0
+    for source in sources:
+        source_dir = fixtures_root / source
+        if not source_dir.is_dir():
+            notes.append(f"{source}:NO_FIXTURE_DIR")
+            failures += 1
+            continue
+        candidates: list[tuple[str, Path]] = []
+        for child in sorted(source_dir.iterdir()):
+            if not child.is_dir() or child.name.startswith(".") or child.name == "__pycache__":
+                continue
+            if (child / "root").is_dir():
+                candidates.append((child.name, child / "root"))
+            if (child / "agent").is_dir():
+                candidates.append((child.name + "/agent", child / "agent"))
+            candidates.append((child.name, child))
+            if candidates:
+                break
+        if not candidates:
+            notes.append(f"{source}:NO_FIXTURE")
+            failures += 1
+            continue
+        ok = False
+        last = ""
+        for fixture_name, root in candidates:
+            for cwd in cwd_candidates:
+                list_run = run(
+                    [
+                        sys.executable,
+                        str(REPO / "scripts" / "portable-resume"),
+                        source,
+                        "list",
+                        "--cwd",
+                        cwd,
+                        "--source-root",
+                        str(root),
+                        "--json",
+                    ]
+                )
+                if list_run.returncode == 0:
+                    show_run = run(
+                        [
+                            sys.executable,
+                            str(REPO / "scripts" / "portable-resume"),
+                            source,
+                            "show",
+                            "latest",
+                            "--cwd",
+                            cwd,
+                            "--source-root",
+                            str(root),
+                            "--format",
+                            "handoff",
+                        ]
+                    )
+                    notes.append(f"{source}:list_ok:show={show_run.returncode}")
+                    ok = True
+                    break
+                last = f"{fixture_name}:list={list_run.returncode}"
+            if ok:
+                break
+        if not ok:
+            failures += 1
+            notes.append(f"{source}:{last or 'list_fail'}")
+    code = 0 if failures == 0 else 1
+    return code, f"failures={failures} " + " ".join(notes)
 
 
 def _stage_packaging() -> tuple[int, str]:
@@ -183,10 +310,12 @@ STAGE_RUNNERS: dict[str, Callable[[], tuple[int, str]]] = {
     "docs": _stage_docs,
     "secrets": _stage_secrets,
     "unit": _stage_unit,
+    "unit_portable": _stage_unit_portable,
     "packaging": _stage_packaging,
     "reader_self_check": _stage_reader_self_check,
     "installer_matrix": _stage_installer_matrix,
     "fixture_list_show": _stage_fixture_list_show,
+    "windows_source_fixtures": _stage_windows_source_fixtures,
 }
 
 

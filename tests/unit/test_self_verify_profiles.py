@@ -27,9 +27,11 @@ class SelfVerifyProfileTests(unittest.TestCase):
     def test_profiles_are_closed_and_disjoint_for_ci(self) -> None:
         self.assertIn("local", self_verify_module.PROFILES)
         self.assertIn("ci-compat", self_verify_module.PROFILES)
+        self.assertIn("ci-compat-windows", self_verify_module.PROFILES)
         self.assertIn("ci-quality", self_verify_module.PROFILES)
         compat = set(self_verify_module.PROFILES["ci-compat"])
         quality = set(self_verify_module.PROFILES["ci-quality"])
+        win = set(self_verify_module.PROFILES["ci-compat-windows"])
         # Docs/secrets are not re-run in every matrix cell.
         self.assertNotIn("docs", compat)
         self.assertNotIn("secrets", compat)
@@ -39,11 +41,15 @@ class SelfVerifyProfileTests(unittest.TestCase):
         self.assertIn("compile", compat)
         self.assertNotIn("packaging", compat)
         self.assertIn("packaging", self_verify_module.STAGE_NAMES)
-        # Local remains the full set.
-        self.assertEqual(
-            tuple(self_verify_module.PROFILES["local"]),
-            self_verify_module.STAGE_NAMES,
-        )
+        # Windows profile uses portable units + 17-source fixture smoke.
+        self.assertIn("unit_portable", win)
+        self.assertIn("windows_source_fixtures", win)
+        self.assertNotIn("unit", win)
+        # Local remains the full pre-commit set (subset of stage allowlist).
+        local = self_verify_module.PROFILES["local"]
+        self.assertIn("unit", local)
+        self.assertIn("secrets", local)
+        self.assertTrue(set(local).issubset(set(self_verify_module.STAGE_NAMES)))
         completed = mock.Mock(returncode=0, stderr="", stdout="")
         with mock.patch.object(self_verify_module, "run", return_value=completed) as run:
             code, _ = self_verify_module._stage_unit()

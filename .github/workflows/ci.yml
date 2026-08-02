@@ -83,7 +83,7 @@ jobs:
           python-version: "3.12"
 
       - name: Compat self-verify (Windows nt)
-        run: python scripts/self_verify.py --profile ci-compat
+        run: python scripts/self_verify.py --profile ci-compat-windows
 
       - name: Installed runner matrix
         env:
