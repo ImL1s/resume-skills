@@ -1,12 +1,16 @@
 """Residual honesty contract for issue #125 (Windows mutating install Policy B).
 
-#125 **product** install/uninstall/recover is NOT claimed complete. Phase 1 may
-ship an exclusive-lock primitive on WindowsFilesystemBackend, but:
+#125 **product** install/uninstall/recover is NOT claimed complete. Phase 1 ships
+an exclusive-lock primitive on WindowsFilesystemBackend, but:
 
 - relative_mutations stays False; mkdirs/unlink/replace_beneath fail closed
 - require_mutating_install_platform and doctor windows_mutating_install still
   report unsupported on nt (transaction gate remains Policy B)
 - Full RootLock wire + reparse-safe install transaction is out of scope here
+
+The tests below prove that unsupported relative mutations do not modify existing
+filesystem state. The Phase-1 lock file itself is an intentional primitive side
+effect on native Windows and is not treated as product install enablement.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from portable_resume.adapters.base import CapabilityReport
@@ -41,55 +46,84 @@ def _stub_load_adapter(source: str):
     return _Adapter()
 
 
+def _tree_snapshot(root: Path) -> dict[str, tuple[str, bytes | str | None]]:
+    """Return a deterministic content/type snapshot without following symlinks."""
+
+    snapshot: dict[str, tuple[str, bytes | str | None]] = {}
+    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+        rel = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            snapshot[rel] = ("symlink", os.readlink(path))
+        elif path.is_file():
+            snapshot[rel] = ("file", path.read_bytes())
+        elif path.is_dir():
+            snapshot[rel] = ("directory", None)
+        else:
+            snapshot[rel] = ("other", None)
+    return snapshot
+
+
 class Issue125ResidualWindowsBackendContractTests(unittest.TestCase):
-    """WindowsFilesystemBackend residual capabilities + fail-closed mutations."""
+    """WindowsFilesystemBackend Phase-1 capabilities + fail-closed mutations."""
 
     def test_windows_backend_capabilities_mutations_disabled_lock_phase1(self) -> None:
         backend = WindowsFilesystemBackend()
         caps = backend.capabilities
-        # Phase 1 may enable exclusive/handle locking; relative mutations stay off.
         self.assertIs(caps.relative_mutations, False)
         self.assertIs(caps.exclusive_locking, True)
         self.assertIs(caps.handle_locking, True)
         self.assertEqual(backend.identity.backend_name, "WindowsFilesystemBackend")
 
-    def test_windows_mutating_surfaces_raise_e_install_unsupported_platform(self) -> None:
-        """Relative mutations stay fail-closed; lock is Phase-1-only (not install gate)."""
+    def test_windows_relative_mutations_fail_without_side_effects(self) -> None:
         backend = WindowsFilesystemBackend()
         with tempfile.TemporaryDirectory() as tmp_dir:
-            sub = os.path.join(tmp_dir, "nested")
-            leaf = os.path.join(tmp_dir, "leaf.txt")
-            dest = os.path.join(tmp_dir, "dest.txt")
-            lock_path = os.path.join(tmp_dir, "install.lock")
-            with open(leaf, "wb") as handle:
-                handle.write(b"payload")
+            root = Path(tmp_dir)
+            sub = root / "nested"
+            leaf = root / "leaf.txt"
+            dest = root / "dest.txt"
+            leaf.write_bytes(b"payload")
+            baseline = _tree_snapshot(root)
 
             with self.assertRaises(DiagnosticError) as ctx:
-                backend.mkdirs_beneath(sub, root=tmp_dir)
+                backend.mkdirs_beneath(sub, root=root)
             self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
             self.assertEqual(ctx.exception.exit_code, ExitCode.UNSUPPORTED)
+            self.assertEqual(_tree_snapshot(root), baseline)
 
             with self.assertRaises(DiagnosticError) as ctx:
-                backend.unlink_beneath(leaf, root=tmp_dir)
+                backend.unlink_beneath(leaf, root=root)
             self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+            self.assertEqual(_tree_snapshot(root), baseline)
 
             with self.assertRaises(DiagnosticError) as ctx:
-                backend.replace_beneath(leaf, dest, root=tmp_dir)
+                backend.replace_beneath(leaf, dest, root=root)
             self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+            self.assertEqual(_tree_snapshot(root), baseline)
 
-            # Phase 1: exclusive lock is implemented only where Win32 APIs exist.
-            # On non-nt hosts, WindowsFilesystemBackend still fail-closes the lock
-            # path (no kernel32); product install remains gated elsewhere.
+    def test_phase1_lock_is_native_only_and_not_a_relative_mutation_claim(self) -> None:
+        backend = WindowsFilesystemBackend()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            lock_path = root / "install.lock"
+            baseline = _tree_snapshot(root)
+
             if os.name == "nt":
                 with backend.acquire_exclusive_lock(lock_path) as fd:
                     self.assertIsInstance(fd, int)
                     self.assertGreaterEqual(fd, 0)
+                    self.assertTrue(lock_path.is_file())
+                self.assertEqual(lock_path.read_bytes(), b"")
+                self.assertEqual(
+                    _tree_snapshot(root),
+                    {"install.lock": ("file", b"")},
+                )
             else:
                 with self.assertRaises(DiagnosticError) as ctx:
                     with backend.acquire_exclusive_lock(lock_path):
                         pass
                 self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
                 self.assertEqual(ctx.exception.exit_code, ExitCode.UNSUPPORTED)
+                self.assertEqual(_tree_snapshot(root), baseline)
 
 
 class Issue125ResidualPlatformGateContractTests(unittest.TestCase):
@@ -132,18 +166,14 @@ class Issue125ResidualRealHostContractTests(unittest.TestCase):
 
         if os.name == "nt":
             self.assertIsInstance(backend, WindowsFilesystemBackend)
-            # Phase 1: exclusive/handle locking true; relative mutations still off.
             self.assertIs(backend.capabilities.exclusive_locking, True)
             self.assertIs(backend.capabilities.handle_locking, True)
             self.assertIs(backend.capabilities.relative_mutations, False)
-            # Product install gate stays fail-closed regardless of lock caps.
             self.assertIs(windows_mutating, False)
             with self.assertRaises(DiagnosticError) as ctx:
                 require_mutating_install_platform()
             self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
         else:
-            # POSIX residual path: exclusive locking is available; doctor must
-            # report mutating install supported (windows_mutating_install True).
             self.assertIsInstance(backend, PosixFilesystemBackend)
             self.assertIs(backend.capabilities.exclusive_locking, True)
             self.assertIs(windows_mutating, True)
