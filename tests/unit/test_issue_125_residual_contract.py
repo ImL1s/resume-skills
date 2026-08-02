@@ -35,10 +35,6 @@ from portable_resume.platform_fs.select import _reset_backend_cache
 from portable_resume.platform_fs.windows import WindowsFilesystemBackend
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_STATUS_TRACK_HEADING = (
-    "**Cross-platform track — closed read-only/CI slices #205–#208; "
-    "open residuals #125 and #209:**"
-)
 
 
 def _stub_load_adapter(source: str):
@@ -143,14 +139,15 @@ class Issue125ResidualPlatformGateContractTests(unittest.TestCase):
         self.assertIn("fail-closed", policy["detail"])
 
         status = (_REPO_ROOT / "docs" / "STATUS.md").read_text(encoding="utf-8")
-        self.assertIn(_STATUS_TRACK_HEADING, status)
-        self.assertIn("**#125 remains OPEN / not product-complete:**", status)
-        self.assertIn("**#209 umbrella remains OPEN:**", status)
-        self.assertNotIn(
-            "**Cross-platform track (#205–#209 + #125 residual):** "
-            "**Closed with evidence",
-            status,
-        )
+        track_lines = [line for line in status.splitlines() if line.startswith("**Cross-platform track")]
+        self.assertEqual(len(track_lines), 1, msg=f"track_lines={track_lines!r}")
+        track = track_lines[0]
+        self.assertIn("closed read-only/CI slices #205", track)
+        self.assertIn("#208", track)
+        self.assertIn("open residuals #125 and #209", track)
+        self.assertIn("#125 remains OPEN", track)
+        self.assertIn("#209 umbrella remains OPEN", track)
+        self.assertNotIn("#205–#209", track)
 
 
 class Issue125ResidualRealHostContractTests(unittest.TestCase):
