@@ -17,7 +17,7 @@ if str(SRC) not in sys.path:
 
 from portable_resume.build_identity import build_identity  # noqa: E402
 from portable_resume.diagnostics import DiagnosticError  # noqa: E402
-from portable_resume.snapshot import stable_read_bytes  # noqa: E402
+from portable_resume.platform_fs import get_filesystem_backend  # noqa: E402
 
 _HEX_40 = re.compile(r"^[0-9a-f]{40}$")
 _ROOT_BUILD_INPUTS = (
@@ -143,7 +143,7 @@ def build_inputs_sha256(
         except OSError as error:
             raise ValueError("build input is unreadable") from error
         try:
-            data = stable_read_bytes(
+            data = get_filesystem_backend().read_regular_stable(
                 path,
                 root=repository,
                 max_bytes=MAX_BUILD_INPUT_FILE_BYTES,
