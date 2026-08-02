@@ -152,7 +152,12 @@ class PosixFilesystemBackend(FilesystemBackend):
         root: str | os.PathLike[str],
         max_bytes: int = DEFAULT_BOUNDS.sqlite_snapshot_bytes,
     ) -> SQLiteSnapshot:
-        return snapshot_sqlite_family(database_path, root=root)
+        bounds = (
+            DEFAULT_BOUNDS
+            if max_bytes == DEFAULT_BOUNDS.sqlite_snapshot_bytes
+            else DEFAULT_BOUNDS.with_overrides(sqlite_snapshot_bytes=max_bytes)
+        )
+        return snapshot_sqlite_family(database_path, root=root, bounds=bounds)
 
     def atomic_replace_output(
         self,

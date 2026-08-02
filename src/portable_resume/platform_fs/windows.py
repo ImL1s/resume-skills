@@ -88,6 +88,8 @@ class WindowsFilesystemBackend(FilesystemBackend):
                     raise DiagnosticError.limit_exceeded()
 
                 if (st1.st_size, st1.st_mtime_ns) == (st2.st_size, st2.st_mtime_ns):
+                    if budget is not None:
+                        budget.consume_bytes(len(data))
                     fingerprint = FileFingerprint(
                         device=st1.st_dev,
                         inode=st1.st_ino,
@@ -135,6 +137,8 @@ class WindowsFilesystemBackend(FilesystemBackend):
         root: str | os.PathLike[str],
         max_bytes: int = DEFAULT_BOUNDS.sqlite_snapshot_bytes,
     ) -> SQLiteSnapshot:
+        if max_bytes < 0 or max_bytes > DEFAULT_BOUNDS.sqlite_snapshot_bytes:
+            raise DiagnosticError.invalid()
         canonical_db = require_within(database_path, root)
         try:
             st = os.lstat(canonical_db)

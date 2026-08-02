@@ -74,6 +74,11 @@ _RUNTIME_MODULES = (
     "adapters/openclaw.py",
     "adapters/pi.py",
     "adapters/qwen.py",
+    "platform_fs/__init__.py",
+    "platform_fs/api.py",
+    "platform_fs/posix.py",
+    "platform_fs/select.py",
+    "platform_fs/windows.py",
 )
 
 

@@ -147,6 +147,31 @@ class PlatformFsContractTests(unittest.TestCase):
             with open(written, "rb") as fp:
                 self.assertEqual(fp.read(), b"output data")
 
+    def test_windows_backend_read_charges_budget(self) -> None:
+        from portable_resume.bounds import ReadBudget
+        win_backend = WindowsFilesystemBackend()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            file_path = os.path.join(tmp_dir, "sample.txt")
+            content = b"budget test content"
+            with open(file_path, "wb") as fp:
+                fp.write(content)
+
+            budget = ReadBudget()
+            win_backend.read_regular_stable(file_path, root=tmp_dir, budget=budget)
+            self.assertEqual(budget.bytes_read, len(content))
+
+    def test_sqlite_family_snapshot_max_bytes_limit(self) -> None:
+        posix_backend = PosixFilesystemBackend()
+        win_backend = WindowsFilesystemBackend()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = os.path.join(tmp_dir, "test.db")
+            with open(db_path, "wb") as fp:
+                fp.write(b"sqlite data")
+
+            with self.assertRaises(DiagnosticError) as caught:
+                win_backend.sqlite_family_snapshot(db_path, root=tmp_dir, max_bytes=-1)
+            self.assertEqual(caught.exception.code, "E_INVALID_INPUT")
+
     def test_posix_backend_selection_under_mock(self) -> None:
         with mock.patch("os.name", "posix"):
             _reset_backend_cache()
