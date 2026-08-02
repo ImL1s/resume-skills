@@ -233,12 +233,43 @@ def _check_status_current_matrix(failures: list[str]) -> None:
             )
 
 
+def _check_status_platform_residuals(failures: list[str]) -> None:
+    """Keep closed read-only slices distinct from open platform residuals."""
+
+    path = REPO / "docs" / "STATUS.md"
+    if not path.is_file():
+        # The matrix check reports the shared missing-file error.
+        return
+    text = path.read_text(encoding="utf-8")
+    track_lines = [line for line in text.splitlines() if line.startswith("**Cross-platform track")]
+    if len(track_lines) != 1:
+        failures.append(
+            "docs/STATUS.md: expected exactly one Cross-platform track line, "
+            f"found {len(track_lines)}"
+        )
+        return
+
+    track = track_lines[0]
+    requirements = {
+        "closed read-only/CI slices must start at #205": "closed read-only/CI slices #205" in track,
+        "closed read-only/CI slices must include #208": "#208" in track,
+        "open residual set must name #125 and #209": "open residuals #125 and #209" in track,
+        "#125 must remain explicitly open": "#125 remains OPEN" in track,
+        "#209 must remain explicitly open": "#209 umbrella remains OPEN" in track,
+        "the old closed #205–#209 range must be absent": "#205–#209" not in track,
+    }
+    for description, satisfied in requirements.items():
+        if not satisfied:
+            failures.append(f"docs/STATUS.md: {description}")
+
+
 def check() -> dict[str, object]:
     failures: list[str] = []
     root_readme = (REPO / "README.md").read_text(encoding="utf-8")
     _check_root_docs(failures, root_readme)
     _check_diagnostics_reference(failures)
     _check_status_current_matrix(failures)
+    _check_status_platform_residuals(failures)
     if "docs/i18n/README.md" not in root_readme:
         failures.append("README.md: missing multilingual documentation link")
 
