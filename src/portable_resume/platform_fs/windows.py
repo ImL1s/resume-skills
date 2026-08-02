@@ -122,7 +122,7 @@ def _validate_win32_path(path: str | os.PathLike[str], root: str | os.PathLike[s
         if part.endswith(" ") or part.endswith("."):
             raise DiagnosticError.unsafe_path()
 
-    base_root = canonical_root(root)
+    base_root = canonicalize_cwd(root)
     abs_path = canonicalize_cwd(path_str)
     if not is_within(abs_path, base_root):
         raise DiagnosticError.unsafe_path()
