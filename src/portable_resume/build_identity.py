@@ -162,15 +162,23 @@ def registry_sha256(
     return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
 
 
-def _stat_fingerprint(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
-    return (
+def _stat_fingerprint(value: os.stat_result) -> tuple[int, ...]:
+    """Stable identity for open-vs-path bind checks.
+
+    On Windows, opening a file can update ctime without content change, so the
+    fingerprint omits ``st_ctime_ns`` there (#207 nt qualification).
+    """
+
+    base = (
         value.st_dev,
         value.st_ino,
         value.st_mode,
         value.st_size,
         value.st_mtime_ns,
-        value.st_ctime_ns,
     )
+    if os.name == "nt":
+        return base
+    return base + (value.st_ctime_ns,)
 
 
 def _read_stable_regular_file(

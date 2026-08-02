@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 from .bounds import DEFAULT_BOUNDS, Bounds, ReadBudget
 from .diagnostics import DiagnosticError
-from .paths import require_regular_no_symlinks
+from .paths import is_within, require_regular_no_symlinks
 
 AttemptHook = Callable[[str, int, str], None]
 
@@ -137,10 +137,31 @@ def _fingerprint(stat_result: os.stat_result, content_sha256: str | None = None)
     )
 
 
+def _dirfd_io_supported() -> bool:
+    """True when descriptor-relative open/stat are available (POSIX)."""
+
+    return (
+        os.name != "nt"
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+        and hasattr(os, "open")
+    )
+
+
 def _open_directory_beneath(directory: str, root: str) -> int:
     relative = os.path.relpath(os.path.abspath(directory), root)
     if relative == os.pardir or relative.startswith(os.pardir + os.sep) or os.path.isabs(relative):
         raise DiagnosticError.unsafe_path()
+    if not _dirfd_io_supported():
+        # Pathname open after containment: Windows has no dir_fd walk.
+        path = os.path.abspath(directory)
+        if not is_within(path, root):
+            raise DiagnosticError.unsafe_path()
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
+        try:
+            return os.open(path, flags)
+        except OSError as error:
+            raise DiagnosticError.unsafe_path() from error
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -172,11 +193,18 @@ def _directory_fingerprint(
 
     descriptor: int | None = None
     try:
-        if root is not None:
+        if root is not None and _dirfd_io_supported():
             descriptor = _open_directory_beneath(directory, root)
             target: str | int = descriptor
         else:
-            target = directory
+            # Windows / no-dir_fd: scandir by path after lexical containment.
+            if root is not None:
+                abs_dir = os.path.abspath(directory)
+                if not is_within(abs_dir, root):
+                    raise DiagnosticError.unsafe_path()
+                target = abs_dir
+            else:
+                target = directory
         output: list[tuple[str, FileFingerprint]] = []
         with os.scandir(target) as entries:
             for entry in entries:
@@ -207,11 +235,22 @@ def _target_entry_fingerprint(
     """Identity of one basename under ``parent`` via dir_fd, ignoring siblings.
 
     Detects target rename/replace (device/inode/type/size/mtime drift) without
-    enumerating unrelated parent directory entries (#16).
+    enumerating unrelated parent directory entries (#16). On platforms without
+    dir_fd, uses lstat after ``require_regular_no_symlinks``.
     """
 
     if not basename or basename in {".", ".."} or "/" in basename or "\x00" in basename:
         raise DiagnosticError.unsafe_path()
+    if not _dirfd_io_supported():
+        candidate = os.path.join(parent, basename)
+        safe, _ = require_regular_no_symlinks(candidate, root)
+        try:
+            current = os.lstat(safe)
+        except OSError as error:
+            raise DiagnosticError.source_busy() from error
+        if not stat.S_ISREG(current.st_mode):
+            raise DiagnosticError.unsafe_path()
+        return _fingerprint(current)
     parent_fd = _open_directory_beneath(parent, root)
     try:
         try:
@@ -239,9 +278,24 @@ def _entry_identity_matches(entry: FileFingerprint, open_stat: os.stat_result) -
 
 
 def _open_no_follow(path: str, root: str) -> int:
-    """Open a regular file by walking every component descriptor-relative."""
+    """Open a regular file by walking every component descriptor-relative.
+
+    On Windows (no dir_fd / O_NOFOLLOW), open the path after
+    ``require_regular_no_symlinks`` rejects symlink components.
+    """
 
     safe, _ = require_regular_no_symlinks(path, root)
+    if not _dirfd_io_supported():
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+        try:
+            descriptor = os.open(safe, flags)
+        except OSError as error:
+            raise DiagnosticError.unsafe_path() from error
+        current = os.fstat(descriptor)
+        if not stat.S_ISREG(current.st_mode):
+            os.close(descriptor)
+            raise DiagnosticError.unsafe_path()
+        return descriptor
     parent = os.path.dirname(safe)
     basename = os.path.basename(safe)
     parent_fd = _open_directory_beneath(parent, root)
