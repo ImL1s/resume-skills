@@ -97,7 +97,10 @@ jobs:
           python scripts/install-resume-skills matrix
           python scripts/portable-resume claude list --cwd /workspace/project --source-root tests/fixtures/claude/s-cla-01-ordered-parent-chain/root --json
           python scripts/portable-resume claude show latest --cwd /workspace/project --source-root tests/fixtures/claude/s-cla-01-ordered-parent-chain/root --format handoff
-          python scripts/self_verify.py --only windows_source_fixtures
+          python scripts/portable-resume codex list --cwd /workspace/project --source-root tests/fixtures/codex/s-cod-01-state-generation-selection/root --json
+          python scripts/portable-resume cursor list --cwd /workspace/project --source-root tests/fixtures/cursor/s-cur-01-cli-cwd-hash/root --json
+          python scripts/portable-resume qwen list --cwd /workspace/project --source-root tests/fixtures/qwen/s-qwe-01/root --json
+          python scripts/portable-resume grok list --cwd /workspace/project --source-root tests/fixtures/grok/s-gro-01/root --json
 
       - name: Installed runner matrix
         env:
