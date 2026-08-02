@@ -165,7 +165,9 @@ def _stage_output_bytes(parent: str, data: bytes) -> str:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     cloexec = getattr(os, "O_CLOEXEC", 0)
     nofollow = getattr(os, "O_NOFOLLOW", 0)
-    flags |= cloexec | nofollow
+    # O_BINARY is required on Windows so LF bytes are not rewritten as CRLF.
+    binary = getattr(os, "O_BINARY", 0)
+    flags |= cloexec | nofollow | binary
 
     # Retry a few times if an exclusive name collides (extremely unlikely).
     last_error: OSError | None = None
