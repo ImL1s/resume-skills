@@ -245,12 +245,48 @@ class RequestInodeBindTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "E_INVALID_INPUT")
         self.assertNotIn("request-v2", str(caught.exception))
 
-    def test_unsupported_platform_without_nofollow_fails_closed(self) -> None:
+    def test_without_dirfd_uses_backend_stable_read(self) -> None:
+        """When dir_fd/O_NOFOLLOW is unavailable, platform_fs backend path is used."""
         self.write_request()
         with mock.patch.object(request_module, "_symlink_safe_request_open_supported", return_value=False):
-            with self.assertRaises(DiagnosticError) as caught:
-                self.load()
+            request = self.load()
+        self.assertEqual(request.resume_ref, "latest")
+        self.assertEqual(request.source, "claude")
+
+    def test_without_dirfd_and_without_backend_nofollow_fails_closed(self) -> None:
+        """No dir_fd and no backend nofollow capability must still fail closed."""
+        from portable_resume.platform_fs import get_filesystem_backend
+        from portable_resume.platform_fs.select import _reset_backend_cache
+
+        self.write_request()
+        backend = get_filesystem_backend()
+        caps = backend.capabilities
+        frozen = type(caps)(
+            descriptor_relative=caps.descriptor_relative,
+            nofollow_reads=False,
+            relative_mutations=caps.relative_mutations,
+            sqlite_snapshots=caps.sqlite_snapshots,
+            atomic_output=caps.atomic_output,
+            exclusive_locking=caps.exclusive_locking,
+            reparse_points=caps.reparse_points,
+            handle_locking=caps.handle_locking,
+        )
+        with mock.patch.object(request_module, "_symlink_safe_request_open_supported", return_value=False):
+            with mock.patch.object(type(backend), "capabilities", new_callable=lambda: property(lambda self: frozen)):
+                _reset_backend_cache()
+                # Force the same backend instance with patched capabilities.
+                with mock.patch(
+                    "portable_resume.platform_fs.get_filesystem_backend",
+                    return_value=backend,
+                ), mock.patch.object(
+                    type(backend),
+                    "capabilities",
+                    property(lambda self: frozen),
+                ):
+                    with self.assertRaises(DiagnosticError) as caught:
+                        self.load()
         self.assertEqual(caught.exception.code, "E_INVALID_INPUT")
+        _reset_backend_cache()
 
     def test_fingerprint_identity_tuple_is_dev_ino_type(self) -> None:
         self.write_request()

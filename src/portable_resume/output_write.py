@@ -80,10 +80,23 @@ def write_output_bytes(
     *,
     clobber: bool = False,
 ) -> str:
-    """Write *data* atomically to *path*. Returns the absolute path written.
+    """Write *data* atomically via platform backend when capable (#205)."""
 
-    See module docstring for ``"-"``, no-clobber, and atomic-replace rules.
-    """
+    from .platform_fs import get_filesystem_backend
+
+    backend = get_filesystem_backend()
+    if backend.capabilities.atomic_output:
+        return backend.atomic_replace_output(path, data, clobber=clobber)
+    return _write_output_bytes_impl(path, data, clobber=clobber)
+
+
+def _write_output_bytes_impl(
+    path: str,
+    data: bytes | bytearray | memoryview,
+    *,
+    clobber: bool = False,
+) -> str:
+    """Pathname atomic write implementation (used when backend lacks atomic_output)."""
     abs_path = _resolve_output_path(path, clobber=clobber)
     if not isinstance(data, (bytes, bytearray, memoryview)):
         raise DiagnosticError.invalid()
@@ -152,7 +165,9 @@ def _stage_output_bytes(parent: str, data: bytes) -> str:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     cloexec = getattr(os, "O_CLOEXEC", 0)
     nofollow = getattr(os, "O_NOFOLLOW", 0)
-    flags |= cloexec | nofollow
+    # O_BINARY is required on Windows so LF bytes are not rewritten as CRLF.
+    binary = getattr(os, "O_BINARY", 0)
+    flags |= cloexec | nofollow | binary
 
     # Retry a few times if an exclusive name collides (extremely unlikely).
     last_error: OSError | None = None

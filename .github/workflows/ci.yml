@@ -64,9 +64,52 @@ jobs:
           PYTHONPATH: src
         run: python scripts/smoke_installed_matrix.py
 
+  # Native Windows read-only qualification (#207/#208). One Python cell is enough
+  # for shipped nt evidence; full multi-version stays on ubuntu/macos.
+  test-windows:
+    name: test (windows-latest / py3.12)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Compile + platform unit tests (Windows nt)
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m compileall -q src scripts tests
+          python -m unittest tests.unit.test_platform_fs tests.unit.test_platform_paths tests.unit.test_install_windows_platform_gate tests.unit.test_output_write tests.unit.test_self_verify_profiles -q
+
+      - name: Product read-only surfaces (Windows nt)
+        env:
+          PYTHONPATH: src
+        run: |
+          python scripts/portable-resume self-check --json
+          python scripts/install-resume-skills matrix
+          python scripts/portable-resume claude list --cwd /workspace/project --source-root tests/fixtures/claude/s-cla-01-ordered-parent-chain/root --json
+          python scripts/portable-resume claude show latest --cwd /workspace/project --source-root tests/fixtures/claude/s-cla-01-ordered-parent-chain/root --format handoff
+          python scripts/portable-resume codex list --cwd /workspace/project --source-root tests/fixtures/codex/s-cod-01-state-generation-selection/root --json
+          python scripts/portable-resume cursor list --cwd /workspace/project --source-root tests/fixtures/cursor/s-cur-01-cli-cwd-hash/root --json
+          python scripts/portable-resume qwen list --cwd /workspace/project --source-root tests/fixtures/qwen/s-qwe-01/root --json
+          python scripts/portable-resume grok list --cwd /workspace/project --source-root tests/fixtures/grok/s-gro-01/root --json
+
+      # Mutating install is fail-closed on Windows (#125). smoke_installed_matrix
+      # requires install into temp skill roots, so it is not a read-only gate.
+      - name: Note skipped mutating installed-runner matrix on Windows
+        run: echo "skip smoke_installed_matrix on Windows (mutating install fail-closed issue 125)"
+
   package:
     name: build and smoke distributions
-    needs: [test, quality]
+    needs: [test, test-windows, quality]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

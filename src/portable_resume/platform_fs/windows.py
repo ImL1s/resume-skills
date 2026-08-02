@@ -162,12 +162,16 @@ class WindowsFilesystemBackend(FilesystemBackend):
             is_windows=True,
             backend_name="WindowsFilesystemBackend",
         )
+        # Read-only product surfaces: stable reads + SQLite family snapshots +
+        # atomic output (pathname replace after reparse checks). Mutating
+        # install ops remain fail-closed until #125 (no exclusive lock / no
+        # relative mutations / no handle locking).
         self._capabilities = FilesystemCapabilities(
             descriptor_relative=False,
             nofollow_reads=True,
             relative_mutations=False,
-            sqlite_snapshots=False,
-            atomic_output=False,
+            sqlite_snapshots=True,
+            atomic_output=True,
             exclusive_locking=False,
             reparse_points=True,
             handle_locking=False,
@@ -503,7 +507,18 @@ class WindowsFilesystemBackend(FilesystemBackend):
         root: str | os.PathLike[str],
         max_bytes: int = DEFAULT_BOUNDS.sqlite_snapshot_bytes,
     ) -> SQLiteSnapshot:
-        raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+        """Private SQLite family snapshot using reparse-safe stable reads.
+
+        Reuses the shared family-copy loop; file bytes come from this
+        backend's ``read_regular_stable`` via the public ``stable_read_bytes``
+        entry (no POSIX dir_fd).
+        """
+        if max_bytes < 0 or max_bytes > DEFAULT_BOUNDS.sqlite_snapshot_bytes:
+            raise DiagnosticError.invalid()
+        _validate_win32_path(database_path, root)
+        from ..snapshot import _snapshot_sqlite_family_impl
+
+        return _snapshot_sqlite_family_impl(database_path, root=root, bounds=DEFAULT_BOUNDS)
 
     def atomic_replace_output(
         self,
@@ -512,7 +527,17 @@ class WindowsFilesystemBackend(FilesystemBackend):
         *,
         clobber: bool = False,
     ) -> str:
-        raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+        """Atomic temp+replace output writer with reserved-name / ADS gates."""
+        from ..output_write import _write_output_bytes_impl
+
+        if isinstance(path, str) and path and path != "-":
+            reject_controls(path)
+            # Basename-only policy: reserved device names and ADS streams.
+            basename = os.path.basename(path.replace("/", "\\"))
+            stem = basename.split(".")[0].upper()
+            if stem in _WIN32_RESERVED_NAMES or ":" in basename:
+                raise DiagnosticError.invalid()
+        return _write_output_bytes_impl(path, data, clobber=clobber)
 
     @contextlib.contextmanager
     def acquire_exclusive_lock(

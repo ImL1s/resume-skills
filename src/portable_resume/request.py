@@ -72,7 +72,7 @@ def _fingerprint(stat_result: os.stat_result) -> _RequestFingerprint:
 
 
 def _symlink_safe_request_open_supported() -> bool:
-    """True when final-component no-follow open can be guaranteed."""
+    """True when final-component no-follow open can be guaranteed via dir_fd."""
 
     return os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
 
@@ -131,18 +131,85 @@ def _read_bounded(descriptor: int, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-def _read_regular_request(path: str) -> bytes:
-    """Read one regular request file on the first opened no-follow descriptor.
+def _read_regular_request_via_backend(path: str) -> bytes:
+    """Windows / non-dir_fd path: read request via platform_fs stable read.
 
-    The open is the atomic validation point: there is no pre-open ``lstat``
-    identity that can be recycled before open. Symlinks are rejected by
-    ``O_NOFOLLOW``; non-regular descriptors (FIFO/device) are rejected after
-    non-blocking open via ``fstat``.
+    Uses the request file's parent directory as the containment root and the
+    backend's reparse/symlink-safe stable reader. Double-read + final lstat
+    identity checks mirror the POSIX descriptor path.
+    """
+
+    from .platform_fs import get_filesystem_backend
+
+    backend = get_filesystem_backend()
+    if not backend.capabilities.nofollow_reads:
+        raise DiagnosticError.invalid()
+
+    abs_path = os.path.abspath(path)
+    parent = os.path.dirname(abs_path) or os.curdir
+    if not parent or not os.path.isdir(parent):
+        raise DiagnosticError.invalid()
+
+    _invoke_hook("after-precheck", path)
+    try:
+        # Capture identity before open-equivalent stable read for final bind.
+        before = _fingerprint(os.lstat(abs_path))
+    except OSError as error:
+        raise DiagnosticError.invalid() from error
+    if not stat.S_ISREG(before.mode) or before.size > DEFAULT_BOUNDS.request_bytes:
+        raise DiagnosticError.invalid()
+    if stat.S_ISLNK(before.mode):
+        raise DiagnosticError.invalid()
+
+    _invoke_hook("after-open", path)
+    try:
+        stable = backend.read_regular_stable(
+            abs_path,
+            root=parent,
+            max_bytes=DEFAULT_BOUNDS.request_bytes,
+            attempts=DEFAULT_BOUNDS.snapshot_attempts,
+        )
+    except DiagnosticError as error:
+        # Map filesystem unsafe paths to request invalid boundary.
+        if error.code in {"E_UNSAFE_PATH", "E_LIMIT_EXCEEDED", "E_SOURCE_BUSY"}:
+            raise DiagnosticError.invalid() from error
+        raise
+
+    data = stable.data
+    if len(data) > DEFAULT_BOUNDS.request_bytes or len(data) != before.size:
+        raise DiagnosticError.invalid()
+    _invoke_hook("after-read", path)
+
+    # Re-read path identity after content (same as fstat after second pass).
+    try:
+        mid = _fingerprint(os.lstat(abs_path))
+    except OSError as error:
+        raise DiagnosticError.invalid() from error
+    if mid != before or mid.size != len(data):
+        raise DiagnosticError.invalid()
+    _invoke_hook("after-verify", path)
+
+    _invoke_hook("before-final", path)
+    try:
+        final = _fingerprint(os.lstat(path))
+    except OSError as error:
+        raise DiagnosticError.invalid() from error
+    if final != before:
+        raise DiagnosticError.invalid()
+    return data
+
+
+def _read_regular_request(path: str) -> bytes:
+    """Read one regular request file with platform-appropriate no-follow safety.
+
+    On POSIX: open is the atomic validation point via ``O_NOFOLLOW`` + dir_fd.
+    On Windows: platform_fs reparse-safe stable read under the parent root,
+    with lstat identity bind before/after (see ``_read_regular_request_via_backend``).
     """
 
     if not _symlink_safe_request_open_supported():
-        # Do not claim no-symlink request protection without O_NOFOLLOW/dir_fd.
-        raise DiagnosticError.invalid()
+        return _read_regular_request_via_backend(path)
+
     # Compatibility hook for tests that previously mutated after lstat precheck.
     _invoke_hook("after-precheck", path)
 
