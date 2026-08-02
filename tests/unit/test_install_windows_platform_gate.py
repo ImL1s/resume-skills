@@ -115,18 +115,40 @@ class WindowsPlatformGateTests(unittest.TestCase):
 
         ``verify_root`` intentionally does **not** call
         ``require_mutating_install_platform`` (see transaction docstring). On
-        ``nt`` it skips ``RootLock`` and remains observational. Missing install
-        state still fails with ``E_VERIFY_MISMATCH``, never
+        ``nt`` it skips ``RootLock`` even when a control tree exists. Missing or
+        incomplete install state fails with ``E_VERIFY_MISMATCH``, never
         ``E_INSTALL_UNSUPPORTED_PLATFORM`` solely due to platform.
         """
         with tempfile.TemporaryDirectory() as temporary:
-            root = str(Path(temporary) / "skills")
-            Path(root).mkdir()
-            with mock.patch("portable_resume.install.transaction.os.name", "nt"):
+            root = Path(temporary) / "skills"
+            # Present control-state marker so has_control is True (the branch
+            # that would take RootLock on POSIX). Windows must still skip it.
+            state = root / ".portable-resume" / ".state"
+            state.mkdir(parents=True)
+            (state / "manifest.json").write_text("{}", encoding="utf-8")
+            root_s = str(root)
+
+            lock_calls: list[str] = []
+
+            class _BoomLock:
+                def __init__(self, locked_root: str) -> None:
+                    lock_calls.append(locked_root)
+
+                def __enter__(self) -> "_BoomLock":
+                    raise AssertionError("RootLock must not be entered on nt")
+
+                def __exit__(self, *args: object) -> None:
+                    return None
+
+            with mock.patch("portable_resume.install.transaction.os.name", "nt"), mock.patch(
+                "portable_resume.install.transaction.RootLock",
+                _BoomLock,
+            ):
                 with self.assertRaises(DiagnosticError) as ctx:
-                    verify_root(root)
+                    verify_root(root_s)
             self.assertEqual(ctx.exception.code, "E_VERIFY_MISMATCH")
             self.assertNotEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+            self.assertEqual(lock_calls, [], "RootLock must not be constructed on nt")
 
 
 if __name__ == "__main__":
