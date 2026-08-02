@@ -110,6 +110,24 @@ class WindowsPlatformGateTests(unittest.TestCase):
                 result = recover_root(str(root))
             self.assertEqual(result, {"ok": True, "recovered": False})
 
+    def test_verify_root_is_observational_on_nt_not_platform_gated(self) -> None:
+        """Residual #125 / Policy B: verify stays read-only on Windows.
+
+        ``verify_root`` intentionally does **not** call
+        ``require_mutating_install_platform`` (see transaction docstring). On
+        ``nt`` it skips ``RootLock`` and remains observational. Missing install
+        state still fails with ``E_VERIFY_MISMATCH``, never
+        ``E_INSTALL_UNSUPPORTED_PLATFORM`` solely due to platform.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = str(Path(temporary) / "skills")
+            Path(root).mkdir()
+            with mock.patch("portable_resume.install.transaction.os.name", "nt"):
+                with self.assertRaises(DiagnosticError) as ctx:
+                    verify_root(root)
+            self.assertEqual(ctx.exception.code, "E_VERIFY_MISMATCH")
+            self.assertNotEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+
 
 if __name__ == "__main__":
     unittest.main()
