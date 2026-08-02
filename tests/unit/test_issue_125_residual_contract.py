@@ -140,14 +140,21 @@ class Issue125ResidualPlatformGateContractTests(unittest.TestCase):
 
         status = (_REPO_ROOT / "docs" / "STATUS.md").read_text(encoding="utf-8")
         track_lines = [line for line in status.splitlines() if line.startswith("**Cross-platform track")]
-        self.assertEqual(len(track_lines), 1, msg=f"track_lines={track_lines!r}")
+        self.assertTrue(
+            len(track_lines) == 1,
+            msg=f"STATUS_CROSS_TRACK_COUNT expected=1 actual={len(track_lines)}",
+        )
         track = track_lines[0]
-        self.assertIn("closed read-only/CI slices #205", track)
-        self.assertIn("#208", track)
-        self.assertIn("open residuals #125 and #209", track)
-        self.assertIn("#125 remains OPEN", track)
-        self.assertIn("#209 umbrella remains OPEN", track)
-        self.assertNotIn("#205–#209", track)
+        checks = {
+            "CLOSED_START": "closed read-only/CI slices #205" in track,
+            "CLOSED_END": "#208" in track,
+            "OPEN_SET": "open residuals #125 and #209" in track,
+            "ISSUE_125_OPEN": "#125 remains OPEN" in track,
+            "ISSUE_209_OPEN": "#209 umbrella remains OPEN" in track,
+            "OLD_CLOSED_RANGE_REMOVED": "#205–#209" not in track,
+        }
+        missing = sorted(name for name, ok in checks.items() if not ok)
+        self.assertFalse(missing, msg=f"STATUS_CROSS_TRACK_CONTRACT missing={missing}")
 
 
 class Issue125ResidualRealHostContractTests(unittest.TestCase):
