@@ -1006,7 +1006,14 @@ def _copy_bounded_descriptor(descriptor: int, destination: str, *, maximum: int)
     os.lseek(descriptor, 0, os.SEEK_SET)
     digest = hashlib.sha256()
     total = 0
-    target = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    write_flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    target = os.open(destination, write_flags, 0o600)
     try:
         while True:
             block = os.read(descriptor, 64 * 1024)
@@ -1150,7 +1157,16 @@ def _snapshot_sqlite_family_impl(
                 if total > bounds.sqlite_snapshot_bytes:
                     raise DiagnosticError.limit_exceeded()
                 destination = os.path.join(temporary.name, os.path.basename(source))
-                descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                # O_BINARY required on Windows so private copies keep exact bytes
+                # (same integrity rule as output_write staging).
+                write_flags = (
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_BINARY", 0)
+                )
+                descriptor = os.open(destination, write_flags, 0o600)
                 try:
                     view = memoryview(read.data)
                     while view:

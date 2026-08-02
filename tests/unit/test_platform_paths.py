@@ -13,7 +13,7 @@ from portable_resume.paths import (
     normalize_unicode,
     same_cwd,
 )
-from portable_resume.snapshot import SQLiteSnapshot
+from portable_resume.snapshot import SQLiteSnapshot, snapshot_sqlite_family
 
 
 class PlatformPathNormalizationTests(unittest.TestCase):
@@ -99,6 +99,51 @@ class PlatformPathNormalizationTests(unittest.TestCase):
                 self.assertNotIn("\\", uri.split("?", 1)[0])
             finally:
                 snap.close()
+
+    def test_sqlite_family_private_copy_open_includes_obinary(self) -> None:
+        """Private SQLite family copies must pass O_BINARY when available (#207)."""
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "state.db")
+            conn = sqlite3.connect(db)
+            conn.execute("CREATE TABLE t (id INTEGER)")
+            conn.execute("INSERT INTO t VALUES (1)")
+            conn.commit()
+            conn.close()
+
+            opens: list[int] = []
+            real_open = os.open
+
+            def tracking_open(path, flags, mode=0o777, *args, **kwargs):  # type: ignore[no-untyped-def]
+                # Capture write opens to private temp destinations only.
+                path_s = os.fspath(path)
+                if "portable-resume-sqlite-" in path_s or path_s.endswith("state.db"):
+                    opens.append(flags)
+                return real_open(path, flags, mode, *args, **kwargs)
+
+            with mock.patch("portable_resume.snapshot.os.open", side_effect=tracking_open):
+                snap = snapshot_sqlite_family(db, root=tmp)
+                try:
+                    self.assertTrue(os.path.isfile(snap.database))
+                    with open(snap.database, "rb") as fp:
+                        # SQLite header must survive the private copy byte-for-byte.
+                        self.assertTrue(fp.read(16).startswith(b"SQLite format 3"))
+                finally:
+                    snap.close()
+
+            write_flags = [
+                flags
+                for flags in opens
+                if flags & os.O_WRONLY and flags & os.O_CREAT and flags & os.O_EXCL
+            ]
+            self.assertTrue(write_flags, f"expected private-copy write open; saw {opens!r}")
+            binary = getattr(os, "O_BINARY", 0)
+            if binary:
+                self.assertTrue(
+                    all(flags & binary for flags in write_flags),
+                    f"O_BINARY missing from write flags {write_flags!r}",
+                )
 
 
 if __name__ == "__main__":
