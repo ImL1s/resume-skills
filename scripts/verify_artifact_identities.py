@@ -615,7 +615,7 @@ def main(argv: list[str] | None = None) -> int:
         if namespace.output:
             Path(namespace.output).write_text(encoded, encoding="utf-8")
     except (OSError, ValueError) as error:
-        print(f"ARTIFACT_IDENTITY_VERIFY FAIL {type(error).__name__}: {error}", file=sys.stderr)
+        print(f"ARTIFACT_IDENTITY_VERIFY FAIL {type(error).__name__}", file=sys.stderr)
         return 1
     if namespace.json:
         print(encoded, end="")
