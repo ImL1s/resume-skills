@@ -31,13 +31,13 @@ class WindowsFilesystemBackend(FilesystemBackend):
         )
         self._capabilities = FilesystemCapabilities(
             descriptor_relative=False,
-            nofollow_reads=True,
+            nofollow_reads=False,
             relative_mutations=False,
             sqlite_snapshots=True,
             atomic_output=True,
             exclusive_locking=False,
             reparse_points=True,
-            handle_locking=True,
+            handle_locking=False,
         )
 
     @property

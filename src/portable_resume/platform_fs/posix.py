@@ -36,7 +36,7 @@ class PosixFilesystemBackend(FilesystemBackend):
         self._capabilities = FilesystemCapabilities(
             descriptor_relative=True,
             nofollow_reads=True,
-            relative_mutations=True,
+            relative_mutations=False,
             sqlite_snapshots=True,
             atomic_output=True,
             exclusive_locking=True,

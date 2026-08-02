@@ -180,7 +180,7 @@ class PlatformFsContractTests(unittest.TestCase):
             self.assertTrue(backend.identity.is_posix)
             self.assertFalse(backend.identity.is_windows)
             self.assertTrue(backend.capabilities.descriptor_relative)
-            self.assertTrue(backend.capabilities.relative_mutations)
+            self.assertFalse(backend.capabilities.relative_mutations)
             self.assertTrue(backend.capabilities.exclusive_locking)
 
     def test_doctor_report_includes_filesystem_backend(self) -> None:

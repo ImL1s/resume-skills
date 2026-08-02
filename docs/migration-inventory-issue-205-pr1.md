@@ -183,3 +183,29 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 This Migration Inventory document establishes the baseline for Issue #205 PR 1. By clearly separating Non-Goal modules (12 files, 660 calls) from Candidate modules (40 files, 639 calls), PR 1 satisfies Requirement R3 and enforces Requirement R4 non-goal boundaries.
 
+---
+
+## 8. Codex Review & Capability Flags Disposition (PR 1 Honesty Alignment)
+
+### 8.1 Capability Flag Honesty Corrections
+To ensure `doctor` diagnostics and system capabilities reflect current PR 1 implementation reality without overclaiming:
+
+- **`WindowsFilesystemBackend`**:
+  - `nofollow_reads = False` (In PR 1, `read_regular_stable` uses `lstat()` followed by standard `open()`, which does not guarantee handle-level/descriptor-level reparse point isolation; handle-based nofollow read is deferred to PR 3).
+  - `handle_locking = False` (In PR 1, `acquire_exclusive_lock` raises `E_INSTALL_UNSUPPORTED_PLATFORM`; locking is deferred to future PRs).
+- **`PosixFilesystemBackend`**:
+  - `relative_mutations = False` (In PR 1, `mkdirs_beneath` uses string-path `os.makedirs`; descriptor-relative `mkdirat` mutations are deferred to PR 2).
+
+### 8.2 Codex Inline Review Disposition Table
+
+| Finding ID | Priority | Description / Location | PR 1 Disposition | Target PR |
+|---|---|---|---|---|
+| P1-1 | P1 | Windows `read_regular_stable` TOCTOU / nofollow (`windows.py`) | Flag set to `nofollow_reads=False` (Honest). Full handle-based read implementation deferred. | PR 3 (Windows Reader Backend) |
+| P1-2 | P1 | Windows SQLite snapshot non-atomic sidecar copy (`windows.py`) | Scaffold implementation retained for PR 1 identity. Atomic VFS/shadow copy deferred. | PR 3 (Windows Reader Backend) |
+| P1-3 | P1 | POSIX `mkdirs_beneath` string paths (`posix.py`) | Flag set to `relative_mutations=False` (Honest). Full `mkdirat`/`openat` deferred. | PR 2 (POSIX Mutating Operations) |
+| P1-4 | P1 | POSIX `unlink_beneath` leaf resolution (`posix.py`) | Leaf resolution safety deferred to PR 2 mutating operations refactor. | PR 2 (POSIX Mutating Operations) |
+| P1-5 | P1 | Runtime allowlist missing `platform_fs` (`render.py`) | **RESOLVED** in commit `aba7d86` (`render.py` + `test_runtime_package_allowlist.py`). | Fixed in PR 1 |
+| P2-1 | P2 | Read budget bytes not charged on Windows read (`windows.py`) | **RESOLVED** in commit `aba7d86` (`budget.consume_bytes(len(data))`). | Fixed in PR 1 |
+| P2-2 | P2 | SQLite family snapshot `max_bytes` boundary checking (`posix.py`, `windows.py`) | **RESOLVED** in commit `aba7d86` (`DEFAULT_BOUNDS.with_overrides(sqlite_snapshot_bytes=max_bytes)`). | Fixed in PR 1 |
+
+
