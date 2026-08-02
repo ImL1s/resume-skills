@@ -452,6 +452,13 @@ def main(argv: list[str] | None = None) -> int:
             print("matrix", code, detail)
         elif name == "fixture_list_show":
             print("fixture", detail)
+        elif name == "windows_source_fixtures":
+            # Always print ok=N/17 detail so Actions logs prove the all-sources gate.
+            print("windows_source_fixtures", code, detail)
+        elif name == "unit_portable":
+            print("unit_portable", code)
+            if detail and code != 0:
+                print(detail[-800:])
         elif name == "secrets":
             print("secrets", code)
             if detail:
