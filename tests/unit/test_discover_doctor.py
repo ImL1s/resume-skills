@@ -228,6 +228,7 @@ class DoctorReportTests(unittest.TestCase):
                 "schema_file_present",
                 "sources_probe_completed",
                 "windows_install_policy",
+                "filesystem_backend",
             },
         )
         for check in report["checks"]:
