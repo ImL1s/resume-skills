@@ -115,7 +115,6 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertNotIn("## Fresh local verification", evidence)
         self.assertIn("## Historical local verification: v0.3.2-era", evidence)
 
-
     def test_status_notes_stable_scan_lines_adoption_is_partial(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
@@ -131,8 +130,14 @@ class StatusHonestyTests(unittest.TestCase):
     def test_status_reflects_pi_merge_honesty(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
-        self.assertRegex(text, r"\*\*\d+ pass locally\*\*")
-        # Current main is 144-cell; published 0.3.4 historical 81 remains noted.
+        # Prefer immutable CI evidence for the current suite. Historical local
+        # snapshots may remain, but they must be explicitly labeled historical.
+        self.assertRegex(text, r"\*\*\d+ pass in current [^*]+ CI\*\*")
+        self.assertRegex(
+            text,
+            r"(?i)prior \*\*\d+ local\*\* snapshot[^.]{0,160}historical",
+        )
+        # Current main is registry-derived; published 0.3.4 historical 81 remains noted.
         self.assertRegex(text, r"169/169|144/144|121/121|100/100|81/81")
         self.assertIn("359", text)  # archived local suite after Pi destination PR C
         self.assertIn("d9152cd", text)  # archived PR #51 merge tip
