@@ -150,11 +150,11 @@ class PlatformFsContractTests(unittest.TestCase):
             self.assertEqual(set(d.keys()), expected_keys)
 
     def test_windows_backend_fail_closed_policy(self) -> None:
-        """Mutating install surfaces stay fail-closed; read-only I/O is enabled."""
+        """Relative mutations stay fail-closed; Phase 1 advertises exclusive lock."""
         win_backend = WindowsFilesystemBackend()
         self.assertFalse(win_backend.capabilities.relative_mutations)
-        self.assertFalse(win_backend.capabilities.exclusive_locking)
-        self.assertFalse(win_backend.capabilities.handle_locking)
+        self.assertTrue(win_backend.capabilities.exclusive_locking)
+        self.assertTrue(win_backend.capabilities.handle_locking)
         self.assertTrue(win_backend.capabilities.sqlite_snapshots)
         self.assertTrue(win_backend.capabilities.atomic_output)
         self.assertTrue(win_backend.capabilities.nofollow_reads)
@@ -178,11 +178,14 @@ class PlatformFsContractTests(unittest.TestCase):
                 win_backend.replace_beneath(file_path, target_path, root=tmp_dir)
             self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
 
+            # On non-Windows hosts kernel32 is unavailable → unsupported.
+            # On Windows the real LockFileEx path is exercised separately.
             lock_path = os.path.join(tmp_dir, "test.lock")
-            with self.assertRaises(DiagnosticError) as caught:
-                with win_backend.acquire_exclusive_lock(lock_path):
-                    pass
-            self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+            if os.name != "nt":
+                with self.assertRaises(DiagnosticError) as caught:
+                    with win_backend.acquire_exclusive_lock(lock_path):
+                        pass
+                self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
 
             # Read-only product surfaces work on the Windows backend even when
             # exercised from a non-Windows host (open/lstat fallback path).
@@ -286,10 +289,34 @@ class PlatformFsContractTests(unittest.TestCase):
         self.assertTrue(win_backend.capabilities.reparse_points)
         self.assertTrue(win_backend.capabilities.sqlite_snapshots)
         self.assertTrue(win_backend.capabilities.atomic_output)
+        self.assertTrue(win_backend.capabilities.exclusive_locking)
+        self.assertTrue(win_backend.capabilities.handle_locking)
         self.assertFalse(win_backend.capabilities.descriptor_relative)
         self.assertFalse(win_backend.capabilities.relative_mutations)
-        self.assertFalse(win_backend.capabilities.exclusive_locking)
-        self.assertFalse(win_backend.capabilities.handle_locking)
+
+    def test_windows_exclusive_lock_phase1_on_native_nt(self) -> None:
+        """Phase 1: real LockFileEx path when running on Windows.
+
+        Share mode allows concurrent CreateFile; exclusivity must come from
+        LockFileEx (second acquire returns E_INSTALL_BUSY). After context exit,
+        the lock is released and can be re-acquired.
+        """
+        if os.name != "nt":
+            self.skipTest("native Windows LockFileEx only")
+        win_backend = WindowsFilesystemBackend()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = os.path.join(tmp_dir, "phase1.lock")
+            with win_backend.acquire_exclusive_lock(lock_path) as fd:
+                self.assertIsInstance(fd, int)
+                self.assertTrue(os.path.isfile(lock_path))
+                # Second exclusive acquire must fail busy while first is held.
+                with self.assertRaises(DiagnosticError) as caught:
+                    with win_backend.acquire_exclusive_lock(lock_path):
+                        pass
+                self.assertEqual(caught.exception.code, "E_INSTALL_BUSY")
+            # Unlock/close must release: reacquire after context exit.
+            with win_backend.acquire_exclusive_lock(lock_path) as fd2:
+                self.assertIsInstance(fd2, int)
 
 
 if __name__ == "__main__":
