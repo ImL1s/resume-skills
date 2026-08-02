@@ -93,7 +93,16 @@ class SQLiteSnapshot:
     @property
     def uri(self) -> str:
         # quote keeps the URI path deterministic and prevents query injection from names.
-        encoded = quote(os.path.abspath(self.database), safe="/")
+        # Windows absolute paths need forward slashes and a leading slash so
+        # sqlite3 URI mode resolves ``file:///C:/...`` correctly (#206).
+        abs_path = os.path.abspath(self.database)
+        if os.name == "nt":
+            abs_path = abs_path.replace("\\", "/")
+            if len(abs_path) >= 2 and abs_path[1] == ":" and not abs_path.startswith("/"):
+                abs_path = "/" + abs_path
+            encoded = quote(abs_path, safe="/:")
+        else:
+            encoded = quote(abs_path, safe="/")
         return f"file:{encoded}?mode=ro&cache=private"
 
     def connect(self) -> sqlite3.Connection:
@@ -251,7 +260,7 @@ def _open_no_follow(path: str, root: str) -> int:
     return descriptor
 
 
-def stable_read_bytes(
+def _stable_read_bytes_impl(
     path: str | os.PathLike[str],
     *,
     root: str | os.PathLike[str],
@@ -261,7 +270,7 @@ def stable_read_bytes(
     budget: ReadBudget | None = None,
     hook: AttemptHook | None = None,
 ) -> StableRead:
-    """Read stable bytes without following symlinks; retry a changing source."""
+    """POSIX/descriptor-relative stable read implementation (used by platform_fs.posix)."""
 
     if max_bytes < 0 or max_bytes > DEFAULT_BOUNDS.sqlite_snapshot_bytes or not 1 <= attempts <= DEFAULT_BOUNDS.snapshot_attempts:
         raise DiagnosticError.invalid()
@@ -322,6 +331,35 @@ def stable_read_bytes(
             return StableRead(data=data, fingerprint=observed, attempts=attempt)
     family = (os.path.basename(safe),)
     raise DiagnosticError.source_busy(attempts=attempts, family=family)
+
+
+def stable_read_bytes(
+    path: str | os.PathLike[str],
+    *,
+    root: str | os.PathLike[str],
+    max_bytes: int = DEFAULT_BOUNDS.record_bytes,
+    attempts: int = DEFAULT_BOUNDS.snapshot_attempts,
+    membership_limit: int = DEFAULT_BOUNDS.scanned_records,
+    budget: ReadBudget | None = None,
+    hook: AttemptHook | None = None,
+) -> StableRead:
+    """Read stable bytes via the platform filesystem backend (#205).
+
+    Call sites keep this public name; POSIX and Windows implementations live
+    behind ``get_filesystem_backend().read_regular_stable``.
+    """
+
+    from .platform_fs import get_filesystem_backend
+
+    return get_filesystem_backend().read_regular_stable(
+        path,
+        root=root,
+        max_bytes=max_bytes,
+        attempts=attempts,
+        membership_limit=membership_limit,
+        budget=budget,
+        hook=hook,
+    )
 
 
 # Length-prefixed spool records for verified-attempt line replay (#10).
@@ -1001,7 +1039,7 @@ def _family_names(database: str) -> tuple[str, ...]:
     return tuple(os.path.basename(path) for path in _family_paths(database).values())
 
 
-def snapshot_sqlite_family(
+def _snapshot_sqlite_family_impl(
     database: str | os.PathLike[str],
     *,
     root: str | os.PathLike[str],
@@ -1097,6 +1135,56 @@ def snapshot_sqlite_family(
         else:
             temporary.cleanup()
     raise DiagnosticError.source_busy(attempts=maximum_attempts, family=family_names, provider=provider)
+
+
+def snapshot_sqlite_family(
+    database: str | os.PathLike[str],
+    *,
+    root: str | os.PathLike[str],
+    bounds: Bounds = DEFAULT_BOUNDS,
+    attempts: int | None = None,
+    hook: AttemptHook | None = None,
+    provider: str | None = None,
+) -> SQLiteSnapshot:
+    """Snapshot SQLite main+journal family via the platform backend (#205).
+
+    On POSIX the backend delegates to the descriptor-safe impl. Extra kwargs
+    (attempts/hook/provider/custom Bounds) always use the full impl path.
+    """
+
+    from .platform_fs import get_filesystem_backend
+
+    use_impl = (
+        attempts is not None
+        or hook is not None
+        or provider is not None
+        or bounds is not DEFAULT_BOUNDS
+    )
+    if use_impl:
+        return _snapshot_sqlite_family_impl(
+            database,
+            root=root,
+            bounds=bounds,
+            attempts=attempts,
+            hook=hook,
+            provider=provider,
+        )
+    backend = get_filesystem_backend()
+    # Default-bounds path: backend may use platform-specific snapshotting.
+    if backend.capabilities.sqlite_snapshots:
+        return backend.sqlite_family_snapshot(
+            database,
+            root=root,
+            max_bytes=bounds.sqlite_snapshot_bytes,
+        )
+    return _snapshot_sqlite_family_impl(
+        database,
+        root=root,
+        bounds=bounds,
+        attempts=attempts,
+        hook=hook,
+        provider=provider,
+    )
 
 
 @contextlib.contextmanager

@@ -150,11 +150,14 @@ class PlatformFsContractTests(unittest.TestCase):
             self.assertEqual(set(d.keys()), expected_keys)
 
     def test_windows_backend_fail_closed_policy(self) -> None:
+        """Mutating install surfaces stay fail-closed; read-only I/O is enabled."""
         win_backend = WindowsFilesystemBackend()
         self.assertFalse(win_backend.capabilities.relative_mutations)
         self.assertFalse(win_backend.capabilities.exclusive_locking)
-        self.assertFalse(win_backend.capabilities.sqlite_snapshots)
-        self.assertFalse(win_backend.capabilities.atomic_output)
+        self.assertFalse(win_backend.capabilities.handle_locking)
+        self.assertTrue(win_backend.capabilities.sqlite_snapshots)
+        self.assertTrue(win_backend.capabilities.atomic_output)
+        self.assertTrue(win_backend.capabilities.nofollow_reads)
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             target_sub = os.path.join(tmp_dir, "sub")
@@ -181,17 +184,24 @@ class PlatformFsContractTests(unittest.TestCase):
                     pass
             self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
 
+            # Read-only product surfaces work on the Windows backend even when
+            # exercised from a non-Windows host (open/lstat fallback path).
             db_path = os.path.join(tmp_dir, "test.db")
             with open(db_path, "wb") as fp:
-                fp.write(b"db")
-            with self.assertRaises(DiagnosticError) as caught:
-                win_backend.sqlite_family_snapshot(db_path, root=tmp_dir)
-            self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+                fp.write(b"db-bytes")
+            snap = win_backend.sqlite_family_snapshot(db_path, root=tmp_dir)
+            try:
+                self.assertTrue(os.path.isfile(snap.database))
+                with open(snap.database, "rb") as fp:
+                    self.assertEqual(fp.read(), b"db-bytes")
+            finally:
+                snap.close()
 
             output_path = os.path.join(tmp_dir, "out.txt")
-            with self.assertRaises(DiagnosticError) as caught:
-                win_backend.atomic_replace_output(output_path, b"data")
-            self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+            written = win_backend.atomic_replace_output(output_path, b"data")
+            self.assertTrue(os.path.isfile(written))
+            with open(written, "rb") as fp:
+                self.assertEqual(fp.read(), b"data")
 
     def test_windows_backend_read(self) -> None:
         win_backend = WindowsFilesystemBackend()
@@ -274,10 +284,10 @@ class PlatformFsContractTests(unittest.TestCase):
         win_backend = WindowsFilesystemBackend()
         self.assertTrue(win_backend.capabilities.nofollow_reads)
         self.assertTrue(win_backend.capabilities.reparse_points)
+        self.assertTrue(win_backend.capabilities.sqlite_snapshots)
+        self.assertTrue(win_backend.capabilities.atomic_output)
         self.assertFalse(win_backend.capabilities.descriptor_relative)
         self.assertFalse(win_backend.capabilities.relative_mutations)
-        self.assertFalse(win_backend.capabilities.sqlite_snapshots)
-        self.assertFalse(win_backend.capabilities.atomic_output)
         self.assertFalse(win_backend.capabilities.exclusive_locking)
         self.assertFalse(win_backend.capabilities.handle_locking)
 

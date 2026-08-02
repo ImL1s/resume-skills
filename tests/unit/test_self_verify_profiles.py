@@ -85,8 +85,13 @@ class CiWorkflowDedupeTests(unittest.TestCase):
         self.assertNotIn("unittest discover", matrix_block)
         self.assertIn("ci-compat", matrix_block)
         self.assertIn("smoke_installed_matrix.py", matrix_block)
-        # Package waits on both axes.
-        self.assertRegex(text, re.compile(r"needs:\s*\[test,\s*quality\]"))
+        # Package waits on POSIX matrix, Windows nt job, and quality.
+        self.assertRegex(
+            text,
+            re.compile(r"needs:\s*\[test,\s*test-windows,\s*quality\]"),
+        )
+        self.assertIn("windows-latest", text)
+        self.assertIn("test-windows:", text)
         packaging_command = "python scripts/self_verify.py --only packaging"
         package_block = text.split("\n  package:", 1)[1]
         self.assertNotIn(packaging_command, matrix_block)

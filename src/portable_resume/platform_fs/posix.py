@@ -10,15 +10,14 @@ from typing import Iterator
 
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
-from ..output_write import write_output_bytes
+from ..output_write import _write_output_bytes_impl
 from ..paths import canonical_root, require_within
 from ..snapshot import (
     AttemptHook,
     SQLiteSnapshot,
     StableRead,
     _open_directory_beneath,
-    snapshot_sqlite_family,
-    stable_read_bytes,
+    _snapshot_sqlite_family_impl,
 )
 from .api import FilesystemBackend, FilesystemCapabilities, FilesystemIdentity, FilesystemObjectIdentity
 
@@ -94,7 +93,9 @@ class PosixFilesystemBackend(FilesystemBackend):
         budget: ReadBudget | None = None,
         hook: AttemptHook | None = None,
     ) -> StableRead:
-        return stable_read_bytes(
+        from ..snapshot import _stable_read_bytes_impl
+
+        return _stable_read_bytes_impl(
             path,
             root=root,
             max_bytes=max_bytes,
@@ -185,7 +186,7 @@ class PosixFilesystemBackend(FilesystemBackend):
     ) -> SQLiteSnapshot:
         if max_bytes < 0 or max_bytes > DEFAULT_BOUNDS.sqlite_snapshot_bytes:
             raise DiagnosticError.invalid()
-        return snapshot_sqlite_family(database_path, root=root, bounds=DEFAULT_BOUNDS)
+        return _snapshot_sqlite_family_impl(database_path, root=root, bounds=DEFAULT_BOUNDS)
 
     def atomic_replace_output(
         self,
@@ -194,7 +195,7 @@ class PosixFilesystemBackend(FilesystemBackend):
         *,
         clobber: bool = False,
     ) -> str:
-        return write_output_bytes(path, data, clobber=clobber)
+        return _write_output_bytes_impl(path, data, clobber=clobber)
 
     @contextlib.contextmanager
     def acquire_exclusive_lock(
