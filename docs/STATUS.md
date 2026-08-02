@@ -68,9 +68,11 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 
 ## Open work (honest backlog)
 
-**Prioritized residual tracker:** [Issue #204](https://github.com/ImL1s/resume-skills/issues/204) (Wave 2–3 + honesty residuals; formal sub-issues for open P1s).  
-**Recently closed on main `055c071`:** [#120](https://github.com/ImL1s/resume-skills/issues/120) discover/doctor · [#159](https://github.com/ImL1s/resume-skills/issues/159) atomic `--output` · [#18](https://github.com/ImL1s/resume-skills/issues/18) large-session umbrella (children already closed).  
-**Partial:** [#119](https://github.com/ImL1s/resume-skills/issues/119) matrix docs gate done; broader STATUS/evidence SSOT still open.
+**Prioritized residual tracker:** [Issue #204](https://github.com/ImL1s/resume-skills/issues/204).  
+**Wave 0+1 (`055c071`):** #120 discover/doctor · #159 atomic `--output` · #18 large-session umbrella closed.  
+**Wave 2+ product (this land):** list `--limit`/`--since`/`--until`/`--cursor` (#157); `--workspace` + `project explain` (#154); `search` (#156); `pick` + `--privacy`/`--redaction-report` (#124); `config` layers/presets (#152); install `--sources` (#151); smoke `--mode source|destination|full` (#122); universal direct-skills zip by payload profile (#121); matrix docs gate (#119 partial→strengthened); native evidence policy doc (#123); Windows mutating install remains fail-closed Policy B (#125).  
+**Research NO-GO (documented, not enabled):** #200 Kimi active-context · #201 Cursor full bubble · #202/#46 Kilo source — see `docs/research/*-2026-08.md`.  
+**Explicitly deferred P2 (not done):** #126 bundle · #127 delta resume · #128 fuzz · #129 qual scaffold · #158 aliases · #160 completions · #173 standup · #47 second-wave agents. #48 roadmap remains umbrella (filesystem done; UI not-run).
 
 | Item | Track | Notes |
 |---|---|---|

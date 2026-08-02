@@ -287,27 +287,48 @@ def build(
     canonical_identity_sha256 = identity_sha256(identity)
     artifact_version = str(identity["version"])
     artifacts: list[dict[str, Any]] = []
+    # #121: collapse byte-identical direct Skill trees by skill_payload_profile.
+    from portable_resume.install.catalog import HOST_PROFILES
+
+    profile_hosts: dict[str, list[str]] = {}
     for host in hosts:
-        direct_name = f"portable-resume-{artifact_version}-{host}-skills.zip"
+        profile = HOST_PROFILES[host].skill_payload_profile
+        profile_hosts.setdefault(profile, []).append(host)
+
+    profile_artifacts: dict[str, dict[str, Any]] = {}
+    for profile, group in sorted(profile_hosts.items()):
+        # Representative host for materialize (payload is host-neutral for shared profile).
+        rep = group[0]
+        direct_files = materialize_plan(rep, identity=identity)
+        if len(group) == 1:
+            direct_name = f"portable-resume-{artifact_version}-{rep}-skills.zip"
+        elif profile == "agent-skills-portable-v1" or len(profile_hosts) == 1:
+            direct_name = f"portable-resume-{artifact_version}-skills.zip"
+        else:
+            safe = profile.replace("/", "-")
+            direct_name = f"portable-resume-{artifact_version}-{safe}-skills.zip"
         direct_path = output / direct_name
-        direct_files = materialize_plan(host, identity=identity)
         digest, meta = _validated_zip(
             direct_path,
             direct_files,
             package_type="direct-skills",
             expected_identity=identity,
         )
-        artifacts.append(
-            {
-                "host": host,
-                "type": "direct-skills",
-                "file": direct_name,
-                "sha256": digest,
-                "members": len(direct_files),
-                "install": contract_for_package_type("direct-skills").install_hint,
-                **meta,
-            }
-        )
+        entry = {
+            "host": group[0],
+            "hosts": group,
+            "skill_payload_profile": profile,
+            "type": "direct-skills",
+            "file": direct_name,
+            "sha256": digest,
+            "members": len(direct_files),
+            "install": contract_for_package_type("direct-skills").install_hint,
+            "universal": len(group) > 1,
+            **meta,
+        }
+        profile_artifacts[profile] = entry
+        # One artifact row per payload profile (#121), not per destination.
+        artifacts.append(entry)
     for surface_key in package_keys:
         surface = PACKAGE_SURFACES[surface_key]
         plugin = _plugin_files(surface.destination, identity=identity)
@@ -346,7 +367,8 @@ def build(
         "build_identity_sha256": canonical_identity_sha256,
         "package_contracts_schema": PACKAGE_CONTRACTS_SCHEMA,
         "host_count": len(hosts),
-        "direct_package_count": len(hosts),
+        "direct_package_count": len(profile_hosts),
+        "direct_payload_profiles": sorted(profile_hosts),
         "plugin_package_count": len(package_keys),
         "package_surfaces": list(package_keys),
         "artifacts": artifacts,

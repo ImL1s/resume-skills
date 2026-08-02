@@ -70,6 +70,7 @@ def select_session(
     ref: str | None,
     cwd: str | None,
     approved_roots: Iterable[str] = (),
+    workspace_mode: str = "exact",
 ) -> SelectionResult:
     """Select one eligible summary or raise a stable no-match/ambiguous diagnostic."""
 
@@ -78,11 +79,17 @@ def select_session(
         raise DiagnosticError.limit_exceeded()
     # Sessions without a durable cwd stay eligible: the store cannot prove a
     # workspace mismatch (OpenHands event files have no cwd field).
-    eligible = [
-        value
-        for value in values
-        if cwd is None or value.cwd is None or same_cwd(value.cwd, cwd)
-    ]
+    if workspace_mode in {"worktree", "repository"} and cwd is not None:
+        from .workspace import filter_by_workspace, resolve_workspace
+
+        identity = resolve_workspace(cwd, mode=workspace_mode)
+        eligible = [row for row, _reason in filter_by_workspace(values, identity)]
+    else:
+        eligible = [
+            value
+            for value in values
+            if cwd is None or value.cwd is None or same_cwd(value.cwd, cwd)
+        ]
     normalized_ref = "latest" if ref is None or not ref.strip() else ref.strip()
 
     if normalized_ref == "latest":

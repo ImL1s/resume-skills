@@ -97,6 +97,8 @@ class ActionPlan:
     # Execute recomputes under lock and never commits these fields as authority.
     base_generation: int | None = None
     base_manifest_digest: str = _MANIFEST_ABSENT
+    # Selected source Skills for this install (#151); None means all enabled.
+    sources: tuple[str, ...] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -114,6 +116,7 @@ class ActionPlan:
             "file_count": len(self.files),
             "base_generation": self.base_generation,
             "base_manifest_digest": self.base_manifest_digest,
+            "sources": list(self.sources) if self.sources is not None else None,
         }
 
 
@@ -328,6 +331,7 @@ def plan_install(
     root: str,
     dry_run: bool = False,
     force_with_backup: bool = False,
+    sources: tuple[str, ...] | None = None,
 ) -> ActionPlan:
     """Build an advisory install plan from the current root state.
 
@@ -338,7 +342,7 @@ def plan_install(
 
     if host not in HOST_PROFILES:
         raise DiagnosticError.invalid()
-    files = materialize_plan(host)
+    files = materialize_plan(host, sources=sources)
     identity = package_identity(files)
     claim = claim_key(host=host, scope=scope, root=root)
     existing = load_manifest(root)
@@ -403,6 +407,7 @@ def plan_install(
         dry_run=dry_run,
         base_generation=base_generation,
         base_manifest_digest=base_digest,
+        sources=sources,
     )
 
 
@@ -2011,6 +2016,7 @@ def _execute_install_under_lock(
         root=plan.root,
         dry_run=False,
         force_with_backup=effective_force,
+        sources=plan.sources,
     )
     # Request identity must match; payload/manifest always come from locked rebuild.
     if (
@@ -2626,6 +2632,7 @@ def install_multi_targets(
     scope: str,
     dry_run: bool = False,
     force_with_backup: bool = False,
+    sources: tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
     """Install multiple ``(host, root)`` targets as one same-process multi-root txn (#23).
 
@@ -2647,6 +2654,7 @@ def install_multi_targets(
                 root=root,
                 dry_run=True,
                 force_with_backup=force_with_backup,
+                sources=sources,
             )
             results.append(execute_install(plan, force_with_backup=force_with_backup))
         return results
@@ -2662,6 +2670,7 @@ def install_multi_targets(
             root=root,
             dry_run=False,
             force_with_backup=force_with_backup,
+            sources=sources,
         )
 
     # Canonical unique physical roots (dedupe shared destinations).
@@ -2695,6 +2704,7 @@ def install_multi_targets(
                 root=root,
                 dry_run=False,
                 force_with_backup=force_with_backup,
+                sources=sources,
             )
             plans.append(plan)
 
@@ -2705,7 +2715,9 @@ def install_multi_targets(
         for hosts in groups.values():
             if len(hosts) < 2:
                 continue
-            identities = {package_identity(materialize_plan(host)) for host in hosts}
+            identities = {
+                package_identity(materialize_plan(host, sources=sources)) for host in hosts
+            }
             if len(identities) > 1:
                 raise DiagnosticError("E_INSTALL_CONFLICT", family=tuple(sorted(hosts)))
 
@@ -2721,6 +2733,7 @@ def install_multi_targets(
                 root=plan.root,
                 dry_run=False,
                 force_with_backup=force_with_backup,
+                sources=sources,
             )
             checkpoint = capture_install_checkpoint(live_plan)
             checkpoints.append(checkpoint)

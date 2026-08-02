@@ -21,6 +21,7 @@ from .model import Envelope, Query, SessionSummary
 from .paths import canonical_root, canonical_source_root, canonicalize_cwd, reject_controls
 from .request import load_request
 from .sanitize import sanitize_session, sanitize_summary, validate_structural_summary
+from .config_layer import resolve_effective, init_config, validate_config
 from .discover_doctor import (
     discover_report,
     discover_table,
@@ -28,6 +29,9 @@ from .discover_doctor import (
     doctor_table,
 )
 from .output_write import OutputToStdout, write_output_text
+from .search_sessions import search_report, search_table
+from .time_range import page_summaries, resolve_window
+from .workspace import WORKSPACE_MODES, explain_project, filter_by_workspace, resolve_workspace
 from .select import (
     AmbiguousSelection,
     bounded_candidates,
@@ -178,6 +182,10 @@ def build_parser() -> argparse.ArgumentParser:
   portable-resume sources           # which agents have local stores (presence)
   portable-resume discover --cwd "$PWD"   # cross-source candidates (metadata)
   portable-resume doctor            # offline health (stores/registry/platform)
+  portable-resume search "keyword"  # bounded offline public-text search
+  portable-resume pick --format json
+  portable-resume project explain
+  portable-resume config show --effective
   portable-resume self-check        # packaging/runtime health (always JSON)
   portable-resume claude show latest --format handoff --output handoff.md""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -272,6 +280,44 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="with --output: allow replacing an existing regular file",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="list only: page size (1..listed_sessions default bound)",
+    )
+    parser.add_argument(
+        "--since",
+        help="list/search: relative (7d) or timezone-aware ISO lower bound",
+    )
+    parser.add_argument(
+        "--until",
+        help="list/search: relative or timezone-aware ISO upper bound",
+    )
+    parser.add_argument(
+        "--cursor",
+        help="list only: opaque continuation token from a previous page",
+    )
+    parser.add_argument(
+        "--workspace",
+        choices=WORKSPACE_MODES,
+        default=None,
+        help="cwd matching: exact (default), worktree, or repository",
+    )
+    parser.add_argument(
+        "--privacy",
+        choices=("default", "strict"),
+        default=None,
+        help="show only: privacy profile (strict omits tool turns)",
+    )
+    parser.add_argument(
+        "--redaction-report",
+        action="store_true",
+        help="show only: emit JSON redaction/privacy summary instead of handoff body",
+    )
+    parser.add_argument(
+        "--preset",
+        help="named config preset from user/project TOML (#152)",
     )
     return parser
 
@@ -741,6 +787,186 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
             return emit_diagnostic(error, stream=stderr)
         return 0
 
+
+    if argv_list and argv_list[0] == "search":
+        search_parser = DiagnosticArgumentParser(
+            prog="portable-resume search",
+            description="Bounded offline search of public user/assistant text (no source CLI).",
+        )
+        search_parser.add_argument("query", help="phrase or terms to find")
+        search_parser.add_argument("--cwd", help="project directory")
+        search_parser.add_argument("--sources", help="comma-separated enabled sources")
+        search_parser.add_argument("--since", help="time lower bound")
+        search_parser.add_argument("--until", help="time upper bound")
+        search_parser.add_argument("--within-min", type=int, help="age window minutes")
+        search_parser.add_argument(
+            "--mode",
+            choices=("phrase", "all-terms"),
+            default="phrase",
+            help="match mode (default: phrase substring)",
+        )
+        search_parser.add_argument("--json", action="store_true")
+        search_parser.add_argument("--output", help="atomic output path")
+        search_parser.add_argument("--force", action="store_true")
+        try:
+            ns = search_parser.parse_args(argv_list[1:])
+            report = search_report(
+                ns.query,
+                cwd=ns.cwd,
+                sources=_parse_sources_csv(ns.sources),
+                since=ns.since,
+                until=ns.until,
+                within_min=ns.within_min,
+                mode=ns.mode,
+            )
+            text_out = (
+                json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+                if ns.json
+                else search_table(report)
+            )
+            _emit_rendered(text_out, output=ns.output, force=ns.force, stdout=stdout)
+        except DiagnosticError as error:
+            return emit_diagnostic(error, stream=stderr)
+        return 0
+
+    if argv_list and argv_list[0] == "pick":
+        pick_parser = DiagnosticArgumentParser(
+            prog="portable-resume pick",
+            description="Select a session candidate (JSON always safe; numbered prompt on TTY).",
+        )
+        pick_parser.add_argument("--cwd", help="project directory")
+        pick_parser.add_argument("--source", help="single source key (optional; default discover)")
+        pick_parser.add_argument("--sources", help="comma-separated sources for discover mode")
+        pick_parser.add_argument("--format", choices=("json", "table"), default="json")
+        pick_parser.add_argument("--json", action="store_true")
+        pick_parser.add_argument("--output", help="atomic output path")
+        pick_parser.add_argument("--force", action="store_true")
+        pick_parser.add_argument(
+            "--select",
+            type=int,
+            help="non-interactive 1-based index into the candidate list",
+        )
+        try:
+            ns = pick_parser.parse_args(argv_list[1:])
+            if ns.source and ns.sources:
+                raise DiagnosticError.invalid()
+            if ns.source:
+                if ns.source not in SOURCE_KEYS:
+                    raise DiagnosticError.invalid()
+                # Reuse discover with one source.
+                report = discover_report(cwd=ns.cwd, sources=[ns.source])
+            else:
+                report = discover_report(cwd=ns.cwd, sources=_parse_sources_csv(ns.sources))
+            candidates = list(report.get("candidates") or [])
+            selected = None
+            if ns.select is not None:
+                if ns.select < 1 or ns.select > len(candidates):
+                    raise DiagnosticError.invalid()
+                selected = candidates[ns.select - 1]
+            payload = {
+                "schema_version": "portable-resume/pick-v1",
+                "candidates": candidates,
+                "selected": selected,
+                "count": len(candidates),
+            }
+            use_json = ns.json or ns.format == "json"
+            if use_json:
+                text_out = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+            else:
+                lines = ["#\tTOKEN\tSOURCE\tUPDATED_AT\tTITLE"]
+                for idx, row in enumerate(candidates, 1):
+                    title = (row.get("title") or "-").replace("\t", " ")
+                    lines.append(
+                        f"{idx}\t{row.get('token')}\t{row.get('source')}\t{row.get('updated_at') or '-'}\t{title}"
+                    )
+                text_out = "\n".join(lines) + "\n"
+            # Interactive numbered prompt only when TTY and no --select/--json force.
+            if (
+                selected is None
+                and not ns.json
+                and ns.select is None
+                and hasattr(sys.stdin, "isatty")
+                and sys.stdin.isatty()
+                and hasattr(sys.stdout, "isatty")
+                and sys.stdout.isatty()
+                and candidates
+            ):
+                stdout.write(text_out)
+                stdout.write(f"Select 1-{len(candidates)} (empty cancels): ")
+                stdout.flush()
+                try:
+                    line = sys.stdin.readline()
+                except Exception:
+                    line = ""
+                line = (line or "").strip()
+                if line:
+                    try:
+                        choice = int(line)
+                    except ValueError as error:
+                        raise DiagnosticError.invalid() from error
+                    if choice < 1 or choice > len(candidates):
+                        raise DiagnosticError.invalid()
+                    selected = candidates[choice - 1]
+                    payload["selected"] = selected
+                    text_out = (
+                        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                        + "\n"
+                    )
+                    _emit_rendered(text_out, output=ns.output, force=ns.force, stdout=stdout)
+                    return 0
+            _emit_rendered(text_out, output=ns.output, force=ns.force, stdout=stdout)
+        except DiagnosticError as error:
+            return emit_diagnostic(error, stream=stderr)
+        return 0
+
+    if argv_list and argv_list[0] == "project":
+        proj_parser = DiagnosticArgumentParser(prog="portable-resume project")
+        sub = proj_parser.add_subparsers(dest="proj_cmd", required=True)
+        ex = sub.add_parser("explain", help="explain workspace identity for cwd")
+        ex.add_argument("--cwd")
+        ex.add_argument("--json", action="store_true")
+        try:
+            ns = proj_parser.parse_args(argv_list[1:])
+            report = explain_project(ns.cwd)
+            text_out = (
+                json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+            )
+            stdout.write(text_out)
+        except DiagnosticError as error:
+            return emit_diagnostic(error, stream=stderr)
+        return 0
+
+    if argv_list and argv_list[0] == "config":
+        cfg_parser = DiagnosticArgumentParser(prog="portable-resume config")
+        sub = cfg_parser.add_subparsers(dest="cfg_cmd", required=True)
+        sh = sub.add_parser("show", help="show effective configuration")
+        sh.add_argument("--effective", action="store_true", default=True)
+        sh.add_argument("--project")
+        sh.add_argument("--preset")
+        sh.add_argument("--json", action="store_true")
+        ini = sub.add_parser("init", help="write a starter config file")
+        ini.add_argument("--scope", choices=("user", "project"), required=True)
+        ini.add_argument("--project")
+        val = sub.add_parser("validate", help="validate user/project config files")
+        val.add_argument("--project")
+        try:
+            ns = cfg_parser.parse_args(argv_list[1:])
+            if ns.cfg_cmd == "init":
+                written = init_config(scope=ns.scope, project=ns.project)
+                stdout.write(json.dumps({"ok": True, "path": written}, sort_keys=True) + "\n")
+            elif ns.cfg_cmd == "validate":
+                report = validate_config(project=ns.project)
+                stdout.write(json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
+            else:
+                eff = resolve_effective(project=ns.project, preset=ns.preset)
+                stdout.write(
+                    json.dumps(eff.to_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                    + "\n"
+                )
+        except DiagnosticError as error:
+            return emit_diagnostic(error, stream=stderr)
+        return 0
+
     install_identity = runtime_install_identity()
     parser = build_parser()
     source: str | None = None
@@ -799,19 +1025,41 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
             if raw.source != source:
                 raise DiagnosticError("E_INVARIANT", source=source)
             internal.append(validate_structural_summary(raw))
+        # Workspace filter (#154) before paging.
+        workspace_mode = getattr(namespace, "workspace", None) or "exact"
+        if workspace_mode != "exact":
+            identity = resolve_workspace(cwd, mode=workspace_mode)
+            internal = [row for row, _r in filter_by_workspace(internal, identity)]
+
         ordered_internal_all = sorted(internal, key=summary_sort_key)
+        # Cap the match/list window honesty signal to listed_sessions (pre-pagination).
         window_truncated = len(ordered_internal_all) > DEFAULT_BOUNDS.listed_sessions
         if window_truncated:
             envelope_warnings.append("W_TRUNCATED")
-        ordered_internal = ordered_internal_all[: DEFAULT_BOUNDS.listed_sessions]
+            ordered_internal_all = ordered_internal_all[: DEFAULT_BOUNDS.listed_sessions]
 
         if action == "list":
-            visible = ordered_internal
+            # Time window + cursor pagination (#157)
+            limit = getattr(namespace, "limit", None)
+            if limit is None:
+                limit = DEFAULT_BOUNDS.listed_sessions
+            since_raw = getattr(namespace, "since", None)
+            until_raw = getattr(namespace, "until", None)
+            cursor_raw = getattr(namespace, "cursor", None)
+            since_dt, until_dt, time_echo = resolve_window(
+                since=since_raw, until=until_raw, within_min=within_min
+            )
+            page, next_cursor, page_meta = page_summaries(
+                ordered_internal_all,
+                limit=limit,
+                cursor=cursor_raw,
+                since_dt=since_dt,
+                until_dt=until_dt,
+            )
+            visible = page
             if match_text is not None:
                 needle = match_text.casefold()
-                visible = [row for row in ordered_internal if summary_matches(row, needle)]
-                # Truncation honesty: clipped pre-filter window must stay visible
-                # even when the filtered page is small or empty.
+                visible = [row for row in page if summary_matches(row, needle)]
                 if window_truncated and "W_TRUNCATED" not in envelope_warnings:
                     envelope_warnings.append("W_TRUNCATED")
             public_sessions: list[SessionSummary] = []
@@ -826,6 +1074,12 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
                 warnings=tuple(dict.fromkeys(envelope_warnings)),
             )
             value = _validated_value(envelope)
+            # Attach pagination metadata for JSON consumers (non-schema extension under warnings-safe keys).
+            value["pagination"] = {
+                **page_meta,
+                "time": time_echo,
+                "workspace": workspace_mode,
+            }
             if output_format == "json":
                 text = _json(value)
             elif output_format == "handoff":
@@ -834,6 +1088,8 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
                 )
             else:
                 text = _table(public_sessions, warnings=envelope.warnings)
+                if next_cursor:
+                    text += f"# next_cursor\t{next_cursor}\n"
             _emit_rendered(
                 text,
                 output=namespace.output,
@@ -848,6 +1104,7 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
                 ref=ref,
                 cwd=cwd,
                 approved_roots=_approved_roots(adapter, query),
+                workspace_mode=workspace_mode,
             )
         except AmbiguousSelection as error:
             # Project each candidate from its own fields (not first-match by ID):
@@ -919,6 +1176,36 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
         # Public session_id remains the validated native token; paths are redacted.
         if session.session_id != selected_raw.session_id:
             raise DiagnosticError("E_INVARIANT", source=source)
+        privacy = getattr(namespace, "privacy", None) or "default"
+        redaction_report = bool(getattr(namespace, "redaction_report", False))
+        tool_turns = sum(1 for t in session.turns if t.role == "tool")
+        user_turns = sum(1 for t in session.turns if t.role == "user")
+        assistant_turns = sum(1 for t in session.turns if t.role == "assistant")
+        if privacy == "strict":
+            # Strict: drop tool turns from public session projection.
+            from dataclasses import replace as _dc_replace
+
+            kept = tuple(t for t in session.turns if t.role != "tool")
+            session = _dc_replace(session, turns=kept)
+        if redaction_report:
+            report = {
+                "schema_version": "portable-resume/redaction-report-v1",
+                "source": source,
+                "session_id": session.session_id,
+                "privacy": privacy,
+                "counts": {
+                    "user_turns": user_turns,
+                    "assistant_turns": assistant_turns,
+                    "tool_turns_seen": tool_turns,
+                    "tool_turns_emitted": 0 if privacy == "strict" else tool_turns,
+                    "public_turns": len(session.turns),
+                },
+                "warnings": list(dict.fromkeys(envelope_warnings)),
+                "note": "Counts are post-sanitize; secrets are redacted without echoing values.",
+            }
+            text = json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+            _emit_rendered(text, output=namespace.output, force=namespace.force, stdout=stdout)
+            return 0
         envelope = Envelope.create(
             operation="show",
             query=query,

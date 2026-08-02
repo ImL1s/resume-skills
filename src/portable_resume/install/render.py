@@ -5,7 +5,7 @@ from __future__ import annotations
 import stat
 from pathlib import Path
 from string import Template
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 from ..build_identity import (
     assert_identity_matches_package,
@@ -34,6 +34,7 @@ _RUNTIME_MODULES = (
     "bounds.py",
     "build_identity.py",
     "contracts.py",
+    "config_layer.py",
     "diagnostics.py",
     "discover_doctor.py",
     "handoff.py",
@@ -46,8 +47,11 @@ _RUNTIME_MODULES = (
     "resources/portable-resume-v1.schema.json",
     "resources/latest-release.json",
     "sanitize.py",
+    "search_sessions.py",
     "select.py",
     "snapshot.py",
+    "time_range.py",
+    "workspace.py",
     "adapters/__init__.py",
     "adapters/antigravity.py",
     "adapters/base.py",
@@ -105,14 +109,34 @@ def materialize_plan(
     host: str,
     *,
     identity: Mapping[str, Any] | None = None,
+    sources: Sequence[str] | None = None,
 ) -> dict[str, bytes]:
-    """Return relative path -> file bytes for one complete skill root."""
+    """Return relative path -> file bytes for one complete skill root.
+
+    ``sources`` (#151): when provided, only those enabled source Skills are
+    emitted (shared runtime still always included). ``None`` means all enabled.
+    """
     if host not in HOST_PROFILES:
         raise KeyError(host)
     selected_identity = runtime_identity() if identity is None else identity
     assert_identity_matches_package(selected_identity, package_root=_PACKAGE_ROOT)
     identity_bytes = identity_json_bytes(selected_identity)
-    cache_key = identity_bytes.decode("utf-8")
+    if sources is None:
+        source_list = tuple(sorted(SOURCE_KEYS))
+    else:
+        enabled = set(SOURCE_KEYS)
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for key in sources:
+            if key not in enabled:
+                raise KeyError(key)
+            if key not in seen:
+                seen.add(key)
+                cleaned.append(key)
+        if not cleaned:
+            raise ValueError("empty sources")
+        source_list = tuple(sorted(cleaned))
+    cache_key = identity_bytes.decode("utf-8") + "|" + ",".join(source_list)
     cached = _PLAN_CACHE.get(cache_key)
     if cached is not None:
         return dict(cached)
@@ -135,8 +159,8 @@ def materialize_plan(
     files[
         ".portable-resume/runtime/portable_resume/resources/build-identity.json"
     ] = identity_bytes
-    # one skill for every supported source
-    for source in sorted(SOURCE_KEYS):
+    # one skill for each selected source
+    for source in source_list:
         skill = skill_name_for(source)
         files[f"{skill}/SKILL.md"] = render_skill_markdown(source=source, host=host).encode("utf-8")
         files[f"{skill}/scripts/run_reader.py"] = render_run_reader(source=source).encode("utf-8")

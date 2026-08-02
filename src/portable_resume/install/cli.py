@@ -66,6 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="plan only; observationally pure (no mutation)",
     )
     inst.add_argument("--force-with-backup", action="store_true")
+    inst.add_argument(
+        "--sources",
+        help=(
+            "comma-separated enabled source keys to install (default: all); "
+            "e.g. claude,codex,grok (#151)"
+        ),
+    )
 
     # --- verify (JSON-only; no dry-run — already read-only) ---
     ver = sub.add_parser(
@@ -178,6 +185,33 @@ def _hosts(value: str) -> list[str]:
     if value not in HOST_KEYS:
         raise DiagnosticError.invalid()
     return [value]
+
+
+def _parse_install_sources(raw: str | None) -> tuple[str, ...] | None:
+    """Parse ``--sources`` for install (#151). ``None`` means all enabled."""
+
+    if raw is None:
+        return None
+    from ..diagnostics import SOURCE_KEYS
+    from ..paths import reject_controls
+
+    reject_controls(raw)
+    parts = [p.strip() for p in raw.split(",")]
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        if not part:
+            continue
+        if part == "all":
+            return None
+        if part not in SOURCE_KEYS:
+            raise DiagnosticError.invalid()
+        if part not in seen:
+            seen.add(part)
+            cleaned.append(part)
+    if not cleaned:
+        raise DiagnosticError.invalid()
+    return tuple(sorted(cleaned))
 
 
 def _root_for(host: str, scope: str, project: str | None, home: str, override: str | None) -> str:
@@ -382,6 +416,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                     home_dir=ns.home,
                     selected_scope=ns.scope,
                 )
+            selected_sources = _parse_install_sources(getattr(ns, "sources", None))
             if dry_run or len(targets) == 1:
                 plans = [
                     plan_install(
@@ -390,6 +425,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                         root=root,
                         dry_run=dry_run,
                         force_with_backup=force,
+                        sources=selected_sources,
                     )
                     for host, root in targets
                 ]
@@ -403,6 +439,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                     scope=ns.scope,
                     dry_run=False,
                     force_with_backup=force,
+                    sources=selected_sources,
                 )
             # Attach discovery + host identity to each result.
             for idx, (host, _root) in enumerate(targets):

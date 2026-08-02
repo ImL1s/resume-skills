@@ -42,10 +42,21 @@ class HostPackageBuilderTests(unittest.TestCase):
             report = self.build(first)
             repeated = self.build(second)
             self.assertEqual(report["host_count"], len(HOST_KEYS))
-            self.assertEqual(report["direct_package_count"], len(HOST_KEYS))
+            # #121: one direct archive per payload profile (all hosts currently share one).
+            self.assertGreaterEqual(report["direct_package_count"], 1)
+            self.assertLessEqual(report["direct_package_count"], len(HOST_KEYS))
             self.assertEqual(report["plugin_package_count"], len(enabled_package_keys()))
-            expected_artifact_count = len(HOST_KEYS) + len(enabled_package_keys())
+            expected_artifact_count = report["direct_package_count"] + len(
+                enabled_package_keys()
+            )
             self.assertEqual(len(report["artifacts"]), expected_artifact_count)
+            direct_items = [a for a in report["artifacts"] if a["type"] == "direct-skills"]
+            self.assertEqual(len(direct_items), report["direct_package_count"])
+            # Universal payload covers every destination host exactly once across profiles.
+            covered = set()
+            for item in direct_items:
+                covered.update(item.get("hosts") or [item.get("host")])
+            self.assertEqual(covered, set(HOST_KEYS))
             artifact_files = [item["file"] for item in report["artifacts"]]
             self.assertEqual(len(artifact_files), len(set(artifact_files)))
             self.assertEqual(

@@ -289,7 +289,23 @@ def _materialize_fixture(source: str, fixture: Path, destination: Path) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
-    as_json = "--json" in (argv or sys.argv[1:])
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--mode",
+        choices=("full", "source", "destination"),
+        default="full",
+        help=(
+            "full: S×D Cartesian (release evidence). "
+            "source: O(S) with one canonical host payload. "
+            "destination: O(D) with one representative source (#122)."
+        ),
+    )
+    ns = parser.parse_args(list(argv) if argv is not None else None)
+    as_json = bool(ns.json)
+    mode = ns.mode
     cells: list[dict[str, object]] = []
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC) + os.pathsep + env.get("PYTHONPATH", "")
@@ -298,6 +314,23 @@ def main(argv: list[str] | None = None) -> int:
     installed_env["PYTHONNOUSERSITE"] = "1"
     python = sys.executable
     install = str(ROOT / "scripts" / "install-resume-skills")
+
+    # Axis selection (#122)
+    if mode == "source":
+        # One host-neutral payload host — prefer claude if present.
+        hosts_iter = ("claude",) if "claude" in HOSTS else (HOSTS[0],)
+        sources_iter = SOURCES
+        expected_cells = len(SOURCES)
+    elif mode == "destination":
+        hosts_iter = HOSTS
+        # One representative source present in fixtures.
+        rep = "claude" if "claude" in SOURCES else SOURCES[0]
+        sources_iter = (rep,)
+        expected_cells = len(HOSTS)
+    else:
+        hosts_iter = HOSTS
+        sources_iter = SOURCES
+        expected_cells = matrix_dimensions()["cells"]
 
     with tempfile.TemporaryDirectory(prefix="portable-resume-smoke-") as tmp:
         project = Path(tmp) / "project"
@@ -312,8 +345,9 @@ def main(argv: list[str] | None = None) -> int:
                 fixture_copies,
             )
             for source, fixture in FIXTURES.items()
+            if source in sources_iter
         }
-        for host in HOSTS:
+        for host in hosts_iter:
             # Distinct roots: Codex/Antigravity share .agents/skills by default.
             skill_root = str(project / f"skills-{host}")
             Path(skill_root).mkdir(parents=True, exist_ok=True)
@@ -336,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
                 env=env,
             )
             if planned.returncode != 0:
-                for source in SOURCES:
+                for source in sources_iter:
                     cells.append(
                         {
                             "host": host,
@@ -347,7 +381,7 @@ def main(argv: list[str] | None = None) -> int:
                         }
                     )
                 continue
-            for source in SOURCES:
+            for source in sources_iter:
                 _fixture_rel, cwd, session_id, contents = FIXTURES[source]
                 fixture = fixtures[source]
                 # Crush binds cwd from project layout (<project>/.crush/crush.db);
@@ -449,9 +483,10 @@ def main(argv: list[str] | None = None) -> int:
 
     passed = sum(1 for c in cells if c["result"] == "pass")
     failed = [c for c in cells if c["result"] != "pass"]
-    expected = matrix_dimensions()["cells"]
+    expected = expected_cells
     report = {
         "schema_version": "portable-resume/installed-runner-smoke-v1",
+        "mode": mode,
         "cell_count": len(cells),
         "expected": expected,
         "passed": passed,
@@ -466,7 +501,7 @@ def main(argv: list[str] | None = None) -> int:
     elif failed:
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     else:
-        print(f"INSTALLED_RUNNER_SMOKE PASS cells={passed}/{expected}")
+        print(f"INSTALLED_RUNNER_SMOKE PASS mode={mode} cells={passed}/{expected}")
     return 0 if report["ok"] else 1
 
 
