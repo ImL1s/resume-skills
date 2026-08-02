@@ -82,8 +82,22 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Compat self-verify (Windows nt)
-        run: python scripts/self_verify.py --profile ci-compat-windows
+      - name: Compile + platform unit tests (Windows nt)
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m compileall -q src scripts tests
+          python -m unittest tests.unit.test_platform_fs tests.unit.test_platform_paths tests.unit.test_install_windows_platform_gate tests.unit.test_output_write tests.unit.test_self_verify_profiles -q
+
+      - name: Product read-only surfaces (Windows nt)
+        env:
+          PYTHONPATH: src
+        run: |
+          python scripts/portable-resume self-check --json
+          python scripts/install-resume-skills matrix
+          python scripts/portable-resume claude list --cwd /workspace/project --source-root tests/fixtures/claude/s-cla-01-ordered-parent-chain/root --json
+          python scripts/portable-resume claude show latest --cwd /workspace/project --source-root tests/fixtures/claude/s-cla-01-ordered-parent-chain/root --format handoff
+          python scripts/self_verify.py --only windows_source_fixtures
 
       - name: Installed runner matrix
         env:
