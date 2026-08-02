@@ -6,12 +6,15 @@ mutations) is NOT claimed. Until that lands, the residual contract is:
 - WindowsFilesystemBackend must advertise no exclusive/handle locking and no
   relative mutations.
 - Mutating backend surfaces (lock + mkdirs/unlink/replace_beneath) must fail
-  closed with E_INSTALL_UNSUPPORTED_PLATFORM.
+  closed with E_INSTALL_UNSUPPORTED_PLATFORM and leave the filesystem unchanged.
 - require_mutating_install_platform and doctor_report must honestly report
-  Windows mutating install as unsupported (os.name == \"nt\").
+  Windows mutating install as unsupported (os.name == "nt").
+- docs/STATUS.md must distinguish the closed #205-#208 read-only/CI slices from
+  the still-open #125 and #209 residual work.
 
-This module strengthens regression coverage so silent unlocked mutation cannot
-land without breaking these assertions. Full Win32 locking is out of scope.
+This module strengthens regression coverage so silent unlocked mutation or
+support-claim drift cannot land without breaking these assertions. Full Win32
+locking is out of scope.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from portable_resume.adapters.base import CapabilityReport
@@ -29,6 +33,12 @@ from portable_resume.platform_fs import get_filesystem_backend
 from portable_resume.platform_fs.posix import PosixFilesystemBackend
 from portable_resume.platform_fs.select import _reset_backend_cache
 from portable_resume.platform_fs.windows import WindowsFilesystemBackend
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_STATUS_TRACK_HEADING = (
+    "**Cross-platform track — closed read-only/CI slices #205–#208; "
+    "open residuals #125 and #209:**"
+)
 
 
 def _stub_load_adapter(source: str):
@@ -46,6 +56,23 @@ def _stub_load_adapter(source: str):
     return _Adapter()
 
 
+def _tree_snapshot(root: Path) -> dict[str, tuple[str, bytes | str | None]]:
+    """Return a deterministic content/type snapshot without following symlinks."""
+
+    snapshot: dict[str, tuple[str, bytes | str | None]] = {}
+    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+        rel = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            snapshot[rel] = ("symlink", os.readlink(path))
+        elif path.is_file():
+            snapshot[rel] = ("file", path.read_bytes())
+        elif path.is_dir():
+            snapshot[rel] = ("directory", None)
+        else:
+            snapshot[rel] = ("other", None)
+    return snapshot
+
+
 class Issue125ResidualWindowsBackendContractTests(unittest.TestCase):
     """WindowsFilesystemBackend residual capabilities + fail-closed mutations."""
 
@@ -60,35 +87,40 @@ class Issue125ResidualWindowsBackendContractTests(unittest.TestCase):
     def test_windows_mutating_surfaces_raise_e_install_unsupported_platform(self) -> None:
         backend = WindowsFilesystemBackend()
         with tempfile.TemporaryDirectory() as tmp_dir:
-            sub = os.path.join(tmp_dir, "nested")
-            leaf = os.path.join(tmp_dir, "leaf.txt")
-            dest = os.path.join(tmp_dir, "dest.txt")
-            lock_path = os.path.join(tmp_dir, "root.lock")
-            with open(leaf, "wb") as handle:
-                handle.write(b"payload")
+            root = Path(tmp_dir)
+            sub = root / "nested"
+            leaf = root / "leaf.txt"
+            dest = root / "dest.txt"
+            lock_path = root / "root.lock"
+            leaf.write_bytes(b"payload")
+            baseline = _tree_snapshot(root)
 
             with self.assertRaises(DiagnosticError) as ctx:
-                backend.mkdirs_beneath(sub, root=tmp_dir)
+                backend.mkdirs_beneath(sub, root=root)
             self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
             self.assertEqual(ctx.exception.exit_code, ExitCode.UNSUPPORTED)
+            self.assertEqual(_tree_snapshot(root), baseline)
 
             with self.assertRaises(DiagnosticError) as ctx:
-                backend.unlink_beneath(leaf, root=tmp_dir)
+                backend.unlink_beneath(leaf, root=root)
             self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+            self.assertEqual(_tree_snapshot(root), baseline)
 
             with self.assertRaises(DiagnosticError) as ctx:
-                backend.replace_beneath(leaf, dest, root=tmp_dir)
+                backend.replace_beneath(leaf, dest, root=root)
             self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+            self.assertEqual(_tree_snapshot(root), baseline)
 
             with self.assertRaises(DiagnosticError) as ctx:
                 with backend.acquire_exclusive_lock(lock_path):
                     pass
             self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
             self.assertEqual(ctx.exception.exit_code, ExitCode.UNSUPPORTED)
+            self.assertEqual(_tree_snapshot(root), baseline)
 
 
 class Issue125ResidualPlatformGateContractTests(unittest.TestCase):
-    """Installer platform gate + doctor honesty for residual Policy B."""
+    """Installer platform gate + doctor/STATUS honesty for residual Policy B."""
 
     def test_require_mutating_install_platform_raises_on_nt_mock(self) -> None:
         with mock.patch("portable_resume.install.transaction.os.name", "nt"):
@@ -109,6 +141,16 @@ class Issue125ResidualPlatformGateContractTests(unittest.TestCase):
         policy = next(c for c in report["checks"] if c["id"] == "windows_install_policy")
         self.assertEqual(policy["status"], "info")
         self.assertIn("fail-closed", policy["detail"])
+
+        status = (_REPO_ROOT / "docs" / "STATUS.md").read_text(encoding="utf-8")
+        self.assertIn(_STATUS_TRACK_HEADING, status)
+        self.assertIn("**#125 remains OPEN / not product-complete:**", status)
+        self.assertIn("**#209 umbrella remains OPEN:**", status)
+        self.assertNotIn(
+            "**Cross-platform track (#205–#209 + #125 residual):** "
+            "**Closed with evidence",
+            status,
+        )
 
 
 class Issue125ResidualRealHostContractTests(unittest.TestCase):
