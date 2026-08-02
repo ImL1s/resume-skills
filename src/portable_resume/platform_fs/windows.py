@@ -47,11 +47,18 @@ _WIN32_RESERVED_NAMES = frozenset(
 FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
 FILE_ATTRIBUTE_DIRECTORY = 0x0010
 GENERIC_READ = 0x80000000
+GENERIC_WRITE = 0x40000000
 FILE_SHARE_READ = 0x00000001
 FILE_SHARE_WRITE = 0x00000002
 FILE_SHARE_DELETE = 0x00000004
 OPEN_EXISTING = 3
+OPEN_ALWAYS = 4
+FILE_ATTRIBUTE_NORMAL = 0x00000080
 FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+LOCKFILE_FAIL_IMMEDIATELY = 0x00000001
+LOCKFILE_EXCLUSIVE_LOCK = 0x00000002
+# Whole-file exclusive lock range (Microsoft-documented pattern).
+_LOCK_MAX_DWORD = 0xFFFFFFFF
 
 try:
     import ctypes
@@ -75,6 +82,15 @@ try:
             ("nNumberOfLinks", wintypes.DWORD),
             ("nFileIndexHigh", wintypes.DWORD),
             ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+    class OVERLAPPED(ctypes.Structure):
+        _fields_ = [
+            ("Internal", ctypes.c_void_p),
+            ("InternalHigh", ctypes.c_void_p),
+            ("Offset", wintypes.DWORD),
+            ("OffsetHigh", wintypes.DWORD),
+            ("hEvent", wintypes.HANDLE),
         ]
 
     _HAS_CTYPES = True
@@ -162,19 +178,18 @@ class WindowsFilesystemBackend(FilesystemBackend):
             is_windows=True,
             backend_name="WindowsFilesystemBackend",
         )
-        # Read-only product surfaces: stable reads + SQLite family snapshots +
-        # atomic output (pathname replace after reparse checks). Mutating
-        # install ops remain fail-closed until #125 (no exclusive lock / no
-        # relative mutations / no handle locking).
+        # Read-only product surfaces + Phase 1 exclusive lock primitive (#125).
+        # Product install/uninstall/recover remain fail-closed in transaction.py
+        # until RootLock is fully wired to this lock (relative_mutations stays False).
         self._capabilities = FilesystemCapabilities(
             descriptor_relative=False,
             nofollow_reads=True,
             relative_mutations=False,
             sqlite_snapshots=True,
             atomic_output=True,
-            exclusive_locking=False,
+            exclusive_locking=True,
             reparse_points=True,
-            handle_locking=False,
+            handle_locking=True,
         )
 
     @property
@@ -544,5 +559,105 @@ class WindowsFilesystemBackend(FilesystemBackend):
         self,
         lock_path: str | os.PathLike[str],
     ) -> Iterator[int]:
-        raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
-        yield 0  # type: ignore[unreachable]
+        """Non-blocking exclusive OS lock via CreateFileW + LockFileEx (#125 Phase 1).
+
+        Product install/uninstall/recover still fail closed in transaction.py;
+        this primitive is the foundation for a future RootLock wire. Returns an
+        integer file descriptor (``msvcrt.open_osfhandle``) while the lock is held.
+        On non-Windows hosts (no kernel32) raises ``E_INSTALL_UNSUPPORTED_PLATFORM``.
+        """
+        kernel32 = _get_kernel32()
+        if kernel32 is None or not _HAS_CTYPES:
+            raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+
+        try:
+            import msvcrt
+        except ImportError as error:
+            raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM") from error
+
+        target = os.path.abspath(os.fspath(lock_path))
+        reject_controls(target)
+        basename = os.path.basename(target.replace("/", "\\"))
+        stem = basename.split(".")[0].upper()
+        if stem in _WIN32_RESERVED_NAMES or ":" in basename:
+            raise DiagnosticError.invalid()
+
+        parent = os.path.dirname(target)
+        if parent and not os.path.isdir(parent):
+            try:
+                os.makedirs(parent, exist_ok=True)
+            except OSError as error:
+                raise DiagnosticError("E_INSTALL_BUSY") from error
+
+        handle = kernel32.CreateFileW(
+            target,
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ,
+            None,
+            OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        )
+        h_val = getattr(handle, "value", handle) if handle is not None else -1
+        if h_val in (-1, 0) or (h_val & 0xFFFFFFFF) == 0xFFFFFFFF:
+            raise DiagnosticError("E_INSTALL_BUSY")
+
+        def _unlock_handle(h: object) -> None:
+            ov = OVERLAPPED()
+            ov.Offset = 0
+            ov.OffsetHigh = 0
+            ov.hEvent = None
+            try:
+                kernel32.UnlockFileEx(
+                    h,
+                    0,
+                    _LOCK_MAX_DWORD,
+                    _LOCK_MAX_DWORD,
+                    ctypes.byref(ov),
+                )
+            except Exception:
+                pass
+
+        overlapped = OVERLAPPED()
+        overlapped.Offset = 0
+        overlapped.OffsetHigh = 0
+        overlapped.hEvent = None
+        locked = False
+        fd: int | None = None
+        try:
+            ok = kernel32.LockFileEx(
+                handle,
+                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                0,
+                _LOCK_MAX_DWORD,
+                _LOCK_MAX_DWORD,
+                ctypes.byref(overlapped),
+            )
+            if not ok:
+                raise DiagnosticError("E_INSTALL_BUSY")
+            locked = True
+            try:
+                # Transfer handle ownership to a CRT fd; os.close closes the handle.
+                fd = msvcrt.open_osfhandle(int(h_val), os.O_RDWR)
+            except (OSError, ValueError, OverflowError) as error:
+                raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM") from error
+            handle = None  # type: ignore[assignment]
+            yield fd
+        finally:
+            if fd is not None:
+                if locked:
+                    try:
+                        _unlock_handle(msvcrt.get_osfhandle(fd))
+                    except Exception:
+                        pass
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            elif handle is not None:
+                if locked:
+                    _unlock_handle(handle)
+                try:
+                    kernel32.CloseHandle(handle)
+                except Exception:
+                    pass
