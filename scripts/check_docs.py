@@ -183,11 +183,62 @@ def _check_diagnostics_reference(failures: list[str]) -> None:
         failures.append(f"docs/diagnostics.md: missing codes: {missing}")
 
 
+def _check_status_current_matrix(failures: list[str]) -> None:
+    """Require STATUS packaging/installed-runner rows match live registry counts.
+
+    Historical products (e.g. published ``0.3.4`` **9×9=81**) may remain in the
+    same row when labeled historical; only the *current main tip* product is gated.
+    """
+
+    path = REPO / "docs" / "STATUS.md"
+    if not path.is_file():
+        failures.append("docs/STATUS.md: missing")
+        return
+    text = path.read_text(encoding="utf-8")
+    source_count = len(enabled_source_keys())
+    destination_count = len(enabled_destination_keys())
+    cells = source_count * destination_count
+    expected_ratio = f"{cells}/{cells}"
+    expected_product = f"{source_count}×{destination_count}"
+    for label in ("Packaging matrix", "Installed runner matrix"):
+        row = next(
+            (
+                line
+                for line in text.splitlines()
+                if line.startswith(f"| {label} |")
+            ),
+            None,
+        )
+        if row is None:
+            failures.append(f"docs/STATUS.md: missing gate row for {label}")
+            continue
+        if expected_ratio not in row:
+            failures.append(
+                f"docs/STATUS.md: {label} row must claim current "
+                f"{expected_ratio} (live registry cells)"
+            )
+        if expected_product not in row:
+            failures.append(
+                f"docs/STATUS.md: {label} row must include current product "
+                f"{expected_product}"
+            )
+        lowered = row.lower()
+        if "derived from registries" not in lowered and "registry-derived" not in lowered:
+            failures.append(
+                f"docs/STATUS.md: {label} row must note registry-derived counts"
+            )
+        if "current main" not in lowered and "on main" not in lowered:
+            failures.append(
+                f"docs/STATUS.md: {label} row must scope the live product to current main"
+            )
+
+
 def check() -> dict[str, object]:
     failures: list[str] = []
     root_readme = (REPO / "README.md").read_text(encoding="utf-8")
     _check_root_docs(failures, root_readme)
     _check_diagnostics_reference(failures)
+    _check_status_current_matrix(failures)
     if "docs/i18n/README.md" not in root_readme:
         failures.append("README.md: missing multilingual documentation link")
 
@@ -256,8 +307,12 @@ def check() -> dict[str, object]:
                 f"{path.relative_to(REPO)}: missing version-scoped host evidence marker"
             )
 
-    for failure in render_docs.check(REPO):
-        failures.append(f"generated docs drift:\n{failure}")
+    for failure in render_docs.assert_matrix_consistent(REPO):
+        # assert_matrix_consistent already prefixes generated-region failures.
+        if failure.startswith("generated docs drift"):
+            failures.append(failure)
+        else:
+            failures.append(f"matrix consistency: {failure}")
 
     return {
         "ok": not failures,
@@ -265,6 +320,7 @@ def check() -> dict[str, object]:
         "required_locale_count": len(LOCALES),
         "source_count": len(enabled_source_keys()),
         "destination_count": len(enabled_destination_keys()),
+        "matrix_cells": len(enabled_source_keys()) * len(enabled_destination_keys()),
         "checked_locales": checked,
         "failures": failures,
     }

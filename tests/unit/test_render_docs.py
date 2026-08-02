@@ -172,6 +172,7 @@ class RenderDocsTests(unittest.TestCase):
             set(regions),
             {
                 "matrix-summary",
+                "matrix-counts-table",
                 "host-support-table",
                 "install-hosts-table",
                 "exit-codes-table",
@@ -179,6 +180,15 @@ class RenderDocsTests(unittest.TestCase):
                 "warning-codes-list",
                 "self-check-result-contract",
             },
+        )
+        dims = matrix_dimensions()
+        self.assertIn(
+            f"**{dims['sources']}×{dims['destinations']}={dims['cells']}**",
+            regions["matrix-summary"],
+        )
+        self.assertIn(
+            f"cells={dims['cells']}",
+            regions["matrix-counts-table"],
         )
         for code, exit_code in ERROR_EXIT_CODES.items():
             self.assertIn(f"`{code}`", regions["error-codes-table"])

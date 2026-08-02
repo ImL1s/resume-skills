@@ -23,7 +23,12 @@ from portable_resume.diagnostics import (  # noqa: E402
     ExitCode,
     WARNING_CODES,
 )
-from portable_resume.registry import matrix_dimensions  # noqa: E402
+from portable_resume.registry import (  # noqa: E402
+    enabled_destination_keys,
+    enabled_source_keys,
+    matrix_dimensions,
+    rectangular_cells,
+)
 
 REGION_FILES = {
     Path("docs/diagnostics.md"): (
@@ -34,8 +39,13 @@ REGION_FILES = {
     ),
     Path("docs/host-support.md"): ("matrix-summary", "host-support-table"),
     Path("docs/install-hosts.md"): ("matrix-summary", "install-hosts-table"),
+    Path("docs/matrix-current.md"): ("matrix-summary", "matrix-counts-table"),
 }
 MARKER_TEMPLATE = "<!-- generated:{name}:{edge} (run scripts/render_docs.py --write) -->"
+MATRIX_COUNTS_MARKER = (
+    "<!-- portable-resume-matrix: sources={sources} "
+    "destinations={destinations} cells={cells} -->"
+)
 
 EXIT_CODE_REFERENCE: dict[ExitCode, tuple[str, str]] = {
     ExitCode.OK: (
@@ -121,6 +131,31 @@ def _matrix_summary() -> str:
         f"**{current['destinations']}** destination hosts (registry-derived; "
         f"currently **{current['sources']}×{current['destinations']}="
         f"{current['cells']}** cells)."
+    )
+
+
+def _matrix_counts_table() -> str:
+    """Render explicit integer SSOT rows for the live registry product."""
+
+    current = counts()
+    marker = MATRIX_COUNTS_MARKER.format(
+        sources=current["sources"],
+        destinations=current["destinations"],
+        cells=current["cells"],
+    )
+    return "\n".join(
+        (
+            marker,
+            "",
+            "| Field | Count |",
+            "|---|---:|",
+            f"| sources | {current['sources']} |",
+            f"| destinations | {current['destinations']} |",
+            f"| cells | {current['cells']} |",
+            "",
+            f"Product check: `{current['sources']} × {current['destinations']} = "
+            f"{current['cells']}` (must equal `len(rectangular_cells(...))`).",
+        )
     )
 
 
@@ -304,9 +339,63 @@ def rendered_regions() -> dict[str, str]:
         "self-check-result-contract": _self_check_result_contract(),
         "warning-codes-list": _warning_codes_list(),
         "matrix-summary": _matrix_summary(),
+        "matrix-counts-table": _matrix_counts_table(),
         "host-support-table": _host_support_table(),
         "install-hosts-table": _install_hosts_table(),
     }
+
+
+def assert_matrix_consistent(root: Path = REPO) -> list[str]:
+    """Return failures if registry matrix math or generated docs drift.
+
+    Checks:
+    1. ``matrix_dimensions()['cells'] == sources * destinations``
+    2. ``len(rectangular_cells(...))`` matches the reported cell product
+    3. committed generated doc regions match live registry render
+    """
+
+    failures: list[str] = []
+    dims = matrix_dimensions()
+    sources = dims["sources"]
+    destinations = dims["destinations"]
+    cells = dims["cells"]
+    product = sources * destinations
+    if cells != product:
+        failures.append(
+            f"matrix_dimensions cells={cells} != sources*destinations={product}"
+        )
+
+    enabled_sources = enabled_source_keys()
+    enabled_destinations = enabled_destination_keys()
+    if len(enabled_sources) != sources:
+        failures.append(
+            "enabled_source_keys length "
+            f"{len(enabled_sources)} != matrix_dimensions sources={sources}"
+        )
+    if len(enabled_destinations) != destinations:
+        failures.append(
+            "enabled_destination_keys length "
+            f"{len(enabled_destinations)} != matrix_dimensions destinations={destinations}"
+        )
+
+    rect = rectangular_cells(
+        sources=enabled_sources,
+        destinations=enabled_destinations,
+    )
+    if len(rect) != cells:
+        failures.append(
+            f"rectangular_cells length={len(rect)} != matrix_dimensions cells={cells}"
+        )
+    if len(set(rect)) != len(rect):
+        failures.append("rectangular_cells contains duplicate (destination, source) pairs")
+
+    for failure in check(root):
+        # Keep a stable prefix so check_docs / tests can group generated drift.
+        if failure.startswith("docs/") or "\n" in failure:
+            failures.append(f"generated docs drift:\n{failure}")
+        else:
+            failures.append(f"generated docs drift: {failure}")
+    return failures
 
 
 def _replace_region(text: str, name: str, body: str, relative: Path) -> str:
@@ -381,15 +470,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"DOCS_RENDER WRITE targets={len(REGION_FILES)}")
         return 0
 
-    failures = check()
+    # --check includes registry product invariants + generated-region drift.
+    failures = assert_matrix_consistent()
     if failures:
         print("DOCS_RENDER FAIL", file=sys.stderr)
         for failure in failures:
             print(failure, file=sys.stderr, end="" if failure.endswith("\n") else "\n")
         return 1
+    dims = counts()
     print(
         "DOCS_RENDER PASS "
-        f"targets={len(REGION_FILES)} regions={sum(map(len, REGION_FILES.values()))}"
+        f"targets={len(REGION_FILES)} regions={sum(map(len, REGION_FILES.values()))} "
+        f"matrix={dims['sources']}x{dims['destinations']}={dims['cells']}"
     )
     return 0
 

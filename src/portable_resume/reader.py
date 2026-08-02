@@ -21,6 +21,13 @@ from .model import Envelope, Query, SessionSummary
 from .paths import canonical_root, canonical_source_root, canonicalize_cwd, reject_controls
 from .request import load_request
 from .sanitize import sanitize_session, sanitize_summary, validate_structural_summary
+from .discover_doctor import (
+    discover_report,
+    discover_table,
+    doctor_report,
+    doctor_table,
+)
+from .output_write import OutputToStdout, write_output_text
 from .select import (
     AmbiguousSelection,
     bounded_candidates,
@@ -169,7 +176,10 @@ def build_parser() -> argparse.ArgumentParser:
   portable-resume claude list --cwd "$PWD" --match keyword
   portable-resume claude show latest --cwd "$PWD" --format handoff
   portable-resume sources           # which agents have local stores (presence)
-  portable-resume self-check        # packaging/runtime health (always JSON)""",
+  portable-resume discover --cwd "$PWD"   # cross-source candidates (metadata)
+  portable-resume doctor            # offline health (stores/registry/platform)
+  portable-resume self-check        # packaging/runtime health (always JSON)
+  portable-resume claude show latest --format handoff --output handoff.md""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -251,6 +261,18 @@ def build_parser() -> argparse.ArgumentParser:
             "(not full store history; not valid with show or --request-file)"
         ),
     )
+    parser.add_argument(
+        "--output",
+        help=(
+            "write rendered result to PATH (atomic, default no-clobber); "
+            "use '-' for stdout (same as omitting --output)"
+        ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="with --output: allow replacing an existing regular file",
+    )
     return parser
 
 
@@ -291,7 +313,113 @@ def build_sources_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="emit compact portable-resume/sources-v1 JSON (default: table)",
     )
+    parser.add_argument(
+        "--output",
+        help="write rendered result to PATH (atomic, default no-clobber); '-' = stdout",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="with --output: allow replacing an existing regular file",
+    )
     return parser
+
+
+def build_discover_parser() -> argparse.ArgumentParser:
+    """Closed option set for cross-source ``discover`` (issue #120)."""
+
+    parser = DiagnosticArgumentParser(
+        prog="portable-resume discover",
+        description=(
+            "List recent session candidates across enabled sources without "
+            "naming a source first (metadata only; offline; no source CLI)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--cwd",
+        help="project directory for session matching (default: current directory)",
+    )
+    parser.add_argument(
+        "--sources",
+        help="comma-separated enabled source keys (default: all enabled)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit compact portable-resume/discover-v1 JSON (default: table)",
+    )
+    parser.add_argument(
+        "--output",
+        help="write rendered result to PATH (atomic, default no-clobber); '-' = stdout",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="with --output: allow replacing an existing regular file",
+    )
+    return parser
+
+
+def build_doctor_parser() -> argparse.ArgumentParser:
+    """Closed option set for offline ``doctor`` (issue #120)."""
+
+    parser = DiagnosticArgumentParser(
+        prog="portable-resume doctor",
+        description=(
+            "Offline health report: registry, matrix, schema, source store "
+            "presence, and platform install policy (no session bodies; no CLI)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--cwd",
+        help="project directory for cwd-scoped probes (default: current directory)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit compact portable-resume/doctor-v1 JSON (default: table)",
+    )
+    parser.add_argument(
+        "--output",
+        help="write rendered result to PATH (atomic, default no-clobber); '-' = stdout",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="with --output: allow replacing an existing regular file",
+    )
+    return parser
+
+
+def _emit_rendered(
+    text: str,
+    *,
+    output: str | None,
+    force: bool,
+    stdout: Any,
+) -> None:
+    """Write rendered text to stdout or an atomic no-clobber path."""
+
+    if output is None:
+        stdout.write(text)
+        return
+    try:
+        write_output_text(output, text, clobber=bool(force))
+    except OutputToStdout:
+        stdout.write(text)
+
+
+def _parse_sources_csv(raw: str | None) -> list[str] | None:
+    if raw is None:
+        return None
+    reject_controls(raw)
+    parts = [part.strip() for part in raw.split(",")]
+    cleaned = [part for part in parts if part]
+    if not cleaned:
+        raise DiagnosticError.invalid()
+    return cleaned
 
 
 def _load_adapter(source: str) -> SourceAdapter:
@@ -550,15 +678,67 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
         sources_parser = build_sources_parser()
         try:
             sources_ns = sources_parser.parse_args(argv_list[1:])
+            report = sources_report(cwd=sources_ns.cwd)
+            if sources_ns.json:
+                text = (
+                    json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                    + "\n"
+                )
+            else:
+                text = _sources_table(report)
+            _emit_rendered(
+                text,
+                output=sources_ns.output,
+                force=sources_ns.force,
+                stdout=stdout,
+            )
         except DiagnosticError as error:
             return emit_diagnostic(error, stream=stderr)
-        report = sources_report(cwd=sources_ns.cwd)
-        if sources_ns.json:
-            stdout.write(
-                json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+        return 0
+
+    if argv_list and argv_list[0] == "discover":
+        discover_parser = build_discover_parser()
+        try:
+            discover_ns = discover_parser.parse_args(argv_list[1:])
+            source_filter = _parse_sources_csv(discover_ns.sources)
+            report = discover_report(cwd=discover_ns.cwd, sources=source_filter)
+            if discover_ns.json:
+                text = (
+                    json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                    + "\n"
+                )
+            else:
+                text = discover_table(report)
+            _emit_rendered(
+                text,
+                output=discover_ns.output,
+                force=discover_ns.force,
+                stdout=stdout,
             )
-        else:
-            stdout.write(_sources_table(report))
+        except DiagnosticError as error:
+            return emit_diagnostic(error, stream=stderr)
+        return 0
+
+    if argv_list and argv_list[0] == "doctor":
+        doctor_parser = build_doctor_parser()
+        try:
+            doctor_ns = doctor_parser.parse_args(argv_list[1:])
+            report = doctor_report(cwd=doctor_ns.cwd)
+            if doctor_ns.json:
+                text = (
+                    json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                    + "\n"
+                )
+            else:
+                text = doctor_table(report)
+            _emit_rendered(
+                text,
+                output=doctor_ns.output,
+                force=doctor_ns.force,
+                stdout=stdout,
+            )
+        except DiagnosticError as error:
+            return emit_diagnostic(error, stream=stderr)
         return 0
 
     install_identity = runtime_install_identity()
@@ -569,6 +749,9 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
         if namespace.version:
             stdout.write(_runtime_version_report(install_identity, prog=parser.prog) + "\n")
             return 0
+        # --force without --output is invalid (nothing to clobber).
+        if namespace.force and namespace.output is None:
+            raise DiagnosticError.invalid()
         source, action, ref, cwd, within_min, match_text = _resolve_invocation(namespace)
         output_format = _format(namespace, action)
         if within_min is not None and (within_min < 0 or within_min > 10 * 365 * 24 * 60):
@@ -644,11 +827,19 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
             )
             value = _validated_value(envelope)
             if output_format == "json":
-                stdout.write(_json(value))
+                text = _json(value)
             elif output_format == "handoff":
-                stdout.write(render_candidates(bounded_candidates(public_sessions), warnings=envelope.warnings))
+                text = render_candidates(
+                    bounded_candidates(public_sessions), warnings=envelope.warnings
+                )
             else:
-                stdout.write(_table(public_sessions, warnings=envelope.warnings))
+                text = _table(public_sessions, warnings=envelope.warnings)
+            _emit_rendered(
+                text,
+                output=namespace.output,
+                force=namespace.force,
+                stdout=stdout,
+            )
             return 0
 
         try:
@@ -681,10 +872,16 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
                 warnings=tuple(dict.fromkeys(envelope_warnings)),
             )
             value = _validated_value(envelope)
-            stdout.write(
+            text = (
                 _json(value)
                 if output_format == "json"
                 else render_candidates(tuple(public_candidates), warnings=envelope.warnings)
+            )
+            _emit_rendered(
+                text,
+                output=namespace.output,
+                force=namespace.force,
+                stdout=stdout,
             )
             return emit_diagnostic(error, stream=stderr)
         except DiagnosticError as error:
@@ -696,10 +893,16 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
                 warnings=tuple(dict.fromkeys(envelope_warnings)),
             )
             value = _validated_value(envelope)
-            stdout.write(
+            text = (
                 _json(value)
                 if output_format == "json"
                 else render_no_match(warnings=envelope.warnings)
+            )
+            _emit_rendered(
+                text,
+                output=namespace.output,
+                force=namespace.force,
+                stdout=stdout,
             )
             return emit_diagnostic(error, stream=stderr)
         assert selection.selected is not None
@@ -723,7 +926,13 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
             warnings=tuple(dict.fromkeys(envelope_warnings)),
         )
         value = _validated_value(envelope)
-        stdout.write(_json(value) if output_format == "json" else render_handoff(envelope))
+        text = _json(value) if output_format == "json" else render_handoff(envelope)
+        _emit_rendered(
+            text,
+            output=namespace.output,
+            force=namespace.force,
+            stdout=stdout,
+        )
         return 0
     except DiagnosticError as error:
         if error.source is None and source in SOURCE_KEYS:
