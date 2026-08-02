@@ -52,7 +52,7 @@ def run(argv: list[str], env: dict[str, str] | None = None) -> subprocess.Comple
     return subprocess.run(
         argv,
         cwd=str(REPO),
-        env=env or {**os.environ, "PYTHONPATH": str(REPO / "src")},
+        env=env or {**os.environ, "PYTHONPATH": os.pathsep.join((str(REPO / "src"), str(REPO)))},
         text=True,
         capture_output=True,
         check=False,

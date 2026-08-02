@@ -369,11 +369,19 @@ def _validate_host_report_inventory(
     expected_identity: dict[str, object],
     expected_identity_sha256: str,
 ) -> None:
+    from portable_resume.install.catalog import HOST_PROFILES
+
     destinations = tuple(sorted(enabled_destination_keys()))
     package_keys = tuple(sorted(enabled_package_keys()))
-    expected_direct = len(destinations)
+
+    profile_hosts: dict[str, list[str]] = {}
+    for host in destinations:
+        profile = HOST_PROFILES[host].skill_payload_profile
+        profile_hosts.setdefault(profile, []).append(host)
+
+    expected_direct_packages = len(profile_hosts)
     expected_plugins = len(package_keys)
-    expected_total = expected_direct + expected_plugins
+    expected_total = expected_direct_packages + expected_plugins
     expected_top_keys = {
         "schema_version",
         "version",
@@ -383,6 +391,7 @@ def _validate_host_report_inventory(
         "package_contracts_schema",
         "host_count",
         "direct_package_count",
+        "direct_payload_profiles",
         "plugin_package_count",
         "package_surfaces",
         "artifacts",
@@ -405,8 +414,9 @@ def _validate_host_report_inventory(
     ):
         raise ValueError("host package report metadata is invalid")
     if (
-        report.get("host_count") != expected_direct
-        or report.get("direct_package_count") != expected_direct
+        report.get("host_count") != len(destinations)
+        or report.get("direct_package_count") != expected_direct_packages
+        or report.get("direct_payload_profiles") != sorted(profile_hosts)
         or report.get("plugin_package_count") != expected_plugins
     ):
         raise ValueError("host package report registry-derived counts are invalid")
@@ -416,10 +426,19 @@ def _validate_host_report_inventory(
     artifact_version = str(expected_identity["version"])
     expected_rows: dict[str, dict[str, Any]] = {}
     direct_contract = contract_for_package_type("direct-skills")
-    for host in destinations:
-        name = f"portable-resume-{artifact_version}-{host}-skills.zip"
+    for profile, group in sorted(profile_hosts.items()):
+        rep = group[0]
+        if len(group) == 1:
+            name = f"portable-resume-{artifact_version}-{rep}-skills.zip"
+        elif profile == "agent-skills-portable-v1" or len(profile_hosts) == 1:
+            name = f"portable-resume-{artifact_version}-skills.zip"
+        else:
+            safe = profile.replace("/", "-")
+            name = f"portable-resume-{artifact_version}-{safe}-skills.zip"
         expected_rows[name] = {
-            "host": host,
+            "host": group[0],
+            "hosts": group,
+            "skill_payload_profile": profile,
             "type": "direct-skills",
             "file": name,
             "contract_id": direct_contract.contract_id,
@@ -430,6 +449,7 @@ def _validate_host_report_inventory(
             "build_identity_sha256": expected_identity_sha256,
             "identity_member": RUNTIME_IDENTITY_RELATIVE,
             "install": direct_contract.install_hint,
+            "universal": len(group) > 1,
         }
     for package_key in package_keys:
         surface = PACKAGE_SURFACES[package_key]

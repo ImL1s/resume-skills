@@ -109,19 +109,36 @@ class ArtifactIdentityVerifierTests(unittest.TestCase):
         encoded: bytes,
         identity: dict[str, object],
     ) -> tuple[list[Path], Path]:
+        from portable_resume.install.catalog import HOST_PROFILES
+
         identity_digest = hashlib.sha256(encoded).hexdigest()
         artifact_version = str(identity["version"])
         hosts: list[Path] = []
         rows: list[dict[str, object]] = []
         direct_contract = contract_for_package_type("direct-skills")
+
+        profile_hosts: dict[str, list[str]] = {}
         for host_key in sorted(enabled_destination_keys()):
-            name = f"portable-resume-{artifact_version}-{host_key}-skills.zip"
+            profile = HOST_PROFILES[host_key].skill_payload_profile
+            profile_hosts.setdefault(profile, []).append(host_key)
+
+        for profile, group in sorted(profile_hosts.items()):
+            rep = group[0]
+            if len(group) == 1:
+                name = f"portable-resume-{artifact_version}-{rep}-skills.zip"
+            elif profile == "agent-skills-portable-v1" or len(profile_hosts) == 1:
+                name = f"portable-resume-{artifact_version}-skills.zip"
+            else:
+                safe = profile.replace("/", "-")
+                name = f"portable-resume-{artifact_version}-{safe}-skills.zip"
             host = root / name
             self._zip(host, RUNTIME_IDENTITY_RELATIVE, encoded)
             hosts.append(host)
             rows.append(
                 {
-                    "host": host_key,
+                    "host": group[0],
+                    "hosts": group,
+                    "skill_payload_profile": profile,
                     "type": "direct-skills",
                     "file": name,
                     "sha256": hashlib.sha256(host.read_bytes()).hexdigest(),
@@ -133,6 +150,7 @@ class ArtifactIdentityVerifierTests(unittest.TestCase):
                     "last_native_evidence_ref": direct_contract.last_native_evidence_ref,
                     "offline_validation": "pass",
                     "build_identity_sha256": identity_digest,
+                    "universal": len(group) > 1,
                 }
             )
         for package_key in sorted(enabled_package_keys()):
@@ -174,7 +192,8 @@ class ArtifactIdentityVerifierTests(unittest.TestCase):
                     "build_identity_sha256": identity_digest,
                     "package_contracts_schema": PACKAGE_CONTRACTS_SCHEMA,
                     "host_count": len(enabled_destination_keys()),
-                    "direct_package_count": len(enabled_destination_keys()),
+                    "direct_package_count": len(profile_hosts),
+                    "direct_payload_profiles": sorted(profile_hosts),
                     "plugin_package_count": len(enabled_package_keys()),
                     "package_surfaces": sorted(enabled_package_keys()),
                     "artifacts": rows,
