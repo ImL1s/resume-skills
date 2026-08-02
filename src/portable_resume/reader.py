@@ -232,10 +232,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-tool-chars",
         type=int,
-        default=DEFAULT_BOUNDS.tool_output_chars,
+        default=None,
         help=(
             f"per-tool-output character cap, 0..{DEFAULT_BOUNDS.tool_output_chars} "
-            f"(default: {DEFAULT_BOUNDS.tool_output_chars})"
+            f"(default: {DEFAULT_BOUNDS.tool_output_chars}; overridable by config/preset)"
         ),
     )
     parser.add_argument(
@@ -396,6 +396,16 @@ def build_discover_parser() -> argparse.ArgumentParser:
         help="emit compact portable-resume/discover-v1 JSON (default: table)",
     )
     parser.add_argument(
+        "--preset",
+        help="named config preset from user/project TOML (#152)",
+    )
+    parser.add_argument(
+        "--workspace",
+        choices=WORKSPACE_MODES,
+        default=None,
+        help="cwd matching mode applied by downstream list/show recommendations",
+    )
+    parser.add_argument(
         "--output",
         help="write rendered result to PATH (atomic, default no-clobber); '-' = stdout",
     )
@@ -466,6 +476,97 @@ def _parse_sources_csv(raw: str | None) -> list[str] | None:
     if not cleaned:
         raise DiagnosticError.invalid()
     return cleaned
+
+
+def _apply_privacy_strict(session: Any) -> Any:
+    """Drop tool turns and renumber ordinals 0..n-1 for envelope validation (#124)."""
+
+    from dataclasses import replace as _dc_replace
+
+    from .model import Turn
+
+    kept: list[Turn] = []
+    for turn in session.turns:
+        if turn.role == "tool":
+            continue
+        kept.append(
+            Turn(
+                ordinal=len(kept),
+                role=turn.role,
+                content=turn.content,
+                timestamp=turn.timestamp,
+                tool_name=turn.tool_name,
+                truncated=turn.truncated,
+                inert=turn.inert,
+                untrusted_content=turn.untrusted_content,
+            )
+        )
+    return _dc_replace(session, turns=tuple(kept))
+
+
+def _flag_present(argv: Sequence[str], flag: str) -> bool:
+    return flag in argv or any(item.startswith(f"{flag}=") for item in argv)
+
+
+def _apply_layered_config(namespace: argparse.Namespace, *, argv: Sequence[str], project: str | None) -> None:
+    """Merge user/project/preset/env into unset CLI fields (#152).
+
+    Explicit CLI flags win. Unknown ``--preset`` fails closed via resolve_effective.
+    """
+
+    preset = getattr(namespace, "preset", None)
+    cli: dict[str, Any] = {}
+    if _flag_present(argv, "--format") or bool(getattr(namespace, "json_alias", False)):
+        if getattr(namespace, "json_alias", False):
+            cli["format"] = "json"
+        elif namespace.format is not None:
+            cli["format"] = namespace.format
+    if _flag_present(argv, "--within-min") and namespace.within_min is not None:
+        cli["within_min"] = namespace.within_min
+    if _flag_present(argv, "--workspace") and getattr(namespace, "workspace", None) is not None:
+        cli["workspace"] = namespace.workspace
+    if _flag_present(argv, "--privacy") and getattr(namespace, "privacy", None) is not None:
+        cli["privacy"] = namespace.privacy
+    if _flag_present(argv, "--limit") and getattr(namespace, "limit", None) is not None:
+        cli["limit"] = namespace.limit
+    if _flag_present(argv, "--match") and getattr(namespace, "match", None) is not None:
+        cli["match"] = namespace.match
+    if _flag_present(argv, "--max-tool-chars"):
+        cli["max_tool_chars"] = namespace.max_tool_chars
+
+    # Always resolve when preset is set (fail closed on unknown). Also resolve when
+    # project/user layers may contribute and CLI left optional fields unset.
+    if preset is None and project is None:
+        # Still allow user-global config for optional fields.
+        pass
+    effective = resolve_effective(project=project, preset=preset, cli=cli)
+    values = effective.values
+    if (
+        hasattr(namespace, "format")
+        and namespace.format is None
+        and not getattr(namespace, "json_alias", False)
+        and "format" in values
+    ):
+        if values["format"] in {"json", "handoff", "table"}:
+            namespace.format = values["format"]
+    if hasattr(namespace, "within_min") and namespace.within_min is None and "within_min" in values:
+        namespace.within_min = int(values["within_min"])
+    if hasattr(namespace, "workspace") and getattr(namespace, "workspace", None) is None and "workspace" in values:
+        if values["workspace"] in WORKSPACE_MODES:
+            namespace.workspace = values["workspace"]
+    if hasattr(namespace, "privacy") and getattr(namespace, "privacy", None) is None and "privacy" in values:
+        if values["privacy"] in {"default", "strict"}:
+            namespace.privacy = values["privacy"]
+    if hasattr(namespace, "limit") and getattr(namespace, "limit", None) is None and "limit" in values:
+        namespace.limit = int(values["limit"])
+    if hasattr(namespace, "match") and getattr(namespace, "match", None) is None and "match" in values:
+        namespace.match = str(values["match"])
+    if (
+        hasattr(namespace, "max_tool_chars")
+        and not _flag_present(argv, "--max-tool-chars")
+        and "max_tool_chars" in values
+    ):
+        namespace.max_tool_chars = int(values["max_tool_chars"])
 
 
 def _load_adapter(source: str) -> SourceAdapter:
@@ -746,6 +847,11 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
         discover_parser = build_discover_parser()
         try:
             discover_ns = discover_parser.parse_args(argv_list[1:])
+            _apply_layered_config(
+                discover_ns,
+                argv=argv_list[1:],
+                project=discover_ns.cwd or os.getcwd(),
+            )
             source_filter = _parse_sources_csv(discover_ns.sources)
             report = discover_report(cwd=discover_ns.cwd, sources=source_filter)
             if discover_ns.json:
@@ -978,6 +1084,17 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
         # --force without --output is invalid (nothing to clobber).
         if namespace.force and namespace.output is None:
             raise DiagnosticError.invalid()
+        # Layered config / named presets (#152) before resolving invocation.
+        # request-file path: do not invent a project cwd from ambient getcwd alone
+        # for config — still allow preset/user layers when --preset is set.
+        config_project: str | None = None
+        if not namespace.request_file:
+            config_project = namespace.cwd or os.getcwd()
+        elif namespace.preset is not None:
+            config_project = namespace.cwd
+        _apply_layered_config(namespace, argv=argv_list, project=config_project)
+        if namespace.max_tool_chars is None:
+            namespace.max_tool_chars = DEFAULT_BOUNDS.tool_output_chars
         source, action, ref, cwd, within_min, match_text = _resolve_invocation(namespace)
         output_format = _format(namespace, action)
         if within_min is not None and (within_min < 0 or within_min > 10 * 365 * 24 * 60):
@@ -1182,11 +1299,7 @@ def run(argv: Sequence[str] | None = None, *, stdout: Any = sys.stdout, stderr: 
         user_turns = sum(1 for t in session.turns if t.role == "user")
         assistant_turns = sum(1 for t in session.turns if t.role == "assistant")
         if privacy == "strict":
-            # Strict: drop tool turns from public session projection.
-            from dataclasses import replace as _dc_replace
-
-            kept = tuple(t for t in session.turns if t.role != "tool")
-            session = _dc_replace(session, turns=kept)
+            session = _apply_privacy_strict(session)
         if redaction_report:
             report = {
                 "schema_version": "portable-resume/redaction-report-v1",

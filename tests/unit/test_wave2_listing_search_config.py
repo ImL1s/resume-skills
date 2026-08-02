@@ -237,5 +237,165 @@ class MaterializeSourcesTests(unittest.TestCase):
         self.assertEqual(skill_dirs, {"resume-claude", "resume-codex"})
 
 
+class PrivacyAndPresetCliTests(unittest.TestCase):
+    """Drive real reader.run for privacy strict / redaction / preset (#124/#152)."""
+
+    def _adapter_with_tools(self, source: str = "claude"):
+        class _Adapter:
+            key = source
+
+            def probe(self, query):  # noqa: ANN001
+                return CapabilityReport(source, "fixture", "supported")
+
+            def list(self, query, budget):  # noqa: ANN001
+                return [
+                    SessionSummary(
+                        source=source,
+                        session_id="priv-1",
+                        title="with tools",
+                        cwd=query.cwd,
+                        updated_at="2026-08-01T12:00:00Z",
+                    )
+                ]
+
+            def show(self, ref, query, budget):  # noqa: ANN001
+                return Session(
+                    source=source,
+                    session_id=ref.session_id,
+                    turns=(
+                        Turn(ordinal=0, role="user", content="please run tool"),
+                        Turn(
+                            ordinal=1,
+                            role="tool",
+                            content="tool secret output",
+                            tool_name="bash",
+                        ),
+                        Turn(ordinal=2, role="assistant", content="done"),
+                    ),
+                )
+
+        return _Adapter()
+
+    def test_show_privacy_strict_renumbers_and_validates(self) -> None:
+        adapter = self._adapter_with_tools()
+        with mock.patch("portable_resume.reader._load_adapter", return_value=adapter):
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            code = run(
+                [
+                    "claude",
+                    "show",
+                    "priv-1",
+                    "--format",
+                    "json",
+                    "--privacy",
+                    "strict",
+                    "--cwd",
+                    os.getcwd(),
+                ],
+                stdout=stdout,
+                stderr=stderr,
+            )
+        self.assertEqual(code, 0, stderr.getvalue() + stdout.getvalue())
+        payload = json.loads(stdout.getvalue())
+        sessions = payload.get("sessions") or []
+        self.assertEqual(len(sessions), 1)
+        turns = sessions[0]["turns"]
+        roles = [t["role"] for t in turns]
+        self.assertNotIn("tool", roles)
+        self.assertEqual([t["ordinal"] for t in turns], list(range(len(turns))))
+        self.assertEqual(roles, ["user", "assistant"])
+
+    def test_show_redaction_report_counts_via_cli(self) -> None:
+        adapter = self._adapter_with_tools()
+        with mock.patch("portable_resume.reader._load_adapter", return_value=adapter):
+            stdout = io.StringIO()
+            code = run(
+                [
+                    "claude",
+                    "show",
+                    "priv-1",
+                    "--redaction-report",
+                    "--privacy",
+                    "strict",
+                    "--cwd",
+                    os.getcwd(),
+                ],
+                stdout=stdout,
+                stderr=io.StringIO(),
+            )
+        self.assertEqual(code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(report["schema_version"], "portable-resume/redaction-report-v1")
+        self.assertEqual(report["privacy"], "strict")
+        self.assertEqual(report["counts"]["tool_turns_seen"], 1)
+        self.assertEqual(report["counts"]["tool_turns_emitted"], 0)
+        self.assertEqual(report["counts"]["public_turns"], 2)
+
+    def test_preset_applies_format_and_unknown_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "proj"
+            project.mkdir()
+            (project / ".portable-resume.toml").write_text(
+                '[presets.daily]\nformat = "json"\nwithin_min = 60\n',
+                encoding="utf-8",
+            )
+
+            def fake_load(source: str):
+                class _Adapter:
+                    key = source
+
+                    def probe(self, query):  # noqa: ANN001
+                        return CapabilityReport(source, "fixture", "supported")
+
+                    def list(self, query, budget):  # noqa: ANN001
+                        return [
+                            SessionSummary(
+                                source=source,
+                                session_id="p1",
+                                title="t",
+                                cwd=query.cwd,
+                                updated_at="2026-08-01T12:00:00Z",
+                            )
+                        ]
+
+                return _Adapter()
+
+            with mock.patch("portable_resume.reader._load_adapter", side_effect=fake_load):
+                stdout = io.StringIO()
+                code = run(
+                    [
+                        "claude",
+                        "list",
+                        "--preset",
+                        "daily",
+                        "--cwd",
+                        str(project),
+                    ],
+                    stdout=stdout,
+                    stderr=io.StringIO(),
+                )
+                self.assertEqual(code, 0)
+                # preset forces json without --format
+                payload = json.loads(stdout.getvalue())
+                self.assertEqual(payload["operation"], "list")
+
+                stderr = io.StringIO()
+                code_bad = run(
+                    [
+                        "claude",
+                        "list",
+                        "--preset",
+                        "nope",
+                        "--cwd",
+                        str(project),
+                    ],
+                    stdout=io.StringIO(),
+                    stderr=stderr,
+                )
+                self.assertEqual(code_bad, 2)
+                self.assertIn("E_INVALID_INPUT", stderr.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
