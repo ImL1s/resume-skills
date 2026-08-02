@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
-from ..paths import canonical_root, is_within, reject_controls
+from ..paths import canonical_root, canonicalize_cwd, is_within, reject_controls
 from .api import FilesystemBackend, FilesystemCapabilities, FilesystemIdentity, FilesystemObjectIdentity
 
 _WIN32_RESERVED_NAMES = frozenset(
@@ -123,14 +123,14 @@ def _validate_win32_path(path: str | os.PathLike[str], root: str | os.PathLike[s
             raise DiagnosticError.unsafe_path()
 
     base_root = canonical_root(root)
-    abs_path = _abs_win_path(path_str)
+    abs_path = canonicalize_cwd(path_str)
     if not is_within(abs_path, base_root):
         raise DiagnosticError.unsafe_path()
 
 
 def _check_reparse_components(path: str, root: str) -> None:
     base_root = canonical_root(root)
-    abs_path = _abs_win_path(path)
+    abs_path = canonicalize_cwd(path)
     if not is_within(abs_path, base_root):
         raise DiagnosticError.unsafe_path()
 
@@ -195,7 +195,7 @@ class WindowsFilesystemBackend(FilesystemBackend):
     ) -> FilesystemObjectIdentity:
         _validate_win32_path(path, root)
         base_root = canonical_root(root)
-        abs_path = _abs_win_path(path)
+        abs_path = canonicalize_cwd(path)
         if not is_within(abs_path, base_root):
             raise DiagnosticError.unsafe_path()
 
@@ -287,7 +287,7 @@ class WindowsFilesystemBackend(FilesystemBackend):
 
         _validate_win32_path(path, root)
         base_root = canonical_root(root)
-        abs_path = _abs_win_path(path)
+        abs_path = canonicalize_cwd(path)
         if not is_within(abs_path, base_root):
             raise DiagnosticError.unsafe_path()
 
