@@ -105,7 +105,7 @@ jobs:
       # Mutating install is fail-closed on Windows (#125). smoke_installed_matrix
       # requires install into temp skill roots, so it is not a read-only gate.
       - name: Note skipped mutating installed-runner matrix on Windows
-        run: python -c "print('skip smoke_installed_matrix on nt: mutating install fail-closed (#125)')"
+        run: echo "skip smoke_installed_matrix on Windows (mutating install fail-closed issue 125)"
 
   package:
     name: build and smoke distributions
