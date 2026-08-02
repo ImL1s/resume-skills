@@ -68,6 +68,10 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 
 ## Open work (honest backlog)
 
+**Prioritized residual tracker:** [Issue #204](https://github.com/ImL1s/resume-skills/issues/204) (Wave 2–3 + honesty residuals; formal sub-issues for open P1s).  
+**Recently closed on main `055c071`:** [#120](https://github.com/ImL1s/resume-skills/issues/120) discover/doctor · [#159](https://github.com/ImL1s/resume-skills/issues/159) atomic `--output` · [#18](https://github.com/ImL1s/resume-skills/issues/18) large-session umbrella (children already closed).  
+**Partial:** [#119](https://github.com/ImL1s/resume-skills/issues/119) matrix docs gate done; broader STATUS/evidence SSOT still open.
+
 | Item | Track | Notes |
 |---|---|---|
 | Issue #3 parent list + large rollout reject | **Closed** via PR #4 → `48746c4` | P0 on main. |
