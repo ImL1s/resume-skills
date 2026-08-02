@@ -147,7 +147,10 @@ class StatusHonestyTests(unittest.TestCase):
         lowered = text.lower()
         # Prefer immutable CI evidence for the current suite. Historical local
         # snapshots may remain, but they must be explicitly labeled historical.
-        self.assertRegex(text, r"\*\*\d+ pass in current [^*]+ CI\*\*")
+        self.assertRegex(
+            text,
+            r"\*\*\d+ pass in current [^*]+ CI(?: \(PR #[0-9]+\))?\*\*",
+        )
         self.assertRegex(
             text,
             r"(?i)prior \*\*\d+ local\*\* snapshot[^.]{0,160}historical",
