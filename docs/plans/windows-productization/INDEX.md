@@ -42,6 +42,16 @@ First PR for a low model on Windows:
   → docs/plans/windows-productization/03-rootlock-wire.md
 ```
 
+**Cannot find these files?** You are on a **stale clone**. Run:
+
+```bat
+git fetch origin main
+git checkout main
+git pull origin main
+dir docs\plans\windows-productization
+```
+
+Also see repo-root [`WINDOWS_PRODUCTIZATION.md`](../../../WINDOWS_PRODUCTIZATION.md) and [`plans/windows-productization/README.md`](../../../plans/windows-productization/README.md).
 ---
 
 ## Global must-not-do (every pre-final slice)

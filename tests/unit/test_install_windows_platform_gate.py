@@ -32,7 +32,13 @@ class WindowsPlatformGateTests(unittest.TestCase):
         with mock.patch("portable_resume.install.transaction.os.name", "posix"):
             require_mutating_install_platform()
 
-    def test_root_lock_does_not_create_support_on_windows(self) -> None:
+    def test_root_lock_mocked_nt_on_non_windows_fail_closed_no_support(self) -> None:
+        """Spoofed os.name==nt on POSIX must not create control state.
+
+        Phase 3: real Windows RootLock uses Win32 exclusive lock (see
+        tests/unit/test_rootlock_windows.py). Product mutations still fail closed
+        via require_mutating_install_platform / execute_install gates below.
+        """
         with tempfile.TemporaryDirectory() as temporary:
             root = str(Path(temporary) / "skills")
             Path(root).mkdir()

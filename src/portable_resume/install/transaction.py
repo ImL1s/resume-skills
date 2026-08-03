@@ -9,6 +9,7 @@ import re
 import secrets
 import shutil
 import stat as stat_mod
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -159,8 +160,57 @@ class RootLock:
         self.path = os.path.join(self.state, LOCK_NAME)
         self._fd: int | None = None
         self.wait_seconds = wait_seconds
+        # Windows: hold backend.acquire_exclusive_lock context across RootLock life.
+        self._win_lock_cm: Any | None = None
 
     def __enter__(self) -> "RootLock":
+        # Windows Phase 3 (#125): exclusive lock via platform_fs Win32 primitive.
+        # Product install/uninstall/recover still call require_mutating_install_platform()
+        # before RootLock — do not treat lock success as product enablement.
+        #
+        # Require *real* Windows (sys.platform), not merely os.name=="nt" mocks on
+        # POSIX hosts, so fail-closed tests never create support dirs via a spoofed
+        # Windows backend selection.
+        if os.name == "nt" and sys.platform.startswith("win"):
+            return self._enter_windows()
+        if os.name == "nt":
+            raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+        return self._enter_posix()
+
+    def _enter_windows(self) -> "RootLock":
+        from ..platform_fs import get_filesystem_backend
+
+        backend = get_filesystem_backend()
+        caps = backend.capabilities
+        if not caps.exclusive_locking or not caps.handle_locking:
+            raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+        _ensure_control_state_directory(self.root)
+        deadline = time.monotonic() + self.wait_seconds
+        last_error: BaseException | None = None
+        while True:
+            try:
+                cm = backend.acquire_exclusive_lock(self.path)
+                fd = cm.__enter__()
+                self._win_lock_cm = cm
+                self._fd = fd
+                _write_root_lock_pid(fd)
+                return self
+            except DiagnosticError as error:
+                last_error = error
+                if error.code == "E_INSTALL_BUSY" and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                    continue
+                raise
+            except OSError as error:
+                last_error = error
+                if time.monotonic() >= deadline:
+                    raise DiagnosticError("E_INSTALL_BUSY") from error
+                time.sleep(0.05)
+        if last_error is not None:
+            raise DiagnosticError("E_INSTALL_BUSY") from last_error
+        raise DiagnosticError("E_INSTALL_BUSY")
+
+    def _enter_posix(self) -> "RootLock":
         # Never open/create support paths on platforms without exclusive locking.
         require_mutating_install_platform()
         _ensure_control_state_directory(self.root)
@@ -195,17 +245,7 @@ class RootLock:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     # Drain any stranded legacy artifacts (partial prior migrate).
                     _migrate_v1_control_state(self.root)
-                os.ftruncate(fd, 0)
-                os.lseek(fd, 0, os.SEEK_SET)
-                payload = f"pid={os.getpid()}\n".encode("ascii")
-                view = memoryview(payload)
-                while view:
-                    written = os.write(fd, view)
-                    view = view[written:]
-                try:
-                    os.fsync(fd)
-                except OSError:
-                    pass
+                _write_root_lock_pid(fd)
                 self._fd = fd
                 return self
             except BlockingIOError as error:
@@ -230,6 +270,13 @@ class RootLock:
                 raise DiagnosticError("E_INSTALL_BUSY") from error
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        if self._win_lock_cm is not None:
+            try:
+                self._win_lock_cm.__exit__(exc_type, exc, tb)
+            finally:
+                self._win_lock_cm = None
+                self._fd = None
+            return
         if self._fd is not None:
             try:
                 import fcntl
@@ -238,6 +285,26 @@ class RootLock:
             finally:
                 os.close(self._fd)
                 self._fd = None
+
+
+def _write_root_lock_pid(fd: int) -> None:
+    """Best-effort pid payload on the locked fd (POSIX + Windows CRT fd)."""
+
+    try:
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        payload = f"pid={os.getpid()}\n".encode("ascii")
+        view = memoryview(payload)
+        while view:
+            written = os.write(fd, view)
+            view = view[written:]
+        try:
+            os.fsync(fd)
+        except OSError:
+            pass
+    except OSError:
+        # Lock is still held; pid write is advisory.
+        pass
 
 
 def journal_path(root: str) -> str:
