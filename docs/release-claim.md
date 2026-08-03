@@ -121,6 +121,10 @@ separate and require their own rows in
 
 ### Current state
 
+- `0.4.1` release candidate: version pin and CHANGELOG heading prepared on `main`
+  for annotated tag `v0.4.1` (Windows mutating install #125 Phase 1–7, platform
+  honesty V1 win+mac #209 reduced close, list JSON clock flake fix, smoke cwd
+  normalize). Evidence after publish is owned by the `release.yml` run for that tag.
 - `0.4.0` release candidate: version pin and CHANGELOG heading prepared on `main`
   for annotated tag `v0.4.0` (includes #118 identity gates, Codex busy-SQLite
   degrade #196/#199, expanded source/destination matrix 17×18=306). Publication

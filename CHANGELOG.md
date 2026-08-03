@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## [0.4.1] — 2026-08-04
+
+- Windows mutating install productization (#125 Phases 1–7): Win32 exclusive
+  lock, reparse-safe relative mutations, parent-chain defenses, adversarial
+  product-path suite, and Policy B lift on real Windows (`os.name == "nt"` and
+  `sys.platform` starts with `win`). Evidence: PR #228 / Actions run 30800595796.
+- Platform honesty V1 desktop dual-OS (Windows native + macOS) (#209 reduced
+  close): WSL2 / musl / FreeBSD–BSD remain **not-run** (no fake green).
+- Windows CI hard gate is focused product-install smoke
+  (`smoke_windows_product_install.py`, hosts claude/cursor/codex). Full
+  306-cell `smoke_installed_matrix` remains the Ubuntu hard gate — Windows is
+  **not** claimed 306/306.
+- CI flake fix: list `--format json` / `--output` comparison ignores
+  `generated_at` second-boundary drift (PR #232).
+- Plan-pack historical banners for completed #125 phases; smoke fixture cwd
+  host-normalization for POSIX project paths (PR #232/#233).
+
 ## [0.4.0] — 2026-08-01
 
 - Codex busy/hot SQLite degrade (#196, #199): when `state_*.sqlite` is busy or has

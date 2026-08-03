@@ -148,6 +148,9 @@ jobs:
             echo "PORTABLE_RESUME_BUILD_IDENTITY_FILE=$GITHUB_WORKSPACE/package-evidence/build-identity.json"
             echo "PORTABLE_RESUME_BUILD_IDENTITY_SHA256=$identity_sha"
             echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)"
+            # Pre-tag release candidates pin exact X.Y.Z before vX.Y.Z exists;
+            # allow development-channel smoke of stable base in CI only.
+            echo "PORTABLE_RESUME_ALLOW_STABLE_DEVELOPMENT_IDENTITY=1"
           } >> "$GITHUB_ENV"
 
       - name: Build wheel and sdist

@@ -1,8 +1,8 @@
-<!-- portable-resume-i18n: ko v0.4.1.dev0 -->
+<!-- portable-resume-i18n: ko v0.4.1 -->
 <!-- portable-resume-counts: sources=17 destinations=18 -->
 # Portable Resume — 한국어 빠른 시작
 
-**현재 공개 릴리스:** [`0.4.0`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.0)
+**현재 공개 릴리스:** [`0.4.1`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.1)
 
 Portable Resume은 Claude, Codex, Cursor, OpenCode, Antigravity, Grok, Qwen, Kimi의 제한된 로컬 컨텍스트를 **새로운** 코딩 에이전트 세션으로 이전합니다. 실행 중인 프로세스나 세션을 복원하지 않습니다. 리더는 오프라인·Python 표준 라이브러리 전용이며 원본 CLI를 실행하지 않고, 복구된 텍스트를 비활성·신뢰할 수 없는 데이터로 표시합니다.
 
