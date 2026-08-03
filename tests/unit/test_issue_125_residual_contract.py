@@ -1,16 +1,14 @@
-"""Residual honesty contract for issue #125 (Windows mutating install Policy B).
+"""Residual honesty contract for issue #125 (Windows mutating install Phase 7).
 
-#125 **product** install/uninstall/recover is NOT claimed complete. Phase 1 ships
-an exclusive-lock primitive on WindowsFilesystemBackend, but:
+#125 **product** install/uninstall/recover IS claimed complete via Phase 7.
+Phases 1–6 established exclusive Win32 locking, reparse-safe mutations,
+parent-chain defenses, and adversarial product-path evidence.  Phase 7
+lifts the Policy B gate on real Windows.
 
-- relative_mutations stays False; mkdirs/unlink/replace_beneath fail closed
-- require_mutating_install_platform and doctor windows_mutating_install still
-  report unsupported on nt (transaction gate remains Policy B)
-- Full RootLock wire + reparse-safe install transaction is out of scope here
-
-The tests below prove that unsupported relative mutations do not modify existing
-filesystem state. The Phase-1 lock file itself is an intentional primitive side
-effect on native Windows and is not treated as product install enablement.
+- relative_mutations is True; mkdirs/unlink/replace_beneath are functional
+- require_mutating_install_platform() passes on real Windows
+- doctor reports windows_mutating_install = True on real Windows
+- Mocked os.name=="nt" on non-Windows hosts still fail-closed
 """
 
 from __future__ import annotations
@@ -122,8 +120,11 @@ class Issue125ResidualWindowsBackendContractTests(unittest.TestCase):
 class Issue125ResidualPlatformGateContractTests(unittest.TestCase):
     """Installer platform gate + doctor honesty for residual Policy B."""
 
-    def test_require_mutating_install_platform_raises_on_nt_mock(self) -> None:
-        with mock.patch("portable_resume.install.transaction.os.name", "nt"):
+    def test_require_mutating_install_platform_raises_on_spoofed_nt(self) -> None:
+        """Mocked nt on non-Windows host still fails closed."""
+        with mock.patch("portable_resume.install.transaction.os.name", "nt"), \
+             mock.patch("portable_resume.install.transaction.sys") as mock_sys:
+            mock_sys.platform = "linux"
             with self.assertRaises(DiagnosticError) as ctx:
                 require_mutating_install_platform()
         self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
@@ -133,8 +134,11 @@ class Issue125ResidualPlatformGateContractTests(unittest.TestCase):
         with mock.patch("portable_resume.install.transaction.os.name", "posix"):
             require_mutating_install_platform()
 
-    def test_doctor_report_windows_mutating_install_false_on_nt_mock(self) -> None:
-        with mock.patch("portable_resume.discover_doctor.os.name", "nt"):
+    def test_doctor_report_windows_mutating_install_on_nt_mock(self) -> None:
+        """Doctor on mocked nt with non-Windows sys.platform reports fail-closed."""
+        with mock.patch("portable_resume.discover_doctor.os.name", "nt"), \
+             mock.patch("portable_resume.discover_doctor.sys") as mock_sys:
+            mock_sys.platform = "linux"
             report = doctor_report(cwd=os.getcwd(), load_adapter=_stub_load_adapter)
         self.assertIs(report["platform"]["windows_mutating_install"], False)
         self.assertEqual(report["platform"]["os_name"], "nt")
@@ -162,10 +166,10 @@ class Issue125ResidualRealHostContractTests(unittest.TestCase):
             self.assertIs(backend.capabilities.exclusive_locking, True)
             self.assertIs(backend.capabilities.handle_locking, True)
             self.assertIs(backend.capabilities.relative_mutations, True)
-            self.assertIs(windows_mutating, False)
-            with self.assertRaises(DiagnosticError) as ctx:
-                require_mutating_install_platform()
-            self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+            # Phase 7: real Windows now reports windows_mutating_install = True
+            self.assertIs(windows_mutating, True)
+            # Phase 7: real Windows no longer raises
+            require_mutating_install_platform()
         else:
             self.assertIsInstance(backend, PosixFilesystemBackend)
             self.assertIs(backend.capabilities.exclusive_locking, True)

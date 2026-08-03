@@ -155,17 +155,39 @@ def _allow_windows_install_for_tests() -> Iterator[None]:
 
 
 def require_mutating_install_platform() -> None:
-    """Fail closed before Windows (or other non-POSIX) mutating installer ops.
+    """Gate mutating installer ops on platform readiness.
 
-    Policy B for issue #29: exclusive root locking and reparse-safe control-store
-    semantics are verified on POSIX only. Mutating install/uninstall/recover must
-    not pretend to lock on ``os.name == "nt"``. Dry-run planning, matrix/hosts,
-    verify (read-only), package builds, and the reader remain available where
-    individually safe.
+    Policy B for issue #29 / #125: Windows mutating install is enabled when
+    running on **real** Windows (``os.name == "nt"`` *and*
+    ``sys.platform.startswith("win")``).  Phases 1–6 established exclusive
+    Win32 locking, reparse-safe relative mutations, parent-chain defenses,
+    and adversarial product-path evidence.  Phase 7 lifts the gate.
+
+    Spoofed ``os.name == "nt"`` on non-Windows hosts (e.g. unit-test mocks)
+    still fail-closed to prevent silent unlocked mutation on POSIX.
+    The test-harness bypass remains for backward compatibility with the
+    Phase-6 adversarial suite on real Windows.
     """
 
-    if os.name == "nt" and not _is_windows_install_allowed_for_tests():
-        raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+    if os.name == "nt":
+        # Real Windows: allowed (Phase 7 lift).
+        if sys.platform.startswith("win"):
+            return
+        # Mocked nt on non-Windows: allow only via test harness.
+        if not _is_windows_install_allowed_for_tests():
+            raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+
+
+def _is_windows_install_enabled() -> bool:
+    """True when the Windows non-dirfd install path should be used.
+
+    Phase 7: real Windows (``os.name == "nt"`` *and*
+    ``sys.platform.startswith("win")``) is always enabled.
+    The test harness provides an additional bypass for mocked-nt scenarios.
+    """
+    if os.name != "nt":
+        return False
+    return sys.platform.startswith("win") or _is_windows_install_allowed_for_tests()
 
 
 def control_state_dir(root: str) -> str:
@@ -2147,7 +2169,7 @@ def _execute_install_under_lock(
             backups.append(rel)
     _ensure_control_state_directory(root)
     if not _supports_descriptor_relative_commit():
-        if os.name == "nt" and _is_windows_install_allowed_for_tests():
+        if _is_windows_install_enabled():
             return _execute_install_under_lock_windows(
                 plan=plan,
                 existing=existing,
@@ -2981,7 +3003,7 @@ def restore_install_checkpoint(
     allowed set (pre-checkpoint snapshot or planned post-install bytes). Unknown
     concurrent mutation returns ``E_RECOVERY_REQUIRED`` (#23).
     """
-    if os.name == "nt" and _is_windows_install_allowed_for_tests():
+    if _is_windows_install_enabled():
         return _restore_checkpoint_files_windows(checkpoint, backup_root=backup_root)
     removed: list[str] = []
     root = checkpoint.root
@@ -3387,7 +3409,7 @@ def _delete_authorized_support_subtree(root: str, path: str, *, role: str) -> No
     authorized = _authorize_support_cleanup(root, path, role=role)
     if authorized is None:
         return
-    if os.name == "nt" and _is_windows_install_allowed_for_tests():
+    if _is_windows_install_enabled():
         if os.path.exists(authorized):
             shutil.rmtree(authorized, ignore_errors=True)
         return
@@ -3530,7 +3552,7 @@ def _safe_rmtree_under_support(root: str, path: str) -> None:
 def _try_safe_rmtree_under_support(root: str, path: str) -> None:
     """Best-effort support cleanup; swallow containment failures."""
     try:
-        if os.name == "nt" and _is_windows_install_allowed_for_tests():
+        if _is_windows_install_enabled():
             if os.path.exists(path):
                 shutil.rmtree(path, ignore_errors=True)
             return
@@ -3543,7 +3565,7 @@ def _rollback_paths(root: str, journal: dict[str, Any]) -> tuple[int, bool]:
     restored = 0
     complete = True
     if not _supports_descriptor_relative_commit():
-        if os.name == "nt" and _is_windows_install_allowed_for_tests():
+        if _is_windows_install_enabled():
             return _rollback_paths_windows(root, journal)
         # Payload restore/delete mutations require dirfd containment (Windows residual #29).
         return 0, False
@@ -3896,7 +3918,7 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
         if manifest is None or claim not in manifest.claims:
             return {"ok": True, "removed_files": [], "claim": claim}
         if not _supports_descriptor_relative_commit():
-            if os.name == "nt" and _is_windows_install_allowed_for_tests():
+            if _is_windows_install_enabled():
                 return _uninstall_claim_windows(root=root, claim=claim, manifest=manifest)
             raise DiagnosticError("E_INSTALL_CONFLICT")
 

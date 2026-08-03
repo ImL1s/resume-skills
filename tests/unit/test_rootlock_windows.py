@@ -12,7 +12,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from portable_resume.diagnostics import DiagnosticError, ExitCode
+from portable_resume.diagnostics import DiagnosticError
 from portable_resume.install.transaction import RootLock, require_mutating_install_platform
 from portable_resume.platform_fs.select import _reset_backend_cache
 
@@ -63,11 +63,9 @@ class RootLockWindowsPhase3Tests(unittest.TestCase):
             t.join(timeout=10)
             self.assertFalse(errors)
 
-    def test_product_policy_b_still_fail_closed(self) -> None:
-        with self.assertRaises(DiagnosticError) as ctx:
-            require_mutating_install_platform()
-        self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-        self.assertEqual(ctx.exception.exit_code, ExitCode.UNSUPPORTED)
+    def test_product_policy_b_lifted_on_real_windows(self) -> None:
+        """Phase 7: require_mutating_install_platform() succeeds on real Windows."""
+        require_mutating_install_platform()  # Should not raise
 
     def test_rootlock_does_not_import_fcntl_on_success_path(self) -> None:
         import sys
