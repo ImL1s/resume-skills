@@ -134,3 +134,26 @@ class InstalledSmokeValidationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_normalize_smoke_cwd_is_absolute_and_stable(self) -> None:
+        """Easy Windows matrix class: POSIX fixture cwd becomes host absolute."""
+        import os
+        import tempfile
+
+        # Existing directory: realpath should be absolute.
+        with tempfile.TemporaryDirectory() as tmp:
+            normalized = self.smoke._normalize_smoke_cwd(tmp)
+            self.assertTrue(os.path.isabs(normalized))
+            self.assertEqual(os.path.realpath(tmp), normalized)
+
+        # POSIX-style synthetic project path used by FIXTURES.
+        path = self.smoke._normalize_smoke_cwd("/workspace/project")
+        self.assertTrue(os.path.isabs(path))
+        # same_cwd(query, smoke_cwd) must hold when query uses the same spelling.
+        from portable_resume.paths import same_cwd
+
+        self.assertTrue(same_cwd(path, path))
+        # Fixture spelling and normalized host form must still compare equal.
+        self.assertTrue(same_cwd("/workspace/project", path))
+

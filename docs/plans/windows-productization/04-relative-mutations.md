@@ -1,5 +1,7 @@
 # Phase 4 — Reparse-safe relative mutations (#125)
 
+> **HISTORICAL (archive):** #125 Phases 1–7 are **COMPLETE** on main (Policy B lifted; PR #228). Do **not** re-implement this slice or treat Policy B fail-closed product install as current residual work. See [`INDEX.md`](INDEX.md).
+
 **Primary issue:** [#125](https://github.com/ImL1s/resume-skills/issues/125)  
 **Depends on:** Phase 3 merged (RootLock can hold Win32 exclusive lock).  
 **PR title pattern:** `feat(platform): #125 Phase 4 reparse-safe relative mutations`

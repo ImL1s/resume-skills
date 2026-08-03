@@ -257,6 +257,27 @@ def _parse_envelope(
     return None
 
 
+def _normalize_smoke_cwd(cwd: str) -> str:
+    """Return a host-stable absolute cwd for installed-runner smoke queries.
+
+    Fixtures record POSIX absolute project paths (``/workspace/project``).
+    On Windows those spellings still work as absolute paths, but ``abspath`` /
+    ``realpath`` produce drive-rooted forms. Create the directory when possible
+    so realpath is stable, then return the real absolute path used for both
+    ``--cwd`` and envelope ``same_cwd`` checks.
+    """
+
+    absolute = os.path.abspath(cwd)
+    try:
+        os.makedirs(absolute, exist_ok=True)
+    except OSError:
+        pass
+    try:
+        return os.path.realpath(absolute)
+    except OSError:
+        return absolute
+
+
 def _materialize_fixture(source: str, fixture: Path, destination: Path) -> Path:
     """Return an immutable fixture root, or a relocated synthetic copy.
 
@@ -388,6 +409,9 @@ def main(argv: list[str] | None = None) -> int:
                 # align smoke query.cwd with the synthetic project root.
                 if source == "crush":
                     cwd = str(fixture.resolve())
+                else:
+                    # Host-normalize POSIX fixture project paths (esp. Windows nt).
+                    cwd = _normalize_smoke_cwd(cwd)
                 runner = Path(skill_root) / f"resume-{source}" / "scripts" / "run_reader.py"
                 if not runner.is_file():
                     cells.append(
