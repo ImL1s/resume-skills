@@ -14,7 +14,14 @@ if TYPE_CHECKING:
 
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
-from ..paths import canonical_root, canonicalize_cwd, is_within, reject_controls
+from ..paths import (
+    _lexical_under,
+    canonical_root,
+    canonicalize_cwd,
+    is_within,
+    normalize_unicode,
+    reject_controls,
+)
 from .api import FilesystemBackend, FilesystemCapabilities, FilesystemIdentity, FilesystemObjectIdentity
 
 _WIN32_RESERVED_NAMES = frozenset(
@@ -55,6 +62,7 @@ OPEN_EXISTING = 3
 OPEN_ALWAYS = 4
 FILE_ATTRIBUTE_NORMAL = 0x00000080
 FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
 LOCKFILE_FAIL_IMMEDIATELY = 0x00000001
 LOCKFILE_EXCLUSIVE_LOCK = 0x00000002
 # Whole-file exclusive lock range (Microsoft-documented pattern).
@@ -234,24 +242,43 @@ def _validate_win32_path(path: str | os.PathLike[str], root: str | os.PathLike[s
         raise DiagnosticError.unsafe_path()
 
 
-def _check_reparse_components(path: str, root: str) -> None:
+def _check_reparse_components(
+    path: str | os.PathLike[str],
+    root: str | os.PathLike[str],
+    *,
+    allow_nonexistent: bool = False,
+) -> None:
     base_root = canonical_root(root)
-    abs_path = canonicalize_cwd(path)
+    path_str = os.fspath(path)
+    reject_controls(path_str)
+    raw_abs = normalize_unicode(os.path.abspath(path_str))
+    if os.name == "nt" and len(raw_abs) >= 2 and raw_abs[1] == ":":
+        raw_abs = raw_abs[0].upper() + raw_abs[1:]
+
+    rel = _lexical_under(raw_abs, base_root)
+    if rel is None:
+        raise DiagnosticError.unsafe_path()
+
+    abs_path = canonicalize_cwd(raw_abs)
     if not is_within(abs_path, base_root):
         raise DiagnosticError.unsafe_path()
 
-    rel = os.path.relpath(abs_path, base_root)
     if rel == ".":
         return
 
-    norm_rel = rel.replace("/", os.sep).replace("\\", os.sep)
+    norm_rel = rel.replace("/", "\\")
+    parts = [p for p in norm_rel.split("\\") if p and p != "."]
     current = base_root
-    for component in norm_rel.split(os.sep):
-        if not component or component == ".":
-            continue
+    num_parts = len(parts)
+    for idx, component in enumerate(parts):
+        is_leaf = (idx == num_parts - 1)
         current = os.path.join(current, component)
         try:
             st = os.lstat(current)
+        except FileNotFoundError:
+            if allow_nonexistent:
+                break
+            raise DiagnosticError.unsafe_path()
         except OSError as error:
             raise DiagnosticError.unsafe_path() from error
 
@@ -260,6 +287,9 @@ def _check_reparse_components(path: str, root: str) -> None:
 
         attrs = getattr(st, "st_file_attributes", 0)
         if bool(attrs & FILE_ATTRIBUTE_REPARSE_POINT):
+            raise DiagnosticError.unsafe_path()
+
+        if not is_leaf and not stat.S_ISDIR(st.st_mode):
             raise DiagnosticError.unsafe_path()
 
 
@@ -308,7 +338,7 @@ class WindowsFilesystemBackend(FilesystemBackend):
         if not is_within(abs_path, base_root):
             raise DiagnosticError.unsafe_path()
 
-        _check_reparse_components(abs_path, root)
+        _check_reparse_components(path, root, allow_nonexistent=False)
 
         kernel32 = _get_kernel32()
         if kernel32 is not None:
@@ -318,7 +348,7 @@ class WindowsFilesystemBackend(FilesystemBackend):
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 None,
                 OPEN_EXISTING,
-                FILE_FLAG_OPEN_REPARSE_POINT,
+                FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
                 None,
             )
             h_val = getattr(h_file, "value", h_file) if h_file is not None else -1
@@ -385,206 +415,21 @@ class WindowsFilesystemBackend(FilesystemBackend):
         budget: ReadBudget | None = None,
         hook: AttemptHook | None = None,
     ) -> StableRead:
-        from ..snapshot import FileFingerprint, StableRead
-
-        if (
-            max_bytes < 0
-            or max_bytes > DEFAULT_BOUNDS.sqlite_snapshot_bytes
-            or not 1 <= attempts <= DEFAULT_BOUNDS.snapshot_attempts
-        ):
-            raise DiagnosticError.invalid()
+        from ..snapshot import _stable_read_bytes_impl
 
         _validate_win32_path(path, root)
-        base_root = canonical_root(root)
-        abs_path = canonicalize_cwd(path)
-        if not is_within(abs_path, base_root):
-            raise DiagnosticError.unsafe_path()
+        _check_reparse_components(path, root, allow_nonexistent=False)
 
-        try:
-            st_target = os.lstat(abs_path)
-        except OSError as error:
-            raise DiagnosticError.unsafe_path() from error
+        return _stable_read_bytes_impl(
+            path,
+            root=root,
+            max_bytes=max_bytes,
+            attempts=attempts,
+            membership_limit=membership_limit,
+            budget=budget,
+            hook=hook,
+        )
 
-        if stat.S_ISLNK(st_target.st_mode) or bool(
-            getattr(st_target, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT
-        ):
-            raise DiagnosticError.unsafe_path()
-
-        if not stat.S_ISREG(st_target.st_mode):
-            raise DiagnosticError.unsafe_path()
-
-        _check_reparse_components(abs_path, root)
-
-        _ = membership_limit
-        kernel32 = _get_kernel32()
-
-        for attempt in range(1, attempts + 1):
-            if hook is not None:
-                try:
-                    hook("before-read", attempt, abs_path)
-                except TypeError:
-                    try:
-                        hook(abs_path, attempt, "read")
-                    except TypeError:
-                        pass
-
-            if kernel32 is not None:
-                h_file = kernel32.CreateFileW(
-                    abs_path,
-                    GENERIC_READ,
-                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                    None,
-                    OPEN_EXISTING,
-                    FILE_FLAG_OPEN_REPARSE_POINT,
-                    None,
-                )
-                h_val = getattr(h_file, "value", h_file) if h_file is not None else -1
-                if h_val == -1 or h_val == 0 or (h_val & 0xFFFFFFFF) == 0xFFFFFFFF:
-                    err = kernel32.GetLastError() if kernel32 is not None else 0
-                    if err in (32, 33):  # ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
-                        continue
-                    raise DiagnosticError.unsafe_path()
-
-                try:
-                    info1 = BY_HANDLE_FILE_INFORMATION()
-                    if not kernel32.GetFileInformationByHandle(h_file, ctypes.byref(info1)):
-                        raise DiagnosticError.unsafe_path()
-
-                    attrs = info1.dwFileAttributes
-                    if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) or (attrs & FILE_ATTRIBUTE_DIRECTORY):
-                        raise DiagnosticError.unsafe_path()
-
-                    size1 = (info1.nFileSizeHigh << 32) | info1.nFileSizeLow
-                    if size1 > max_bytes:
-                        raise DiagnosticError.limit_exceeded()
-
-                    buf = ctypes.create_string_buffer(max_bytes + 1)
-                    bytes_read = wintypes.DWORD(0)
-                    res = kernel32.ReadFile(
-                        h_file, buf, max_bytes + 1, ctypes.byref(bytes_read), None
-                    )
-                    if not res:
-                        continue
-
-                    data = buf.raw[: bytes_read.value]
-                    if len(data) > max_bytes:
-                        raise DiagnosticError.limit_exceeded()
-
-                    if hook is not None:
-                        try:
-                            hook("after-read", attempt, abs_path)
-                        except TypeError:
-                            pass
-
-                    kernel32.SetFilePointer(h_file, 0, None, 0)
-                    buf2 = ctypes.create_string_buffer(max_bytes + 1)
-                    bytes_read2 = wintypes.DWORD(0)
-                    res2 = kernel32.ReadFile(
-                        h_file, buf2, max_bytes + 1, ctypes.byref(bytes_read2), None
-                    )
-                    if not res2 or buf2.raw[: bytes_read2.value] != data:
-                        continue
-
-                    info2 = BY_HANDLE_FILE_INFORMATION()
-                    if not kernel32.GetFileInformationByHandle(h_file, ctypes.byref(info2)):
-                        continue
-
-                    stable = (
-                        info1.dwVolumeSerialNumber == info2.dwVolumeSerialNumber
-                        and info1.nFileIndexHigh == info2.nFileIndexHigh
-                        and info1.nFileIndexLow == info2.nFileIndexLow
-                        and info1.nFileSizeHigh == info2.nFileSizeHigh
-                        and info1.nFileSizeLow == info2.nFileSizeLow
-                        and info1.ftLastWriteTime.dwLowDateTime
-                        == info2.ftLastWriteTime.dwLowDateTime
-                        and info1.ftLastWriteTime.dwHighDateTime
-                        == info2.ftLastWriteTime.dwHighDateTime
-                    )
-
-                    if stable:
-                        try:
-                            st_check = os.lstat(abs_path)
-                            if (
-                                stat.S_ISLNK(st_check.st_mode)
-                                or not stat.S_ISREG(st_check.st_mode)
-                                or bool(
-                                    getattr(st_check, "st_file_attributes", 0)
-                                    & FILE_ATTRIBUTE_REPARSE_POINT
-                                )
-                            ):
-                                continue
-                        except OSError:
-                            continue
-
-                        if budget is not None:
-                            budget.consume_bytes(len(data))
-                        file_index = (info1.nFileIndexHigh << 32) | info1.nFileIndexLow
-                        mtime_ns = _filetime_to_ns(
-                            info1.ftLastWriteTime.dwHighDateTime,
-                            info1.ftLastWriteTime.dwLowDateTime,
-                        )
-                        fingerprint = FileFingerprint(
-                            device=info1.dwVolumeSerialNumber,
-                            inode=file_index,
-                            mode=stat.S_IFREG | 0o666,
-                            size=size1,
-                            mtime_ns=mtime_ns,
-                            content_sha256=hashlib.sha256(data).hexdigest(),
-                        )
-                        return StableRead(data=data, fingerprint=fingerprint, attempts=attempt)
-                finally:
-                    kernel32.CloseHandle(h_file)
-            else:
-                try:
-                    st1 = os.lstat(abs_path)
-                    if stat.S_ISLNK(st1.st_mode) or not stat.S_ISREG(st1.st_mode):
-                        raise DiagnosticError.unsafe_path()
-                    if bool(getattr(st1, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT):
-                        raise DiagnosticError.unsafe_path()
-                    if st1.st_size > max_bytes:
-                        raise DiagnosticError.limit_exceeded()
-
-                    with open(abs_path, "rb") as fp:
-                        data = fp.read(max_bytes + 1)
-
-                    if len(data) > max_bytes:
-                        raise DiagnosticError.limit_exceeded()
-
-                    if hook is not None:
-                        try:
-                            hook("after-read", attempt, abs_path)
-                        except TypeError:
-                            pass
-
-                    with open(abs_path, "rb") as fp2:
-                        data2 = fp2.read(max_bytes + 1)
-                    if data2 != data:
-                        continue
-
-                    st2 = os.lstat(abs_path)
-
-                    if (st1.st_size, st1.st_mtime_ns, st1.st_ino) == (
-                        st2.st_size,
-                        st2.st_mtime_ns,
-                        st2.st_ino,
-                    ):
-                        if budget is not None:
-                            budget.consume_bytes(len(data))
-                        fingerprint = FileFingerprint(
-                            device=st1.st_dev,
-                            inode=st1.st_ino,
-                            mode=st1.st_mode,
-                            size=st1.st_size,
-                            mtime_ns=getattr(st1, "st_mtime_ns", int(st1.st_mtime * 1e9)),
-                            content_sha256=hashlib.sha256(data).hexdigest(),
-                        )
-                        return StableRead(data=data, fingerprint=fingerprint, attempts=attempt)
-                except DiagnosticError:
-                    raise
-                except (OSError, IOError) as error:
-                    raise DiagnosticError.unsafe_path() from error
-
-        raise DiagnosticError.source_busy(attempts=attempts)
 
     def mkdirs_beneath(
         self,
@@ -594,18 +439,27 @@ class WindowsFilesystemBackend(FilesystemBackend):
     ) -> str:
         _validate_win32_path(directory, root)
         base_root = canonical_root(root)
+        _check_reparse_components(directory, root, allow_nonexistent=True)
+
+        path_str = os.fspath(directory)
+        raw_abs = normalize_unicode(os.path.abspath(path_str))
+        if os.name == "nt" and len(raw_abs) >= 2 and raw_abs[1] == ":":
+            raw_abs = raw_abs[0].upper() + raw_abs[1:]
+
+        rel = _lexical_under(raw_abs, base_root)
+        if rel is None:
+            raise DiagnosticError.unsafe_path()
+
         abs_dir = canonicalize_cwd(directory)
         if not is_within(abs_dir, base_root):
             raise DiagnosticError.unsafe_path()
-        if abs_dir == base_root:
+        if rel == "." or abs_dir == base_root:
             return base_root
 
-        rel = os.path.relpath(abs_dir, base_root)
         norm_rel = rel.replace("/", "\\")
+        parts = [p for p in norm_rel.split("\\") if p and p != "."]
         current = base_root
-        for component in norm_rel.split("\\"):
-            if not component or component == ".":
-                continue
+        for component in parts:
             current = os.path.join(current, component)
             try:
                 st = os.lstat(current)
@@ -614,16 +468,20 @@ class WindowsFilesystemBackend(FilesystemBackend):
                     os.mkdir(current, 0o700)
                 except OSError as error:
                     raise DiagnosticError.unsafe_path() from error
+                try:
+                    st = os.lstat(current)
+                except OSError as error:
+                    raise DiagnosticError.unsafe_path() from error
             except OSError as error:
                 raise DiagnosticError.unsafe_path() from error
-            else:
-                if stat.S_ISLNK(st.st_mode):
-                    raise DiagnosticError.unsafe_path()
-                attrs = getattr(st, "st_file_attributes", 0)
-                if bool(attrs & FILE_ATTRIBUTE_REPARSE_POINT):
-                    raise DiagnosticError.unsafe_path()
-                if not stat.S_ISDIR(st.st_mode):
-                    raise DiagnosticError.unsafe_path()
+
+            if stat.S_ISLNK(st.st_mode):
+                raise DiagnosticError.unsafe_path()
+            attrs = getattr(st, "st_file_attributes", 0)
+            if bool(attrs & FILE_ATTRIBUTE_REPARSE_POINT):
+                raise DiagnosticError.unsafe_path()
+            if not stat.S_ISDIR(st.st_mode):
+                raise DiagnosticError.unsafe_path()
 
         return abs_dir
 
@@ -635,12 +493,23 @@ class WindowsFilesystemBackend(FilesystemBackend):
     ) -> None:
         _validate_win32_path(path, root)
         base_root = canonical_root(root)
+        path_str = os.fspath(path)
+        reject_controls(path_str)
+        raw_abs = normalize_unicode(os.path.abspath(path_str))
+        if os.name == "nt" and len(raw_abs) >= 2 and raw_abs[1] == ":":
+            raw_abs = raw_abs[0].upper() + raw_abs[1:]
+
+        rel = _lexical_under(raw_abs, base_root)
+        if rel is None:
+            raise DiagnosticError.unsafe_path()
+
         abs_path = canonicalize_cwd(path)
         if not is_within(abs_path, base_root) or abs_path == base_root:
             raise DiagnosticError.unsafe_path()
 
-        dirname = os.path.dirname(abs_path)
-        _check_reparse_components(dirname, root)
+        dirname = os.path.dirname(raw_abs)
+        if dirname != base_root:
+            _check_reparse_components(dirname, root, allow_nonexistent=False)
 
         try:
             st = os.lstat(abs_path)
@@ -668,6 +537,18 @@ class WindowsFilesystemBackend(FilesystemBackend):
         _validate_win32_path(target_path, root)
 
         base_root = canonical_root(root)
+
+        src_raw = normalize_unicode(os.path.abspath(os.fspath(source_path)))
+        dst_raw = normalize_unicode(os.path.abspath(os.fspath(target_path)))
+        if os.name == "nt":
+            if len(src_raw) >= 2 and src_raw[1] == ":":
+                src_raw = src_raw[0].upper() + src_raw[1:]
+            if len(dst_raw) >= 2 and dst_raw[1] == ":":
+                dst_raw = dst_raw[0].upper() + dst_raw[1:]
+
+        if _lexical_under(src_raw, base_root) is None or _lexical_under(dst_raw, base_root) is None:
+            raise DiagnosticError.unsafe_path()
+
         src_abs = canonicalize_cwd(source_path)
         dst_abs = canonicalize_cwd(target_path)
 
@@ -679,10 +560,12 @@ class WindowsFilesystemBackend(FilesystemBackend):
         ):
             raise DiagnosticError.unsafe_path()
 
-        src_parent = os.path.dirname(src_abs)
-        dst_parent = os.path.dirname(dst_abs)
-        _check_reparse_components(src_parent, root)
-        _check_reparse_components(dst_parent, root)
+        src_parent = os.path.dirname(src_raw)
+        dst_parent = os.path.dirname(dst_raw)
+        if src_parent != base_root:
+            _check_reparse_components(src_parent, root, allow_nonexistent=False)
+        if dst_parent != base_root:
+            _check_reparse_components(dst_parent, root, allow_nonexistent=True)
 
         src_drive, _ = os.path.splitdrive(src_abs)
         dst_drive, _ = os.path.splitdrive(dst_abs)
@@ -780,20 +663,42 @@ class WindowsFilesystemBackend(FilesystemBackend):
                 raise DiagnosticError.unsafe_path()
 
         parent = os.path.dirname(target)
-        if parent and not os.path.isdir(parent):
-            try:
-                os.makedirs(parent, exist_ok=True)
-            except OSError as error:
-                raise DiagnosticError.invalid() from error
+        if parent:
+            drive, rest = os.path.splitdrive(parent)
+            parts = [p for p in rest.replace("/", "\\").split("\\") if p]
+            current = (drive + "\\") if drive else "\\"
+            for part in parts:
+                current = os.path.join(current, part)
+                try:
+                    st = os.lstat(current)
+                except FileNotFoundError:
+                    try:
+                        os.mkdir(current, 0o700)
+                    except OSError as error:
+                        raise DiagnosticError.unsafe_path() from error
+                    try:
+                        st = os.lstat(current)
+                    except OSError as error:
+                        raise DiagnosticError.unsafe_path() from error
+                except OSError as error:
+                    raise DiagnosticError.unsafe_path() from error
 
-        # OPEN_ALWAYS + OPEN_REPARSE_POINT: open the leaf itself if it is a reparse.
+                if stat.S_ISLNK(st.st_mode):
+                    raise DiagnosticError.unsafe_path()
+                attrs = getattr(st, "st_file_attributes", 0)
+                if bool(attrs & FILE_ATTRIBUTE_REPARSE_POINT):
+                    raise DiagnosticError.unsafe_path()
+                if not stat.S_ISDIR(st.st_mode):
+                    raise DiagnosticError.unsafe_path()
+
+        # OPEN_ALWAYS + OPEN_REPARSE_POINT + BACKUP_SEMANTICS: open the leaf itself if it is a reparse point or directory handle.
         handle = kernel32.CreateFileW(
             target,
             GENERIC_READ | GENERIC_WRITE,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             None,
             OPEN_ALWAYS,
-            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
             None,
         )
         if _handle_is_invalid(handle):
