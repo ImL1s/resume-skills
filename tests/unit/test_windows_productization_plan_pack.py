@@ -61,18 +61,32 @@ class WindowsProductizationPlanPackTests(unittest.TestCase):
             self.assertTrue(path.is_file(), f"missing plan file: {path}")
             self.assertGreater(path.stat().st_size, 200, f"plan file too small: {path}")
 
-    def test_index_orders_rootlock_first(self) -> None:
+    def test_index_next_incomplete_is_phase4_not_phase3(self) -> None:
+        """After Phase 3 landed on main, handoff must start low models at Phase 4."""
         text = (PLAN_DIR / "INDEX.md").read_text(encoding="utf-8")
         self.assertIn("03-rootlock-wire.md", text)
+        self.assertIn("04-relative-mutations.md", text)
+        # Phase 3 is baseline landed, not the next start-here work
         self.assertRegex(
             text,
-            re.compile(r"1 \(start here\).*03-rootlock-wire", re.I | re.S),
+            re.compile(r"Phase 3.*LANDED|LANDED on main", re.I | re.S),
         )
-        # First slice before enablement
-        i_root = text.find("03-rootlock-wire")
+        self.assertRegex(
+            text,
+            re.compile(r"1 \(start here\).*04-relative-mutations", re.I | re.S),
+        )
+        self.assertRegex(
+            text,
+            re.compile(
+                r"First PR for a low model on Windows.*04-relative-mutations\.md",
+                re.I | re.S,
+            ),
+        )
+        # Incomplete slices still before enablement in document order
+        i_phase4 = text.find("04-relative-mutations")
         i_enable = text.find("07-policy-b-enablement")
-        self.assertGreater(i_root, 0)
-        self.assertGreater(i_enable, i_root)
+        self.assertGreater(i_phase4, 0)
+        self.assertGreater(i_enable, i_phase4)
 
     def test_pre_final_slices_forbid_early_policy_b_lift(self) -> None:
         for name in PRE_FINAL_SLICES:
