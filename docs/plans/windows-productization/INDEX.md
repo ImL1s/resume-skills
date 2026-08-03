@@ -71,6 +71,21 @@ Examples:
 - `feat(platform): #125 Phase 4 reparse-safe relative mutations`
 - `docs(platform): #209 refresh not-run family checklist`
 
+### GitHub auto-close guard (critical)
+
+For **Phases 3–6** and **docs-only** PRs (including plan-pack PRs):
+
+```text
+PR body MUST use:  Relates to #125   or   Refs #125
+PR body MUST NOT use: Closes / Close / Fixes / Fix / Resolves #125
+Merge commit subject: avoid implying product completion of #125
+```
+
+**Only Phase 7** (after checklist + product evidence) may use `Closes #125`.  
+**Never** auto-close #209 from a single Windows phase PR.
+
+If #125 is closed without Phase 7 product evidence, **reopen immediately** and comment that only the plan/partial phase landed.
+
 ---
 
 ## How a low model should work
