@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..diagnostics import DiagnosticError
+from ..platform_fs import get_filesystem_backend
 from .catalog import BUNDLE_VERSION, HOST_PROFILES, MANIFEST_SCHEMA
 from .control_schema import ControlSchemaError, parse_journal_document
 from .manifest import (
@@ -152,15 +153,71 @@ def support_dir(root: str) -> str:
 
 
 class RootLock:
-    def __init__(self, root: str, *, wait_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        root: str,
+        *,
+        wait_seconds: float = 5.0,
+        _allow_win32_internal: bool = False,
+    ) -> None:
         self.root = root
         self.support = support_dir(root)
         self.state = control_state_dir(root)
         self.path = os.path.join(self.state, LOCK_NAME)
         self._fd: int | None = None
         self.wait_seconds = wait_seconds
+        self._allow_win32_internal = _allow_win32_internal
+        self._win32_cm: Any = None
 
     def __enter__(self) -> "RootLock":
+        if os.name == "nt":
+            if not self._allow_win32_internal:
+                require_mutating_install_platform()
+            _ensure_control_state_directory(self.root)
+            deadline = time.monotonic() + self.wait_seconds
+            backend = get_filesystem_backend()
+            while True:
+                try:
+                    self._win32_cm = backend.acquire_exclusive_lock(self.path)
+                    self._fd = self._win32_cm.__enter__()
+                    try:
+                        os.ftruncate(self._fd, 0)
+                        os.lseek(self._fd, 0, os.SEEK_SET)
+                        payload = f"pid={os.getpid()}\n".encode("ascii")
+                        os.write(self._fd, payload)
+                        try:
+                            os.fsync(self._fd)
+                        except OSError:
+                            pass
+                    except OSError:
+                        pass
+                    return self
+                except DiagnosticError as error:
+                    if self._win32_cm is not None:
+                        try:
+                            self._win32_cm.__exit__(None, None, None)
+                        except Exception:
+                            pass
+                        self._win32_cm = None
+                        self._fd = None
+                    if error.code == "E_INSTALL_BUSY":
+                        if time.monotonic() >= deadline:
+                            raise DiagnosticError("E_INSTALL_BUSY") from error
+                        time.sleep(0.05)
+                        continue
+                    raise
+                except OSError as error:
+                    if self._win32_cm is not None:
+                        try:
+                            self._win32_cm.__exit__(None, None, None)
+                        except Exception:
+                            pass
+                        self._win32_cm = None
+                        self._fd = None
+                    if time.monotonic() >= deadline:
+                        raise DiagnosticError("E_INSTALL_BUSY") from error
+                    time.sleep(0.05)
+
         # Never open/create support paths on platforms without exclusive locking.
         require_mutating_install_platform()
         _ensure_control_state_directory(self.root)
@@ -229,7 +286,15 @@ class RootLock:
                     raise DiagnosticError("E_INSTALL_CONFLICT") from error
                 raise DiagnosticError("E_INSTALL_BUSY") from error
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        if self._win32_cm is not None:
+            try:
+                self._win32_cm.__exit__(exc_type, exc, tb)
+            finally:
+                self._win32_cm = None
+                self._fd = None
+            return
+
         if self._fd is not None:
             try:
                 import fcntl
