@@ -1,8 +1,8 @@
-<!-- portable-resume-i18n: zh-TW v0.4.1.dev0 -->
+<!-- portable-resume-i18n: zh-TW v0.4.1 -->
 <!-- portable-resume-counts: sources=17 destinations=18 -->
 # Portable Resume — 繁體中文快速指南
 
-**目前已發布版本：** [`0.4.0`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.0)
+**目前已發布版本：** [`0.4.1`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.1)
 
 Portable Resume 可把 Claude、Codex、Cursor、OpenCode、Antigravity、Grok、Qwen、Kimi 的有限本機脈絡帶到**全新**的程式代理工作階段；它不是即時程序或工作階段還原。讀取器離線、僅使用 Python 標準函式庫、不會呼叫來源 CLI，並把復原文字標示為惰性且不受信任。
 

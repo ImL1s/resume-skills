@@ -99,7 +99,12 @@ def resolve_build_identity(
         _STABLE_BASE_VERSION.fullmatch(base_version) is not None
         and identity.get("release_channel") != "release"
     ):
-        raise ValueError("stable artifacts require an exact release identity")
+        # Release.yml never sets this: published bytes still require exact-tag
+        # release identity. CI package jobs may set it so a pre-tag release
+        # candidate (exact X.Y.Z on main before annotated vX.Y.Z exists) can
+        # still smoke wheel/sdist/host archives under a development-channel pin.
+        if os.environ.get("PORTABLE_RESUME_ALLOW_STABLE_DEVELOPMENT_IDENTITY") != "1":
+            raise ValueError("stable artifacts require an exact release identity")
     return identity
 
 

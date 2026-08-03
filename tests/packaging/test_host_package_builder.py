@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -19,6 +21,12 @@ REPO = Path(__file__).resolve().parents[2]
 
 class HostPackageBuilderTests(unittest.TestCase):
     def build(self, output: Path) -> dict:
+        env = os.environ.copy()
+        # Pre-tag release candidates pin exact X.Y.Z before vX.Y.Z exists.
+        # Checkout-default packaging smoke may use a development-channel pin;
+        # release.yml never sets this env and still requires exact release identity.
+        if re.fullmatch(r"\d+\.\d+\.\d+", __version__):
+            env["PORTABLE_RESUME_ALLOW_STABLE_DEVELOPMENT_IDENTITY"] = "1"
         completed = subprocess.run(
             [
                 sys.executable,
@@ -31,6 +39,7 @@ class HostPackageBuilderTests(unittest.TestCase):
             text=True,
             capture_output=True,
             check=False,
+            env=env,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return json.loads(completed.stdout)
