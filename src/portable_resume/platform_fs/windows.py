@@ -243,12 +243,10 @@ def _validate_win32_path(path: str | os.PathLike[str], root: str | os.PathLike[s
         raise DiagnosticError.unsafe_path()
 
 
-def _check_reparse_components(
+def _get_lexical_rel(
     path: str | os.PathLike[str],
     root: str | os.PathLike[str],
-    *,
-    allow_nonexistent: bool = False,
-) -> None:
+) -> tuple[str, str, str]:
     path_str = os.fspath(path)
     root_str = os.fspath(root)
     reject_controls(path_str)
@@ -276,6 +274,16 @@ def _check_reparse_components(
     if walk_root is None or rel is None:
         raise DiagnosticError.unsafe_path()
 
+    return walk_root, base_root, rel
+
+
+def _check_reparse_components(
+    path: str | os.PathLike[str],
+    root: str | os.PathLike[str],
+    *,
+    allow_nonexistent: bool = False,
+) -> None:
+    walk_root, base_root, rel = _get_lexical_rel(path, root)
     if rel in ("", "."):
         return
 
@@ -307,6 +315,7 @@ def _check_reparse_components(
         if not is_leaf and not stat.S_ISDIR(st.st_mode):
             raise DiagnosticError.unsafe_path()
 
+    original = normalize_unicode(os.path.abspath(os.fspath(path)))
     if os.path.exists(original):
         canonical = canonicalize_cwd(original)
         if not is_within(canonical, base_root):
@@ -458,28 +467,21 @@ class WindowsFilesystemBackend(FilesystemBackend):
         root: str | os.PathLike[str],
     ) -> str:
         _validate_win32_path(directory, root)
-        base_root = canonical_root(root)
+        walk_root, base_root, rel = _get_lexical_rel(directory, root)
         _check_reparse_components(directory, root, allow_nonexistent=True)
-
-        path_str = os.fspath(directory)
-        raw_abs = normalize_unicode(os.path.abspath(path_str))
-        if os.name == "nt" and len(raw_abs) >= 2 and raw_abs[1] == ":":
-            raw_abs = raw_abs[0].upper() + raw_abs[1:]
-
-        rel = _lexical_under(raw_abs, base_root)
-        if rel is None:
-            raise DiagnosticError.unsafe_path()
 
         abs_dir = canonicalize_cwd(directory)
         if not is_within(abs_dir, base_root):
             raise DiagnosticError.unsafe_path()
-        if rel == "." or abs_dir == base_root:
+        if rel in ("", ".") or abs_dir == base_root:
             return base_root
 
-        norm_rel = rel.replace("/", "\\")
-        parts = [p for p in norm_rel.split("\\") if p and p != "."]
-        current = base_root
+        norm_rel = rel.replace("/", "\\") if os.name == "nt" else rel
+        parts = [p for p in norm_rel.replace("/", "\\").split("\\") if p and p != "."]
+        current = walk_root
         for component in parts:
+            if component == os.pardir:
+                raise DiagnosticError.unsafe_path()
             current = os.path.join(current, component)
             try:
                 st = os.lstat(current)
@@ -503,7 +505,7 @@ class WindowsFilesystemBackend(FilesystemBackend):
             if not stat.S_ISDIR(st.st_mode):
                 raise DiagnosticError.unsafe_path()
 
-        return abs_dir
+        return canonicalize_cwd(current)
 
     def unlink_beneath(
         self,
@@ -512,23 +514,15 @@ class WindowsFilesystemBackend(FilesystemBackend):
         root: str | os.PathLike[str],
     ) -> None:
         _validate_win32_path(path, root)
-        base_root = canonical_root(root)
-        path_str = os.fspath(path)
-        reject_controls(path_str)
-        raw_abs = normalize_unicode(os.path.abspath(path_str))
-        if os.name == "nt" and len(raw_abs) >= 2 and raw_abs[1] == ":":
-            raw_abs = raw_abs[0].upper() + raw_abs[1:]
-
-        rel = _lexical_under(raw_abs, base_root)
-        if rel is None:
-            raise DiagnosticError.unsafe_path()
+        walk_root, base_root, rel = _get_lexical_rel(path, root)
 
         abs_path = canonicalize_cwd(path)
         if not is_within(abs_path, base_root) or abs_path == base_root:
             raise DiagnosticError.unsafe_path()
 
+        raw_abs = normalize_unicode(os.path.abspath(os.fspath(path)))
         dirname = os.path.dirname(raw_abs)
-        if dirname != base_root:
+        if canonicalize_cwd(dirname) != base_root:
             _check_reparse_components(dirname, root, allow_nonexistent=False)
 
         try:
@@ -556,18 +550,8 @@ class WindowsFilesystemBackend(FilesystemBackend):
         _validate_win32_path(source_path, root)
         _validate_win32_path(target_path, root)
 
-        base_root = canonical_root(root)
-
-        src_raw = normalize_unicode(os.path.abspath(os.fspath(source_path)))
-        dst_raw = normalize_unicode(os.path.abspath(os.fspath(target_path)))
-        if os.name == "nt":
-            if len(src_raw) >= 2 and src_raw[1] == ":":
-                src_raw = src_raw[0].upper() + src_raw[1:]
-            if len(dst_raw) >= 2 and dst_raw[1] == ":":
-                dst_raw = dst_raw[0].upper() + dst_raw[1:]
-
-        if _lexical_under(src_raw, base_root) is None or _lexical_under(dst_raw, base_root) is None:
-            raise DiagnosticError.unsafe_path()
+        src_walk, base_root, src_rel = _get_lexical_rel(source_path, root)
+        dst_walk, _, dst_rel = _get_lexical_rel(target_path, root)
 
         src_abs = canonicalize_cwd(source_path)
         dst_abs = canonicalize_cwd(target_path)
@@ -580,11 +564,14 @@ class WindowsFilesystemBackend(FilesystemBackend):
         ):
             raise DiagnosticError.unsafe_path()
 
+        src_raw = normalize_unicode(os.path.abspath(os.fspath(source_path)))
+        dst_raw = normalize_unicode(os.path.abspath(os.fspath(target_path)))
+
         src_parent = os.path.dirname(src_raw)
         dst_parent = os.path.dirname(dst_raw)
-        if src_parent != base_root:
+        if canonicalize_cwd(src_parent) != base_root:
             _check_reparse_components(src_parent, root, allow_nonexistent=False)
-        if dst_parent != base_root:
+        if canonicalize_cwd(dst_parent) != base_root:
             _check_reparse_components(dst_parent, root, allow_nonexistent=True)
 
         src_drive, _ = os.path.splitdrive(src_abs)
