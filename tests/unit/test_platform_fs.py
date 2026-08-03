@@ -21,7 +21,11 @@ from portable_resume.platform_fs import (
 )
 from portable_resume.platform_fs.posix import PosixFilesystemBackend
 from portable_resume.platform_fs.select import _reset_backend_cache
-from portable_resume.platform_fs.windows import WindowsFilesystemBackend
+from portable_resume.platform_fs.windows import (
+    WindowsFilesystemBackend,
+    _handle_is_invalid,
+    _invalid_handle_value,
+)
 
 
 class PlatformFsContractTests(unittest.TestCase):
@@ -317,6 +321,80 @@ class PlatformFsContractTests(unittest.TestCase):
             # Unlock/close must release: reacquire after context exit.
             with win_backend.acquire_exclusive_lock(lock_path) as fd2:
                 self.assertIsInstance(fd2, int)
+
+    def test_handle_is_invalid_pointer_width_only(self) -> None:
+        """Phase-2: invalid-handle uses full pointer-width sentinel, not low-32 alone.
+
+        Regression pin: values whose *low* 32 bits are all ones but that are not
+        the full-width INVALID_HANDLE_VALUE must be accepted on 64-bit (old code
+        rejected them via ``(as_int & 0xFFFFFFFF) == 0xFFFFFFFF``).
+        """
+        import ctypes
+
+        self.assertTrue(_handle_is_invalid(None))
+        self.assertTrue(_handle_is_invalid(0))
+        self.assertTrue(_handle_is_invalid(-1))
+        self.assertTrue(_handle_is_invalid(_invalid_handle_value()))
+        self.assertFalse(_handle_is_invalid(1))
+        self.assertFalse(_handle_is_invalid(0x12345678))
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            # These would have been True under the removed low-32 heuristic.
+            self.assertFalse(_handle_is_invalid(0xFFFFFFFF))
+            self.assertFalse(_handle_is_invalid(0x1FFFFFFFF))
+            self.assertFalse(_handle_is_invalid(0x00000001FFFFFFFF))
+
+    def test_lock_source_fails_closed_when_handle_metadata_unproven(self) -> None:
+        """Structural: GetFileInformationByHandle failure must not fall through to lock."""
+        import inspect
+        from portable_resume.platform_fs import windows as win_mod
+
+        src = inspect.getsource(win_mod.WindowsFilesystemBackend.acquire_exclusive_lock)
+        self.assertIn("GetFileInformationByHandle", src)
+        self.assertIn("E_INSTALL_UNSUPPORTED_PLATFORM", src)
+        # Former soft-continue wording must not return.
+        self.assertNotIn("Attribute probe failure: continue", src)
+        self.assertNotIn("LockFileEx still gates exclusivity", src)
+
+    def test_lock_fails_closed_when_get_file_info_returns_false(self) -> None:
+        """Native Windows: mock unproven leaf metadata → fail closed before LockFileEx."""
+        if os.name != "nt":
+            self.skipTest("requires native kernel32 + msvcrt")
+        import portable_resume.platform_fs.windows as win_mod
+
+        win_backend = WindowsFilesystemBackend()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = os.path.join(tmp_dir, "meta-fail.lock")
+            real_k32 = win_mod._get_kernel32()
+            self.assertIsNotNone(real_k32)
+
+            class _K32:
+                def __init__(self, inner: object) -> None:
+                    self._inner = inner
+                    self.lock_calls = 0
+
+                def CreateFileW(self, *args: object, **kwargs: object) -> object:
+                    return self._inner.CreateFileW(*args, **kwargs)
+
+                def GetFileInformationByHandle(self, *args: object, **kwargs: object) -> int:
+                    return 0  # fail to prove attributes
+
+                def LockFileEx(self, *args: object, **kwargs: object) -> int:
+                    self.lock_calls += 1
+                    return 0
+
+                def UnlockFileEx(self, *args: object, **kwargs: object) -> int:
+                    return 1
+
+                def CloseHandle(self, *args: object, **kwargs: object) -> int:
+                    return self._inner.CloseHandle(*args, **kwargs)
+
+            fake = _K32(real_k32)
+            with mock.patch.object(win_mod, "_get_kernel32", return_value=fake):
+                with self.assertRaises(DiagnosticError) as caught:
+                    with win_backend.acquire_exclusive_lock(lock_path):
+                        pass
+            self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+            self.assertEqual(fake.lock_calls, 0, "LockFileEx must not run without proven metadata")
 
 
 if __name__ == "__main__":

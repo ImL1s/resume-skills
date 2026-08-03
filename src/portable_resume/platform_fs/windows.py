@@ -112,6 +112,12 @@ def _invalid_handle_value() -> int:
 
 
 def _handle_is_invalid(handle: object) -> bool:
+    """True if *handle* is not a usable Win32 HANDLE (pointer-width aware).
+
+    Compares against full pointer-width ``INVALID_HANDLE_VALUE`` only. Do **not**
+    treat a low-32-bit ``0xFFFFFFFF`` mask alone as decisive — on 64-bit Windows
+    a truncated comparison can mis-classify handles.
+    """
     if handle is None:
         return True
     h_val = getattr(handle, "value", handle)
@@ -121,8 +127,7 @@ def _handle_is_invalid(handle: object) -> bool:
         return True
     if as_int in (0, -1):
         return True
-    # Compare full pointer-width invalid value (not low-32 heuristic alone).
-    return as_int == _invalid_handle_value() or (as_int & 0xFFFFFFFF) == 0xFFFFFFFF
+    return as_int == _invalid_handle_value()
 
 
 def _get_kernel32() -> ctypes.WinDLL | None:
@@ -732,21 +737,41 @@ class WindowsFilesystemBackend(FilesystemBackend):
             except Exception:
                 pass
 
-        # Reject lock leaf that is a reparse point (junction/symlink redirect).
+        # Require proven leaf attributes before locking (Phase-2 safety).
+        # Fail closed if metadata cannot be read or leaf is reparse/directory.
         try:
             info = BY_HANDLE_FILE_INFORMATION()
-            if kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
-                if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT:
+            if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+                try:
                     kernel32.CloseHandle(handle)
-                    raise DiagnosticError.unsafe_path()
-                if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY:
+                except Exception:
+                    pass
+                handle = None  # type: ignore[assignment]
+                raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+            if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT:
+                try:
                     kernel32.CloseHandle(handle)
-                    raise DiagnosticError.unsafe_path()
+                except Exception:
+                    pass
+                handle = None  # type: ignore[assignment]
+                raise DiagnosticError.unsafe_path()
+            if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY:
+                try:
+                    kernel32.CloseHandle(handle)
+                except Exception:
+                    pass
+                handle = None  # type: ignore[assignment]
+                raise DiagnosticError.unsafe_path()
         except DiagnosticError:
             raise
-        except Exception:
-            # Attribute probe failure: continue; LockFileEx still gates exclusivity.
-            pass
+        except Exception as error:
+            if handle is not None:
+                try:
+                    kernel32.CloseHandle(handle)
+                except Exception:
+                    pass
+                handle = None  # type: ignore[assignment]
+            raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM") from error
 
         overlapped = OVERLAPPED()
         overlapped.Offset = 0
