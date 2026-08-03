@@ -133,6 +133,22 @@ class WindowsProductizationPlanPackTests(unittest.TestCase):
         self.assertRegex(text, re.compile(r"mock|Ubuntu|monkeypatch", re.I))
         self.assertRegex(text, re.compile(r"Anti-theater|anti-theater", re.I))
 
+    def test_index_forbids_github_autoclose_before_phase7(self) -> None:
+        text = (PLAN_DIR / "INDEX.md").read_text(encoding="utf-8")
+        self.assertRegex(
+            text,
+            re.compile(r"MUST NOT use:.*Closes|auto-close|GitHub auto-close", re.I | re.S),
+        )
+        self.assertRegex(
+            text,
+            re.compile(r"Only Phase 7.*Closes #125|Closes #125", re.I | re.S),
+        )
+        # Pre-final guidance must keep #125 open language in index global rules
+        self.assertRegex(
+            text,
+            re.compile(r"Do not\*\* close \*\*#125|do not\*\* close \*\*#125|Do not.*close \*\*#125", re.I),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
