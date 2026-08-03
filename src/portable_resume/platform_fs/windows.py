@@ -274,13 +274,13 @@ class WindowsFilesystemBackend(FilesystemBackend):
             is_windows=True,
             backend_name="WindowsFilesystemBackend",
         )
-        # Read-only product surfaces + Phase 1 exclusive lock primitive (#125).
+        # Read-only product surfaces + Phase 1 exclusive lock primitive + Phase 4 relative mutations (#125).
         # Product install/uninstall/recover remain fail-closed in transaction.py
-        # until RootLock is fully wired to this lock (relative_mutations stays False).
+        # until Phase 7.
         self._capabilities = FilesystemCapabilities(
             descriptor_relative=False,
             nofollow_reads=True,
-            relative_mutations=False,
+            relative_mutations=True,
             sqlite_snapshots=True,
             atomic_output=True,
             exclusive_locking=True,
@@ -592,7 +592,40 @@ class WindowsFilesystemBackend(FilesystemBackend):
         *,
         root: str | os.PathLike[str],
     ) -> str:
-        raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+        _validate_win32_path(directory, root)
+        base_root = canonical_root(root)
+        abs_dir = canonicalize_cwd(directory)
+        if not is_within(abs_dir, base_root):
+            raise DiagnosticError.unsafe_path()
+        if abs_dir == base_root:
+            return base_root
+
+        rel = os.path.relpath(abs_dir, base_root)
+        norm_rel = rel.replace("/", "\\")
+        current = base_root
+        for component in norm_rel.split("\\"):
+            if not component or component == ".":
+                continue
+            current = os.path.join(current, component)
+            try:
+                st = os.lstat(current)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(current, 0o700)
+                except OSError as error:
+                    raise DiagnosticError.unsafe_path() from error
+            except OSError as error:
+                raise DiagnosticError.unsafe_path() from error
+            else:
+                if stat.S_ISLNK(st.st_mode):
+                    raise DiagnosticError.unsafe_path()
+                attrs = getattr(st, "st_file_attributes", 0)
+                if bool(attrs & FILE_ATTRIBUTE_REPARSE_POINT):
+                    raise DiagnosticError.unsafe_path()
+                if not stat.S_ISDIR(st.st_mode):
+                    raise DiagnosticError.unsafe_path()
+
+        return abs_dir
 
     def unlink_beneath(
         self,
@@ -600,7 +633,29 @@ class WindowsFilesystemBackend(FilesystemBackend):
         *,
         root: str | os.PathLike[str],
     ) -> None:
-        raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+        _validate_win32_path(path, root)
+        base_root = canonical_root(root)
+        abs_path = canonicalize_cwd(path)
+        if not is_within(abs_path, base_root) or abs_path == base_root:
+            raise DiagnosticError.unsafe_path()
+
+        dirname = os.path.dirname(abs_path)
+        _check_reparse_components(dirname, root)
+
+        try:
+            st = os.lstat(abs_path)
+        except OSError as error:
+            raise DiagnosticError.unsafe_path() from error
+
+        is_reparse = bool(getattr(st, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT)
+        is_link = stat.S_ISLNK(st.st_mode)
+        if stat.S_ISDIR(st.st_mode) and not (is_link or is_reparse):
+            raise DiagnosticError.unsafe_path()
+
+        try:
+            os.unlink(abs_path)
+        except OSError as error:
+            raise DiagnosticError.unsafe_path() from error
 
     def replace_beneath(
         self,
@@ -609,7 +664,35 @@ class WindowsFilesystemBackend(FilesystemBackend):
         *,
         root: str | os.PathLike[str],
     ) -> None:
-        raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+        _validate_win32_path(source_path, root)
+        _validate_win32_path(target_path, root)
+
+        base_root = canonical_root(root)
+        src_abs = canonicalize_cwd(source_path)
+        dst_abs = canonicalize_cwd(target_path)
+
+        if (
+            not is_within(src_abs, base_root)
+            or not is_within(dst_abs, base_root)
+            or src_abs == base_root
+            or dst_abs == base_root
+        ):
+            raise DiagnosticError.unsafe_path()
+
+        src_parent = os.path.dirname(src_abs)
+        dst_parent = os.path.dirname(dst_abs)
+        _check_reparse_components(src_parent, root)
+        _check_reparse_components(dst_parent, root)
+
+        src_drive, _ = os.path.splitdrive(src_abs)
+        dst_drive, _ = os.path.splitdrive(dst_abs)
+        if src_drive.upper() != dst_drive.upper():
+            raise DiagnosticError.unsafe_path()
+
+        try:
+            os.replace(src_abs, dst_abs)
+        except OSError as error:
+            raise DiagnosticError.unsafe_path() from error
 
     def sqlite_family_snapshot(
         self,
