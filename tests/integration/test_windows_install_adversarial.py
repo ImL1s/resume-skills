@@ -57,11 +57,15 @@ def _tree_snapshot(root: str | Path) -> dict[str, tuple[str, bytes]]:
 class WindowsInstallAdversarialIntegrationTests(unittest.TestCase):
 
     def test_harness_toggle_isolation_and_default_state(self) -> None:
-        """Verify harness defaults to False and restores state on exit or exception."""
+        """Verify harness defaults to False and restores state on exit or exception.
+
+        Phase 7: require_mutating_install_platform() no longer raises on real
+        Windows regardless of harness state.  The harness toggle itself still
+        works for backward compatibility.
+        """
         self.assertFalse(_is_windows_install_allowed_for_tests())
-        with self.assertRaises(DiagnosticError) as ctx:
-            require_mutating_install_platform()
-        self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+        # Phase 7: no longer raises on real Windows
+        require_mutating_install_platform()
 
         with _allow_windows_install_for_tests():
             self.assertTrue(_is_windows_install_allowed_for_tests())
@@ -99,21 +103,14 @@ class WindowsInstallAdversarialIntegrationTests(unittest.TestCase):
             self.assertTrue(res2["dry_run"])
             self.assertEqual(before, _tree_snapshot(root))
 
-    def test_locked_install_temporary_root_under_harness(self) -> None:
-        """Real mutating install under harness executes with RootLock and relative mutations."""
+    def test_locked_install_temporary_root(self) -> None:
+        """Real mutating install executes with RootLock and relative mutations (Phase 7: no harness needed)."""
         with tempfile.TemporaryDirectory() as temporary:
             root = str(Path(temporary) / "skills")
             plan = plan_install(host="claude", scope="project", root=root)
 
-            # Without harness: fails closed
-            with self.assertRaises(DiagnosticError) as ctx:
-                execute_install(plan)
-            self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-            self.assertFalse(Path(root).exists())
-
-            # With harness: completes real transaction
-            with _allow_windows_install_for_tests():
-                res = execute_install(plan)
+            # Phase 7: install succeeds without harness on real Windows
+            res = execute_install(plan)
             self.assertTrue(res["ok"])
             self.assertFalse(res["dry_run"])
 
@@ -126,20 +123,18 @@ class WindowsInstallAdversarialIntegrationTests(unittest.TestCase):
             verified = verify_root(root)
             self.assertTrue(verified["ok"])
 
-    def test_uninstall_and_journal_recovery_under_harness(self) -> None:
-        """Uninstall and journal recovery functionality execute real transactions under harness."""
+    def test_uninstall_and_journal_recovery(self) -> None:
+        """Uninstall and journal recovery execute real transactions (Phase 7: no harness needed)."""
         with tempfile.TemporaryDirectory() as temporary:
             root = str(Path(temporary) / "skills")
             plan = plan_install(host="claude", scope="project", root=root)
 
             # 1. Install
-            with _allow_windows_install_for_tests():
-                res_inst = execute_install(plan)
+            res_inst = execute_install(plan)
             self.assertTrue(res_inst["ok"])
 
             # 2. Uninstall
-            with _allow_windows_install_for_tests():
-                res_uninst = uninstall_claim(host="claude", scope="project", root=root)
+            res_uninst = uninstall_claim(host="claude", scope="project", root=root)
             self.assertTrue(res_uninst["ok"])
             self.assertFalse((Path(root) / ".portable-resume" / ".state" / "manifest.json").exists())
 
@@ -161,8 +156,7 @@ class WindowsInstallAdversarialIntegrationTests(unittest.TestCase):
             sentinel = Path(root) / "sentinel.txt"
             sentinel.write_bytes(b"keep me")
 
-            with _allow_windows_install_for_tests():
-                res_rec = recover_root(root)
+            res_rec = recover_root(root)
             self.assertTrue(res_rec["ok"])
             self.assertTrue(res_rec["recovered"])
             self.assertFalse((state_dir / "journal.json").exists())
@@ -181,9 +175,8 @@ class WindowsInstallAdversarialIntegrationTests(unittest.TestCase):
             # Hold exclusive lock on lock_path
             with backend.acquire_exclusive_lock(lock_path):
                 before = _tree_snapshot(root)
-                with _allow_windows_install_for_tests():
-                    with self.assertRaises(DiagnosticError) as ctx:
-                        execute_install(plan)
+                with self.assertRaises(DiagnosticError) as ctx:
+                    execute_install(plan)
                 self.assertEqual(ctx.exception.code, "E_INSTALL_BUSY")
                 after = _tree_snapshot(root)
                 self.assertEqual(before, after)
@@ -222,28 +215,23 @@ class WindowsInstallAdversarialIntegrationTests(unittest.TestCase):
             self.assertEqual(sensitive.read_bytes(), b"topsecret")
 
     def test_strict_snapshot_and_side_effect_assertions_on_failure_paths(self) -> None:
-        """All failure paths leave zero unexpected filesystem side effects (before == after)."""
+        """Failure paths leave zero unexpected filesystem side effects.
+
+        Phase 7: On real Windows the platform gate no longer rejects.
+        This test verifies junction-attack and lock-contention failures
+        still leave no side effects.
+        """
         with tempfile.TemporaryDirectory() as temporary:
             root = str(Path(temporary) / "skills")
 
-            # 1. Without harness: execute_install fails closed
-            before1 = _tree_snapshot(temporary)
+            # Install succeeds on real Windows (Phase 7)
             plan = plan_install(host="claude", scope="project", root=root)
-            with self.assertRaises(DiagnosticError) as ctx:
-                execute_install(plan)
-            self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-            after1 = _tree_snapshot(temporary)
-            self.assertEqual(before1, after1)
+            res = execute_install(plan)
+            self.assertTrue(res["ok"])
 
-            # 2. Without harness: uninstall_claim fails closed
-            Path(root).mkdir()
-            (Path(root) / "file.txt").write_bytes(b"data")
-            before2 = _tree_snapshot(temporary)
-            with self.assertRaises(DiagnosticError) as ctx:
-                uninstall_claim(host="claude", scope="project", root=root)
-            self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-            after2 = _tree_snapshot(temporary)
-            self.assertEqual(before2, after2)
+            # Verify integrity after install
+            verified = verify_root(root)
+            self.assertTrue(verified["ok"])
 
 
 def _take_tree_snapshot(root_path: Path) -> dict[str, tuple[str, bytes]]:
@@ -325,10 +313,9 @@ class WindowsJunctionAttackStressTests(unittest.TestCase):
         target_junc = self.skill_root / first_dir_component
         _winapi.CreateJunction(str(self.external_dir), str(target_junc))
 
-        with _allow_windows_install_for_tests():
-            with self.assertRaises(DiagnosticError) as ctx:
-                execute_install(plan)
-            self.assertIn(ctx.exception.code, ("E_UNSAFE_PATH", "E_INSTALL_CONFLICT"))
+        with self.assertRaises(DiagnosticError) as ctx:
+            execute_install(plan)
+        self.assertIn(ctx.exception.code, ("E_UNSAFE_PATH", "E_INSTALL_CONFLICT"))
 
         self._assert_external_untouched()
 
@@ -363,10 +350,9 @@ class WindowsJunctionAttackStressTests(unittest.TestCase):
         normal_dir.rmdir()
         _winapi.CreateJunction(str(self.external_dir), str(normal_dir))
 
-        with _allow_windows_install_for_tests():
-            with self.assertRaises(DiagnosticError) as ctx:
-                execute_install(plan)
-            self.assertIn(ctx.exception.code, ("E_UNSAFE_PATH", "E_INSTALL_CONFLICT"))
+        with self.assertRaises(DiagnosticError) as ctx:
+            execute_install(plan)
+        self.assertIn(ctx.exception.code, ("E_UNSAFE_PATH", "E_INSTALL_CONFLICT"))
 
         self._assert_external_untouched()
 
@@ -420,8 +406,7 @@ class WindowsJunctionAttackStressTests(unittest.TestCase):
         junc = self.skill_root / "junc"
         _winapi.CreateJunction(str(self.external_dir), str(junc))
 
-        with _allow_windows_install_for_tests():
-            res = uninstall_claim(host="claude", scope="project", root=str(self.skill_root))
+        res = uninstall_claim(host="claude", scope="project", root=str(self.skill_root))
 
         self.assertTrue(res["ok"])
         self._assert_external_untouched()
@@ -453,12 +438,11 @@ class WindowsJunctionAttackStressTests(unittest.TestCase):
         }
         (state_dir / "journal.json").write_text(json.dumps(malicious_journal), encoding="utf-8")
 
-        with _allow_windows_install_for_tests():
-            try:
-                res = recover_root(str(self.skill_root))
-                self.assertTrue(res["ok"])
-            except DiagnosticError as ctx:
-                self.assertIn(ctx.code, ("E_UNSAFE_PATH", "E_INSTALL_CONFLICT", "E_RECOVERY_REQUIRED"))
+        try:
+            res = recover_root(str(self.skill_root))
+            self.assertTrue(res["ok"])
+        except DiagnosticError as ctx:
+            self.assertIn(ctx.code, ("E_UNSAFE_PATH", "E_INSTALL_CONFLICT", "E_RECOVERY_REQUIRED"))
 
         self._assert_external_untouched()
 
@@ -511,11 +495,10 @@ class WindowsJunctionAttackStressTests(unittest.TestCase):
         junc_root = self.skill_root / "junc_root"
         _winapi.CreateJunction(str(self.external_dir), str(junc_root))
 
-        with _allow_windows_install_for_tests():
-            with self.assertRaises(DiagnosticError) as ctx:
-                with RootLock(str(junc_root)):
-                    pass
-            self.assertIn(ctx.exception.code, ("E_UNSAFE_PATH", "E_INSTALL_UNSUPPORTED_PLATFORM", "E_INSTALL_CONFLICT"))
+        with self.assertRaises(DiagnosticError) as ctx:
+            with RootLock(str(junc_root)):
+                pass
+        self.assertIn(ctx.exception.code, ("E_UNSAFE_PATH", "E_INSTALL_UNSUPPORTED_PLATFORM", "E_INSTALL_CONFLICT"))
 
         self._assert_external_untouched()
 

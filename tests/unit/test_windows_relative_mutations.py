@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from portable_resume.diagnostics import DiagnosticError, ExitCode
+from portable_resume.diagnostics import DiagnosticError
 from portable_resume.install.catalog import resolve_skill_root
 from portable_resume.install.transaction import (
     execute_install,
@@ -227,8 +227,8 @@ class WindowsRelativeMutationsTests(unittest.TestCase):
                 self.backend.replace_beneath(src, root, root=root)
             self.assertEqual(ctx.exception.code, "E_UNSAFE_PATH")
 
-    def test_product_cli_policy_b_fail_closed_gate(self) -> None:
-        """Product CLI install/uninstall/recover must raise E_INSTALL_UNSUPPORTED_PLATFORM on nt."""
+    def test_product_cli_policy_b_lifted_on_real_windows(self) -> None:
+        """Phase 7: Product CLI install/uninstall/recover succeeds on real Windows."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             home = Path(tmp_dir) / "home"
             project = Path(tmp_dir) / "project"
@@ -242,34 +242,35 @@ class WindowsRelativeMutationsTests(unittest.TestCase):
             )
             plan = plan_install(host="claude", scope="project", root=root)
 
-            # execute_install fails closed
-            with self.assertRaises(DiagnosticError) as ctx:
-                execute_install(plan)
-            self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-            self.assertEqual(ctx.exception.exit_code, ExitCode.UNSUPPORTED)
-            self.assertFalse(Path(root).exists())
+            # Phase 7: execute_install succeeds on real Windows
+            res = execute_install(plan)
+            self.assertTrue(res["ok"])
+            self.assertFalse(res["dry_run"])
+            self.assertTrue(Path(root).exists())
 
-            # uninstall_claim fails closed
-            skills_root = Path(tmp_dir) / "skills"
-            skills_root.mkdir()
-            sentinel = skills_root / "keep.txt"
-            sentinel.write_bytes(b"unchanged")
+            # uninstall_claim succeeds
+            res_uninst = uninstall_claim(host="claude", scope="project", root=root)
+            self.assertTrue(res_uninst["ok"])
 
-            with self.assertRaises(DiagnosticError) as ctx:
-                uninstall_claim(host="claude", scope="project", root=str(skills_root))
-            self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-            self.assertEqual(sentinel.read_bytes(), b"unchanged")
-
-            # recover_root with journal fails closed
-            support = skills_root / ".portable-resume" / ".state"
-            support.mkdir(parents=True)
+            # recover_root with journal succeeds
+            Path(root).mkdir(parents=True, exist_ok=True)
+            support = Path(root) / ".portable-resume" / ".state"
+            support.mkdir(parents=True, exist_ok=True)
             journal = support / "journal.json"
-            journal.write_text("{}", encoding="utf-8")
+            import json
+            journal_data = {
+                "schema_version": "portable-resume/install-journal-v1",
+                "state": "staging",
+                "generation": 1,
+                "claim": "claude:project",
+                "stage_dir": str(support / "portable-resume-stage-test"),
+                "operation": "install",
+                "paths": {},
+            }
+            journal.write_text(json.dumps(journal_data), encoding="utf-8")
 
-            with self.assertRaises(DiagnosticError) as ctx:
-                recover_root(str(skills_root))
-            self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-            self.assertEqual(sentinel.read_bytes(), b"unchanged")
+            res_rec = recover_root(root)
+            self.assertTrue(res_rec["ok"])
 
 
 if __name__ == "__main__":

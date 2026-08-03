@@ -8,6 +8,7 @@ Failures are isolated per source so one bad probe/list cannot wipe others.
 from __future__ import annotations
 
 import os
+import sys
 from typing import Any, Callable, Sequence
 
 from .adapters.base import CAPABILITY_STATES, SourceAdapter
@@ -350,8 +351,10 @@ def doctor_report(
             }
         )
 
-    # --- windows_install_policy (fail-closed mutating install on nt) ---
-    windows_mutating_install = os.name != "nt"
+    # --- windows_install_policy (Phase 7 lift: real Windows is now supported) ---
+    # Real Windows (os.name == "nt" AND sys.platform starts "win") = supported.
+    # Spoofed nt on non-Windows = fail-closed (consistent with gate).
+    windows_mutating_install = (os.name != "nt") or sys.platform.startswith("win")
     if windows_mutating_install:
         checks.append(
             {

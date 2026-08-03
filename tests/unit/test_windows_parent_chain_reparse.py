@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from portable_resume.diagnostics import DiagnosticError, ExitCode
+from portable_resume.diagnostics import DiagnosticError
 from portable_resume.install.transaction import (
     execute_install,
     plan_install,
@@ -198,47 +198,54 @@ class WindowsParentChainReparseTests(unittest.TestCase):
         self.assertFalse(new_file_path.exists())
 
     # -------------------------------------------------------------------------
-    # 3. Product CLI Policy B gate fails closed
+    # 3. Product CLI Policy B lifted (Phase 7)
     # -------------------------------------------------------------------------
 
-    def test_product_cli_execute_install_fails_closed_on_nt(self) -> None:
+    def test_product_cli_execute_install_succeeds_on_nt(self) -> None:
+        """Phase 7: execute_install succeeds on real Windows."""
         dest_root = self.tmp_path / "dest_skill_root"
         plan = plan_install(host="claude", scope="project", root=str(dest_root), dry_run=False)
 
-        with self.assertRaises(DiagnosticError) as ctx:
-            execute_install(plan)
+        res = execute_install(plan)
 
-        self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-        self.assertEqual(ctx.exception.exit_code, ExitCode.UNSUPPORTED)
-        self.assertFalse(dest_root.exists())
+        self.assertTrue(res["ok"])
+        self.assertFalse(res["dry_run"])
+        self.assertTrue(dest_root.exists())
 
-    def test_product_cli_uninstall_claim_fails_closed_on_nt(self) -> None:
+    def test_product_cli_uninstall_claim_succeeds_on_nt(self) -> None:
+        """Phase 7: uninstall_claim succeeds on real Windows."""
         dest_root = self.tmp_path / "uninstall_root"
         dest_root.mkdir(parents=True, exist_ok=True)
-        keep_file = dest_root / "keep.txt"
-        keep_file.write_bytes(b"content")
 
-        with self.assertRaises(DiagnosticError) as ctx:
-            uninstall_claim(host="claude", scope="project", root=str(dest_root))
+        # First install, then uninstall
+        plan = plan_install(host="claude", scope="project", root=str(dest_root))
+        execute_install(plan)
 
-        self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-        self.assertEqual(keep_file.read_bytes(), b"content")
-        self.assertFalse((dest_root / ".portable-resume").exists())
+        res = uninstall_claim(host="claude", scope="project", root=str(dest_root))
+        self.assertTrue(res["ok"])
 
-    def test_product_cli_recover_root_fails_closed_on_nt(self) -> None:
+    def test_product_cli_recover_root_succeeds_on_nt(self) -> None:
+        """Phase 7: recover_root succeeds on real Windows."""
         dest_root = self.tmp_path / "recover_root"
         state_dir = dest_root / ".portable-resume" / ".state"
         state_dir.mkdir(parents=True, exist_ok=True)
         journal = state_dir / "journal.json"
-        journal.write_bytes(b'{"version": 1}')
+        import json
+        journal_data = {
+            "schema_version": "portable-resume/install-journal-v1",
+            "state": "staging",
+            "generation": 1,
+            "claim": "claude:project",
+            "stage_dir": str(state_dir / "portable-resume-stage-test"),
+            "operation": "install",
+            "paths": {},
+        }
+        journal.write_text(json.dumps(journal_data), encoding="utf-8")
         keep_file = dest_root / "keep.txt"
         keep_file.write_bytes(b"keep")
 
-        with self.assertRaises(DiagnosticError) as ctx:
-            recover_root(str(dest_root))
-
-        self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-        self.assertTrue(journal.exists())
+        res = recover_root(str(dest_root))
+        self.assertTrue(res["ok"])
         self.assertEqual(keep_file.read_bytes(), b"keep")
 
 

@@ -55,8 +55,8 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertEqual(len(tracks), 1)
         track = tracks[0]
         self.assertIn("closed read-only/CI slices #205–#208", track)
-        self.assertIn("open residuals #125 and #209", track)
-        self.assertIn("#125 remains OPEN", track)
+        self.assertIn("open residual #209", track)
+        self.assertIn("#125 Phase 7 on PR #228 pending merge", track)
         self.assertIn("#209 umbrella remains OPEN", track)
         self.assertNotIn("#205–#209", track)
 

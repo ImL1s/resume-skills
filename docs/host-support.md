@@ -62,12 +62,12 @@ Enabled source adapters and their store families are listed in the root README. 
 | CI definition | Ubuntu/macOS × Python 3.11–3.14 |
 | Latest archived remote CI/release | `v0.3.4` pass: release-commit CI and 14-job release run archived |
 | Historical release proof | Earlier releases are archived separately in `evidence-summary.md` |
-| Windows | **mutating installer unsupported** (`E_INSTALL_UNSUPPORTED_PLATFORM`); reader/matrix/dry-run/verify may remain where individually safe; not a V1 release gate |
+| Windows | **mutating install supported** (Phase 7 / #125): Win32 exclusive locking, reparse-safe relative mutations, parent-chain defenses, adversarial product-path evidence; `install`/`uninstall`/`recover` execute on real `nt` |
 
 ### Installer containment notes (Phase 0 / PR #49 + #29)
 
 - **POSIX descriptor-relative commits (#31):** payload files are committed with `dir_fd` / `O_NOFOLLOW` under the skill root. The skill-root path itself may be a symlink (common dotfiles layouts); it is resolved once with `realpath`, then the final directory is opened no-follow. Intermediate payload parents never follow symlinks.
-- **Windows platform gate (#29 Policy B):** `install` (non-dry-run), `uninstall` (non-dry-run), and `recover` (when a journal exists) fail closed with `E_INSTALL_UNSUPPORTED_PLATFORM` **before** creating support directories or claiming a root lock. Silent unlocked mutation is not permitted. Exclusive Windows locking (Policy A) is not claimed.
+- **Windows platform gate (#29 Policy B — lifted by Phase 7 / #125):** `install`, `uninstall`, and `recover` now execute on real Windows (`os.name == "nt"` and `sys.platform.startswith("win")`). Spoofed `os.name == "nt"` on non-Windows hosts still fail-closed. Phases 1–6 established Win32 exclusive locking (`LockFileEx`), reparse-safe relative mutations, parent-chain reparse point defenses, and adversarial product-path evidence on `windows-latest`.
 - **Recover (#20):** complete journals must not `rmtree` a `stage_dir` outside `.portable-resume/`.
 
 Official host references and alternate roots are linked from the machine-readable `hosts --json` output and [`install-hosts.md`](install-hosts.md).
