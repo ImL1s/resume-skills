@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -36,9 +38,11 @@ class WindowsPlatformGateTests(unittest.TestCase):
         """Spoofed os.name==nt on POSIX must not create control state.
 
         Phase 3: real Windows RootLock uses Win32 exclusive lock (see
-        tests/unit/test_rootlock_windows.py). Product mutations still fail closed
-        via require_mutating_install_platform / execute_install gates below.
+        tests/unit/test_rootlock_windows.py). This case only applies when the
+        host is *not* real Windows — on real nt, RootLock is allowed to lock.
         """
+        if os.name == "nt" and sys.platform.startswith("win"):
+            self.skipTest("real Windows: RootLock Phase 3 path is intentional")
         with tempfile.TemporaryDirectory() as temporary:
             root = str(Path(temporary) / "skills")
             Path(root).mkdir()
