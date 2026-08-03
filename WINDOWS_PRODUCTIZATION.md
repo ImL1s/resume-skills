@@ -1,14 +1,22 @@
 # Windows productization handoff (#125 / #209)
 
-## If you cannot find the plan files
+## Status (current main)
 
-They live under **`docs/plans/`**, not only `plans/`:
+| Item | State |
+|------|--------|
+| **#125** Windows mutating install (Phases 1–7) | **CLOSED** — PR #228 → `949180a` |
+| **#209** V1 desktop dual-OS (Windows native + macOS) | **CLOSED** under reduced scope |
+| WSL2 / musl / FreeBSD–BSD | **not-run** (out of V1; no fake green) |
+| Windows CI hard gate | `scripts/smoke_windows_product_install.py` (claude/cursor/codex) — **not** 306/306 |
+| Full installed-runner 306/306 | **Ubuntu-only** hard gate |
+
+## Canonical docs
 
 | File | Path |
 |------|------|
-| **Index (start)** | [`docs/plans/windows-productization/INDEX.md`](docs/plans/windows-productization/INDEX.md) |
-| **Phase 4 relative mutations (next)** | [`docs/plans/windows-productization/04-relative-mutations.md`](docs/plans/windows-productization/04-relative-mutations.md) |
-| Phase 3 RootLock (already landed) | [`docs/plans/windows-productization/03-rootlock-wire.md`](docs/plans/windows-productization/03-rootlock-wire.md) — reference only |
+| **Index** | [`docs/plans/windows-productization/INDEX.md`](docs/plans/windows-productization/INDEX.md) |
+| **#209 honesty** | [`docs/plans/windows-productization/209-platform-honesty.md`](docs/plans/windows-productization/209-platform-honesty.md) |
+| Historical phases 3–7 | under `docs/plans/windows-productization/` (reference only) |
 | Pointer under plans/ | [`plans/windows-productization/README.md`](plans/windows-productization/README.md) |
 
 ### Stale clone fix (Windows)
@@ -20,13 +28,11 @@ git pull origin main
 dir docs\plans\windows-productization
 ```
 
-Must see `INDEX.md` and `04-relative-mutations.md`. Tip should include Phase 3 RootLock on main (`55c3279` or later) plus plan-pack merges (#220 / #221).
+Must see `INDEX.md`. Tip should include Phase 7 (#228) or later.
 
-## Next work for low model on real `nt`
+## Do not re-open
 
-1. Read `docs/plans/windows-productization/INDEX.md`  
-2. Implement **only** `docs/plans/windows-productization/04-relative-mutations.md`  
-3. Keep Policy B fail-closed (`require_mutating_install_platform` on product install/uninstall/recover)  
-4. PR body: `Relates to #125` — never `Closes #125` until Phase 7  
-
-**Do not re-implement Phase 3** — `RootLock` already uses Win32 exclusive lock on real Windows.
+1. Do not re-implement Phases 1–7 primitives.  
+2. Do not re-fail-close product install on real Windows without a security regression.  
+3. Do not claim Windows installed-runner **306/306** unless a real green run measures every cell.  
+4. Do not mark WSL2 / musl / BSD verified without real host evidence.

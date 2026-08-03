@@ -55,12 +55,69 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertEqual(len(tracks), 1)
         track = tracks[0]
         self.assertIn("closed read-only/CI slices #205–#208", track)
-        self.assertIn("open residual #209", track)
         self.assertIn("#125 CLOSED", track)
         self.assertIn("949180a", track)
         self.assertIn("30800595796", track)
-        self.assertIn("#209 umbrella remains OPEN", track)
+        # V1 desktop dual-OS (win+mac) closed; residual families stay not-run.
+        self.assertIn("#209 V1 desktop dual-OS", track)
+        self.assertIn("CLOSED", track)
+        self.assertIn("WSL2", track)
+        self.assertIn("not-run", track)
+        self.assertNotIn("open residual #209", track)
+        self.assertNotIn("#209 umbrella remains OPEN", track)
         self.assertNotIn("#205–#209", track)
+
+    def test_windows_installed_runner_not_claimed_as_full_matrix(self) -> None:
+        """Windows hard gate is focused product install smoke — never 306/306 on nt."""
+        status = Path("docs/STATUS.md").read_text(encoding="utf-8")
+        host = Path("docs/host-support.md").read_text(encoding="utf-8")
+        ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+        smoke = Path("scripts/smoke_windows_product_install.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("smoke_windows_product_install.py", status)
+        self.assertIn("Ubuntu-only", status)
+        self.assertIn("smoke_windows_product_install.py", ci)
+        self.assertIn("smoke_installed_matrix.py", ci)
+        # CI must still hard-gate the focused Windows smoke script.
+        self.assertRegex(ci, r"smoke_windows_product_install\.py")
+        self.assertIn("full_matrix", smoke)
+        self.assertIn("False", smoke)
+        # Explicit non-claim of Windows 306/306.
+        self.assertRegex(
+            host,
+            r"(?i)not\*\* claimed 306/306 on Windows|not claimed 306/306 on Windows",
+        )
+        self.assertRegex(
+            status,
+            r"(?i)never claim Windows 306/306|not.*306/306 on Windows|focused product-install smoke",
+        )
+        # Residual families remain not-run in STATUS platform table.
+        for family in ("WSL2", "musl-only", "FreeBSD"):
+            self.assertIn(family, status)
+        self.assertIn("not-run", status)
+
+    def test_smoke_windows_product_install_script_is_partial_gate(self) -> None:
+        """Drive the shipped smoke module contract (hosts + honesty report fields)."""
+        import importlib.util
+        import sys
+        from pathlib import Path as P
+
+        path = P("scripts/smoke_windows_product_install.py").resolve()
+        spec = importlib.util.spec_from_file_location(
+            "smoke_windows_product_install", path
+        )
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        hosts = list(mod._SMOKE_HOSTS)
+        self.assertEqual(hosts, ["claude", "cursor", "codex"])
+        # Non-nt hosts skip with success (no false 306 claim).
+        if __import__("os").name != "nt":
+            code = mod.main()
+            self.assertEqual(code, 0)
 
     def test_agents_md_uses_registry_derived_matrix_language(self) -> None:
         text = Path("AGENTS.md").read_text(encoding="utf-8")
