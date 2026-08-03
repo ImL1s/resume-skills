@@ -153,10 +153,10 @@ class PlatformFsContractTests(unittest.TestCase):
             }
             self.assertEqual(set(d.keys()), expected_keys)
 
-    def test_windows_backend_fail_closed_policy(self) -> None:
-        """Relative mutations stay fail-closed; Phase 1 advertises exclusive lock."""
+    def test_windows_backend_phase4_relative_mutations(self) -> None:
+        """Phase 4 advertises relative_mutations=True and functional relative mutations."""
         win_backend = WindowsFilesystemBackend()
-        self.assertFalse(win_backend.capabilities.relative_mutations)
+        self.assertTrue(win_backend.capabilities.relative_mutations)
         self.assertTrue(win_backend.capabilities.exclusive_locking)
         self.assertTrue(win_backend.capabilities.handle_locking)
         self.assertTrue(win_backend.capabilities.sqlite_snapshots)
@@ -165,22 +165,20 @@ class PlatformFsContractTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             target_sub = os.path.join(tmp_dir, "sub")
-            with self.assertRaises(DiagnosticError) as caught:
-                win_backend.mkdirs_beneath(target_sub, root=tmp_dir)
-            self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+            res = win_backend.mkdirs_beneath(target_sub, root=tmp_dir)
+            self.assertTrue(os.path.isdir(res))
 
             file_path = os.path.join(tmp_dir, "test.txt")
             with open(file_path, "wb") as fp:
                 fp.write(b"data")
 
-            with self.assertRaises(DiagnosticError) as caught:
-                win_backend.unlink_beneath(file_path, root=tmp_dir)
-            self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-
             target_path = os.path.join(tmp_dir, "dest.txt")
-            with self.assertRaises(DiagnosticError) as caught:
-                win_backend.replace_beneath(file_path, target_path, root=tmp_dir)
-            self.assertEqual(caught.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+            win_backend.replace_beneath(file_path, target_path, root=tmp_dir)
+            self.assertFalse(os.path.exists(file_path))
+            self.assertTrue(os.path.exists(target_path))
+
+            win_backend.unlink_beneath(target_path, root=tmp_dir)
+            self.assertFalse(os.path.exists(target_path))
 
             # On non-Windows hosts kernel32 is unavailable → unsupported.
             # On Windows the real LockFileEx path is exercised separately.
@@ -296,7 +294,7 @@ class PlatformFsContractTests(unittest.TestCase):
         self.assertTrue(win_backend.capabilities.exclusive_locking)
         self.assertTrue(win_backend.capabilities.handle_locking)
         self.assertFalse(win_backend.capabilities.descriptor_relative)
-        self.assertFalse(win_backend.capabilities.relative_mutations)
+        self.assertTrue(win_backend.capabilities.relative_mutations)
 
     def test_windows_exclusive_lock_phase1_on_native_nt(self) -> None:
         """Phase 1: real LockFileEx path when running on Windows.

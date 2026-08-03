@@ -64,17 +64,17 @@ def _tree_snapshot(root: Path) -> dict[str, tuple[str, bytes | str | None]]:
 
 
 class Issue125ResidualWindowsBackendContractTests(unittest.TestCase):
-    """WindowsFilesystemBackend Phase-1 capabilities + fail-closed mutations."""
+    """WindowsFilesystemBackend Phase-4 capabilities + relative mutations."""
 
-    def test_windows_backend_capabilities_mutations_disabled_lock_phase1(self) -> None:
+    def test_windows_backend_capabilities_phase4(self) -> None:
         backend = WindowsFilesystemBackend()
         caps = backend.capabilities
-        self.assertIs(caps.relative_mutations, False)
+        self.assertIs(caps.relative_mutations, True)
         self.assertIs(caps.exclusive_locking, True)
         self.assertIs(caps.handle_locking, True)
         self.assertEqual(backend.identity.backend_name, "WindowsFilesystemBackend")
 
-    def test_windows_relative_mutations_fail_without_side_effects(self) -> None:
+    def test_windows_relative_mutations_functional_under_temp_root(self) -> None:
         backend = WindowsFilesystemBackend()
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -82,23 +82,16 @@ class Issue125ResidualWindowsBackendContractTests(unittest.TestCase):
             leaf = root / "leaf.txt"
             dest = root / "dest.txt"
             leaf.write_bytes(b"payload")
-            baseline = _tree_snapshot(root)
 
-            with self.assertRaises(DiagnosticError) as ctx:
-                backend.mkdirs_beneath(sub, root=root)
-            self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-            self.assertEqual(ctx.exception.exit_code, ExitCode.UNSUPPORTED)
-            self.assertEqual(_tree_snapshot(root), baseline)
+            created = backend.mkdirs_beneath(sub, root=root)
+            self.assertTrue(Path(created).is_dir())
 
-            with self.assertRaises(DiagnosticError) as ctx:
-                backend.unlink_beneath(leaf, root=root)
-            self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-            self.assertEqual(_tree_snapshot(root), baseline)
+            backend.replace_beneath(leaf, dest, root=root)
+            self.assertFalse(leaf.exists())
+            self.assertEqual(dest.read_bytes(), b"payload")
 
-            with self.assertRaises(DiagnosticError) as ctx:
-                backend.replace_beneath(leaf, dest, root=root)
-            self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-            self.assertEqual(_tree_snapshot(root), baseline)
+            backend.unlink_beneath(dest, root=root)
+            self.assertFalse(dest.exists())
 
     def test_phase1_lock_is_native_only_and_not_a_relative_mutation_claim(self) -> None:
         backend = WindowsFilesystemBackend()
@@ -168,7 +161,7 @@ class Issue125ResidualRealHostContractTests(unittest.TestCase):
             self.assertIsInstance(backend, WindowsFilesystemBackend)
             self.assertIs(backend.capabilities.exclusive_locking, True)
             self.assertIs(backend.capabilities.handle_locking, True)
-            self.assertIs(backend.capabilities.relative_mutations, False)
+            self.assertIs(backend.capabilities.relative_mutations, True)
             self.assertIs(windows_mutating, False)
             with self.assertRaises(DiagnosticError) as ctx:
                 require_mutating_install_platform()
