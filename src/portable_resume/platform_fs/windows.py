@@ -16,6 +16,7 @@ from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
 from ..paths import (
     _lexical_under,
+    _platform_root_aliases,
     canonical_root,
     canonicalize_cwd,
     is_within,
@@ -248,29 +249,43 @@ def _check_reparse_components(
     *,
     allow_nonexistent: bool = False,
 ) -> None:
-    base_root = canonical_root(root)
     path_str = os.fspath(path)
+    root_str = os.fspath(root)
     reject_controls(path_str)
-    raw_abs = normalize_unicode(os.path.abspath(path_str))
-    if os.name == "nt" and len(raw_abs) >= 2 and raw_abs[1] == ":":
-        raw_abs = raw_abs[0].upper() + raw_abs[1:]
+    reject_controls(root_str)
 
-    rel = _lexical_under(raw_abs, base_root)
-    if rel is None:
+    raw_root = normalize_unicode(os.path.abspath(root_str))
+    base_root = canonical_root(root_str)
+    original = normalize_unicode(os.path.abspath(path_str))
+
+    if os.name == "nt":
+        if len(raw_root) >= 2 and raw_root[1] == ":":
+            raw_root = raw_root[0].upper() + raw_root[1:]
+        if len(original) >= 2 and original[1] == ":":
+            original = original[0].upper() + original[1:]
+
+    walk_root: str | None = None
+    rel: str | None = None
+    for candidate in _platform_root_aliases(raw_root, base_root):
+        cand_rel = _lexical_under(original, candidate)
+        if cand_rel is not None:
+            walk_root = candidate
+            rel = cand_rel
+            break
+
+    if walk_root is None or rel is None:
         raise DiagnosticError.unsafe_path()
 
-    abs_path = canonicalize_cwd(raw_abs)
-    if not is_within(abs_path, base_root):
-        raise DiagnosticError.unsafe_path()
-
-    if rel == ".":
+    if rel in ("", "."):
         return
 
-    norm_rel = rel.replace("/", "\\")
-    parts = [p for p in norm_rel.split("\\") if p and p != "."]
-    current = base_root
+    norm_rel = rel.replace("/", "\\") if os.name == "nt" else rel
+    parts = [p for p in norm_rel.replace("/", "\\").split("\\") if p and p != "."]
+    current = walk_root
     num_parts = len(parts)
     for idx, component in enumerate(parts):
+        if component == os.pardir:
+            raise DiagnosticError.unsafe_path()
         is_leaf = (idx == num_parts - 1)
         current = os.path.join(current, component)
         try:
@@ -278,7 +293,7 @@ def _check_reparse_components(
         except FileNotFoundError:
             if allow_nonexistent:
                 break
-            raise DiagnosticError.unsafe_path()
+            raise
         except OSError as error:
             raise DiagnosticError.unsafe_path() from error
 
@@ -290,6 +305,11 @@ def _check_reparse_components(
             raise DiagnosticError.unsafe_path()
 
         if not is_leaf and not stat.S_ISDIR(st.st_mode):
+            raise DiagnosticError.unsafe_path()
+
+    if os.path.exists(original):
+        canonical = canonicalize_cwd(original)
+        if not is_within(canonical, base_root):
             raise DiagnosticError.unsafe_path()
 
 
