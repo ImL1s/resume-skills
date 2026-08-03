@@ -2,11 +2,12 @@
 
 ## Windows productization handoff (#125 / #209)
 
-Low-model / real-Windows execution pack (residuals after Phase 1–2 lock foundation):
+Low-model / real-Windows execution pack (Phases **1–3 landed** on main — lock primitive, lock-metadata fail-closed, RootLock Win32 wire):
 
-→ **[`docs/plans/windows-productization/INDEX.md`](../docs/plans/windows-productization/INDEX.md)**
+→ **[`docs/plans/windows-productization/INDEX.md`](../docs/plans/windows-productization/INDEX.md)**  
+→ **Next incomplete slice (start here):** [`docs/plans/windows-productization/04-relative-mutations.md`](../docs/plans/windows-productization/04-relative-mutations.md)
 
-Order: Phase 3 RootLock → 4 relative mutations → 5 parent-chain reparse → 6 adversarial evidence → 7 Policy B enablement only. #209 honesty is docs-only / not-run families.
+Order remaining: **Phase 4** relative mutations → 5 parent-chain reparse → 6 adversarial evidence → 7 Policy B enablement only. **Do not re-implement Phase 3** RootLock. #209 honesty is docs-only / not-run families.
 
 ## 2026-08-01 in-session UX audit (plans 045–055)
 
