@@ -323,16 +323,25 @@ class PlatformFsContractTests(unittest.TestCase):
                 self.assertIsInstance(fd2, int)
 
     def test_handle_is_invalid_pointer_width_only(self) -> None:
-        """Phase-2: invalid-handle uses full pointer-width sentinel, not low-32 alone."""
+        """Phase-2: invalid-handle uses full pointer-width sentinel, not low-32 alone.
+
+        Regression pin: values whose *low* 32 bits are all ones but that are not
+        the full-width INVALID_HANDLE_VALUE must be accepted on 64-bit (old code
+        rejected them via ``(as_int & 0xFFFFFFFF) == 0xFFFFFFFF``).
+        """
+        import ctypes
+
         self.assertTrue(_handle_is_invalid(None))
         self.assertTrue(_handle_is_invalid(0))
         self.assertTrue(_handle_is_invalid(-1))
         self.assertTrue(_handle_is_invalid(_invalid_handle_value()))
-        # A non-zero ordinary integer is treated as a handle value for this helper.
-        # Low-32 0xFFFFFFFF alone must not be the sole reject rule on 64-bit;
-        # only full-width INVALID_HANDLE_VALUE / 0 / -1 / None qualify.
         self.assertFalse(_handle_is_invalid(1))
         self.assertFalse(_handle_is_invalid(0x12345678))
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            # These would have been True under the removed low-32 heuristic.
+            self.assertFalse(_handle_is_invalid(0xFFFFFFFF))
+            self.assertFalse(_handle_is_invalid(0x1FFFFFFFF))
+            self.assertFalse(_handle_is_invalid(0x00000001FFFFFFFF))
 
     def test_lock_source_fails_closed_when_handle_metadata_unproven(self) -> None:
         """Structural: GetFileInformationByHandle failure must not fall through to lock."""
