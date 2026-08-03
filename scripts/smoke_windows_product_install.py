@@ -98,6 +98,14 @@ def main() -> int:
         "hosts_tested": len(_SMOKE_HOSTS),
         "hosts_passed": sum(1 for r in results if r["ok"]),
         "ok": all(r["ok"] for r in results),
+        # Honesty: this is NOT the full 17×18=306 installed-runner matrix.
+        "full_matrix": False,
+        "matrix_cells_claimed": None,
+        "note": (
+            "Windows partial product-install hard gate only "
+            f"({', '.join(_SMOKE_HOSTS)}); full 306-cell smoke_installed_matrix "
+            "remains Ubuntu-only."
+        ),
         "results": results,
     }
     print(json.dumps(report, indent=2))

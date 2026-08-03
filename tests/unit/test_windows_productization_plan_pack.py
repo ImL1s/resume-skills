@@ -61,32 +61,28 @@ class WindowsProductizationPlanPackTests(unittest.TestCase):
             self.assertTrue(path.is_file(), f"missing plan file: {path}")
             self.assertGreater(path.stat().st_size, 200, f"plan file too small: {path}")
 
-    def test_index_next_incomplete_is_phase4_not_phase3(self) -> None:
-        """After Phase 3 landed on main, handoff must start low models at Phase 4."""
+    def test_index_reflects_phase7_and_dual_os_v1_closed(self) -> None:
+        """After #125 Phase 7, INDEX must not send agents back to Phase 4."""
         text = (PLAN_DIR / "INDEX.md").read_text(encoding="utf-8")
-        self.assertIn("03-rootlock-wire.md", text)
-        self.assertIn("04-relative-mutations.md", text)
-        # Phase 3 is baseline landed, not the next start-here work
+        self.assertRegex(text, re.compile(r"#125.*CLOSED|CLOSED.*#125", re.I | re.S))
+        self.assertRegex(text, re.compile(r"Phase 7|Policy B lift", re.I))
+        self.assertIn("smoke_windows_product_install.py", text)
+        self.assertRegex(text, re.compile(r"306/306|Ubuntu only|Ubuntu-only", re.I))
         self.assertRegex(
             text,
-            re.compile(r"Phase 3.*LANDED|LANDED on main", re.I | re.S),
+            re.compile(r"#209.*CLOSED|V1 desktop dual-OS", re.I | re.S),
         )
-        self.assertRegex(
+        self.assertNotRegex(
             text,
             re.compile(r"1 \(start here\).*04-relative-mutations", re.I | re.S),
         )
-        self.assertRegex(
+        self.assertNotRegex(
             text,
             re.compile(
-                r"First PR for a low model on Windows.*04-relative-mutations\.md",
+                r"Product `install`.*still raise.*E_INSTALL_UNSUPPORTED_PLATFORM",
                 re.I | re.S,
             ),
         )
-        # Incomplete slices still before enablement in document order
-        i_phase4 = text.find("04-relative-mutations")
-        i_enable = text.find("07-policy-b-enablement")
-        self.assertGreater(i_phase4, 0)
-        self.assertGreater(i_enable, i_phase4)
 
     def test_pre_final_slices_forbid_early_policy_b_lift(self) -> None:
         for name in PRE_FINAL_SLICES:
@@ -147,75 +143,49 @@ class WindowsProductizationPlanPackTests(unittest.TestCase):
         self.assertRegex(text, re.compile(r"mock|Ubuntu|monkeypatch", re.I))
         self.assertRegex(text, re.compile(r"Anti-theater|anti-theater", re.I))
 
-    def test_index_forbids_github_autoclose_before_phase7(self) -> None:
+    def test_index_records_post_phase7_autoclose_policy(self) -> None:
+        """Post-#125 INDEX: no early Phase-4 start; keep residual family honesty."""
         text = (PLAN_DIR / "INDEX.md").read_text(encoding="utf-8")
+        self.assertRegex(text, re.compile(r"CLOSED", re.I))
         self.assertRegex(
             text,
-            re.compile(r"MUST NOT use:.*Closes|auto-close|GitHub auto-close", re.I | re.S),
+            re.compile(r"Do not claim Windows installed-runner \*\*306/306\*\*|not\*\* 306/306", re.I),
         )
-        self.assertRegex(
-            text,
-            re.compile(r"Only Phase 7.*Closes #125|Closes #125", re.I | re.S),
-        )
-        # Pre-final guidance must keep #125 open language in index global rules
-        self.assertRegex(
-            text,
-            re.compile(r"Do not\*\* close \*\*#125|do not\*\* close \*\*#125|Do not.*close \*\*#125", re.I),
-        )
+        self.assertRegex(text, re.compile(r"WSL2|musl|FreeBSD|BSD", re.I))
 
-    def test_plans_readme_pointer_starts_at_phase4(self) -> None:
-        """Top-level plans/README must not send low models back to Phase 3 RootLock."""
+    def test_plans_readme_pointer_post_phase7(self) -> None:
+        """Top-level plans/README must not send agents back to incomplete Phase 4."""
         path = REPO_ROOT / "plans" / "README.md"
         self.assertTrue(path.is_file(), f"missing {path}")
         text = path.read_text(encoding="utf-8")
         self.assertIn("windows-productization", text)
-        self.assertIn("04-relative-mutations.md", text)
-        self.assertRegex(
-            text,
-            re.compile(
-                r"Phase 4|04-relative-mutations|start here|Next incomplete",
-                re.I,
-            ),
-        )
-        # Must not present Phase 3 as the first remaining order without landed note
+        self.assertRegex(text, re.compile(r"#125.*COMPLETE|Phases 1–7 COMPLETE", re.I | re.S))
+        self.assertRegex(text, re.compile(r"#209.*CLOSED|dual-OS", re.I | re.S))
         self.assertNotRegex(
             text,
-            re.compile(
-                r"Order:\s*Phase 3 RootLock\s*→\s*4 relative",
-                re.I,
-            ),
-            "plans/README still lists Phase 3 as first remaining work",
+            re.compile(r"Next incomplete slice.*04-relative-mutations", re.I | re.S),
         )
-        self.assertRegex(
-            text,
-            re.compile(r"1–3 landed|Phase 3.*landed|Do not re-implement Phase 3", re.I),
-        )
+        self.assertIn("smoke_windows_product_install.py", text)
 
-    def test_status_residual_tracker_does_not_list_rootlock_wire_as_remaining(self) -> None:
-        """STATUS residual row must not advertise RootLock wire as still-to-do foundation."""
+    def test_status_residual_tracker_marks_125_closed(self) -> None:
+        """STATUS residual row must record #125 CLOSED, not open Phase 4 work."""
         path = REPO_ROOT / "docs" / "STATUS.md"
         text = path.read_text(encoding="utf-8")
-        # Locate the #125 residual tracker cell content
-        self.assertIn("#125", text)
-        # Must acknowledge Phase 3 / RootLock landed and point next at Phase 4
+        self.assertIn("#125 CLOSED", text)
         self.assertRegex(
             text,
-            re.compile(
-                r"Phase 1–3 \(landed\)|RootLock.*wire.*landed|RootLock wire is not remaining",
-                re.I | re.S,
-            ),
+            re.compile(r"Phase 7 \(landed\)|Policy B gate lifted", re.I | re.S),
         )
-        self.assertRegex(
-            text,
-            re.compile(r"next incomplete.*Phase 4|Phase 4.*relative mutations", re.I | re.S),
-        )
-        # Forbidden stale phrasing that lists RootLock wire as open remaining work
         self.assertNotRegex(
             text,
             re.compile(
                 r"productization still OPEN\*\* \(RootLock wire \+ relative mutations",
                 re.I,
             ),
+        )
+        self.assertNotRegex(
+            text,
+            re.compile(r"next incomplete\s*=\s*\*\*Phase 4\*\*|next incomplete.*Phase 4", re.I),
         )
 
 

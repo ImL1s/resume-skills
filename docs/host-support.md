@@ -52,16 +52,17 @@ Enabled source adapters and their store families are listed in the root README. 
 | Layer | Current status |
 |---|---|
 | Local packaging matrix | 306/306 pass (currently 17×18, derived from registries) |
-| Installed runner matrix | 306/306 pass (currently 17×18, derived from registries) |
+| Installed runner matrix | **Ubuntu hard gate 306/306** (17×18); **Windows** uses focused product-install smoke (`smoke_windows_product_install.py`, 3 hosts: claude/cursor/codex) — **not** claimed 306/306 on Windows |
 | Native local plugin/extension installs | 7/7 pass with exact v0.3.2 release assets |
 | Host-native headless Skill invocation | 8/8 pass from v0.3.2-era evidence; Pi not-run |
 | Public marketplace installation | 6/6 compatible hosts pass on v0.3.2; fresh v0.3.4 reinstall not-run |
 | Visual marketplace picker | Cursor and Kimi pass on v0.3.2; fresh v0.3.4 picker flow not-run |
 | Other visual Skill pickers | not-run |
 | Vendor-curated directory listing | not submitted |
-| CI definition | Ubuntu/macOS × Python 3.11–3.14 |
+| CI definition | Ubuntu/macOS × Python 3.11–3.14 + windows-latest / Python 3.12 (nt gates + focused product install smoke) |
 | Latest archived remote CI/release | `v0.3.4` pass: release-commit CI and 14-job release run archived |
 | Historical release proof | Earlier releases are archived separately in `evidence-summary.md` |
+| Dual-OS product V1 (win+mac) | **Windows native + macOS** readers/CI verified; mutating install supported on both; WSL2/musl/BSD **not-run** (out of V1 scope) |
 | Windows | **mutating install supported** (Phase 7 / #125): Win32 exclusive locking, reparse-safe relative mutations, parent-chain defenses, adversarial product-path evidence; `install`/`uninstall`/`recover` execute on real `nt` |
 
 ### Installer containment notes (Phase 0 / PR #49 + #29)

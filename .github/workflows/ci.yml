@@ -104,10 +104,9 @@ jobs:
           PYTHONPATH: src
         run: python scripts/self_verify.py --only windows_source_fixtures
 
-      # Phase 7 (#125): focused Windows product install smoke.
-      # Full 306-cell smoke_installed_matrix stays Ubuntu-only hard gate —
-      # some source adapters have unrelated format issues on Windows.
-      - name: Product install smoke (Windows nt, Phase 7)
+      # Windows hard gate: focused product install smoke only (claude/cursor/codex).
+      # Full 306-cell smoke_installed_matrix is Ubuntu-only — do not claim Windows 306/306.
+      - name: Product install smoke (Windows nt hard gate)
         env:
           PYTHONPATH: src
         run: python scripts/smoke_windows_product_install.py

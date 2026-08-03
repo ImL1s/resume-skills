@@ -1,90 +1,49 @@
-# #209 — Platform-family honesty plan (not “implement all OS”)
+# #209 — Platform-family honesty (V1 desktop dual-OS)
 
 **Primary issue:** [#209](https://github.com/ImL1s/resume-skills/issues/209)  
 **Type:** documentation / checklist / evidence hygiene  
-**PR title pattern:** `docs(platform): #209 honesty <short-slug>`
+**V1 close criteria (maintainer, 2026-08-03):** Windows native + macOS product surfaces with real CI evidence; WSL2 / musl / BSD **not-run** and **out of V1 scope**.
 
 ---
 
 ## Agent brief (copy to low model)
 
 ```text
-You are working on #209 umbrella honesty ONLY.
+You are working on #209 platform honesty ONLY (or residual not-run family docs).
 
 GOAL
 - Keep the platform contract honest: verified vs not-run families.
-- Never implement “all OS support” in one PR.
+- V1 desktop dual-OS = Windows native + macOS (Ubuntu remains a CI host).
 - Never mark WSL2 / musl-only / FreeBSD-BSD as verified without real runners.
 
 MUST DO
-1. Read docs/STATUS.md platform table and issue #209 body rules.
+1. Read docs/STATUS.md platform table.
 2. Update checklist only when merged code + current evidence exist.
-3. When #125 Phase 7 lands, update Windows native mutating row to verified
-   with CI URL — still leave WSL2/musl/BSD as not-run unless evidence exists.
-4. Forbid STATUS language that groups #205–#209 as all closed.
+3. Windows mutating install is CLOSED via #125 Phase 7 — do not re-open.
+4. Windows installed-runner: focused smoke only; full 306 is Ubuntu-only unless measured.
 
 MUST NOT DO
 - Fake green CI for missing runners.
-- Close #209 while #125 open (unless maintainer redefines #209 scope in writing).
-- Close #209 while WSL2/musl/BSD remain required-and-not-run under current
-  issue definition.
-- Implement Windows install here (that is #125 phases).
+- Require WSL2/musl/BSD verified before documenting V1 dual-OS done.
+- Implement new OS runners in a honesty-only PR unless assigned.
 
-DoD for a honesty-only PR
-- [ ] STATUS/table accurate
+DoD for honesty-only PR
+- [ ] STATUS/table accurate for win+mac V1
 - [ ] not-run families remain not-run without runners
-- [ ] #209 stays open unless explicit maintainer close criteria met
+- [ ] no claim of Windows 306/306 installed-runner without evidence
 ```
 
 ---
 
-## Current family posture (template — refresh from STATUS when editing)
+## V1 scope (closed)
 
-| Family | Typical posture |
-|--------|-----------------|
-| Ubuntu (`ubuntu-latest`) | verified (suite / readers) |
-| macOS (`macos-latest`) | verified (suite / readers) |
-| Windows native (`windows-latest`) | read-only verified; mutating fail-closed until #125 Phase 7 |
-| WSL2 | **not-run** |
-| musl-only | **not-run** |
-| FreeBSD / BSD | **not-run** |
+| Family | Readers + CI | Mutating install |
+|--------|--------------|------------------|
+| Windows native | verified | supported (#125) |
+| macOS | verified | supported |
+| Ubuntu (CI host) | verified | supported (POSIX) |
+| WSL2 | not-run | not-run |
+| musl-only | not-run | not-run |
+| FreeBSD / BSD | not-run | not-run |
 
-## Allowed #209 PR units (atomic)
-
-1. **Refresh STATUS table** after a real CI change (links only).  
-2. **Document how to add a runner** (WSL2/musl/BSD) without claiming verified.  
-3. **Fix overclaim wording** found in README/host-support.  
-4. **After #125 Phase 7:** update Windows mutating row only.
-
-## Forbidden
-
-```text
-❌ "Full cross-platform support complete"
-❌ Closing #209 because Windows lock primitive landed
-❌ Closing #209 because Ubuntu+macOS+Windows read-only CI is green
-❌ Marking WSL2 verified from ordinary Linux CI
-```
-
-## Verification (docs PR)
-
-```bash
-# any OS
-rg -n "not-run|verified|#125|#209" docs/STATUS.md
-# ensure no "#205–#209" bulk-closed language
-rg -n "205–#209|#205-#209" docs/STATUS.md && exit 1 || true
-```
-
-## Relationship to #125
-
-- #125 owns Windows **mutating install productization**.  
-- #209 owns **umbrella honesty** across families.  
-- Completing #125 Phase 7 is **necessary but not sufficient** to close #209 under the current issue text (WSL2/musl/BSD still not-run).
-
-## Done when (honesty PR)
-
-- [ ] Docs accurate; no fake verified rows  
-- [ ] Issue #209 comment summarizing still-open residuals  
-
-## Close #209 only if
-
-Maintainer rewrites scope **or** every required family has real evidence — not by agent assumption.
+Closing #209 under V1 means **desktop dual-OS product honesty is complete**, not “every Unix-like is verified.”

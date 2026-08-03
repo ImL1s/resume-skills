@@ -2,12 +2,12 @@
 
 ## Windows productization handoff (#125 / #209)
 
-Low-model / real-Windows execution pack (Phases **1–3 landed** on main — lock primitive, lock-metadata fail-closed, RootLock Win32 wire):
+**#125 Phases 1–7 COMPLETE** (mutating install on real Windows). **#209 V1 desktop dual-OS (win+mac) CLOSED**; WSL2 / musl / BSD remain **not-run**.
 
 → **[`docs/plans/windows-productization/INDEX.md`](../docs/plans/windows-productization/INDEX.md)**  
-→ **Next incomplete slice (start here):** [`docs/plans/windows-productization/04-relative-mutations.md`](../docs/plans/windows-productization/04-relative-mutations.md)
+→ Honesty residual brief: [`docs/plans/windows-productization/209-platform-honesty.md`](../docs/plans/windows-productization/209-platform-honesty.md)
 
-Order remaining: **Phase 4** relative mutations → 5 parent-chain reparse → 6 adversarial evidence → 7 Policy B enablement only. **Do not re-implement Phase 3** RootLock. #209 honesty is docs-only / not-run families.
+Windows CI hard gate: focused `smoke_windows_product_install.py` (not 306/306). Full matrix remains Ubuntu-only.
 
 ## 2026-08-01 in-session UX audit (plans 045–055)
 
