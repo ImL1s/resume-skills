@@ -1,5 +1,16 @@
 # Evidence summary
 
+
+## v0.4.1 (2026-08-03)
+
+- Tag: `v0.4.1` → commit `a2ae025dcdf6a3944eb6752caadd67a53c28f46e`
+- Release workflow: [Actions run 30837046570](https://github.com/ImL1s/resume-skills/actions/runs/30837046570) (success)
+- GitHub Release: https://github.com/ImL1s/resume-skills/releases/tag/v0.4.1
+- PyPI: https://pypi.org/project/portable-resume/0.4.1/
+- Highlights: Windows mutating install (#125), win+mac V1 honesty (#209 reduced), list JSON flake fix, smoke cwd normalize
+- Windows installed-runner: focused product-install smoke only (not full 306/306 on Windows)
+- Host UI / marketplace reinstall on this tip: **not-run**
+
 ## Unreleased main: release identity and tag-policy evidence
 
 | Field | Evidence |
