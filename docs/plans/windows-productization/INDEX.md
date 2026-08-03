@@ -11,9 +11,10 @@
 | Phase 1 | Win32 exclusive lock primitive (`CreateFileW` + `LockFileEx`) | PR [#216](https://github.com/ImL1s/resume-skills/pull/216) |
 | Residual honesty | Zero side-effect gates + STATUS closed/open clarity | PR [#218](https://github.com/ImL1s/resume-skills/pull/218) |
 | Phase 2 | Lock-leaf metadata fail-closed + full-width `INVALID_HANDLE_VALUE` | PR [#219](https://github.com/ImL1s/resume-skills/pull/219) |
+| Phase 3 | `RootLock` on real Windows uses `platform_fs` exclusive lock (`_enter_windows`) | main `55c3279` (+ follow-up test skip `a130553`); product still Policy B fail-closed |
 
 Product `install` / `uninstall` / `recover` on Windows still raise **`E_INSTALL_UNSUPPORTED_PLATFORM`** (Policy B / #29).  
-`FilesystemCapabilities.relative_mutations` remains **`False`** on the Windows backend.
+`FilesystemCapabilities.relative_mutations` remains **`False`** on the Windows backend until Phase 4 DoD is green.
 
 Decision docs:
 
@@ -28,18 +29,19 @@ Do **one** slice → one PR → one primary issue. Do not combine enablement wit
 
 | Order | Slice file | Phase label | Primary issue | Product Policy B |
 |------:|------------|-------------|---------------|------------------|
-| **1 (start here)** | [`03-rootlock-wire.md`](03-rootlock-wire.md) | Phase 3 | **#125** | **MUST keep fail-closed** |
-| 2 | [`04-relative-mutations.md`](04-relative-mutations.md) | Phase 4 | **#125** | **MUST keep fail-closed** |
-| 3 | [`05-parent-chain-reparse.md`](05-parent-chain-reparse.md) | Phase 5 | **#125** | **MUST keep fail-closed** |
-| 4 | [`06-adversarial-product-path.md`](06-adversarial-product-path.md) | Phase 6 | **#125** | **MUST keep fail-closed** (tests may use a **test-only** hook; product CLI still blocked) |
-| 5 (last #125) | [`07-policy-b-enablement.md`](07-policy-b-enablement.md) | Phase 7 | **#125** | **Only slice allowed to lift** after checklist |
+| ~~1~~ | [`03-rootlock-wire.md`](03-rootlock-wire.md) | Phase 3 | **#125** | **LANDED on main** — do not re-implement |
+| **1 (start here)** | [`04-relative-mutations.md`](04-relative-mutations.md) | Phase 4 | **#125** | **MUST keep fail-closed** |
+| 2 | [`05-parent-chain-reparse.md`](05-parent-chain-reparse.md) | Phase 5 | **#125** | **MUST keep fail-closed** |
+| 3 | [`06-adversarial-product-path.md`](06-adversarial-product-path.md) | Phase 6 | **#125** | **MUST keep fail-closed** (tests may use a **test-only** hook; product CLI still blocked) |
+| 4 (last #125) | [`07-policy-b-enablement.md`](07-policy-b-enablement.md) | Phase 7 | **#125** | **Only slice allowed to lift** after checklist |
 | Parallel (docs only) | [`209-platform-honesty.md`](209-platform-honesty.md) | #209 honesty | **#209** | N/A — **never** invent WSL2/musl/BSD green |
 
 Also read once: [`00-baseline-and-global-rules.md`](00-baseline-and-global-rules.md).
 
 ```text
-First PR for a low model on Windows:
-  → docs/plans/windows-productization/03-rootlock-wire.md
+First PR for a low model on Windows (current main):
+  → docs/plans/windows-productization/04-relative-mutations.md
+Do NOT re-do Phase 3 RootLock wire (already on main).
 ```
 
 **Cannot find these files?** You are on a **stale clone**. Run:
@@ -77,13 +79,13 @@ docs(platform): #209 honesty <short-slug>
 
 Examples:
 
-- `feat(platform): #125 Phase 3 wire RootLock to Win32 exclusive lock`
-- `feat(platform): #125 Phase 4 reparse-safe relative mutations`
+- `feat(platform): #125 Phase 4 reparse-safe relative mutations` ← **next**
+- `feat(platform): #125 Phase 5 parent-chain reparse defenses`
 - `docs(platform): #209 refresh not-run family checklist`
 
 ### GitHub auto-close guard (critical)
 
-For **Phases 3–6** and **docs-only** PRs (including plan-pack PRs):
+For **Phases 4–6** and **docs-only** PRs (including plan-pack PRs):
 
 ```text
 PR body MUST use:  Relates to #125   or   Refs #125
@@ -115,4 +117,4 @@ If #125 is closed without Phase 7 product evidence, **reopen immediately** and c
 - ACL ownership model completeness  
 - Claiming `ReplaceFileW` durability without measured limits  
 - reinframe or other repos  
-- Re-doing Phase 1–2 primitives already on `main`
+- Re-doing Phase 1–3 primitives already on `main` (lock, metadata fail-closed, RootLock Win32 wire)
