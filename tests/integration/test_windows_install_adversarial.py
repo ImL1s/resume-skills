@@ -6,7 +6,10 @@ import json
 import os
 import stat
 import tempfile
-import _winapi
+if os.name == "nt":
+    import _winapi
+else:
+    _winapi = None  # type: ignore
 import unittest
 from pathlib import Path
 
