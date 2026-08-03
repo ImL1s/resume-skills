@@ -87,7 +87,7 @@ jobs:
           PYTHONPATH: src
         run: |
           python -m compileall -q src scripts tests
-          python -m unittest tests.unit.test_platform_fs tests.unit.test_platform_paths tests.unit.test_install_windows_platform_gate tests.unit.test_windows_relative_mutations tests.unit.test_windows_parent_chain_reparse tests.unit.test_output_write tests.unit.test_self_verify_profiles -q
+          python -m unittest tests.unit.test_platform_fs tests.unit.test_platform_paths tests.unit.test_install_windows_platform_gate tests.unit.test_windows_relative_mutations tests.unit.test_windows_parent_chain_reparse tests.unit.test_output_write tests.unit.test_self_verify_profiles tests.integration.test_windows_install_adversarial -q
 
       - name: Product read-only surfaces (Windows nt)
         env:

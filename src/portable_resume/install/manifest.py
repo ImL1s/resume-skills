@@ -98,14 +98,19 @@ def sha256_bytes(data: bytes) -> str:
 
 def sha256_file(path: str) -> str:
     """Hash a regular file without following symlinks when O_NOFOLLOW is available."""
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
     try:
         fd = os.open(path, flags)
     except OSError:
         # Fallback: refuse obvious symlinks, then follow-open (platforms without O_NOFOLLOW).
         if os.path.islink(path):
             raise
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0))
     try:
         import stat as stat_mod
 
