@@ -65,6 +65,9 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertIn("not-run", track)
         self.assertNotIn("open residual #209", track)
         self.assertNotIn("#209 umbrella remains OPEN", track)
+        # After V1 close, no platform-table / residual cell may still say "#209 OPEN".
+        self.assertNotIn("#209 OPEN", text)
+        self.assertNotIn("#209 remains OPEN", text)
         self.assertNotIn("#205–#209", track)
 
     def test_windows_installed_runner_not_claimed_as_full_matrix(self) -> None:
@@ -235,3 +238,18 @@ class StatusHonestyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_platform_table_marks_209_v1_closed(self) -> None:
+        """Windows native mutating cell must not contradict closed #209 V1."""
+        text = Path("docs/STATUS.md").read_text(encoding="utf-8")
+        win_rows = [
+            line
+            for line in text.splitlines()
+            if line.startswith("| Windows native")
+        ]
+        self.assertEqual(len(win_rows), 1, msg=win_rows)
+        row = win_rows[0]
+        self.assertIn("#125 CLOSED", row)
+        self.assertIn("#209 V1 desktop dual-OS CLOSED", row)
+        self.assertNotIn("#209 OPEN", row)
