@@ -5,18 +5,18 @@
     "sdist",
     "wheel"
   ],
-  "commit_sha": "7539bc81e658437f9a2f4425b48738e201993e4d",
-  "github_release": "https://github.com/ImL1s/resume-skills/releases/tag/v0.4.0",
+  "commit_sha": "a2ae025dcdf6a3944eb6752caadd67a53c28f46e",
+  "github_release": "https://github.com/ImL1s/resume-skills/releases/tag/v0.4.1",
   "matrix_dimensions": {
     "cells": 306,
     "destinations": 18,
     "sources": 17
   },
-  "published_at": "2026-08-01T07:19:55Z",
-  "pypi": "https://pypi.org/project/portable-resume/0.4.0/",
+  "published_at": "2026-08-03T17:43:14Z",
+  "pypi": "https://pypi.org/project/portable-resume/0.4.1/",
   "registry_sha256": "1a9725210209390ab86d84de465a0b5850e90d0e115f20d8edeb8ccc48c90d5e",
   "schema": "portable-resume/latest-release-v1",
-  "source_sha256": "6b7c0977982fa3508f6dace14b2d6eebf71eb1f34489f3fb43d723ac4d640667",
-  "tag": "v0.4.0",
-  "version": "0.4.0"
+  "source_sha256": "46903bb19cdef530d5f699badf53d306702cd8359f0d9cc75575e1057c201ecf",
+  "tag": "v0.4.1",
+  "version": "0.4.1"
 }
