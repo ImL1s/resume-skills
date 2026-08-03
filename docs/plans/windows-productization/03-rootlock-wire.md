@@ -1,5 +1,7 @@
 # Phase 3 — Wire RootLock to Win32 exclusive lock (#125)
 
+> **HISTORICAL (archive):** #125 Phases 1–7 are **COMPLETE** on main (Policy B lifted; PR #228). Do **not** re-implement this slice or treat Policy B fail-closed product install as current residual work. See [`INDEX.md`](INDEX.md).
+
 **Primary issue:** [#125](https://github.com/ImL1s/resume-skills/issues/125)  
 **Depends on:** Phase 1–2 on `main` (PR #216, #219). **Not** on Phase 4–7.  
 **PR title pattern:** `feat(platform): #125 Phase 3 wire RootLock to Win32 exclusive lock`

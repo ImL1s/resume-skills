@@ -189,5 +189,13 @@ class WindowsProductizationPlanPackTests(unittest.TestCase):
         )
 
 
+    def test_phase_briefs_marked_historical_after_phase7(self) -> None:
+        """Active agents must not treat Phase 3–7 briefs as incomplete work."""
+        for name in PRE_FINAL_SLICES + ("07-policy-b-enablement.md",):
+            text = (PLAN_DIR / name).read_text(encoding="utf-8")
+            self.assertIn("HISTORICAL (archive)", text, msg=name)
+            self.assertIn("#125", text)
+
+
 if __name__ == "__main__":
     unittest.main()

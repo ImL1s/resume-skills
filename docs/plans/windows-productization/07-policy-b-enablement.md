@@ -1,5 +1,7 @@
 # Phase 7 — Policy B enablement gate (final #125 product slice)
 
+> **HISTORICAL (archive):** #125 Phases 1–7 are **COMPLETE** on main (Policy B lifted; PR #228). Do **not** re-implement this slice or treat Policy B fail-closed product install as current residual work. See [`INDEX.md`](INDEX.md).
+
 **Primary issue:** [#125](https://github.com/ImL1s/resume-skills/issues/125)  
 **Depends on:** Phases 3–6 **all** merged with windows-latest evidence.  
 **PR title pattern:** `feat(platform): #125 Phase 7 enable Windows mutating install (Policy B lift)`

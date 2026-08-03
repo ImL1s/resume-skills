@@ -8,11 +8,28 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from portable_resume.adapters.base import CapabilityReport
 from portable_resume.model import SessionSummary
 from portable_resume.reader import run
+
+
+def _stable_json_payload(text: str) -> dict[str, Any]:
+    """Parse list/show JSON and drop clock fields that differ across invocations.
+
+    Two consecutive ``list --format json`` runs can cross a second boundary, so
+    raw string equality on ``generated_at`` is flaky in CI (observed on
+    ubuntu-latest self_verify unit stage).
+    """
+
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise AssertionError(f"expected JSON object, got {type(payload)!r}")
+    payload = dict(payload)
+    payload.pop("generated_at", None)
+    return payload
 
 
 class ReaderOutputCliTests(unittest.TestCase):
@@ -66,7 +83,13 @@ class ReaderOutputCliTests(unittest.TestCase):
                     stderr=io.StringIO(),
                 )
                 self.assertEqual(code2, 0)
-                self.assertEqual(file_bytes, stdout2.getvalue())
+                # Structural equality only — not raw string (generated_at clock).
+                self.assertEqual(
+                    _stable_json_payload(file_bytes),
+                    _stable_json_payload(stdout2.getvalue()),
+                )
+                self.assertIn("generated_at", json.loads(file_bytes))
+                self.assertIn("generated_at", json.loads(stdout2.getvalue()))
 
                 # Second write without --force must fail and preserve content.
                 stderr = io.StringIO()
@@ -88,7 +111,7 @@ class ReaderOutputCliTests(unittest.TestCase):
                 self.assertIn("E_INVALID_INPUT", stderr.getvalue())
                 self.assertEqual(out_path.read_text(encoding="utf-8"), file_bytes)
 
-                # --force replaces.
+                # --force replaces (new clock ok; stable payload must match list).
                 code4 = run(
                     [
                         "claude",
@@ -105,7 +128,35 @@ class ReaderOutputCliTests(unittest.TestCase):
                     stderr=io.StringIO(),
                 )
                 self.assertEqual(code4, 0)
-                self.assertEqual(out_path.read_text(encoding="utf-8"), file_bytes)
+                self.assertEqual(
+                    _stable_json_payload(out_path.read_text(encoding="utf-8")),
+                    _stable_json_payload(stdout2.getvalue()),
+                )
+
+    def test_stable_json_payload_ignores_generated_at_clock(self) -> None:
+        """Regression: second-boundary generated_at must not break equality."""
+        a = json.dumps(
+            {
+                "schema_version": "portable-resume/v1",
+                "operation": "list",
+                "inert": True,
+                "generated_at": "2026-08-03T10:05:21Z",
+                "sessions": [],
+            },
+            sort_keys=True,
+        )
+        b = json.dumps(
+            {
+                "schema_version": "portable-resume/v1",
+                "operation": "list",
+                "inert": True,
+                "generated_at": "2026-08-03T10:05:22Z",
+                "sessions": [],
+            },
+            sort_keys=True,
+        )
+        self.assertNotEqual(a, b)
+        self.assertEqual(_stable_json_payload(a), _stable_json_payload(b))
 
     def test_output_dash_writes_stdout(self) -> None:
         def fake_load(source: str):

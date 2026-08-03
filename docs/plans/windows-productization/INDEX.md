@@ -34,7 +34,7 @@ Do **not** write STATUS language that claims Windows installed-runner **306/306*
 
 | File | Status |
 |------|--------|
-| `03`–`07` phase briefs | Historical — #125 complete |
+| `03`–`07` phase briefs | **HISTORICAL (archive)** — each file is bannered; #125 complete; do not re-implement |
 | [`209-platform-honesty.md`](209-platform-honesty.md) | V1 dual-OS closed; residual families stay not-run |
 
 ## Global must-not-do
