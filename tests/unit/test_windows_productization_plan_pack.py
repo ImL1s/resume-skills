@@ -163,6 +163,61 @@ class WindowsProductizationPlanPackTests(unittest.TestCase):
             re.compile(r"Do not\*\* close \*\*#125|do not\*\* close \*\*#125|Do not.*close \*\*#125", re.I),
         )
 
+    def test_plans_readme_pointer_starts_at_phase4(self) -> None:
+        """Top-level plans/README must not send low models back to Phase 3 RootLock."""
+        path = REPO_ROOT / "plans" / "README.md"
+        self.assertTrue(path.is_file(), f"missing {path}")
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("windows-productization", text)
+        self.assertIn("04-relative-mutations.md", text)
+        self.assertRegex(
+            text,
+            re.compile(
+                r"Phase 4|04-relative-mutations|start here|Next incomplete",
+                re.I,
+            ),
+        )
+        # Must not present Phase 3 as the first remaining order without landed note
+        self.assertNotRegex(
+            text,
+            re.compile(
+                r"Order:\s*Phase 3 RootLock\s*→\s*4 relative",
+                re.I,
+            ),
+            "plans/README still lists Phase 3 as first remaining work",
+        )
+        self.assertRegex(
+            text,
+            re.compile(r"1–3 landed|Phase 3.*landed|Do not re-implement Phase 3", re.I),
+        )
+
+    def test_status_residual_tracker_does_not_list_rootlock_wire_as_remaining(self) -> None:
+        """STATUS residual row must not advertise RootLock wire as still-to-do foundation."""
+        path = REPO_ROOT / "docs" / "STATUS.md"
+        text = path.read_text(encoding="utf-8")
+        # Locate the #125 residual tracker cell content
+        self.assertIn("#125", text)
+        # Must acknowledge Phase 3 / RootLock landed and point next at Phase 4
+        self.assertRegex(
+            text,
+            re.compile(
+                r"Phase 1–3 \(landed\)|RootLock.*wire.*landed|RootLock wire is not remaining",
+                re.I | re.S,
+            ),
+        )
+        self.assertRegex(
+            text,
+            re.compile(r"next incomplete.*Phase 4|Phase 4.*relative mutations", re.I | re.S),
+        )
+        # Forbidden stale phrasing that lists RootLock wire as open remaining work
+        self.assertNotRegex(
+            text,
+            re.compile(
+                r"productization still OPEN\*\* \(RootLock wire \+ relative mutations",
+                re.I,
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
