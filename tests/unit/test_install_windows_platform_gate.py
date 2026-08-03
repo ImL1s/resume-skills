@@ -1,8 +1,7 @@
-"""Windows mutating installer ops must fail closed without exclusive lock (#29)."""
+"""Windows product mutations stay fail-closed despite the Phase-1 lock primitive."""
 
 from __future__ import annotations
 
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -31,7 +30,7 @@ class WindowsPlatformGateTests(unittest.TestCase):
 
     def test_require_mutating_install_platform_ok_on_posix(self) -> None:
         with mock.patch("portable_resume.install.transaction.os.name", "posix"):
-            require_mutating_install_platform()  # no raise
+            require_mutating_install_platform()
 
     def test_root_lock_does_not_create_support_on_windows(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -62,7 +61,10 @@ class WindowsPlatformGateTests(unittest.TestCase):
                 with self.assertRaises(DiagnosticError) as ctx:
                     execute_install(plan)
             self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
-            self.assertFalse(Path(root).exists() or any(Path(root).rglob("*") if Path(root).exists() else []))
+            self.assertFalse(
+                Path(root).exists()
+                or any(Path(root).rglob("*") if Path(root).exists() else [])
+            )
 
     def test_execute_install_dry_run_still_allowed_under_nt_mock(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -81,26 +83,48 @@ class WindowsPlatformGateTests(unittest.TestCase):
                 result = execute_install(plan)
             self.assertTrue(result["dry_run"])
             self.assertTrue(result["ok"])
+            self.assertFalse(Path(root).exists(), "dry-run must not create the destination root")
 
     def test_uninstall_mutation_fails_closed_on_windows(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = str(Path(temporary) / "skills")
-            Path(root).mkdir()
+            root = Path(temporary) / "skills"
+            root.mkdir()
+            sentinel = root / "keep.txt"
+            sentinel.write_bytes(b"unchanged")
             with mock.patch("portable_resume.install.transaction.os.name", "nt"):
                 with self.assertRaises(DiagnosticError) as ctx:
-                    uninstall_claim(host="claude", scope="project", root=root)
+                    uninstall_claim(host="claude", scope="project", root=str(root))
             self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+            self.assertEqual(sentinel.read_bytes(), b"unchanged")
+            self.assertFalse(
+                (root / ".portable-resume").exists(),
+                "the product gate must run before creating installer control state",
+            )
 
     def test_recover_with_journal_fails_closed_on_windows(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "skills"
             support = root / ".portable-resume" / ".state"
             support.mkdir(parents=True)
-            (support / "journal.json").write_text("{}", encoding="utf-8")
+            journal = support / "journal.json"
+            journal.write_text("{}", encoding="utf-8")
+            sentinel = root / "keep.txt"
+            sentinel.write_bytes(b"unchanged")
             with mock.patch("portable_resume.install.transaction.os.name", "nt"):
                 with self.assertRaises(DiagnosticError) as ctx:
                     recover_root(str(root))
             self.assertEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
+            self.assertEqual(journal.read_text(encoding="utf-8"), "{}")
+            self.assertEqual(sentinel.read_bytes(), b"unchanged")
+            self.assertEqual(
+                sorted(path.relative_to(root).as_posix() for path in root.rglob("*")),
+                [
+                    ".portable-resume",
+                    ".portable-resume/.state",
+                    ".portable-resume/.state/journal.json",
+                    "keep.txt",
+                ],
+            )
 
     def test_recover_without_journal_noop_on_windows(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -109,23 +133,16 @@ class WindowsPlatformGateTests(unittest.TestCase):
             with mock.patch("portable_resume.install.transaction.os.name", "nt"):
                 result = recover_root(str(root))
             self.assertEqual(result, {"ok": True, "recovered": False})
+            self.assertEqual(list(root.iterdir()), [])
 
     def test_verify_root_is_observational_on_nt_not_platform_gated(self) -> None:
-        """Residual #125 / Policy B: verify stays read-only on Windows.
-
-        ``verify_root`` intentionally does **not** call
-        ``require_mutating_install_platform`` (see transaction docstring). On
-        ``nt`` it skips ``RootLock`` even when a control tree exists. Missing or
-        incomplete install state fails with ``E_VERIFY_MISMATCH``, never
-        ``E_INSTALL_UNSUPPORTED_PLATFORM`` solely due to platform.
-        """
+        """Verify stays read-only on Windows and does not construct RootLock."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "skills"
-            # Present control-state marker so has_control is True (the branch
-            # that would take RootLock on POSIX). Windows must still skip it.
             state = root / ".portable-resume" / ".state"
             state.mkdir(parents=True)
-            (state / "manifest.json").write_text("{}", encoding="utf-8")
+            manifest = state / "manifest.json"
+            manifest.write_text("{}", encoding="utf-8")
             root_s = str(root)
 
             lock_calls: list[str] = []
@@ -149,6 +166,7 @@ class WindowsPlatformGateTests(unittest.TestCase):
             self.assertEqual(ctx.exception.code, "E_VERIFY_MISMATCH")
             self.assertNotEqual(ctx.exception.code, "E_INSTALL_UNSUPPORTED_PLATFORM")
             self.assertEqual(lock_calls, [], "RootLock must not be constructed on nt")
+            self.assertEqual(manifest.read_text(encoding="utf-8"), "{}")
 
 
 if __name__ == "__main__":

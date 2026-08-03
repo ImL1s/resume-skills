@@ -45,6 +45,21 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertRegex(text, r"github\.com/ImL1s/resume-skills/issues/36")
         self.assertRegex(text, r"github\.com/ImL1s/resume-skills/issues/48")
 
+    def test_status_separates_closed_platform_slices_from_open_residuals(self) -> None:
+        text = Path("docs/STATUS.md").read_text(encoding="utf-8")
+        tracks = [
+            line
+            for line in text.splitlines()
+            if line.startswith("**Cross-platform track")
+        ]
+        self.assertEqual(len(tracks), 1)
+        track = tracks[0]
+        self.assertIn("closed read-only/CI slices #205–#208", track)
+        self.assertIn("open residuals #125 and #209", track)
+        self.assertIn("#125 remains OPEN", track)
+        self.assertIn("#209 umbrella remains OPEN", track)
+        self.assertNotIn("#205–#209", track)
+
     def test_agents_md_uses_registry_derived_matrix_language(self) -> None:
         text = Path("AGENTS.md").read_text(encoding="utf-8")
         lowered = text.lower()
@@ -115,7 +130,6 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertNotIn("## Fresh local verification", evidence)
         self.assertIn("## Historical local verification: v0.3.2-era", evidence)
 
-
     def test_status_notes_stable_scan_lines_adoption_is_partial(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
@@ -131,8 +145,17 @@ class StatusHonestyTests(unittest.TestCase):
     def test_status_reflects_pi_merge_honesty(self) -> None:
         text = Path("docs/STATUS.md").read_text(encoding="utf-8")
         lowered = text.lower()
-        self.assertRegex(text, r"\*\*\d+ pass locally\*\*")
-        # Current main is 144-cell; published 0.3.4 historical 81 remains noted.
+        # Prefer immutable CI evidence for the current suite. Historical local
+        # snapshots may remain, but they must be explicitly labeled historical.
+        self.assertRegex(
+            text,
+            r"\*\*\d+ pass in current [^*]+ CI(?: \(PR #[0-9]+\))?\*\*",
+        )
+        self.assertRegex(
+            text,
+            r"(?i)prior \*\*\d+ local\*\* snapshot[^.]{0,160}historical",
+        )
+        # Current main is registry-derived; published 0.3.4 historical 81 remains noted.
         self.assertRegex(text, r"169/169|144/144|121/121|100/100|81/81")
         self.assertIn("359", text)  # archived local suite after Pi destination PR C
         self.assertIn("d9152cd", text)  # archived PR #51 merge tip
