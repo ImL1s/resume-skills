@@ -131,15 +131,16 @@ class InstalledSmokeValidationTests(unittest.TestCase):
             )
         self.assertEqual((fixture / "session_index.jsonl").read_bytes(), original)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
     def test_normalize_smoke_cwd_is_absolute_and_stable(self) -> None:
-        """Easy Windows matrix class: POSIX fixture cwd becomes host absolute."""
+        """Easy Windows matrix class: POSIX fixture cwd becomes host absolute.
+
+        Drives shipped ``_normalize_smoke_cwd`` (not a reimplementation) and
+        proves envelope validation accepts the normalized host form via
+        ``same_cwd`` against the original fixture spelling.
+        """
         import os
-        import tempfile
+
+        from portable_resume.paths import same_cwd
 
         # Existing directory: realpath should be absolute.
         with tempfile.TemporaryDirectory() as tmp:
@@ -148,12 +149,34 @@ if __name__ == "__main__":
             self.assertEqual(os.path.realpath(tmp), normalized)
 
         # POSIX-style synthetic project path used by FIXTURES.
-        path = self.smoke._normalize_smoke_cwd("/workspace/project")
+        fixture_cwd = "/workspace/project"
+        path = self.smoke._normalize_smoke_cwd(fixture_cwd)
         self.assertTrue(os.path.isabs(path))
-        # same_cwd(query, smoke_cwd) must hold when query uses the same spelling.
-        from portable_resume.paths import same_cwd
-
         self.assertTrue(same_cwd(path, path))
         # Fixture spelling and normalized host form must still compare equal.
-        self.assertTrue(same_cwd("/workspace/project", path))
+        self.assertTrue(same_cwd(fixture_cwd, path))
 
+        # Envelope check path used by smoke_installed_matrix after normalize.
+        payload = json.loads(self.envelope())
+        payload["query"]["cwd"] = path
+        detail = self.smoke._parse_envelope(
+            json.dumps(payload),
+            operation="show",
+            source="qwen",
+            cwd=path,
+            session_id="qwen-one",
+            contents=("exact synthetic content",),
+        )
+        self.assertIsNone(detail)
+
+        # All FIXTURES project cwds (except crush override) normalize to abs paths.
+        for source, (_rel, cwd, _sid, _contents) in self.smoke.FIXTURES.items():
+            if source == "crush":
+                continue
+            host_cwd = self.smoke._normalize_smoke_cwd(cwd)
+            self.assertTrue(os.path.isabs(host_cwd), msg=source)
+            self.assertTrue(same_cwd(cwd, host_cwd), msg=source)
+
+
+if __name__ == "__main__":
+    unittest.main()
