@@ -14,7 +14,9 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
+import contextlib
+import threading
 
 from ..diagnostics import DiagnosticError
 from .catalog import BUNDLE_VERSION, HOST_PROFILES, MANIFEST_SCHEMA
@@ -128,6 +130,30 @@ class InstallCheckpoint:
     paths: dict[str, dict[str, Any]]
 
 
+_test_harness_state = threading.local()
+
+
+def _is_windows_install_allowed_for_tests() -> bool:
+    """Return True iff the test harness context is currently active on this thread."""
+    return getattr(_test_harness_state, "allow_windows_install", False)
+
+
+@contextlib.contextmanager
+def _allow_windows_install_for_tests() -> Iterator[None]:
+    """Strict test-only context manager enabling Windows installer transaction execution.
+
+    MUST be imported and used ONLY within test suites (e.g.
+    ``tests/integration/test_windows_install_adversarial.py``). Restores default
+    fail-closed state unconditionally upon exit via try...finally.
+    """
+    previous = _is_windows_install_allowed_for_tests()
+    _test_harness_state.allow_windows_install = True
+    try:
+        yield
+    finally:
+        _test_harness_state.allow_windows_install = previous
+
+
 def require_mutating_install_platform() -> None:
     """Fail closed before Windows (or other non-POSIX) mutating installer ops.
 
@@ -138,7 +164,7 @@ def require_mutating_install_platform() -> None:
     individually safe.
     """
 
-    if os.name == "nt":
+    if os.name == "nt" and not _is_windows_install_allowed_for_tests():
         raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
 
 
@@ -184,6 +210,13 @@ class RootLock:
         caps = backend.capabilities
         if not caps.exclusive_locking or not caps.handle_locking:
             raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
+        try:
+            st = os.lstat(self.root)
+            if stat_mod.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400):
+                raise DiagnosticError("E_UNSAFE_PATH")
+        except OSError as error:
+            if isinstance(error, DiagnosticError):
+                raise
         _ensure_control_state_directory(self.root)
         deadline = time.monotonic() + self.wait_seconds
         last_error: BaseException | None = None
@@ -533,7 +566,7 @@ def _mkdir_nofollow_child(parent_fd: int, name: str, *, mode: int = 0o755) -> No
             raise DiagnosticError("E_INSTALL_CONFLICT") from error
     except OSError as error:
         raise DiagnosticError("E_INSTALL_CONFLICT") from error
-    if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISDIR(st.st_mode):
+    if stat_mod.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400) or not stat_mod.S_ISDIR(st.st_mode):
         raise DiagnosticError("E_INSTALL_CONFLICT")
 
 
@@ -554,7 +587,7 @@ def _ensure_support_directory(root: str) -> None:
                     st = os.lstat(SUPPORT_DIR, dir_fd=root_fd)
                 except OSError as error:
                     raise DiagnosticError("E_INSTALL_CONFLICT") from error
-            if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISDIR(st.st_mode):
+            if stat_mod.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400) or not stat_mod.S_ISDIR(st.st_mode):
                 raise DiagnosticError("E_INSTALL_CONFLICT")
             flags = (
                 os.O_RDONLY
@@ -577,7 +610,7 @@ def _ensure_support_directory(root: str) -> None:
             st = os.lstat(support)
         except OSError as error:
             raise DiagnosticError("E_INSTALL_CONFLICT") from error
-        if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISDIR(st.st_mode):
+        if stat_mod.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400) or not stat_mod.S_ISDIR(st.st_mode):
             raise DiagnosticError("E_INSTALL_CONFLICT")
         return
     try:
@@ -590,7 +623,7 @@ def _ensure_support_directory(root: str) -> None:
         st = os.lstat(support)
     except OSError as error:
         raise DiagnosticError("E_INSTALL_CONFLICT") from error
-    if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISDIR(st.st_mode):
+    if stat_mod.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400) or not stat_mod.S_ISDIR(st.st_mode):
         raise DiagnosticError("E_INSTALL_CONFLICT")
 
 
@@ -616,7 +649,7 @@ def _ensure_control_state_directory(root: str) -> None:
             st = os.lstat(state)
         except OSError as error:
             raise DiagnosticError("E_INSTALL_CONFLICT") from error
-        if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISDIR(st.st_mode):
+        if stat_mod.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400) or not stat_mod.S_ISDIR(st.st_mode):
             raise DiagnosticError("E_INSTALL_CONFLICT")
         return
     try:
@@ -629,7 +662,7 @@ def _ensure_control_state_directory(root: str) -> None:
         st = os.lstat(state)
     except OSError as error:
         raise DiagnosticError("E_INSTALL_CONFLICT") from error
-    if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISDIR(st.st_mode):
+    if stat_mod.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400) or not stat_mod.S_ISDIR(st.st_mode):
         raise DiagnosticError("E_INSTALL_CONFLICT")
 
 
@@ -2114,6 +2147,15 @@ def _execute_install_under_lock(
             backups.append(rel)
     _ensure_control_state_directory(root)
     if not _supports_descriptor_relative_commit():
+        if os.name == "nt" and _is_windows_install_allowed_for_tests():
+            return _execute_install_under_lock_windows(
+                plan=plan,
+                existing=existing,
+                backups=backups,
+                planned_backups=planned_backups,
+                effective_force=effective_force,
+                changed_since_preflight=changed_since_preflight,
+            )
         raise DiagnosticError("E_INSTALL_CONFLICT")
     pin_root_fd = _open_skill_root_descriptor(root)
     support_fd: int | None = None
@@ -2417,6 +2459,350 @@ def _execute_install_under_lock(
         os.close(pin_root_fd)
 
 
+
+def _execute_install_under_lock_windows(
+    plan: ActionPlan,
+    existing: Manifest | None,
+    backups: list[str],
+    planned_backups: set[str],
+    effective_force: bool,
+    changed_since_preflight: bool,
+) -> dict[str, Any]:
+    from ..platform_fs import get_filesystem_backend
+    backend = get_filesystem_backend()
+    root = plan.root
+
+    stage_name = f"{STAGE_PREFIX}{secrets.token_hex(8)}"
+    stage_dir = os.path.join(control_state_dir(root), stage_name)
+    backend.mkdirs_beneath(stage_dir, root=root)
+
+    backup_root: str | None = None
+    if backups:
+        backup_name = time.strftime("%Y%m%dT%H%M%SZ-", time.gmtime()) + secrets.token_hex(4)
+        backup_root = os.path.join(control_state_dir(root), BACKUP_DIR, backup_name)
+        backend.mkdirs_beneath(backup_root, root=root)
+
+    journal: dict[str, Any] = {
+        "schema_version": "portable-resume/install-journal-v1",
+        "state": "staging",
+        "generation": plan.generation,
+        "claim": plan.claim,
+        "stage_dir": stage_dir,
+        "backup_root": backup_root,
+        "operation": "install",
+        "paths": {},
+    }
+
+    try:
+        for rel, data in plan.files.items():
+            safe = _safe_rel_path(rel)
+            staged_path = os.path.join(stage_dir, safe)
+            backend.mkdirs_beneath(os.path.dirname(staged_path), root=root)
+            with open(staged_path, "wb") as f:
+                f.write(data)
+            journal["paths"][safe] = {
+                "state": "staged",
+                "sha256": sha256_bytes(data),
+                "existed": False,
+            }
+
+        for rel in sorted(plan.files):
+            safe = _safe_rel_path(rel)
+            dest = _dest_under_root(root, safe)
+            if os.path.lexists(dest):
+                try:
+                    st = os.lstat(dest)
+                except OSError as error:
+                    raise DiagnosticError("E_INSTALL_CONFLICT") from error
+                if stat_mod.S_ISLNK(st.st_mode) or not stat_mod.S_ISREG(st.st_mode):
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                with open(dest, "rb") as f:
+                    body = f.read()
+                payload_digest = sha256_bytes(body)
+                rollback_path = os.path.join(stage_dir, ".rollback", safe)
+                backend.mkdirs_beneath(os.path.dirname(rollback_path), root=root)
+                with open(rollback_path, "wb") as f:
+                    f.write(body)
+                journal["paths"][safe]["existed"] = True
+                journal["paths"][safe]["rollback_backup"] = rollback_path
+                journal["paths"][safe]["original_sha256"] = payload_digest
+
+        for rel in backups:
+            safe = _safe_rel_path(rel)
+            if backup_root is None:
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            dest = _dest_under_root(root, safe)
+            with open(dest, "rb") as f:
+                body = f.read()
+            backup_path = os.path.join(backup_root, safe)
+            backend.mkdirs_beneath(os.path.dirname(backup_path), root=root)
+            with open(backup_path, "wb") as f:
+                f.write(body)
+            journal["paths"][safe]["backup"] = backup_path
+
+        journal["state"] = "committing"
+        _write_journal(root, journal)
+
+        for rel in sorted(plan.files):
+            safe = _safe_rel_path(rel)
+            kind = _classify_dest(
+                root=root,
+                rel=safe,
+                data=plan.files[rel],
+                existing=existing,
+                claim=plan.claim,
+                force_with_backup=effective_force or safe in planned_backups or safe in backups,
+            )
+            if kind == "backup" and safe not in backups and not effective_force and safe not in planned_backups:
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            if kind == "retain":
+                journal["paths"][safe]["state"] = "retained"
+                _write_journal(root, journal)
+                continue
+            src = os.path.join(stage_dir, safe)
+            dst = _dest_under_root(root, safe)
+            backend.mkdirs_beneath(os.path.dirname(dst), root=root)
+            backend.replace_beneath(src, dst, root=root)
+            journal["paths"][safe]["state"] = "committed"
+            _write_journal(root, journal)
+
+        orphan_removed: list[str] = []
+        orphan_pending: list[tuple[str, str]] = []
+        if existing is not None:
+            for rel, entry in list(existing.files.items()):
+                if rel in plan.files or rel in plan.manifest.files:
+                    continue
+                dest = _dest_under_root(root, rel)
+                if os.path.lexists(dest):
+                    try:
+                        with open(dest, "rb") as f:
+                            digest = sha256_bytes(f.read())
+                    except OSError:
+                        continue
+                    if digest == entry.sha256:
+                        orphan_pending.append((rel, entry.sha256))
+
+        if orphan_pending:
+            journal["orphans"] = {
+                rel: {"sha256": digest, "state": "pending"}
+                for rel, digest in orphan_pending
+            }
+            journal["state"] = "orphaning"
+            _write_journal(root, journal)
+            for rel, digest in orphan_pending:
+                dest = _dest_under_root(root, rel)
+                try:
+                    backend.unlink_beneath(dest, root=root)
+                    orphan_removed.append(rel)
+                    journal["orphans"][rel]["state"] = "removed"
+                except DiagnosticError:
+                    journal["orphans"][rel]["state"] = "skipped"
+                _write_journal(root, journal)
+
+        journal["state"] = "publishing_manifest"
+        journal["target_generation"] = plan.generation
+        _write_journal(root, journal)
+        _atomic_write_support_file(
+            root,
+            MANIFEST_NAME,
+            plan.manifest.dumps().encode("utf-8"),
+        )
+        journal["state"] = "complete"
+        try:
+            _write_journal(root, journal)
+        except DiagnosticError:
+            try:
+                _unlink_support_control_file(root, JOURNAL_NAME)
+            except DiagnosticError:
+                pass
+
+        try:
+            _delete_authorized_support_subtree(root, stage_dir, role="stage")
+        except DiagnosticError:
+            pass
+        try:
+            if os.path.lexists(journal_path(root)):
+                _unlink_support_control_file(root, JOURNAL_NAME)
+        except DiagnosticError:
+            pass
+
+        result = {
+            "ok": True,
+            "dry_run": False,
+            "plan": plan.to_dict(),
+            "generation": plan.generation,
+            "changed_since_preflight": changed_since_preflight,
+            "previous_manifest_digest": plan.base_manifest_digest,
+        }
+        if orphan_removed:
+            result["orphan_removed"] = orphan_removed
+        if backups:
+            result["backup_root"] = backup_root
+        return result
+    except Exception:
+        if "journal" in locals() and isinstance(journal, dict):
+            if not _install_generation_is_published(root, journal):
+                _attempt_rollback(root, journal)
+        raise
+
+
+def _uninstall_claim_windows(
+    *,
+    root: str,
+    claim: str,
+    manifest: Manifest,
+) -> dict[str, Any]:
+    from ..platform_fs import get_filesystem_backend
+    backend = get_filesystem_backend()
+
+    removable: list[tuple[str, str]] = []
+    drop_from_manifest: list[str] = []
+
+    for path, entry in list(manifest.files.items()):
+        if claim not in entry.claims:
+            continue
+        remaining = [c for c in entry.claims if c != claim]
+        if remaining:
+            entry.claims = remaining
+            continue
+        try:
+            _safe_rel_path(path)
+        except DiagnosticError:
+            drop_from_manifest.append(path)
+            continue
+        dest = _dest_under_root(root, path)
+        matches = False
+        if os.path.lexists(dest):
+            try:
+                with open(dest, "rb") as f:
+                    matches = sha256_bytes(f.read()) == entry.sha256
+            except OSError:
+                matches = False
+        if matches:
+            removable.append((path, entry.sha256))
+            drop_from_manifest.append(path)
+        else:
+            drop_from_manifest.append(path)
+
+    for path in drop_from_manifest:
+        manifest.files.pop(path, None)
+
+    removed_files: list[str] = []
+    for path, sha256 in removable:
+        dest = _dest_under_root(root, path)
+        try:
+            backend.unlink_beneath(dest, root=root)
+            removed_files.append(path)
+        except DiagnosticError:
+            pass
+
+    manifest.claims.pop(claim, None)
+    manifest.generation += 1
+
+    if manifest.files:
+        _atomic_write_support_file(root, MANIFEST_NAME, manifest.dumps().encode("utf-8"))
+    else:
+        _unlink_support_control_file(root, MANIFEST_NAME)
+
+    return {
+        "ok": True,
+        "removed_files": removed_files,
+        "claim": claim,
+        "generation": manifest.generation,
+    }
+
+
+def _rollback_paths_windows(root: str, journal: dict[str, Any]) -> tuple[int, bool]:
+    from ..platform_fs import get_filesystem_backend
+    backend = get_filesystem_backend()
+    restored = 0
+    complete = True
+    operation = journal.get("operation") or "install"
+
+    for rel, meta in journal.get("paths", {}).items():
+        try:
+            safe = _safe_rel_path(str(rel))
+        except DiagnosticError:
+            continue
+        if isinstance(meta, dict) and meta.get("state") in {"retained", "skipped"}:
+            continue
+        rollback_backup = meta.get("rollback_backup") or meta.get("backup")
+        if rollback_backup:
+            if not isinstance(rollback_backup, str) or not _path_within_support(root, rollback_backup):
+                complete = False
+                continue
+            original_sha = meta.get("original_sha256")
+            if not _is_hex_sha256(original_sha):
+                complete = False
+                continue
+            if os.path.isfile(rollback_backup) and not os.path.islink(rollback_backup):
+                dest = _dest_under_root(root, safe)
+                if operation == "uninstall" and os.path.lexists(dest):
+                    continue
+                try:
+                    backend.mkdirs_beneath(os.path.dirname(dest), root=root)
+                    backend.replace_beneath(rollback_backup, dest, root=root)
+                    restored += 1
+                    continue
+                except DiagnosticError:
+                    complete = False
+                    continue
+            dest = _dest_under_root(root, safe)
+            if os.path.lexists(dest):
+                try:
+                    with open(dest, "rb") as f:
+                        if sha256_bytes(f.read()) == original_sha:
+                            restored += 1
+                            continue
+                except OSError:
+                    pass
+            complete = False
+        else:
+            dest = _dest_under_root(root, safe)
+            if os.path.lexists(dest):
+                staged_sha = meta.get("sha256")
+                if isinstance(staged_sha, str):
+                    try:
+                        with open(dest, "rb") as f:
+                            if sha256_bytes(f.read()) != staged_sha:
+                                complete = False
+                                continue
+                    except OSError:
+                        complete = False
+                        continue
+                try:
+                    backend.unlink_beneath(dest, root=root)
+                    restored += 1
+                except DiagnosticError:
+                    complete = False
+
+    return restored, complete
+
+
+def _restore_checkpoint_files_windows(
+    checkpoint: InstallCheckpoint,
+    *,
+    backup_root: str | None = None,
+) -> None:
+    from ..platform_fs import get_filesystem_backend
+    backend = get_filesystem_backend()
+    root = checkpoint.root
+    for rel, meta in checkpoint.paths.items():
+        if meta.get("transaction_lock"):
+            continue
+        dest = _dest_under_root(root, rel)
+        if meta.get("existed"):
+            snapshot = meta.get("snapshot")
+            if isinstance(snapshot, str) and os.path.isfile(snapshot) and not os.path.islink(snapshot):
+                backend.mkdirs_beneath(os.path.dirname(dest), root=root)
+                backend.replace_beneath(snapshot, dest, root=root)
+        else:
+            if os.path.lexists(dest):
+                backend.unlink_beneath(dest, root=root)
+    if backup_root:
+        _delete_authorized_support_subtree(root, backup_root, role="backup")
+
+
 def _write_journal(root: str, journal: dict[str, Any]) -> None:
     payload = json.dumps(journal, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     # Self-check closed journal schema before durable write (#28).
@@ -2595,6 +2981,8 @@ def restore_install_checkpoint(
     allowed set (pre-checkpoint snapshot or planned post-install bytes). Unknown
     concurrent mutation returns ``E_RECOVERY_REQUIRED`` (#23).
     """
+    if os.name == "nt" and _is_windows_install_allowed_for_tests():
+        return _restore_checkpoint_files_windows(checkpoint, backup_root=backup_root)
     removed: list[str] = []
     root = checkpoint.root
     root_fd: int | None = None
@@ -2940,7 +3328,7 @@ def _authorize_support_cleanup(root: str, path: str, *, role: str) -> str | None
         support_stat = os.lstat(support_path)
     except OSError as error:
         raise DiagnosticError("E_RECOVERY_REQUIRED") from error
-    if stat_mod.S_ISLNK(support_stat.st_mode) or not stat_mod.S_ISDIR(support_stat.st_mode):
+    if stat_mod.S_ISLNK(support_stat.st_mode) or bool(getattr(support_stat, "st_file_attributes", 0) & 0x400) or not stat_mod.S_ISDIR(support_stat.st_mode):
         raise DiagnosticError("E_RECOVERY_REQUIRED")
 
     support_base = os.path.abspath(support_path)
@@ -2989,7 +3377,7 @@ def _authorize_support_cleanup(root: str, path: str, *, role: str) -> str | None
         path_stat = os.lstat(path)
     except OSError as error:
         raise DiagnosticError("E_RECOVERY_REQUIRED") from error
-    if stat_mod.S_ISLNK(path_stat.st_mode) or not stat_mod.S_ISDIR(path_stat.st_mode):
+    if stat_mod.S_ISLNK(path_stat.st_mode) or bool(getattr(path_stat, "st_file_attributes", 0) & 0x400) or not stat_mod.S_ISDIR(path_stat.st_mode):
         raise DiagnosticError("E_RECOVERY_REQUIRED")
     return candidate
 
@@ -2998,6 +3386,10 @@ def _delete_authorized_support_subtree(root: str, path: str, *, role: str) -> No
     """Authorize then delete a stage/backup tree; failures stay fail-closed."""
     authorized = _authorize_support_cleanup(root, path, role=role)
     if authorized is None:
+        return
+    if os.name == "nt" and _is_windows_install_allowed_for_tests():
+        if os.path.exists(authorized):
+            shutil.rmtree(authorized, ignore_errors=True)
         return
     _safe_rmtree_under_support(root, authorized)
 
@@ -3138,6 +3530,10 @@ def _safe_rmtree_under_support(root: str, path: str) -> None:
 def _try_safe_rmtree_under_support(root: str, path: str) -> None:
     """Best-effort support cleanup; swallow containment failures."""
     try:
+        if os.name == "nt" and _is_windows_install_allowed_for_tests():
+            if os.path.exists(path):
+                shutil.rmtree(path, ignore_errors=True)
+            return
         _safe_rmtree_under_support(root, path)
     except (DiagnosticError, OSError):
         pass
@@ -3147,6 +3543,8 @@ def _rollback_paths(root: str, journal: dict[str, Any]) -> tuple[int, bool]:
     restored = 0
     complete = True
     if not _supports_descriptor_relative_commit():
+        if os.name == "nt" and _is_windows_install_allowed_for_tests():
+            return _rollback_paths_windows(root, journal)
         # Payload restore/delete mutations require dirfd containment (Windows residual #29).
         return 0, False
     operation = journal.get("operation") or "install"
@@ -3498,6 +3896,8 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
         if manifest is None or claim not in manifest.claims:
             return {"ok": True, "removed_files": [], "claim": claim}
         if not _supports_descriptor_relative_commit():
+            if os.name == "nt" and _is_windows_install_allowed_for_tests():
+                return _uninstall_claim_windows(root=root, claim=claim, manifest=manifest)
             raise DiagnosticError("E_INSTALL_CONFLICT")
 
         base_generation = manifest.generation
