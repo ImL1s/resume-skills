@@ -56,7 +56,7 @@ These classes describe current recovery behavior, not registry support status.
 | Cursor | `~/.cursor/chats/.../store.db`; Desktop `User/globalStorage/state.vscdb` | CLI `store.db`; Desktop composer blobs are only partially qualified | CLI projection; Desktop bubble/composer graph | Authoritative projection for CLI; partial graph recovery for Desktop |
 | OpenCode | `~/.local/share/opencode/{opencode.db,opencode.sqlite}` or `storage/{session,message,part}` | Selected SQLite, file-store, or explicit export family | Ordered session/message/part projection | Authoritative projection |
 | Antigravity | `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl` | `transcript.jsonl`; `brain/index.json` is only a hint | Linear transcript or live step stream | Bounded public-text extraction |
-| Grok Build | `~/.grok/sessions/<encoded-cwd>/<id>/updates.jsonl` | `updates.jsonl`; `summary.json` is metadata | Chunked session updates; unsupported rewind/compaction fails closed | Bounded public-text extraction with fail-closed timeline controls |
+| Grok Build | `~/.grok/sessions/<encoded-cwd>/<id>/updates.jsonl` | `updates.jsonl`; `summary.json` is metadata; optional `compaction_checkpoints/` | Chunked session updates; qualified compaction v1 (#238); rewind still fail-closed | Bounded public-text extraction with fail-closed timeline controls |
 | Qwen Code | `~/.qwen/projects/<project>/chats/*.jsonl` and `chats/archive/*.jsonl` | Chat JSONL | Repeated-fragment aggregation plus `uuid` / `parentUuid` tree | Active-lineage reducer |
 | Kimi Code / legacy Kimi CLI | `~/.kimi-code/session_index.jsonl` plus `sessions/.../agents/main/wire.jsonl`; legacy `~/.kimi/kimi.json` plus `context.jsonl` | Current `wire.jsonl`; legacy context/wire JSONL | Append-only current wire with control records; legacy message/event families | Bounded public-text extraction; active-control qualification tracked in #200 |
 | Pi | `~/.pi/agent/sessions/--<cwd-slug>--/*.jsonl` | Versioned session JSONL | `id` / `parentId` tree with compaction nodes | Active-lineage reducer |
@@ -157,8 +157,12 @@ session updates.
 
 Consecutive user or agent message chunks are coalesced. Public tool titles/results are
 bounded, provider-private `rawOutput` is omitted, and encrypted-looking payloads are not
-surfaced. Unknown rewind or compaction controls fail closed instead of returning a
-plausible stale history.
+surfaced. Qualified **compaction v1** (`compaction_checkpoint` + session-local
+`compaction_checkpoints/<file>` sidecar, `schema_version: 1`) replaces the active public
+projection with allowlisted user/assistant history from `compacted_history`, then continues
+reducing later `updates.jsonl` records (#238). System/developer/reasoning/tool sidecar roles
+are omitted. Missing, escaping, mismatched, or wrong-version sidecars fail closed.
+**`rewind_marker` remains unsupported** (fail closed).
 
 ### Qwen Code
 

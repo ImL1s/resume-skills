@@ -1,0 +1,18 @@
+{
+  "checkpoint_id": "cp-a",
+  "schema_version": 1,
+  "prompt_index_at_compaction": 1,
+  "created_at": 3,
+  "compacted_history": [
+    {
+      "role": "user",
+      "content": "C1 user"
+    },
+    {
+      "role": "assistant",
+      "content": "C1 asst"
+    }
+  ],
+  "original_user_info": {},
+  "reread_file_paths": []
+}

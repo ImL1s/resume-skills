@@ -65,7 +65,10 @@ Grok Build session `updates.jsonl`. Synthetic fixtures: `tests/fixtures/grok/`.
 Show streams byte-bounded physical records and normalizes only allowlisted
 update fields. Provider-private `rawOutput` stays omitted and does not borrow
 the discovery `scanned_records` cardinality ceiling; duplicate keys, depth,
-map width, public-list cardinality, rewind, and compaction still fail closed.
+map width, and public-list cardinality still fail closed. **Qualified compaction
+v1** (`compaction_checkpoint` + session-local sidecar, `schema_version: 1`) is
+supported for public projection (#238). **`rewind_marker` and unqualified
+compaction still fail closed.**
 
 ### qwen-qwen-chat-jsonl-v1
 

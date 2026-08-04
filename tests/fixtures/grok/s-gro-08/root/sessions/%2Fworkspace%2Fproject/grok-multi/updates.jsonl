@@ -1,0 +1,8 @@
+{"timestamp":1,"method":"session/update","params":{"sessionId":"grok-multi","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"U0"}}}}
+{"timestamp":2,"method":"session/update","params":{"sessionId":"grok-multi","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"A0"}}}}
+{"timestamp":3,"method":"session/update","params":{"sessionId":"grok-multi","update":{"sessionUpdate":"compaction_checkpoint","checkpoint_id":"cp-a","schema_version":1,"prompt_index_at_compaction":1,"checkpoint_file":"cp-a.json"}}}
+{"timestamp":4,"method":"session/update","params":{"sessionId":"grok-multi","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"U1 mid"}}}}
+{"timestamp":5,"method":"session/update","params":{"sessionId":"grok-multi","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"A1 mid"}}}}
+{"timestamp":6,"method":"session/update","params":{"sessionId":"grok-multi","update":{"sessionUpdate":"compaction_checkpoint","checkpoint_id":"cp-b","schema_version":1,"prompt_index_at_compaction":2,"checkpoint_file":"cp-b.json"}}}
+{"timestamp":7,"method":"session/update","params":{"sessionId":"grok-multi","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"U2 after second"}}}}
+{"timestamp":8,"method":"session/update","params":{"sessionId":"grok-multi","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"A2 after second"}}}}

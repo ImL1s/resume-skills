@@ -45,9 +45,35 @@ _FILTERED_UPDATES = frozenset(
         "memory_flush_completed",
         "hook_execution",
         "hook_annotation",
+        "auto_compact_started",
+        "auto_compact_completed",
     }
 )
-_ESSENTIAL_UNSUPPORTED = frozenset({"rewind_marker", "compaction_checkpoint"})
+# Timeline-changing events that V1 cannot safely replay. Compaction v1 is
+# handled by an allowlisted checkpoint reducer (#238); rewind stays unsupported.
+_ESSENTIAL_UNSUPPORTED = frozenset({"rewind_marker"})
+_CHECKPOINT_EVENT_KEYS = frozenset(
+    {
+        "sessionupdate",
+        "checkpoint_id",
+        "schema_version",
+        "prompt_index_at_compaction",
+        "checkpoint_file",
+    }
+)
+_CHECKPOINT_SIDECAR_KEYS = frozenset(
+    {
+        "checkpoint_id",
+        "schema_version",
+        "prompt_index_at_compaction",
+        "created_at",
+        "compacted_history",
+        "original_user_info",
+        "reread_file_paths",
+    }
+)
+_COMPACTION_SCHEMA_V1 = 1
+_CHECKPOINT_DIRNAME = "compaction_checkpoints"
 
 
 class _DuplicateKey(ValueError):
@@ -412,6 +438,7 @@ class GrokAdapter:
             budget,
             include_turns=True,
             expected_id=ref.session_id,
+            session_dir=session_dir,
         )
         metadata, summary_warnings = self._summary(
             session_dir,
@@ -517,6 +544,7 @@ class GrokAdapter:
         *,
         include_turns: bool,
         expected_id: str,
+        session_dir: str | None = None,
     ) -> tuple[tuple[str | None, str | None], list[Turn], list[str]]:
         # Stream via stable_scan_lines under source_read_bytes + transcript_records
         # so large updates.jsonl is not whole-file buffered (#10).
@@ -524,6 +552,7 @@ class GrokAdapter:
         turns: list[Turn] = []
         timestamps: list[str] = []
         recognized = 0
+        resolved_session_dir = session_dir if session_dir is not None else os.path.dirname(path)
         for line in stable_scan_lines(
             path,
             root=root,
@@ -565,11 +594,33 @@ class GrokAdapter:
                 raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
             kind = kind.casefold()
             public_update = {key: item for key, item in update.items() if key != "rawOutput"}
+            if kind in _ESSENTIAL_UNSUPPORTED:
+                raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+            # Timeline controls must not be soft-skipped when encrypted-looking keys appear
+            # on the control object (#238 Codex P1): fail closed instead of keeping
+            # superseded pre-checkpoint turns.
+            if kind == "compaction_checkpoint":
+                if _contains_encrypted(public_update):
+                    raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+                # list/metadata path: recognize without sidecar load (#238).
+                if not include_turns:
+                    recognized += 1
+                    continue
+                self._apply_compaction_checkpoint(
+                    update,
+                    turns=turns,
+                    root=root,
+                    session_dir=resolved_session_dir,
+                    query=query,
+                    budget=budget,
+                    warnings=warnings,
+                    event_timestamp=timestamp,
+                )
+                recognized += 1
+                continue
             if _contains_encrypted(public_update):
                 recognized += 1
                 continue
-            if kind in _ESSENTIAL_UNSUPPORTED:
-                raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
             if kind in _FILTERED_UPDATES:
                 recognized += 1
                 continue
@@ -613,7 +664,121 @@ class GrokAdapter:
             warnings.append("W_BROKEN_CHAIN")
         if recognized == 0:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+        if include_turns:
+            # Enforce normalized_turns against the *surviving* projection only, after
+            # any compaction replacements (#238). Pre-checkpoint stream length must
+            # not exhaust the ceiling before a smaller checkpointed result is built.
+            # Charge through consume_turns (locked) so reused budgets cannot replace
+            # counters out of band (#238 Codex P2).
+            with budget._lock:
+                budget.turns = 0
+            if turns:
+                budget.consume_turns(len(turns))
         return ((min(timestamps) if timestamps else None, max(timestamps) if timestamps else None), turns, warnings)
+
+    def _apply_compaction_checkpoint(
+        self,
+        update: Mapping[str, Any],
+        *,
+        turns: list[Turn],
+        root: str,
+        session_dir: str,
+        query: Query,
+        budget: ReadBudget,
+        warnings: list[str],
+        event_timestamp: str | None,
+    ) -> None:
+        """Replace active public projection with qualified compaction v1 sidecar history (#238)."""
+        keys = {str(key).casefold() for key in update.keys()}
+        if keys != _CHECKPOINT_EVENT_KEYS:
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+        checkpoint_id = _identifier(update.get("checkpoint_id"))
+        schema_version = update.get("schema_version")
+        # bool is a subclass of int — require exact int type.
+        if type(schema_version) is not int or schema_version != _COMPACTION_SCHEMA_V1:
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+        prompt_index = update.get("prompt_index_at_compaction")
+        if type(prompt_index) is not int or prompt_index < 0:
+            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+        checkpoint_file = update.get("checkpoint_file")
+        if not isinstance(checkpoint_file, str) or not checkpoint_file:
+            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+        # Basename only — reject absolute paths, traversal, and nested segments.
+        if checkpoint_file in {".", ".."} or "/" in checkpoint_file or "\\" in checkpoint_file:
+            raise DiagnosticError.unsafe_path()
+        if os.path.basename(checkpoint_file) != checkpoint_file:
+            raise DiagnosticError.unsafe_path()
+        # Allow `.json` suffix while reusing identifier charset on the stem.
+        stem, ext = os.path.splitext(checkpoint_file)
+        if ext not in {"", ".json"} or not stem or _ID.fullmatch(stem) is None:
+            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+        checkpoint_dir = os.path.join(session_dir, _CHECKPOINT_DIRNAME)
+        sidecar_path = os.path.join(checkpoint_dir, checkpoint_file)
+        if not is_within(sidecar_path, root) or not is_within(sidecar_path, session_dir):
+            raise DiagnosticError.unsafe_path()
+        if not os.path.isfile(sidecar_path) or os.path.islink(sidecar_path):
+            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+        try:
+            read = stable_read_bytes(
+                sidecar_path,
+                root=root,
+                budget=budget,
+                hook=self._read_hook,
+            )
+            sidecar = _loads(read.data)
+        except DiagnosticError:
+            raise
+        except OSError as error:
+            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID) from error
+        if not isinstance(sidecar, Mapping):
+            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+        side_keys = {str(key).casefold() for key in sidecar.keys()}
+        if not _CHECKPOINT_SIDECAR_KEYS.issubset(side_keys):
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+        # Reject unknown top-level sidecar keys outside the allowlist (exact surface).
+        if side_keys - _CHECKPOINT_SIDECAR_KEYS:
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+        if _identifier(sidecar.get("checkpoint_id")) != checkpoint_id:
+            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+        side_schema = sidecar.get("schema_version")
+        if type(side_schema) is not int or side_schema != _COMPACTION_SCHEMA_V1:
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+        side_index = sidecar.get("prompt_index_at_compaction")
+        if type(side_index) is not int or side_index != prompt_index:
+            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+        history = sidecar.get("compacted_history")
+        if not isinstance(history, list):
+            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+        if _contains_encrypted(sidecar):
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+        # Replace superseded pre-checkpoint projection; re-append public entries only.
+        # Turn-budget accounting is deferred until the full active projection is
+        # known (end of _parse_updates), so pre-checkpoint charges cannot starve
+        # a smaller surviving projection (#238 Codex P1).
+        turns.clear()
+        for item in history:
+            if not isinstance(item, Mapping):
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+            role = item.get("role")
+            if not isinstance(role, str):
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+            role_cf = role.casefold()
+            if role_cf not in {"user", "assistant"}:
+                # system / developer / reasoning / tool / unknown: omit (privacy).
+                continue
+            text = self._compaction_entry_text(item)
+            if text is None:
+                continue
+            self._append_chunk(turns, role_cf, text, event_timestamp, query, budget, warnings)
+
+    @staticmethod
+    def _compaction_entry_text(item: Mapping[str, Any]) -> str | None:
+        content = item.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, Mapping) and content.get("type") == "text" and isinstance(content.get("text"), str):
+            return content["text"]
+        return None
 
     @staticmethod
     def _tool_text(update: Mapping[str, Any]) -> str | None:
@@ -674,7 +839,8 @@ class GrokAdapter:
                 truncated=prior.truncated or turn.truncated or len(turn.content) > room,
             )
             return
-        budget.consume_turns()
+        # Normalized-turn ceiling is enforced once on the surviving projection
+        # after checkpoint replacement (#238); do not charge mid-stream.
         turns.append(turn)
 
     @staticmethod
@@ -697,7 +863,6 @@ class GrokAdapter:
         turn, found = sanitize_turn_record(record, ordinal=len(turns), bounds=bounds)
         warnings.extend(found)
         if turn is not None:
-            budget.consume_turns()
             turns.append(turn)
 
 
