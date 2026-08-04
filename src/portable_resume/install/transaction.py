@@ -201,6 +201,56 @@ def support_dir(root: str) -> str:
     return os.path.join(root, SUPPORT_DIR)
 
 
+# FILE_ATTRIBUTE_REPARSE_POINT — Win32 leaf skill-root junctions/symlinks (#245).
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
+def _is_reparse_or_symlink(st: os.stat_result) -> bool:
+    if stat_mod.S_ISLNK(st.st_mode):
+        return True
+    return bool(getattr(st, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def resolve_skill_root_for_lock(root: str) -> str:
+    """Resolve a skill-root path for exclusive locking / control-state ownership.
+
+    Parity with POSIX leaf-symlink policy (#31 / docs): the **leaf** skill root
+    itself may be a directory symlink or Windows junction/reparse point (common
+    multi-tool skills-sync layouts). Intermediate payload reparse components
+    remain fail-closed in platform_fs mutations.
+
+    Returns a path suitable for creating ``.portable-resume/.state`` and holding
+    ``install.lock`` on the physical directory tree.
+    """
+    abs_root = os.path.abspath(os.path.expanduser(root))
+    try:
+        st = os.lstat(abs_root)
+    except FileNotFoundError:
+        # Missing root: install will create it as a real directory.
+        return abs_root
+    except OSError as error:
+        raise DiagnosticError("E_UNSAFE_PATH") from error
+
+    if _is_reparse_or_symlink(st):
+        # Leaf skill-root reparse/symlink is allowed — resolve once to the real dir.
+        try:
+            resolved = os.path.realpath(abs_root)
+        except OSError as error:
+            raise DiagnosticError("E_UNSAFE_PATH") from error
+        try:
+            resolved_st = os.lstat(resolved)
+        except OSError as error:
+            raise DiagnosticError("E_UNSAFE_PATH") from error
+        # After realpath the target must be a concrete directory (no residual leaf reparse).
+        if _is_reparse_or_symlink(resolved_st) or not stat_mod.S_ISDIR(resolved_st.st_mode):
+            raise DiagnosticError("E_UNSAFE_PATH")
+        return resolved
+
+    if not stat_mod.S_ISDIR(st.st_mode):
+        raise DiagnosticError("E_UNSAFE_PATH")
+    return abs_root
+
+
 class RootLock:
     def __init__(self, root: str, *, wait_seconds: float = 5.0) -> None:
         self.root = root
@@ -211,6 +261,8 @@ class RootLock:
         self.wait_seconds = wait_seconds
         # Windows: hold backend.acquire_exclusive_lock context across RootLock life.
         self._win_lock_cm: Any | None = None
+        # Caller-facing spelling before leaf reparse resolve (junction / symlink).
+        self.requested_root = root
 
     def __enter__(self) -> "RootLock":
         # Windows Phase 3 (#125): exclusive lock via platform_fs Win32 primitive.
@@ -226,6 +278,13 @@ class RootLock:
             raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
         return self._enter_posix()
 
+    def _bind_resolved_root(self, resolved: str) -> None:
+        """Point lock support/state/path at the resolved physical skill root."""
+        self.root = resolved
+        self.support = support_dir(resolved)
+        self.state = control_state_dir(resolved)
+        self.path = os.path.join(self.state, LOCK_NAME)
+
     def _enter_windows(self) -> "RootLock":
         from ..platform_fs import get_filesystem_backend
 
@@ -233,13 +292,11 @@ class RootLock:
         caps = backend.capabilities
         if not caps.exclusive_locking or not caps.handle_locking:
             raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
-        try:
-            st = os.lstat(self.root)
-            if stat_mod.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400):
-                raise DiagnosticError("E_UNSAFE_PATH")
-        except OSError as error:
-            if isinstance(error, DiagnosticError):
-                raise
+        # #245: allow leaf skill-root junction/symlink; lock the resolved real directory.
+        # Do not treat intermediate reparse under payload paths as safe — those stay
+        # fail-closed in WindowsFilesystemBackend relative mutations.
+        resolved = resolve_skill_root_for_lock(self.root)
+        self._bind_resolved_root(resolved)
         _ensure_control_state_directory(self.root)
         deadline = time.monotonic() + self.wait_seconds
         last_error: BaseException | None = None
@@ -2101,9 +2158,17 @@ def execute_install(
     require_mutating_install_platform()
     if lock is not None:
         _require_held_root_lock(lock, root)
-        return _execute_install_under_lock(plan, force_with_backup=force_with_backup)
-    with RootLock(root):
-        return _execute_install_under_lock(plan, force_with_backup=force_with_backup)
+        return _execute_install_under_lock(
+            plan,
+            force_with_backup=force_with_backup,
+            locked_root=lock.root,
+        )
+    with RootLock(root) as held:
+        return _execute_install_under_lock(
+            plan,
+            force_with_backup=force_with_backup,
+            locked_root=held.root,
+        )
 
 
 def _require_held_root_lock(lock: RootLock, root: str) -> None:
@@ -2117,9 +2182,17 @@ def _execute_install_under_lock(
     plan: ActionPlan,
     *,
     force_with_backup: bool = False,
+    locked_root: str,
 ) -> dict[str, Any]:
-    """Mutating install body. Caller must hold ``RootLock`` for ``plan.root``."""
-    root = plan.root
+    """Mutating install body. Caller must hold ``RootLock`` for ``plan.root``.
+
+    ``locked_root`` is the physical tree bound by that lock (may differ from the
+    caller spelling when the leaf skill root is a junction/symlink — #245).
+    All mutations use ``locked_root``, never a repointable junction spelling.
+    """
+    if os.path.realpath(locked_root) != os.path.realpath(plan.root):
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    root = locked_root
     require_no_pending_journal(root)
     # Preflight token is advisory for payload bytes, but ownership identity
     # must still match: if the locked manifest digest diverged, fail busy so
@@ -2134,20 +2207,22 @@ def _execute_install_under_lock(
     # Honor preflight force classification when the Python API calls
     # execute_install(plan) without repeating force_with_backup=True.
     effective_force = force_with_backup or bool(plan.backups)
+    # Rebuild under the locked physical root so plan.root matches mutation paths.
     locked = plan_install(
         host=plan.host,
         scope=plan.scope,
-        root=plan.root,
+        root=root,
         dry_run=False,
         force_with_backup=effective_force,
         sources=plan.sources,
     )
     # Request identity must match; payload/manifest always come from locked rebuild.
+    # claim_key uses realpath, so junction vs physical spellings stay equivalent.
     if (
         locked.host != plan.host
         or locked.scope != plan.scope
         or locked.claim != plan.claim
-        or os.path.realpath(locked.root) != os.path.realpath(plan.root)
+        or os.path.realpath(locked.root) != os.path.realpath(root)
     ):
         raise DiagnosticError("E_INSTALL_BUSY")
     # Digest must still match after replan observation (same locked read path).
@@ -3180,10 +3255,12 @@ def install_multi_targets(
 
         plans: list[ActionPlan] = []
         for host, root in targets:
+            key = os.path.realpath(root)
+            locked_root = lock_by_key[key].root
             plan = plan_install(
                 host=host,
                 scope=scope,
-                root=root,
+                root=locked_root,
                 dry_run=False,
                 force_with_backup=force_with_backup,
                 sources=sources,
@@ -3206,17 +3283,20 @@ def install_multi_targets(
         for plan in plans:
             key = os.path.realpath(plan.root)
             lock = lock_by_key[key]
-            # Replan + checkpoint immediately before each execute so shared
-            # physical roots capture the generation that this step will undo
-            # (not the common pre-transaction generation).
+            # Replan + checkpoint against the locked physical root (#245), never a
+            # repointable leaf junction spelling, so compensation restores the
+            # same tree that was locked and mutated.
+            locked_root = lock.root
             live_plan = plan_install(
                 host=plan.host,
                 scope=scope,
-                root=plan.root,
+                root=locked_root,
                 dry_run=False,
                 force_with_backup=force_with_backup,
                 sources=sources,
             )
+            if os.path.realpath(live_plan.root) != os.path.realpath(locked_root):
+                raise DiagnosticError("E_INSTALL_CONFLICT")
             checkpoint = capture_install_checkpoint(live_plan)
             checkpoints.append(checkpoint)
             result = execute_install(
@@ -3750,13 +3830,24 @@ def _attempt_rollback(root: str, journal: dict[str, Any]) -> None:
 def recover_root(root: str) -> dict[str, Any]:
     path = journal_path(root)
     legacy_path = _legacy_journal_path(root)
+    # Observational pre-check may use caller spelling; mutations use locked root.
     if not os.path.lexists(path) and not os.path.lexists(legacy_path):
-        return {"ok": True, "recovered": False}
+        # Also probe resolved physical root when leaf is a junction/symlink (#245).
+        try:
+            resolved_probe = resolve_skill_root_for_lock(root)
+        except DiagnosticError:
+            resolved_probe = root
+        if resolved_probe != root:
+            path = journal_path(resolved_probe)
+            legacy_path = _legacy_journal_path(resolved_probe)
+        if not os.path.lexists(path) and not os.path.lexists(legacy_path):
+            return {"ok": True, "recovered": False}
     active = path if os.path.lexists(path) else legacy_path
     if os.path.islink(active) or not os.path.isfile(active):
         raise DiagnosticError("E_RECOVERY_REQUIRED")
     require_mutating_install_platform()
-    with RootLock(root):
+    with RootLock(root) as held:
+        root = held.root
         try:
             # Migration may have moved the journal into .state/ under the lock.
             if os.path.lexists(journal_path(root)):
@@ -3976,7 +4067,9 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
         return {"ok": True, "dry_run": True, "removed_files": removable, "claim": claim}
 
     require_mutating_install_platform()
-    with RootLock(root):
+    with RootLock(root) as held:
+        # Bind mutations to the locked physical skill root (#245).
+        root = held.root
         require_no_pending_journal(root)
         manifest = load_manifest(root)
         if manifest is None or claim not in manifest.claims:

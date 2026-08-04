@@ -490,17 +490,23 @@ class WindowsJunctionAttackStressTests(unittest.TestCase):
 
         self._assert_external_untouched()
 
-    def test_root_lock_on_junction_rejection(self) -> None:
-        """RootLock rejects lock acquisition when root itself is a junction to external dir."""
+    def test_root_lock_on_leaf_junction_resolves_to_target(self) -> None:
+        """#245: leaf skill-root junction is allowed; RootLock binds the resolved real directory.
+
+        Intermediate payload junctions remain fail-closed (other tests in this module).
+        Control state is owned on the physical tree (skills-sync shared roots).
+        """
         junc_root = self.skill_root / "junc_root"
         _winapi.CreateJunction(str(self.external_dir), str(junc_root))
 
-        with self.assertRaises(DiagnosticError) as ctx:
-            with RootLock(str(junc_root)):
-                pass
-        self.assertIn(ctx.exception.code, ("E_UNSAFE_PATH", "E_INSTALL_UNSUPPORTED_PLATFORM", "E_INSTALL_CONFLICT"))
+        with RootLock(str(junc_root)) as lock:
+            self.assertEqual(os.path.realpath(lock.root), os.path.realpath(self.external_dir))
+            state = Path(lock.root) / ".portable-resume" / ".state"
+            self.assertTrue(state.is_dir())
+            self.assertTrue((state / "install.lock").is_file() or lock._fd is not None)
 
-        self._assert_external_untouched()
+        # Physical target receives support state; that is intentional for shared skill roots.
+        self.assertTrue((self.external_dir / ".portable-resume" / ".state").is_dir())
 
 
 if __name__ == "__main__":
