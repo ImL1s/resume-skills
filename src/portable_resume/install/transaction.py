@@ -3255,10 +3255,12 @@ def install_multi_targets(
 
         plans: list[ActionPlan] = []
         for host, root in targets:
+            key = os.path.realpath(root)
+            locked_root = lock_by_key[key].root
             plan = plan_install(
                 host=host,
                 scope=scope,
-                root=root,
+                root=locked_root,
                 dry_run=False,
                 force_with_backup=force_with_backup,
                 sources=sources,
@@ -3281,17 +3283,20 @@ def install_multi_targets(
         for plan in plans:
             key = os.path.realpath(plan.root)
             lock = lock_by_key[key]
-            # Replan + checkpoint immediately before each execute so shared
-            # physical roots capture the generation that this step will undo
-            # (not the common pre-transaction generation).
+            # Replan + checkpoint against the locked physical root (#245), never a
+            # repointable leaf junction spelling, so compensation restores the
+            # same tree that was locked and mutated.
+            locked_root = lock.root
             live_plan = plan_install(
                 host=plan.host,
                 scope=scope,
-                root=plan.root,
+                root=locked_root,
                 dry_run=False,
                 force_with_backup=force_with_backup,
                 sources=sources,
             )
+            if os.path.realpath(live_plan.root) != os.path.realpath(locked_root):
+                raise DiagnosticError("E_INSTALL_CONFLICT")
             checkpoint = capture_install_checkpoint(live_plan)
             checkpoints.append(checkpoint)
             result = execute_install(
