@@ -105,7 +105,7 @@ class FixtureManifestTests(unittest.TestCase):
     def test_all_lane_fixture_manifests_are_strict_and_complete(self) -> None:
         expected = {
             "opencode": {f"s-ope-{index:02d}" for index in range(1, 8)},
-            "antigravity": {f"s-ant-{index:02d}" for index in range(1, 7)},
+            "antigravity": {f"s-ant-{index:02d}" for index in range(1, 8)},
             "grok": {f"s-gro-{index:02d}" for index in range(1, 9)},
         }
         for source, cases in expected.items():
@@ -675,6 +675,28 @@ class AntigravityAdapterTests(unittest.TestCase):
             self.assertEqual(session.session_id, "conv-one")
             self.assertTrue(session.turns)
             self.assertIn("W_STALE_INDEX", session.warnings)
+
+    def test_cli_empty_transcript_uses_history_and_messages_lane(self) -> None:
+        """#248: empty transcript.jsonl recovers via history.jsonl + messages/*."""
+        root = fixture_root("antigravity", "s-ant-07")
+        before = tree_snapshot(root)
+        adapter = AntigravityAdapter(root=str(root))
+        list_q = query("antigravity", root, None, within_min=0)
+        summaries = adapter.list(list_q, ReadBudget())
+        self.assertEqual([item.session_id for item in summaries], ["conv-cli"])
+        self.assertIn("W_CLI_MESSAGES_LANE", summaries[0].warnings)
+        show_q = query("antigravity", root, "conv-cli", within_min=0)
+        session = adapter.show(resolve(summaries, "conv-cli"), show_q, ReadBudget())
+        self.assertEqual(session.session_id, "conv-cli")
+        roles = [turn.role for turn in session.turns]
+        self.assertIn("user", roles)
+        self.assertIn("assistant", roles)
+        joined = " ".join(turn.content for turn in session.turns)
+        self.assertIn("fix the windows packager", joined)
+        self.assertIn("Lite channel", joined)
+        self.assertNotIn("internal timer cancelled noise", joined)
+        self.assertIn("W_CLI_MESSAGES_LANE", session.warnings)
+        self.assertEqual(tree_snapshot(root), before)
 
 
 class GrokAdapterTests(unittest.TestCase):

@@ -1,0 +1,10 @@
+{
+  "case": "s-ant-07",
+  "expected_code": 0,
+  "expected_operation": "list",
+  "expected_warnings": ["W_STALE_INDEX", "W_CLI_MESSAGES_LANE"],
+  "format_id": "antigravity-transcript-jsonl-v1",
+  "provenance_ref": "docs/source-formats.md#source-format-evidence-registry",
+  "source": "antigravity",
+  "synthetic": true
+}
