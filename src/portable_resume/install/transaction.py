@@ -3803,6 +3803,18 @@ def verify_root(root: str, *, claim: str | None = None) -> dict[str, Any]:
     return _verify_root_locked(root, claim=claim)
 
 
+def _physical_mode_matches(
+    actual_mode: int,
+    expected_mode: int,
+    *,
+    platform_name: str | None = None,
+) -> bool:
+    """Compare POSIX payload modes without inventing Windows chmod semantics."""
+
+    effective_platform = os.name if platform_name is None else platform_name
+    return effective_platform == "nt" or actual_mode == expected_mode
+
+
 def _verify_root_locked(root: str, *, claim: str | None = None) -> dict[str, Any]:
     require_no_pending_journal(root)
     manifest = load_manifest(root)
@@ -3877,7 +3889,9 @@ def _verify_root_locked(root: str, *, claim: str | None = None) -> dict[str, Any
                             if owns_parent:
                                 os.close(parent_fd)
                         if (
-                            stat_mod.S_IMODE(st.st_mode) != expected_mode
+                            not _physical_mode_matches(
+                                stat_mod.S_IMODE(st.st_mode), expected_mode
+                            )
                             or _sha256_regular_under_root_fd(root_fd, rel) != expected_sha
                         ):
                             mismatches.append(rel)
@@ -3887,7 +3901,9 @@ def _verify_root_locked(root: str, *, claim: str | None = None) -> dict[str, Any
                             mismatches.append(rel)
                             continue
                         if (
-                            stat_mod.S_IMODE(os.stat(path).st_mode) != expected_mode
+                            not _physical_mode_matches(
+                                stat_mod.S_IMODE(os.stat(path).st_mode), expected_mode
+                            )
                             or sha256_file(path) != expected_sha
                         ):
                             mismatches.append(rel)

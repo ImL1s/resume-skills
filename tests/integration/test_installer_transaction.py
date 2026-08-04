@@ -293,6 +293,28 @@ class InstallerTransactionTests(unittest.TestCase):
             verify_root(self.root)
         self.assertEqual(caught.exception.code, "E_VERIFY_MISMATCH")
 
+    def test_windows_verify_ignores_non_portable_physical_mode_bits(self) -> None:
+        execute_install(plan_install(host="claude", scope="project", root=self.root))
+        manifest = load_manifest(self.root)
+        assert manifest is not None
+        payload_rel = next(rel for rel in manifest.files if rel.endswith("SKILL.md"))
+        (Path(self.root) / payload_rel).chmod(0o600)
+
+        self.assertTrue(
+            transaction_module._physical_mode_matches(0o600, 0o644, platform_name="nt")
+        )
+        original_mode_matches = transaction_module._physical_mode_matches
+
+        def emulate_windows(actual: int, expected: int) -> bool:
+            return original_mode_matches(actual, expected, platform_name="nt")
+
+        with mock.patch.object(
+            transaction_module,
+            "_physical_mode_matches",
+            side_effect=emulate_windows,
+        ):
+            self.assertTrue(verify_root(self.root)["ok"])
+
     def test_legacy_source_inference_is_deterministic_and_ambiguous_fails_closed(
         self,
     ) -> None:
