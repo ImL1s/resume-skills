@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Installer verify/uninstall honesty after source-aware claims (#242 follow-up):
+  recompute top-level `package_identity` when a claim is removed; parse
+  `--sources` before shadow scan so expanded installs cannot skip new skill
+  names; claimless generation-zero manifests no longer IndexError on verify.
+
+
 - Installer selected-source verification (#240): ownership claims now record a
   normalized explicit source set, and read-only verify/discovery reconstruct the
   manifest-authoritative plan instead of assuming every enabled source. Legacy
