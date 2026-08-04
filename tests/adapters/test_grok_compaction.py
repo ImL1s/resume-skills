@@ -260,6 +260,26 @@ class GrokCompactionTests(unittest.TestCase):
         tight = ReadBudget(limits=Bounds(normalized_turns=4))
         session = adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), tight)
         self.assertEqual(len([t for t in session.turns if t.tool_name is None]), 4)
+        self.assertEqual(tight.turns, 4)
+
+    def test_precharged_budget_accumulates_surviving_turns(self) -> None:
+        """Reused budgets keep prior charges and add surviving projection (Codex P2)."""
+        from portable_resume.bounds import Bounds
+
+        root = fixture_root("s-gro-07")
+        adapter = GrokAdapter(root=str(root))
+        items = adapter.list(query(root), ReadBudget())
+        # Prior 3 + surviving 4 would be 7; ceiling 4 must fail closed.
+        precharged = ReadBudget(limits=Bounds(normalized_turns=4))
+        precharged.consume_turns(3)
+        with self.assertRaises(DiagnosticError) as caught:
+            adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), precharged)
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+        # Room for surviving 4 after prior 0: still succeeds.
+        fresh = ReadBudget(limits=Bounds(normalized_turns=4))
+        session = adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), fresh)
+        self.assertEqual(len([t for t in session.turns if t.tool_name is None]), 4)
+        self.assertEqual(fresh.turns, 4)
 
     def test_pre_checkpoint_stream_over_limit_still_projects(self) -> None:
         """Long pre-checkpoint stream must not starve a smaller post-compaction projection."""

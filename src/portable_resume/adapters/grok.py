@@ -665,13 +665,12 @@ class GrokAdapter:
         if recognized == 0:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
         if include_turns:
-            # Enforce normalized_turns against the *surviving* projection only, after
-            # any compaction replacements (#238). Pre-checkpoint stream length must
-            # not exhaust the ceiling before a smaller checkpointed result is built.
-            # Charge through consume_turns (locked) so reused budgets cannot replace
-            # counters out of band (#238 Codex P2).
-            with budget._lock:
-                budget.turns = 0
+            # Enforce normalized_turns against the *surviving* projection only after
+            # any compaction replacements (#238). Mid-stream appends do not charge
+            # turns, so a long pre-checkpoint stream cannot exhaust the ceiling
+            # before a smaller surviving projection is built.
+            # Charge the surviving count through consume_turns (locked) without
+            # zeroing prior charges on a reused budget (#238 Codex P2).
             if turns:
                 budget.consume_turns(len(turns))
         return ((min(timestamps) if timestamps else None, max(timestamps) if timestamps else None), turns, warnings)
