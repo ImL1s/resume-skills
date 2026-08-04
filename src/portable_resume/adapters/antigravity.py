@@ -298,9 +298,14 @@ class AntigravityAdapter:
                     and kind != "slash_command"
                     and not display.strip().startswith("/")
                 ):
+                    text = display.strip()
+                    # Skip pure continue-nudges; keep substantive prompts for handoff.
+                    if text in {"繼續", "继续", "continue", "Continue", "ok", "OK", "go", "GO"}:
+                        # Still refresh timestamps via stamp above; do not store as a turn.
+                        continue
                     # Keep a bounded tail of user displays for handoff.
                     lines: list[tuple[str | None, str]] = entry["user_lines"]
-                    lines.append((stamp, display.strip()))
+                    lines.append((stamp, text))
                     if len(lines) > 64:
                         entry["user_lines"] = lines[-64:]
         except DiagnosticError as error:
