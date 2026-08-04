@@ -18,7 +18,7 @@ import sys
 from typing import Any, Sequence
 
 from ..build_identity import runtime_identity
-from ..diagnostics import DiagnosticError, emit_diagnostic
+from ..diagnostics import SOURCE_KEYS, DiagnosticError, emit_diagnostic
 from .catalog import HOST_KEYS, hosts_report, resolve_skill_root
 from .discovery import audit_host_report, require_no_blocking_shadow, scan_skill_duplicates
 from .manifest import claim_key
@@ -407,6 +407,15 @@ def run(argv: Sequence[str] | None = None) -> int:
                 raise DiagnosticError.invalid()
             if ns.scope == "global" and not project_for_scan:
                 project_for_scan = os.getcwd()
+            # Parse --sources before shadow scan so expanding a partial claim
+            # still gates newly requested skills (#242 Codex P1).
+            selected_sources = _parse_install_sources(getattr(ns, "sources", None))
+            # Omitted/--sources all is plan-all-sources; do not fall back to a
+            # partial claim's recorded set for the pre-install shadow gate.
+            if selected_sources is None:
+                shadow_sources = tuple(sorted(SOURCE_KEYS))
+            else:
+                shadow_sources = selected_sources
             discovery_by_host: dict[str, dict[str, Any]] = {}
             for host, root in targets:
                 discovery_by_host[host] = require_no_blocking_shadow(
@@ -415,8 +424,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                     project_dir=project_for_scan,
                     home_dir=ns.home,
                     selected_scope=ns.scope,
+                    sources=shadow_sources,
                 )
-            selected_sources = _parse_install_sources(getattr(ns, "sources", None))
             if dry_run or len(targets) == 1:
                 plans = [
                     plan_install(

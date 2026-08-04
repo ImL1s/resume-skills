@@ -245,3 +245,41 @@ def empty_manifest(package_identity: str) -> Manifest:
         claims={},
         files={},
     )
+
+
+def recompute_top_package_identity(manifest: Manifest) -> None:
+    """Align top-level ``package_identity`` with remaining claims after uninstall.
+
+    Prefer the recorded ``package_identity`` of the lexicographically first claim
+    (same rule as :func:`build_manifest`). For legacy claims without that field,
+    derive identity from host + :func:`resolve_claim_sources` + the materialize
+    plan so shared-root uninstall does not leave a removed claim's digest
+    (#242 Codex P1).
+    """
+
+    if not manifest.claims:
+        return
+    first = sorted(manifest.claims)[0]
+    meta = manifest.claims[first]
+    recorded = meta.get("package_identity")
+    if isinstance(recorded, str) and recorded:
+        # When every claim is source-aware, first-claim identity is authoritative.
+        if all(
+            isinstance(m.get("package_identity"), str) and m.get("package_identity")
+            for m in manifest.claims.values()
+        ):
+            manifest.package_identity = recorded
+            return
+    host = meta.get("host")
+    if not isinstance(host, str):
+        return
+    try:
+        from .catalog import HOST_PROFILES
+        from .render import materialize_plan, package_identity as identity_of
+
+        if host not in HOST_PROFILES:
+            return
+        sources = resolve_claim_sources(manifest, first)
+        manifest.package_identity = identity_of(materialize_plan(host, sources=sources))
+    except (ValueError, KeyError, TypeError):
+        return
