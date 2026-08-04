@@ -826,6 +826,70 @@ class AntigravityAdapterTests(unittest.TestCase):
                 adapter.list(query("antigravity", root, None, within_min=0), ReadBudget())
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
+    def test_cli_history_overflow_does_not_block_nonempty_transcripts(self) -> None:
+        """#249: optional history overflow must not hide authoritative transcripts."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session_id = "conv-legacy"
+            brain = root / "brain" / session_id / ".system_generated" / "logs"
+            brain.mkdir(parents=True)
+            # Non-empty authoritative transcript (legacy lane).
+            (brain / "transcript.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "session",
+                                "conversation_id": session_id,
+                                "cwd": CWD,
+                                "title": "legacy",
+                                "created_at": "2026-08-04T15:00:00Z",
+                                "updated_at": "2026-08-04T15:00:00Z",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "role": "user",
+                                "content": "legacy user",
+                                "timestamp": "2026-08-04T15:00:01Z",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": "legacy assistant",
+                                "timestamp": "2026-08-04T15:00:02Z",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            lines = [
+                json.dumps(
+                    {
+                        "display": f"noise-{index}",
+                        "timestamp": 1_785_856_851_015 + index,
+                        "workspace": CWD,
+                        "conversationId": "other-session",
+                    }
+                )
+                for index in range(DEFAULT_BOUNDS.scanned_records + 5)
+            ]
+            (root / "history.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            adapter = AntigravityAdapter(root=str(root))
+            summaries = adapter.list(query("antigravity", root, None, within_min=0), ReadBudget())
+            self.assertEqual([item.session_id for item in summaries], [session_id])
+            session = adapter.show(
+                resolve(summaries, session_id),
+                query("antigravity", root, session_id, within_min=0),
+                ReadBudget(),
+            )
+            self.assertIn("legacy user", " ".join(turn.content for turn in session.turns))
+
     def test_cli_history_midsize_reuses_hints_without_double_charge(self) -> None:
         """#249: list must not re-scan history (double budget) for empty transcripts."""
         with tempfile.TemporaryDirectory() as temporary:

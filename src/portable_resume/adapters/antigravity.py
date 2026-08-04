@@ -525,9 +525,27 @@ class AntigravityAdapter:
             candidates.append((direct, None))
         output: list[SessionSummary] = []
         scan_mode = entries is None and not query.ref
-        # Load once and reuse in empty-transcript fallback — a second scan would
-        # double-charge scanned_records and skip valid mid-size history files.
-        history_hints = self._load_history_hints(root, budget)
+        # History is optional enrichment for non-empty transcripts, but required
+        # for empty-transcript CLI recovery. Load once and reuse (no double charge).
+        # Overflow: fail closed only when some candidate needs the CLI fallback;
+        # otherwise keep listing authoritative non-empty transcripts (Codex P1).
+        needs_history = False
+        for cand_path, _cand_hint in candidates:
+            try:
+                if (not os.path.isfile(cand_path)) or os.lstat(cand_path).st_size == 0:
+                    needs_history = True
+                    break
+            except OSError:
+                needs_history = True
+                break
+        history_hints: dict[str, dict[str, Any]] = {}
+        try:
+            history_hints = self._load_history_hints(root, budget)
+        except DiagnosticError as error:
+            if error.code == "E_LIMIT_EXCEEDED" and not needs_history:
+                history_hints = {}
+            else:
+                raise
         for path, hint in candidates:
             try:
                 summary, _, warnings = self._read_transcript(
