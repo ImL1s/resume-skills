@@ -668,10 +668,12 @@ class GrokAdapter:
             # Enforce normalized_turns against the *surviving* projection only, after
             # any compaction replacements (#238). Pre-checkpoint stream length must
             # not exhaust the ceiling before a smaller checkpointed result is built.
-            ceiling = min(budget.limits.normalized_turns, DEFAULT_BOUNDS.normalized_turns)
-            if len(turns) > ceiling:
-                raise DiagnosticError.limit_exceeded()
-            budget.turns = max(budget.turns, len(turns))
+            # Charge through consume_turns (locked) so reused budgets cannot replace
+            # counters out of band (#238 Codex P2).
+            with budget._lock:
+                budget.turns = 0
+            if turns:
+                budget.consume_turns(len(turns))
         return ((min(timestamps) if timestamps else None, max(timestamps) if timestamps else None), turns, warnings)
 
     def _apply_compaction_checkpoint(
