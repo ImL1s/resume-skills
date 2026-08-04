@@ -157,8 +157,12 @@ session updates.
 
 Consecutive user or agent message chunks are coalesced. Public tool titles/results are
 bounded, provider-private `rawOutput` is omitted, and encrypted-looking payloads are not
-surfaced. Unknown rewind or compaction controls fail closed instead of returning a
-plausible stale history.
+surfaced. Qualified **compaction v1** (`compaction_checkpoint` + session-local
+`compaction_checkpoints/<file>` sidecar, `schema_version: 1`) replaces the active public
+projection with allowlisted user/assistant history from `compacted_history`, then continues
+reducing later `updates.jsonl` records (#238). System/developer/reasoning/tool sidecar roles
+are omitted. Missing, escaping, mismatched, or wrong-version sidecars fail closed.
+**`rewind_marker` remains unsupported** (fail closed).
 
 ### Qwen Code
 

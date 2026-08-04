@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Grok `show` supports qualified **compaction v1** sessions (#238): allowlisted
+  `compaction_checkpoint` events load a session-local sidecar under
+  `compaction_checkpoints/`, project public user/assistant `compacted_history`,
+  replace superseded pre-checkpoint turns, and continue with post-checkpoint
+  public chunks. Multi-checkpoint reduction is sequential. Sidecar path escape,
+  schema/id mismatch, and missing files fail closed. **`rewind_marker` remains
+  unsupported.**
+
 ## [0.4.1] — 2026-08-04
 
 - Windows mutating install productization (#125 Phases 1–7): Win32 exclusive

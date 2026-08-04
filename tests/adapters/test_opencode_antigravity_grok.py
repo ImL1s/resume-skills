@@ -106,7 +106,7 @@ class FixtureManifestTests(unittest.TestCase):
         expected = {
             "opencode": {f"s-ope-{index:02d}" for index in range(1, 8)},
             "antigravity": {f"s-ant-{index:02d}" for index in range(1, 7)},
-            "grok": {f"s-gro-{index:02d}" for index in range(1, 7)},
+            "grok": {f"s-gro-{index:02d}" for index in range(1, 9)},
         }
         for source, cases in expected.items():
             with self.subTest(source=source):
