@@ -11,6 +11,7 @@ import os
 import re
 from typing import Any, Mapping
 
+from ..diagnostics import SOURCE_KEYS
 from .catalog import HOST_KEYS, MANIFEST_SCHEMA
 
 # Conservative control-document limits (bytes / structure).
@@ -45,7 +46,8 @@ _ALLOWED_MODES = frozenset({0o644, 0o755, 420, 493})  # 420=0o644, 493=0o755 dec
 _MANIFEST_TOP = frozenset(
     {"schema_version", "bundle_version", "generation", "package_identity", "claims", "files"}
 )
-_CLAIM_KEYS = frozenset({"host", "scope", "root", "bundle_version"})
+_CLAIM_REQUIRED_KEYS = frozenset({"host", "scope", "root", "bundle_version"})
+_CLAIM_KEYS = _CLAIM_REQUIRED_KEYS | {"package_identity", "sources"}
 _FILE_ENTRY_KEYS = frozenset({"path", "sha256", "claims", "mode", "owner"})
 _JOURNAL_TOP_REQUIRED = frozenset({"schema_version", "state", "generation", "claim", "stage_dir", "paths"})
 _JOURNAL_TOP_OPTIONAL = frozenset(
@@ -221,12 +223,12 @@ def parse_manifest_document(text: str | bytes) -> dict[str, Any]:
         raise ControlSchemaError("claims must be an object")
     if len(claims_raw) > CONTROL_MAX_CLAIMS:
         raise ControlSchemaError("too many claims")
-    claims: dict[str, dict[str, str]] = {}
+    claims: dict[str, dict[str, Any]] = {}
     for claim_id, meta in claims_raw.items():
         claim_id = _require_str(claim_id, name="claim id", max_chars=1024)
         if not isinstance(meta, dict):
             raise ControlSchemaError("claim entry must be an object")
-        _require_keys(meta, _CLAIM_KEYS, _CLAIM_KEYS)
+        _require_keys(meta, _CLAIM_REQUIRED_KEYS, _CLAIM_KEYS)
         host = _require_str(meta["host"], name="claim.host", max_chars=64)
         if host not in HOST_KEYS:
             raise ControlSchemaError("unknown claim host")
@@ -245,12 +247,32 @@ def parse_manifest_document(text: str | bytes) -> dict[str, Any]:
         expected = f"{host}|{scope}|{root}"
         if claim_id != expected:
             raise ControlSchemaError("claim key inconsistent with host/scope/root")
-        claims[claim_id] = {
+        claim_meta: dict[str, Any] = {
             "host": host,
             "scope": scope,
             "root": root,
             "bundle_version": claim_bundle,
         }
+        if "sources" in meta:
+            raw_sources = meta["sources"]
+            if not isinstance(raw_sources, list) or not raw_sources:
+                raise ControlSchemaError("claim.sources must be a non-empty list")
+            sources: list[str] = []
+            for item in raw_sources:
+                source = _require_str(item, name="claim.source", max_chars=64)
+                if source not in SOURCE_KEYS:
+                    raise ControlSchemaError("unknown claim source")
+                if source in sources:
+                    raise ControlSchemaError("duplicate claim source")
+                sources.append(source)
+            if sources != sorted(sources):
+                raise ControlSchemaError("claim.sources must be normalized")
+            claim_meta["sources"] = sources
+        if "package_identity" in meta:
+            claim_meta["package_identity"] = _require_hex64(
+                meta["package_identity"], name="claim.package_identity"
+            )
+        claims[claim_id] = claim_meta
 
     files_raw = data["files"]
     if not isinstance(files_raw, dict):

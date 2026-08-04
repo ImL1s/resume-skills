@@ -111,6 +111,10 @@ install-resume-skills install \
   --host qwen --scope project --project "$PWD" --dry-run
 install-resume-skills install \
   --host qwen --scope project --project "$PWD"
+# Selected sources are recorded in the ownership claim; verify intentionally
+# takes no --sources argument and checks the recorded install plan.
+install-resume-skills install \
+  --host qwen --scope project --project "$PWD" --sources codex,grok
 install-resume-skills verify \
   --host qwen --scope project --project "$PWD"
 install-resume-skills uninstall \

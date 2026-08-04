@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Installer selected-source verification (#240): ownership claims now record a
+  normalized explicit source set, and read-only verify/discovery reconstruct the
+  manifest-authoritative plan instead of assuming every enabled source. Legacy
+  pre-field claims are inferred only from unambiguous owned `resume-*` paths;
+  malformed, ambiguous, path-set, identity, hash, mode, or source metadata still
+  fails closed.
 - Grok `show` supports qualified **compaction v1** sessions (#238): allowlisted
   `compaction_checkpoint` events load a session-local sidecar under
   `compaction_checkpoints/`, project public user/assistant `compacted_history`,

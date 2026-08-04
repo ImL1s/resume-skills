@@ -22,6 +22,7 @@ from typing import Any, Iterable
 
 from ..diagnostics import DiagnosticError
 from .catalog import BUNDLE_VERSION, HOST_PROFILES, SOURCE_SKILL_NAMES
+from .manifest import claim_key, resolve_claim_sources
 from .render import materialize_plan, package_identity
 
 # Bounded SKILL.md body read for fingerprinting foreign/owned copies.
@@ -757,14 +758,19 @@ def _read_regular_capped(path: str, *, max_bytes: int) -> bytes | None:
         os.close(fd)
 
 
-def _on_disk_package_state(skill_root: str, host: str) -> tuple[bool, str | None]:
+def _on_disk_package_state(
+    skill_root: str,
+    host: str,
+    *,
+    sources: tuple[str, ...] | None = None,
+) -> tuple[bool, str | None]:
     """Return byte verification and computed identity for the installed package.
 
     Manifest package_identity alone is not enough: the host loads SKILL.md,
     run_reader.py, and ``.portable-resume/runtime/**`` from the discovery root.
     """
 
-    expected = materialize_plan(host)
+    expected = materialize_plan(host, sources=sources)
     actual: dict[str, bytes] = {}
     matches_expected = True
     for rel, data in expected.items():
@@ -787,10 +793,15 @@ def _on_disk_package_state(skill_root: str, host: str) -> tuple[bool, str | None
     return matches_expected, package_identity(actual)
 
 
-def _on_disk_package_matches(skill_root: str, host: str) -> bool:
+def _on_disk_package_matches(
+    skill_root: str,
+    host: str,
+    *,
+    sources: tuple[str, ...] | None = None,
+) -> bool:
     """True only when every expected package path is a regular file with matching bytes."""
 
-    matches, _identity = _on_disk_package_state(skill_root, host)
+    matches, _identity = _on_disk_package_state(skill_root, host, sources=sources)
     return matches
 
 
@@ -799,6 +810,7 @@ def inspect_skill_copy(
     skill_name: str,
     *,
     host: str,
+    sources: tuple[str, ...] | None = None,
     expected_payload_digest: str | None = None,
     soft_manifest: bool = True,
 ) -> dict[str, Any]:
@@ -864,7 +876,9 @@ def inspect_skill_copy(
     result["payload_fingerprint"] = fp.hexdigest()
 
     # Full package byte verification (SKILL + runner + runtime + resources).
-    payload_verified, on_disk_identity = _on_disk_package_state(skill_root, host)
+    payload_verified, on_disk_identity = _on_disk_package_state(
+        skill_root, host, sources=sources
+    )
     result["payload_verified"] = payload_verified
     if expected_payload_digest is not None:
         result["matches_expected"] = (
@@ -894,8 +908,47 @@ def inspect_skill_copy(
     return result
 
 
-def _expected_package_identity(host: str) -> str:
-    return package_identity(materialize_plan(host))
+def _selected_claim_sources(
+    *,
+    host: str,
+    selected_root: str,
+    selected_scope: str | None,
+) -> tuple[str, ...] | None:
+    """Return the selected root's authoritative claim sources, if installed."""
+
+    from .transaction import load_manifest
+
+    manifest = load_manifest(selected_root)
+    if manifest is None:
+        return None
+    if selected_scope is not None:
+        selected_claim = claim_key(host=host, scope=selected_scope, root=selected_root)
+        if selected_claim not in manifest.claims:
+            return None
+        try:
+            return resolve_claim_sources(manifest, selected_claim)
+        except ValueError as error:
+            raise DiagnosticError("E_VERIFY_MISMATCH") from error
+    selected_real = os.path.realpath(selected_root)
+    matching = [
+        claim_id
+        for claim_id, meta in manifest.claims.items()
+        if meta.get("host") == host
+        and os.path.realpath(str(meta.get("root", ""))) == selected_real
+    ]
+    if not matching:
+        return None
+    try:
+        source_sets = {resolve_claim_sources(manifest, claim_id) for claim_id in matching}
+    except ValueError as error:
+        raise DiagnosticError("E_VERIFY_MISMATCH") from error
+    if len(source_sets) != 1:
+        raise DiagnosticError("E_VERIFY_MISMATCH")
+    return next(iter(source_sets))
+
+
+def _expected_package_identity(host: str, sources: tuple[str, ...] | None = None) -> str:
+    return package_identity(materialize_plan(host, sources=sources))
 
 def scan_skill_duplicates(
     *,
@@ -914,13 +967,23 @@ def scan_skill_duplicates(
 
     if host not in HOST_PROFILES:
         raise DiagnosticError.invalid()
-    names = tuple(skill_names) if skill_names is not None else SOURCE_SKILL_NAMES
+    selected_sources = _selected_claim_sources(
+        host=host,
+        selected_root=selected_root,
+        selected_scope=selected_scope,
+    )
+    if skill_names is not None:
+        names = tuple(skill_names)
+    elif selected_sources is not None:
+        names = tuple(f"resume-{source}" for source in selected_sources)
+    else:
+        names = SOURCE_SKILL_NAMES
     for name in names:
         if not name.startswith("resume-") or name not in SOURCE_SKILL_NAMES:
             raise DiagnosticError.invalid()
 
     selected_real = os.path.realpath(selected_root)
-    expected_identity = _expected_package_identity(host)
+    expected_identity = _expected_package_identity(host, selected_sources)
 
     roots = discovery_roots_for_host(host)
     findings: list[dict[str, Any]] = []
@@ -956,6 +1019,7 @@ def scan_skill_duplicates(
             home_dir=home_dir,
             selected_scope=selected_scope,
             names=names,
+            sources=selected_sources,
             expected_identity=expected_identity,
             roots=roots,
             findings=findings,
@@ -975,6 +1039,7 @@ def _scan_skill_duplicates_body(
     home_dir: str,
     selected_scope: str | None,
     names: tuple[str, ...],
+    sources: tuple[str, ...] | None,
     expected_identity: str,
     roots: tuple[DiscoveryRoot, ...],
     findings: list[dict[str, Any]],
@@ -1057,6 +1122,7 @@ def _scan_skill_duplicates_body(
                 path,
                 skill,
                 host=host,
+                sources=sources,
                 expected_payload_digest=expected_identity,
                 # Selected root: keep hard control-plane errors for audit honesty.
                 soft_manifest=not row["is_selected"],

@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from portable_resume.diagnostics import DiagnosticError
+from portable_resume.diagnostics import DiagnosticError, SOURCE_KEYS
 from portable_resume.install.catalog import BUNDLE_VERSION, MANIFEST_SCHEMA, resolve_skill_root
 from portable_resume.install.manifest import sha256_bytes
 from portable_resume.install.render import materialize_plan
@@ -169,6 +169,161 @@ class InstallerTransactionTests(unittest.TestCase):
 
         self.assertEqual(materialize.call_count, 1)
         self.assertEqual(identity.call_count, 1)
+
+    def test_selected_source_claims_verify_and_remain_idempotent(self) -> None:
+        selected = ("codex",)
+        execute_install(
+            plan_install(
+                host="claude",
+                scope="project",
+                root=self.root,
+                sources=selected,
+            )
+        )
+        first = load_manifest(self.root)
+        assert first is not None
+        claim = next(iter(first.claims))
+        self.assertEqual(first.claims[claim]["sources"], ["codex"])
+        self.assertTrue(verify_root(self.root)["ok"])
+
+        execute_install(
+            plan_install(
+                host="claude",
+                scope="project",
+                root=self.root,
+                sources=selected,
+            )
+        )
+        second = load_manifest(self.root)
+        assert second is not None
+        self.assertEqual(second.claims[claim]["sources"], ["codex"])
+        self.assertEqual(
+            {path for path, entry in second.files.items() if claim in entry.claims},
+            set(materialize_plan("claude", sources=selected)),
+        )
+        self.assertTrue(verify_root(self.root)["ok"])
+
+    def test_multiple_selected_sources_and_all_partial_transitions_verify(self) -> None:
+        claim = None
+        for selected in (("claude", "grok"), None, ("grok",)):
+            execute_install(
+                plan_install(
+                    host="claude",
+                    scope="project",
+                    root=self.root,
+                    sources=selected,
+                )
+            )
+            manifest = load_manifest(self.root)
+            assert manifest is not None
+            claim = claim or next(iter(manifest.claims))
+            expected_sources = sorted(selected or SOURCE_KEYS)
+            self.assertEqual(manifest.claims[claim]["sources"], expected_sources)
+            self.assertEqual(
+                {path for path, entry in manifest.files.items() if claim in entry.claims},
+                set(materialize_plan("claude", sources=selected)),
+            )
+            self.assertTrue(verify_root(self.root)["ok"])
+
+    def test_shared_root_verifies_each_claim_recorded_source_set(self) -> None:
+        shared_root = str(self.project / "source-aware-shared")
+        execute_install(
+            plan_install(
+                host="claude",
+                scope="global",
+                root=shared_root,
+                sources=("codex",),
+            )
+        )
+        execute_install(
+            plan_install(
+                host="claude",
+                scope="project",
+                root=shared_root,
+                sources=("codex", "grok"),
+            )
+        )
+        manifest = load_manifest(shared_root)
+        assert manifest is not None
+        by_scope = {meta["scope"]: meta["sources"] for meta in manifest.claims.values()}
+        self.assertEqual(by_scope, {"global": ["codex"], "project": ["codex", "grok"]})
+        self.assertTrue(verify_root(shared_root)["ok"])
+        for claim in manifest.claims:
+            self.assertTrue(verify_root(shared_root, claim=claim)["ok"])
+
+    def test_source_metadata_tampering_fails_closed(self) -> None:
+        execute_install(
+            plan_install(
+                host="claude",
+                scope="project",
+                root=self.root,
+                sources=("codex",),
+            )
+        )
+        path = Path(manifest_path(self.root))
+        original = json.loads(path.read_text(encoding="utf-8"))
+        claim = next(iter(original["claims"]))
+        skill_rel = next(rel for rel in original["files"] if rel.startswith("resume-"))
+
+        tampered_documents = []
+        source_tampered = json.loads(json.dumps(original))
+        source_tampered["claims"][claim]["sources"] = ["grok"]
+        tampered_documents.append(source_tampered)
+        identity_tampered = json.loads(json.dumps(original))
+        identity_tampered["claims"][claim]["package_identity"] = "0" * 64
+        tampered_documents.append(identity_tampered)
+        mode_tampered = json.loads(json.dumps(original))
+        mode_tampered["files"][skill_rel]["mode"] = 0o755
+        tampered_documents.append(mode_tampered)
+        path_set_tampered = json.loads(json.dumps(original))
+        del path_set_tampered["files"][skill_rel]
+        tampered_documents.append(path_set_tampered)
+
+        for index, tampered in enumerate(tampered_documents):
+            with self.subTest(tamper=index):
+                path.write_text(json.dumps(tampered), encoding="utf-8")
+                with self.assertRaises(DiagnosticError) as caught:
+                    verify_root(self.root)
+                self.assertEqual(caught.exception.code, "E_VERIFY_MISMATCH")
+
+        path.write_text(json.dumps(original), encoding="utf-8")
+        payload_path = Path(self.root) / skill_rel
+        payload_path.chmod(0o600)
+        with self.assertRaises(DiagnosticError) as caught:
+            verify_root(self.root)
+        self.assertEqual(caught.exception.code, "E_VERIFY_MISMATCH")
+
+    def test_legacy_source_inference_is_deterministic_and_ambiguous_fails_closed(
+        self,
+    ) -> None:
+        execute_install(
+            plan_install(
+                host="claude",
+                scope="project",
+                root=self.root,
+                sources=("codex",),
+            )
+        )
+        path = Path(manifest_path(self.root))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        claim = next(iter(data["claims"]))
+        del data["claims"][claim]["sources"]
+        del data["claims"][claim]["package_identity"]
+        path.write_text(json.dumps(data), encoding="utf-8")
+        self.assertTrue(verify_root(self.root)["ok"])
+
+        # A legacy claim that owns only shared runtime files cannot identify
+        # which source plan created it, so verification must not guess.
+        for entry in data["files"].values():
+            if entry["path"].startswith("resume-"):
+                entry["claims"].remove(claim)
+        data["files"] = {
+            rel: entry for rel, entry in data["files"].items() if entry["claims"]
+        }
+        path.write_text(json.dumps(data), encoding="utf-8")
+        with self.assertRaises(DiagnosticError) as caught:
+            verify_root(self.root)
+        self.assertEqual(caught.exception.code, "E_VERIFY_MISMATCH")
 
     def test_manifest_path_escape_rejected_on_load_and_uninstall(self) -> None:
         execute_install(plan_install(host="claude", scope="project", root=self.root))

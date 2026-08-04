@@ -80,6 +80,31 @@ class DuplicateScanTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
+    def test_selected_partial_install_discovery_uses_recorded_source_plan(self) -> None:
+        root = self.project / ".claude" / "skills"
+        execute_install(
+            plan_install(
+                host="claude",
+                scope="project",
+                root=str(root),
+                sources=("codex", "grok"),
+            )
+        )
+        report = scan_skill_duplicates(
+            host="claude",
+            selected_root=str(root),
+            project_dir=str(self.project),
+            home_dir=str(self.home),
+            selected_scope="project",
+        )
+        expected = package_identity(
+            materialize_plan("claude", sources=("codex", "grok"))
+        )
+        self.assertEqual(report["expected_package_identity"], expected)
+        self.assertEqual(report["skills_scanned"], ["resume-codex", "resume-grok"])
+        selected = [row for row in report["findings"] if row["detail"] == "selected_root"]
+        self.assertEqual({row["skill"] for row in selected}, {"resume-codex", "resume-grok"})
+
     def test_unique_when_only_selected_empty(self) -> None:
         selected = self.project / ".cursor" / "skills"
         selected.mkdir(parents=True)
