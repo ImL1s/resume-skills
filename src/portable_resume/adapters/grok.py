@@ -801,9 +801,19 @@ class GrokAdapter:
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
             role = item.get("type")
             content = item.get("content")
-            if not isinstance(content, list):
+            if not isinstance(role, str):
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
-            text_blocks = self._compaction_text_blocks(content, warnings)
+            role_cf = role.casefold()
+            if role_cf not in _COMPACTION_ENTRY_TYPES:
+                raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+            if isinstance(content, list):
+                text_blocks = self._compaction_text_blocks(content, warnings)
+            elif role_cf not in {"user", "assistant"} and isinstance(content, str):
+                # Real sidecars persist the private ``system`` entry as a
+                # string. It is type-checked here and omitted below.
+                text_blocks = (content,)
+            else:
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
         elif "role" in item:
             # Backward compatibility for the original synthetic fixture shape.
             if keys != _LEGACY_COMPACTION_ENTRY_KEYS:

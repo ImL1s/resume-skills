@@ -7,7 +7,8 @@
   `compaction_checkpoints/`, project public user/assistant `compacted_history`,
   replace superseded pre-checkpoint turns, and continue with post-checkpoint
   public chunks. Real list-form text blocks are concatenated through the normal
-  sanitizer; non-null `synthetic_reason` records and private roles are omitted.
+  sanitizer; non-null `synthetic_reason` records and private roles (including
+  string-form system content) are omitted.
   Multi-checkpoint reduction is sequential. Sidecar path escape, schema/id
   mismatch, and missing files fail closed. **`rewind_marker` remains unsupported.**
 

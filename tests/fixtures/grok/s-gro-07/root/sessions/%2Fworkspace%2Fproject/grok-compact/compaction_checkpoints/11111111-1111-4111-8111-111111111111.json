@@ -54,14 +54,18 @@
       "synthetic_reason": "project_instructions"
     },
     {
-      "type": "system",
+      "type": "user",
       "content": [
         {
           "type": "text",
-          "text": "PRIVATE system must omit"
+          "text": "PRIVATE system reminder must omit"
         }
       ],
       "synthetic_reason": "system_reminder"
+    },
+    {
+      "type": "system",
+      "content": "PRIVATE system must omit"
     },
     {
       "type": "developer",

@@ -169,6 +169,22 @@ class GrokCompactionTests(unittest.TestCase):
                     adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), ReadBudget())
                 self.assertIn(caught.exception.code, {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"})
 
+    def test_private_system_content_rejects_unknown_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copytree(fixture_root("s-gro-07"), root, dirs_exist_ok=True)
+
+            def replace_system_content(sidecar) -> None:
+                system = next(item for item in sidecar["compacted_history"] if item.get("type") == "system")
+                system["content"] = {"unknown": "PRIVATE"}
+
+            mutate_checkpoint_sidecar(root, replace_system_content)
+            adapter = GrokAdapter(root=str(root))
+            items = adapter.list(query(root), ReadBudget())
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), ReadBudget())
+            self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
     def test_show_latest_via_reader_cli(self) -> None:
         import io
 
