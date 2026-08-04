@@ -126,6 +126,22 @@ def _epoch_ms_to_rfc3339(value: object) -> str | None:
         return None
 
 
+def _min_rfc3339(left: str | None, right: str | None) -> str | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return left if left <= right else right
+
+
+def _max_rfc3339(left: str | None, right: str | None) -> str | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return left if left >= right else right
+
+
 def _eligible(summary: SessionSummary, query: Query) -> bool:
     if query.cwd is not None and (summary.cwd is None or not same_cwd(summary.cwd, query.cwd)):
         return False
@@ -309,7 +325,9 @@ class AntigravityAdapter:
                     if len(lines) > 64:
                         entry["user_lines"] = lines[-64:]
         except DiagnosticError as error:
-            if error.code in {"E_SOURCE_BUSY", "E_LIMIT_EXCEEDED", "E_UNSAFE_PATH"}:
+            # Busy/unsafe history is optional enrichment; overflow must fail closed
+            # so empty-transcript recovery never silently drops every user prompt.
+            if error.code in {"E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
                 return hints
             raise
         return hints
@@ -534,8 +552,9 @@ class AntigravityAdapter:
             if hist is not None:
                 if cwd is None and isinstance(hist.get("cwd"), str):
                     cwd = hist["cwd"]
-                created_at = created_at or hist.get("created_at")
-                updated_at = updated_at or hist.get("updated_at")
+                created_at = _min_rfc3339(created_at, hist.get("created_at"))
+                # Prefer the later of transcript/messages vs history activity.
+                updated_at = _max_rfc3339(updated_at, hist.get("updated_at"))
             summary = SessionSummary(
                 source=summary.source,
                 session_id=summary.session_id,
@@ -936,14 +955,16 @@ class AntigravityAdapter:
         title: str | None = f"antigravity:{session_id[:8]}"
 
         if include_turns:
+            # Collect history prompts + message-lane assistants, then order by
+            # persisted timestamps before assigning ordinals (Codex P1 #249).
+            pending: list[tuple[str, int, str, str | None, str]] = []
+            # sort key: (stamp or "", role_rank, source_order, role, content)
+            order = 0
             for stamp, display in history.get("user_lines") or []:
-                self._append_turn(
-                    turns,
-                    {"role": "user", "content": display, "timestamp": stamp},
-                    query,
-                    budget,
-                    warnings,
-                )
+                pending.append((stamp or "", 0, f"{order:08d}", "user", display))
+                order += 1
+                created_at = _min_rfc3339(created_at, stamp)
+                updated_at = _max_rfc3339(updated_at, stamp)
             if has_messages:
                 names: list[str] = []
                 try:
@@ -991,34 +1012,44 @@ class AntigravityAdapter:
                     if not isinstance(content, str) or not content.strip():
                         continue
                     stamp = _rfc3339(record.get("timestamp"))
-                    if stamp is not None:
-                        if created_at is None or stamp < created_at:
-                            created_at = stamp
-                        if updated_at is None or stamp > updated_at:
-                            updated_at = stamp
+                    created_at = _min_rfc3339(created_at, stamp)
+                    updated_at = _max_rfc3339(updated_at, stamp)
                     details = record.get("renderDetails")
                     if isinstance(details, Mapping) and isinstance(details.get("messageTitle"), str):
                         msg_title = details["messageTitle"].strip()
                         if msg_title and not msg_title.lower().startswith("wait for"):
                             content = f"{msg_title}\n\n{content}"
-                    self._append_turn(
-                        turns,
-                        {"role": "assistant", "content": content, "timestamp": stamp},
-                        query,
-                        budget,
-                        warnings,
-                    )
+                    pending.append((stamp or "", 1, f"{order:08d}", "assistant", content))
+                    order += 1
+
+            pending.sort(key=lambda item: (item[0], item[1], item[2]))
+            for stamp, _role_rank, _order, role, content in pending:
+                self._append_turn(
+                    turns,
+                    {"role": role, "content": content, "timestamp": stamp or None},
+                    query,
+                    budget,
+                    warnings,
+                )
 
         if not include_turns:
-            # Freshness from messages dir or history; avoid treating empty transcript mtime alone.
+            # Freshness: max(history activity, messages-dir mtime). Never drop a
+            # later messages lane when history already set updated_at.
             try:
-                mtime_src = messages_dir if has_messages else self._history_path(root)
-                mtime = os.lstat(mtime_src).st_mtime
-                stamp = datetime.fromtimestamp(mtime, timezone.utc).isoformat(
-                    timespec="microseconds"
-                ).replace("+00:00", "Z")
-                updated_at = updated_at or stamp
-                created_at = created_at or stamp
+                if has_messages:
+                    mtime = os.lstat(messages_dir).st_mtime
+                    stamp = datetime.fromtimestamp(mtime, timezone.utc).isoformat(
+                        timespec="microseconds"
+                    ).replace("+00:00", "Z")
+                    updated_at = _max_rfc3339(updated_at, stamp)
+                    created_at = _min_rfc3339(created_at, stamp)
+                elif updated_at is None or created_at is None:
+                    mtime = os.lstat(self._history_path(root)).st_mtime
+                    stamp = datetime.fromtimestamp(mtime, timezone.utc).isoformat(
+                        timespec="microseconds"
+                    ).replace("+00:00", "Z")
+                    updated_at = _max_rfc3339(updated_at, stamp)
+                    created_at = _min_rfc3339(created_at, stamp)
             except OSError:
                 pass
 

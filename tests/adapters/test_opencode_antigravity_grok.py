@@ -691,12 +691,140 @@ class AntigravityAdapterTests(unittest.TestCase):
         roles = [turn.role for turn in session.turns]
         self.assertIn("user", roles)
         self.assertIn("assistant", roles)
+        # Chronological handoff: user prompts and assistant replies interleaved by time.
+        self.assertEqual(
+            [(turn.role, turn.content.splitlines()[0][:40]) for turn in session.turns],
+            [
+                ("user", "fix the windows packager"),
+                ("user", "open WIP PR with size table"),
+                ("assistant", "Message from packaging agent"),
+            ],
+        )
         joined = " ".join(turn.content for turn in session.turns)
         self.assertIn("fix the windows packager", joined)
         self.assertIn("Lite channel", joined)
         self.assertNotIn("internal timer cancelled noise", joined)
         self.assertIn("W_CLI_MESSAGES_LANE", session.warnings)
+        self.assertEqual(session.updated_at, "2026-08-04T15:23:51Z")
         self.assertEqual(tree_snapshot(root), before)
+
+    def test_cli_messages_lane_merges_history_and_messages_chronologically(self) -> None:
+        """#249: merge history + messages before ordinals (not all-users-then-assistants)."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session_id = "conv-interleave"
+            brain = root / "brain" / session_id / ".system_generated"
+            (brain / "logs").mkdir(parents=True)
+            (brain / "messages").mkdir(parents=True)
+            (brain / "logs" / "transcript.jsonl").write_bytes(b"")
+            history = [
+                {
+                    "display": "first user",
+                    "timestamp": 1_785_856_851_015,
+                    "workspace": CWD,
+                    "conversationId": session_id,
+                },
+                {
+                    "display": "second user",
+                    "timestamp": 1_785_856_971_015,
+                    "workspace": CWD,
+                    "conversationId": session_id,
+                },
+            ]
+            (root / "history.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in history),
+                encoding="utf-8",
+            )
+            # Assistant between the two user prompts (by timestamp).
+            (brain / "messages" / "a1.json").write_text(
+                json.dumps(
+                    {
+                        "id": "a1",
+                        "content": "first assistant",
+                        "timestamp": "2026-08-04T15:21:51Z",
+                        "hideFromUser": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (brain / "messages" / "a2.json").write_text(
+                json.dumps(
+                    {
+                        "id": "a2",
+                        "content": "second assistant",
+                        "timestamp": "2026-08-04T15:24:51Z",
+                        "hideFromUser": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            before = tree_snapshot(root)
+            adapter = AntigravityAdapter(root=str(root))
+            list_q = query("antigravity", root, None, within_min=0)
+            summaries = adapter.list(list_q, ReadBudget())
+            session = adapter.show(
+                resolve(summaries, session_id),
+                query("antigravity", root, session_id, within_min=0),
+                ReadBudget(),
+            )
+            self.assertEqual(
+                [(turn.role, turn.content) for turn in session.turns],
+                [
+                    ("user", "first user"),
+                    ("assistant", "first assistant"),
+                    ("user", "second user"),
+                    ("assistant", "second assistant"),
+                ],
+            )
+            self.assertEqual(session.updated_at, "2026-08-04T15:24:51Z")
+            self.assertEqual(tree_snapshot(root), before)
+            # List mode: later messages-dir activity must win over older history prompts.
+            messages_dir = brain / "messages"
+            late = 1_785_857_100.0  # 2026-08-04T15:25:00Z approx
+            os.utime(messages_dir, (late, late))
+            listed = adapter.list(list_q, ReadBudget())
+            self.assertEqual(len(listed), 1)
+            self.assertGreaterEqual(listed[0].updated_at or "", "2026-08-04T15:24:00Z")
+
+    def test_cli_history_overflow_fails_closed(self) -> None:
+        """#249: history.jsonl scan overflow must not silently drop user prompts."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session_id = "conv-overflow"
+            brain = root / "brain" / session_id / ".system_generated"
+            (brain / "logs").mkdir(parents=True)
+            (brain / "messages").mkdir(parents=True)
+            (brain / "logs" / "transcript.jsonl").write_bytes(b"")
+            (brain / "messages" / "a1.json").write_text(
+                json.dumps(
+                    {
+                        "id": "a1",
+                        "content": "assistant only without prompts would be wrong",
+                        "timestamp": "2026-08-04T15:23:51Z",
+                        "hideFromUser": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            # Exceed scanned_records so stable_scan_lines raises E_LIMIT_EXCEEDED
+            # before replaying any verified history lines.
+            lines = []
+            for index in range(DEFAULT_BOUNDS.scanned_records + 5):
+                lines.append(
+                    json.dumps(
+                        {
+                            "display": f"prompt-{index}",
+                            "timestamp": 1_785_856_851_015 + index,
+                            "workspace": CWD,
+                            "conversationId": session_id,
+                        }
+                    )
+                )
+            (root / "history.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            adapter = AntigravityAdapter(root=str(root))
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.list(query("antigravity", root, None, within_min=0), ReadBudget())
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
 
 class GrokAdapterTests(unittest.TestCase):
