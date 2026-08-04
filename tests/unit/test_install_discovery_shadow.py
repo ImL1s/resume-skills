@@ -354,6 +354,20 @@ class DuplicateScanTests(unittest.TestCase):
                 sources=("codex", "grok"),
             )
         self.assertEqual(ctx.exception.code, "E_INSTALL_SHADOW")
+        # Full SOURCE_KEYS tuple (CLI omitted/--sources all) must also scan
+        # beyond the partial claim, not fall back to codex-only.
+        from portable_resume.diagnostics import SOURCE_KEYS
+
+        full = scan_skill_duplicates(
+            host="claude",
+            selected_root=str(selected),
+            project_dir=str(self.project),
+            home_dir=str(self.home),
+            selected_scope="project",
+            sources=tuple(sorted(SOURCE_KEYS)),
+        )
+        self.assertIn("resume-grok", full["skills_scanned"])
+        self.assertGreater(len(full["skills_scanned"]), 1)
 
     def test_unknown_precedence_compat_warns(self) -> None:
         selected = self.project / ".cursor" / "skills"

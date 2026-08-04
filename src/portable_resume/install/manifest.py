@@ -248,19 +248,38 @@ def empty_manifest(package_identity: str) -> Manifest:
 
 
 def recompute_top_package_identity(manifest: Manifest) -> None:
-    """Align top-level ``package_identity`` with remaining source-aware claims.
+    """Align top-level ``package_identity`` with remaining claims after uninstall.
 
-    When every remaining claim carries ``package_identity``, the top-level field
-    is the identity of the lexicographically first claim id (same rule as
-    :func:`build_manifest`). Call after uninstall removes a claim so shared-root
-    multi-claim verify does not keep a removed claim's identity (#242 Codex P1).
+    Prefer the recorded ``package_identity`` of the lexicographically first claim
+    (same rule as :func:`build_manifest`). For legacy claims without that field,
+    derive identity from host + :func:`resolve_claim_sources` + the materialize
+    plan so shared-root uninstall does not leave a removed claim's digest
+    (#242 Codex P1).
     """
 
     if not manifest.claims:
         return
-    if not all("package_identity" in meta for meta in manifest.claims.values()):
-        return
     first = sorted(manifest.claims)[0]
-    identity = manifest.claims[first].get("package_identity")
-    if isinstance(identity, str) and identity:
-        manifest.package_identity = identity
+    meta = manifest.claims[first]
+    recorded = meta.get("package_identity")
+    if isinstance(recorded, str) and recorded:
+        # When every claim is source-aware, first-claim identity is authoritative.
+        if all(
+            isinstance(m.get("package_identity"), str) and m.get("package_identity")
+            for m in manifest.claims.values()
+        ):
+            manifest.package_identity = recorded
+            return
+    host = meta.get("host")
+    if not isinstance(host, str):
+        return
+    try:
+        from .catalog import HOST_PROFILES
+        from .render import materialize_plan, package_identity as identity_of
+
+        if host not in HOST_PROFILES:
+            return
+        sources = resolve_claim_sources(manifest, first)
+        manifest.package_identity = identity_of(materialize_plan(host, sources=sources))
+    except (ValueError, KeyError, TypeError):
+        return
