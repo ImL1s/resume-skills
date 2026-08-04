@@ -8,6 +8,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..diagnostics import SOURCE_KEYS
 from .catalog import BUNDLE_VERSION, MANIFEST_SCHEMA
 from .control_schema import OWNER_MARKER, ControlSchemaError, parse_manifest_document
 
@@ -47,7 +48,7 @@ class Manifest:
     bundle_version: str
     generation: int
     package_identity: str
-    claims: dict[str, dict[str, str]]
+    claims: dict[str, dict[str, Any]]
     files: dict[str, FileEntry]
 
     def to_dict(self) -> dict[str, Any]:
@@ -132,6 +133,50 @@ def claim_key(*, host: str, scope: str, root: str) -> str:
     return f"{host}|{scope}|{os.path.realpath(root)}"
 
 
+def normalize_claim_sources(sources: tuple[str, ...] | None) -> tuple[str, ...]:
+    """Return the canonical explicit source set stored on new ownership claims."""
+
+    if sources is None:
+        return tuple(sorted(SOURCE_KEYS))
+    normalized = tuple(sorted(dict.fromkeys(sources)))
+    if not normalized or any(source not in SOURCE_KEYS for source in normalized):
+        raise ValueError("invalid claim sources")
+    return normalized
+
+
+def resolve_claim_sources(manifest: Manifest, claim: str) -> tuple[str, ...]:
+    """Resolve a claim's recorded sources, with bounded legacy inference.
+
+    Pre-field manifests are accepted only when their claim-owned top-level
+    ``resume-<source>`` paths identify a non-empty enabled source set. Exact
+    path-set validation remains the verifier's responsibility, so incomplete,
+    mixed, or otherwise ambiguous legacy ownership fails closed there.
+    """
+
+    meta = manifest.claims.get(claim)
+    if meta is None:
+        raise ValueError("unknown claim")
+    recorded = meta.get("sources")
+    if recorded is not None:
+        if not isinstance(recorded, list):
+            raise ValueError("invalid claim sources")
+        return normalize_claim_sources(tuple(recorded))
+    inferred: set[str] = set()
+    for rel, entry in manifest.files.items():
+        if claim not in entry.claims:
+            continue
+        top = rel.split("/", 1)[0]
+        if not top.startswith("resume-"):
+            continue
+        source = top.removeprefix("resume-")
+        if source not in SOURCE_KEYS:
+            raise ValueError("ambiguous legacy claim sources")
+        inferred.add(source)
+    if not inferred:
+        raise ValueError("ambiguous legacy claim sources")
+    return tuple(sorted(inferred))
+
+
 def build_manifest(
     *,
     files: dict[str, bytes],
@@ -141,6 +186,7 @@ def build_manifest(
     root: str,
     package_identity: str,
     generation: int,
+    sources: tuple[str, ...] | None = None,
     existing: Manifest | None = None,
 ) -> Manifest:
     claims = dict(existing.claims) if existing else {}
@@ -149,6 +195,8 @@ def build_manifest(
         "scope": scope,
         "root": os.path.realpath(root),
         "bundle_version": BUNDLE_VERSION,
+        "package_identity": package_identity,
+        "sources": list(normalize_claim_sources(sources)),
     }
     file_map: dict[str, FileEntry] = dict(existing.files) if existing else {}
     # Drop previous claim references, then re-add for this claim's files.
@@ -173,6 +221,11 @@ def build_manifest(
             file_map[rel] = FileEntry(path=rel, sha256=digest, claims=[claim], mode=mode)
     # Remove unreferenced files from manifest (physical delete handled by transaction).
     file_map = {path: entry for path, entry in file_map.items() if entry.claims}
+    # New source-aware claims carry their own plan identity. Once every claim
+    # has that field, keep the legacy top-level identity deterministic rather
+    # than dependent on which shared-root claim happened to install last.
+    if claims and all("package_identity" in meta for meta in claims.values()):
+        package_identity = claims[sorted(claims)[0]]["package_identity"]
     return Manifest(
         schema_version=MANIFEST_SCHEMA,
         bundle_version=BUNDLE_VERSION,

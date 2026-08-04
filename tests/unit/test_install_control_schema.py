@@ -86,6 +86,17 @@ class InstallControlSchemaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Manifest.loads(json.dumps(data))
 
+    def test_claim_sources_must_be_known_unique_and_normalized(self) -> None:
+        original = json.loads(self._valid_manifest_text())
+        claim_id = next(iter(original["claims"]))
+        invalid_sources = (["grok", "codex"], ["codex", "codex"], ["not-a-source"], [])
+        for sources in invalid_sources:
+            with self.subTest(sources=sources):
+                data = json.loads(json.dumps(original))
+                data["claims"][claim_id]["sources"] = sources
+                with self.assertRaises(ValueError):
+                    Manifest.loads(json.dumps(data))
+
     def test_unsafe_file_path_rejected(self) -> None:
         data = json.loads(self._valid_manifest_text())
         entry = next(iter(data["files"].values()))

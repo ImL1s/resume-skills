@@ -27,6 +27,7 @@ from .manifest import (
     build_manifest,
     claim_key,
     empty_manifest,
+    resolve_claim_sources,
     sha256_bytes,
     sha256_file,
     validate_rel_path,
@@ -484,6 +485,7 @@ def plan_install(
             root=root,
             package_identity=identity,
             generation=generation,
+            sources=sources,
             existing=existing,
         )
     except ValueError as error:
@@ -3801,6 +3803,18 @@ def verify_root(root: str, *, claim: str | None = None) -> dict[str, Any]:
     return _verify_root_locked(root, claim=claim)
 
 
+def _physical_mode_matches(
+    actual_mode: int,
+    expected_mode: int,
+    *,
+    platform_name: str | None = None,
+) -> bool:
+    """Compare POSIX payload modes without inventing Windows chmod semantics."""
+
+    effective_platform = os.name if platform_name is None else platform_name
+    return effective_platform == "nt" or actual_mode == expected_mode
+
+
 def _verify_root_locked(root: str, *, claim: str | None = None) -> dict[str, Any]:
     require_no_pending_journal(root)
     manifest = load_manifest(root)
@@ -3818,38 +3832,80 @@ def _verify_root_locked(root: str, *, claim: str | None = None) -> dict[str, Any
         except DiagnosticError as error:
             raise DiagnosticError("E_VERIFY_MISMATCH") from error
     try:
-        expected_by_host: dict[str, tuple[dict[str, bytes], str]] = {}
+        expected_by_plan: dict[tuple[str, tuple[str, ...]], tuple[dict[str, bytes], str]] = {}
+        expected_identity_by_claim: dict[str, str] = {}
+        for claim_id, meta in manifest.claims.items():
+            host = meta.get("host")
+            if host not in HOST_PROFILES or meta.get("bundle_version") != BUNDLE_VERSION:
+                raise DiagnosticError("E_VERIFY_MISMATCH")
+            try:
+                sources = resolve_claim_sources(manifest, claim_id)
+                key = (host, sources)
+                if key not in expected_by_plan:
+                    files = materialize_plan(host, sources=sources)
+                    expected_by_plan[key] = (files, package_identity(files))
+                expected_identity_by_claim[claim_id] = expected_by_plan[key][1]
+                recorded_identity = meta.get("package_identity")
+                if (
+                    recorded_identity is not None
+                    and recorded_identity != expected_identity_by_claim[claim_id]
+                ):
+                    raise DiagnosticError("E_VERIFY_MISMATCH")
+            except (KeyError, ValueError) as error:
+                raise DiagnosticError("E_VERIFY_MISMATCH") from error
+        if all("package_identity" in meta for meta in manifest.claims.values()):
+            expected_top_identity = expected_identity_by_claim[sorted(manifest.claims)[0]]
+            if manifest.package_identity != expected_top_identity:
+                raise DiagnosticError("E_VERIFY_MISMATCH")
+        elif manifest.package_identity not in set(expected_identity_by_claim.values()):
+            raise DiagnosticError("E_VERIFY_MISMATCH")
+
         for claim_id, meta in manifest.claims.items():
             if claim is not None and claim_id != claim:
                 continue
             host = meta.get("host")
-            if host not in HOST_PROFILES or meta.get("bundle_version") != BUNDLE_VERSION:
-                raise DiagnosticError("E_VERIFY_MISMATCH")
-            if host not in expected_by_host:
-                files = materialize_plan(host)
-                expected_by_host[host] = (files, package_identity(files))
-            expected_files, expected_identity = expected_by_host[host]
-            if manifest.package_identity != expected_identity:
-                raise DiagnosticError("E_VERIFY_MISMATCH")
-            claimed_paths = {rel for rel, entry in manifest.files.items() if claim_id in entry.claims}
+            sources = resolve_claim_sources(manifest, claim_id)
+            expected_files, _expected_identity = expected_by_plan[(host, sources)]
+            claimed_paths = {
+                rel for rel, entry in manifest.files.items() if claim_id in entry.claims
+            }
             if claimed_paths != set(expected_files):
                 raise DiagnosticError("E_VERIFY_MISMATCH")
             for rel, expected_bytes in sorted(expected_files.items()):
                 entry = manifest.files[rel]
                 expected_sha = sha256_bytes(expected_bytes)
-                if entry.sha256 != expected_sha:
+                expected_mode = 0o755 if rel.endswith("run_reader.py") else 0o644
+                if entry.sha256 != expected_sha or entry.mode != expected_mode:
                     mismatches.append(rel)
                     continue
                 try:
                     if root_fd is not None:
-                        if _sha256_regular_under_root_fd(root_fd, rel) != expected_sha:
+                        parent_fd, basename, owns_parent = _open_parent_under_root_fd(
+                            root_fd, rel, create=False
+                        )
+                        try:
+                            st = os.stat(basename, dir_fd=parent_fd, follow_symlinks=False)
+                        finally:
+                            if owns_parent:
+                                os.close(parent_fd)
+                        if (
+                            not _physical_mode_matches(
+                                stat_mod.S_IMODE(st.st_mode), expected_mode
+                            )
+                            or _sha256_regular_under_root_fd(root_fd, rel) != expected_sha
+                        ):
                             mismatches.append(rel)
                     else:
                         path = _dest_under_root(root, rel)
                         if os.path.islink(path) or not os.path.isfile(path):
                             mismatches.append(rel)
                             continue
-                        if sha256_file(path) != expected_sha:
+                        if (
+                            not _physical_mode_matches(
+                                stat_mod.S_IMODE(os.stat(path).st_mode), expected_mode
+                            )
+                            or sha256_file(path) != expected_sha
+                        ):
                             mismatches.append(rel)
                 except (DiagnosticError, OSError):
                     mismatches.append(rel)
