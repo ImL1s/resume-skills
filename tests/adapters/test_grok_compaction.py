@@ -59,21 +59,36 @@ class GrokCompactionTests(unittest.TestCase):
         self.assertEqual(tree_snapshot(root), before)
 
     def test_show_latest_via_reader_cli(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
         root = fixture_root("s-gro-07")
-        code = reader_main(
-            [
-                "grok",
-                "show",
-                "latest",
-                "--cwd",
-                CWD,
-                "--source-root",
-                str(root),
-                "--format",
-                "json",
-            ]
-        )
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = reader_main(
+                [
+                    "grok",
+                    "show",
+                    "latest",
+                    "--cwd",
+                    CWD,
+                    "--source-root",
+                    str(root),
+                    "--format",
+                    "json",
+                ]
+            )
         self.assertEqual(code, 0)
+        payload = json.loads(buf.getvalue())
+        sessions = payload.get("sessions") or []
+        self.assertEqual(len(sessions), 1)
+        turns = sessions[0].get("turns") or []
+        contents = [turn.get("content") for turn in turns]
+        self.assertIn("Compacted public user", contents)
+        self.assertTrue(any(isinstance(c, str) and "Post-compact assistant" in c for c in contents))
+        joined = "\n".join(c for c in contents if isinstance(c, str))
+        self.assertNotIn("PRIVATE", joined)
+        self.assertNotIn("Pre-compact user (raw stream)", joined)
 
     def test_multi_checkpoint_final_projection_without_duplicates(self) -> None:
         root = fixture_root("s-gro-08")
