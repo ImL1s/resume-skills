@@ -188,7 +188,7 @@ package formats, including Cursor. Pi native activation remains **not-run**.
 This release workflow does not reproduce those credentialed host checks.
 Separate v0.3.2 post-release evidence verifies public marketplace installation
 on all six compatible hosts and Cursor/Kimi marketplace picker flows; fresh
-v0.3.4 host-by-host reinstall remains **not-run**. Sanitized readbacks are
+through 0.4.1 host-by-host reinstall remains **not-run**. Sanitized readbacks are
 retained in
 [`evidence/public-marketplace-v0.3.2.json`](evidence/public-marketplace-v0.3.2.json).
 Other visual Skill pickers, vendor-curated
