@@ -121,15 +121,14 @@ separate and require their own rows in
 
 ### Current state
 
-- `0.4.1` release candidate: version pin and CHANGELOG heading prepared on `main`
-  for annotated tag `v0.4.1` (Windows mutating install #125 Phase 1–7, platform
-  honesty V1 win+mac #209 reduced close, list JSON clock flake fix, smoke cwd
-  normalize). Evidence after publish is owned by the `release.yml` run for that tag.
-- `0.4.0` release candidate: version pin and CHANGELOG heading prepared on `main`
-  for annotated tag `v0.4.0` (includes #118 identity gates, Codex busy-SQLite
-  degrade #196/#199, expanded source/destination matrix 17×18=306). Publication
-  evidence is owned by the `release.yml` run for that tag.
-- `v0.3.4`: **published** from annotated tag object
+- `v0.4.1`: **published** from annotated tag at commit
+  `a2ae025dcdf6a3944eb6752caadd67a53c28f46e`.
+  [Release run 30837046570](https://github.com/ImL1s/resume-skills/actions/runs/30837046570)
+  and evidence in [`evidence-summary.md`](evidence-summary.md) (Windows install #125,
+  dual-OS V1 win+mac #209). Current `main` advances to `0.4.2.dev0` after this tag.
+- `v0.4.0`: **published** (historical). See evidence-summary for identity/matrix
+  17×18=306 publication record.
+- `v0.3.4`: **published** (historical) from annotated tag object
   `f952856476dbf7742d16c0f42638497c0a930b28` at commit
   `fa1344bf62eb26332baea7b7ef4540a1a37acba8`.
   [Release run 30269713516, attempt 1](https://github.com/ImL1s/resume-skills/actions/runs/30269713516)
@@ -142,9 +141,12 @@ separate and require their own rows in
   The earlier PR #49 final-review bot exception remains documented in
   [`STATUS.md`](STATUS.md) and is not retroactively claimed as a successful
   callback.
-- Published outputs:
-  [GitHub Release](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4)
-  and [PyPI](https://pypi.org/project/portable-resume/0.3.4/).
+- Published outputs (latest):
+  [GitHub Release v0.4.1](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.1)
+  and [PyPI 0.4.1](https://pypi.org/project/portable-resume/0.4.1/); prior
+  [v0.4.0](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.0) and
+  [v0.3.4](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4) /
+  [PyPI 0.3.4](https://pypi.org/project/portable-resume/0.3.4/) remain historical.
 - Public marketplace:
   [`ImL1s/portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace)
   at commit `7833e4a3628213f78eb8458f30e9873d43a95fa6`.
@@ -152,7 +154,7 @@ separate and require their own rows in
   and [marketplace release 30270407710](https://github.com/ImL1s/portable-resume-marketplace/actions/runs/30270407710)
   passed after the nine-skill catalog test fix; its
   [`v0.3.4` release](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.4)
-  is public. Fresh 0.3.4 host reinstall UI evidence remains **not-run**.
+  is public. Fresh through **0.4.1** host reinstall UI evidence remains **not-run**.
 - `v0.3.2`: **published** from annotated tag object
   `a1a17fc21a7ea65bd2717b2ce3faa89fe21d0b5a` at commit
   `284865a4dc8c1c3dca16ee40f5204053cabb3a92`.
@@ -186,7 +188,7 @@ package formats, including Cursor. Pi native activation remains **not-run**.
 This release workflow does not reproduce those credentialed host checks.
 Separate v0.3.2 post-release evidence verifies public marketplace installation
 on all six compatible hosts and Cursor/Kimi marketplace picker flows; fresh
-v0.3.4 host-by-host reinstall remains **not-run**. Sanitized readbacks are
+through 0.4.1 host-by-host reinstall remains **not-run**. Sanitized readbacks are
 retained in
 [`evidence/public-marketplace-v0.3.2.json`](evidence/public-marketplace-v0.3.2.json).
 Other visual Skill pickers, vendor-curated

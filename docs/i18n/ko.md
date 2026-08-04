@@ -62,7 +62,7 @@ PYTHONPATH=src python3 scripts/smoke_installed_matrix.py
 
 현재 host 스모크는 8/8 CLI 호출과 정확한 로컬 네이티브 패키지 7/7 설치를 통과했습니다. 공개 marketplace 설치는 호환되는 6/6 host에서 통과했고 Cursor와 Kimi marketplace picker도 통과했습니다. 다른 시각적 Skill picker와 공급업체 선정 디렉터리는 완료로 주장하지 않습니다.
 
-이 host 수준 결과는 v0.3.2 시점의 증거입니다. v0.4.0의 host별 재설치 및 picker 흐름은 아직 **not-run**입니다.
-<!-- portable-resume-evidence-scope: v0.3.2-hosts v0.3.4-host-reinstall-not-run -->
+이 host 수준 결과는 v0.3.2 시점의 증거입니다. 0.4.1까지 host별 재설치 및 picker 흐름은 아직 **not-run**입니다.
+<!-- portable-resume-evidence-scope: v0.3.2-hosts v0.4.1-host-reinstall-not-run -->
 
 검증된 주장과 실행되지 않은 UI／release 게이트는 [프로젝트 상태](../STATUS.md)를 참조하세요.

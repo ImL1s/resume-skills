@@ -62,7 +62,7 @@ Aktivieren Sie `resume-<source>` mit der Syntax des Ziel-host und prüfen Sie da
 
 Der Host-Smoke-Test bestand 8/8 CLI-Aufrufe und 7/7 exakte lokale native Paketinstallationen. Die Installation aus dem öffentlichen Marketplace bestand auf 6/6 kompatiblen Hosts; auch die Marketplace-Picker von Cursor und Kimi bestanden. Andere visuelle Skill-Picker und kuratierte Herstellerverzeichnisse werden nicht als abgeschlossen beansprucht.
 
-Diese Ergebnisse auf Host-Ebene stammen aus der v0.3.2-Evidenz. Die Host-für-Host-Neuinstallation und Picker-Abläufe für v0.4.0 bleiben **not-run**.
-<!-- portable-resume-evidence-scope: v0.3.2-hosts v0.3.4-host-reinstall-not-run -->
+Diese Ergebnisse auf Host-Ebene stammen aus der v0.3.2-Evidenz. Die Host-für-Host-Neuinstallation und Picker-Abläufe für 0.4.1 bleiben **not-run**.
+<!-- portable-resume-evidence-scope: v0.3.2-hosts v0.4.1-host-reinstall-not-run -->
 
 Der [Projektstatus](../STATUS.md) trennt verifizierte Aussagen von noch nicht ausgeführten UI／release-Gates.

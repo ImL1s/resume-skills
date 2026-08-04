@@ -143,12 +143,14 @@ class StatusHonestyTests(unittest.TestCase):
             )
 
     def test_release_summary_scopes_historical_host_evidence(self) -> None:
+        """Host UI evidence stays scoped: v0.3.2-era pass only; not-run through current published tip."""
         readme_opening = "\n".join(
             Path("README.md").read_text(encoding="utf-8").splitlines()[:30]
         )
         self.assertIn("v0.3.2", readme_opening)
         compact_readme = " ".join(readme_opening.replace("**", "").split())
-        self.assertRegex(compact_readme, r"(?i)fresh v0\.3\.4.*not-run")
+        # Current honesty boundary: fresh through 0.4.1 remains not-run (not a green claim).
+        self.assertRegex(compact_readme, r"(?i)fresh through 0\.4\.1.*not-run")
 
         host = Path("docs/host-support.md").read_text(encoding="utf-8")
         for label in (
@@ -158,6 +160,13 @@ class StatusHonestyTests(unittest.TestCase):
         ):
             row = next(line for line in host.splitlines() if f"| {label} |" in line)
             self.assertIn("v0.3.2", row, label)
+        marketplace = next(
+            line
+            for line in host.splitlines()
+            if "| Public marketplace installation |" in line
+        )
+        self.assertIn("0.4.1", marketplace)
+        self.assertIn("not-run", marketplace)
         latest = next(
             line
             for line in host.splitlines()
@@ -174,7 +183,7 @@ class StatusHonestyTests(unittest.TestCase):
         self.assertEqual(len(headless_rows), 2)
         for row in headless_rows:
             self.assertIn("v0.3.2", row)
-            self.assertIn("v0.3.4", row)
+            self.assertIn("0.4.1", row)
             self.assertIn("not-run", row)
 
         host_ui = Path("docs/host-ui-smoke.md").read_text(encoding="utf-8")
@@ -184,7 +193,7 @@ class StatusHonestyTests(unittest.TestCase):
             if "| Host-native headless activation |" in line
         )
         self.assertIn("v0.3.2", host_ui_headless)
-        self.assertIn("v0.3.4", host_ui_headless)
+        self.assertIn("0.4.1", host_ui_headless)
         self.assertIn("not-run", host_ui_headless)
 
     def test_historical_evidence_heading_is_version_scoped(self) -> None:

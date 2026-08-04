@@ -1,6 +1,6 @@
 # Host support matrix
 
-Status date: **2026-08-01**. Installer truth lives in `src/portable_resume/install/catalog.py` and `src/portable_resume/registry.py`. Detailed commands are in [`install-hosts.md`](install-hosts.md).
+Status date: **2026-08-04**. Installer truth lives in `src/portable_resume/install/catalog.py` and `src/portable_resume/registry.py`. Detailed commands are in [`install-hosts.md`](install-hosts.md).
 
 <!-- generated:matrix-summary:begin (run scripts/render_docs.py --write) -->
 This repository ships **17** enabled source Skills to **18** destination hosts (registry-derived; currently **17×18=306** cells).
@@ -54,9 +54,9 @@ Enabled source adapters and their store families are listed in the root README. 
 | Local packaging matrix | 306/306 pass (currently 17×18, derived from registries) |
 | Installed runner matrix | **Ubuntu hard gate 306/306** (17×18); **Windows** uses focused product-install smoke (`smoke_windows_product_install.py`, 3 hosts: claude/cursor/codex) — **not** claimed 306/306 on Windows |
 | Native local plugin/extension installs | 7/7 pass with exact v0.3.2 release assets |
-| Host-native headless Skill invocation | 8/8 pass from v0.3.2-era evidence; Pi not-run |
-| Public marketplace installation | 6/6 compatible hosts pass on v0.3.2; fresh v0.3.4 reinstall not-run |
-| Visual marketplace picker | Cursor and Kimi pass on v0.3.2; fresh v0.3.4 picker flow not-run |
+| Host-native headless Skill invocation | 8/8 pass from v0.3.2-era evidence; fresh through 0.4.1 and Pi not-run |
+| Public marketplace installation | 6/6 compatible hosts pass on v0.3.2; fresh through 0.4.1 reinstall not-run |
+| Visual marketplace picker | Cursor and Kimi pass on v0.3.2; fresh through 0.4.1 picker flow not-run |
 | Other visual Skill pickers | not-run |
 | Vendor-curated directory listing | not submitted |
 | CI definition | Ubuntu/macOS × Python 3.11–3.14 + windows-latest / Python 3.12 (nt gates + focused product install smoke) |

@@ -61,7 +61,7 @@ REQUIRED_EVIDENCE_MARKERS = (
 )
 EVIDENCE_SCOPE_MARKER = (
     "<!-- portable-resume-evidence-scope: "
-    "v0.3.2-hosts v0.3.4-host-reinstall-not-run -->"
+    "v0.3.2-hosts v0.4.1-host-reinstall-not-run -->"
 )
 ROOT_INSTALLED_COMMANDS = (
     "portable-resume --version",

@@ -1,0 +1,43 @@
+{
+  "checkpoint_id": "cp-001",
+  "schema_version": 1,
+  "prompt_index_at_compaction": 2,
+  "created_at": 1767225611,
+  "compacted_history": [
+    {
+      "role": "user",
+      "content": "Compacted public user"
+    },
+    {
+      "role": "assistant",
+      "content": "Compacted public assistant"
+    },
+    {
+      "role": "system",
+      "content": "PRIVATE system must omit"
+    },
+    {
+      "role": "developer",
+      "content": "PRIVATE developer must omit"
+    },
+    {
+      "role": "reasoning",
+      "content": "PRIVATE reasoning must omit"
+    },
+    {
+      "role": "tool",
+      "content": "PRIVATE tool must omit"
+    },
+    {
+      "role": "assistant",
+      "content": {
+        "type": "text",
+        "text": "Compacted structured assistant"
+      }
+    }
+  ],
+  "original_user_info": {
+    "note": "synthetic only"
+  },
+  "reread_file_paths": []
+}

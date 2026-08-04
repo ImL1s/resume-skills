@@ -66,8 +66,8 @@ package installs. Public marketplace installation passed 6/6 compatible
 hosts; Cursor and Kimi marketplace pickers also passed. Other visual Skill
 pickers and vendor-curated directories remain unclaimed.
 
-These host-level results are v0.3.2-era evidence. Fresh v0.3.4 host-by-host
+These host-level results are v0.3.2-era evidence. Fresh through 0.4.1 host-by-host
 reinstall and picker flows remain **not-run**.
-<!-- portable-resume-evidence-scope: v0.3.2-hosts v0.3.4-host-reinstall-not-run -->
+<!-- portable-resume-evidence-scope: v0.3.2-hosts v0.4.1-host-reinstall-not-run -->
 
 See [project status](../STATUS.md) for verified claims and explicit not-run UI/release gates.
