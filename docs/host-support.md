@@ -1,6 +1,6 @@
 # Host support matrix
 
-Status date: **2026-08-01**. Installer truth lives in `src/portable_resume/install/catalog.py` and `src/portable_resume/registry.py`. Detailed commands are in [`install-hosts.md`](install-hosts.md).
+Status date: **2026-08-04**. Installer truth lives in `src/portable_resume/install/catalog.py` and `src/portable_resume/registry.py`. Detailed commands are in [`install-hosts.md`](install-hosts.md).
 
 <!-- generated:matrix-summary:begin (run scripts/render_docs.py --write) -->
 This repository ships **17** enabled source Skills to **18** destination hosts (registry-derived; currently **17×18=306** cells).
