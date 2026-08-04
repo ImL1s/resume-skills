@@ -2158,9 +2158,17 @@ def execute_install(
     require_mutating_install_platform()
     if lock is not None:
         _require_held_root_lock(lock, root)
-        return _execute_install_under_lock(plan, force_with_backup=force_with_backup)
-    with RootLock(root):
-        return _execute_install_under_lock(plan, force_with_backup=force_with_backup)
+        return _execute_install_under_lock(
+            plan,
+            force_with_backup=force_with_backup,
+            locked_root=lock.root,
+        )
+    with RootLock(root) as held:
+        return _execute_install_under_lock(
+            plan,
+            force_with_backup=force_with_backup,
+            locked_root=held.root,
+        )
 
 
 def _require_held_root_lock(lock: RootLock, root: str) -> None:
@@ -2174,9 +2182,17 @@ def _execute_install_under_lock(
     plan: ActionPlan,
     *,
     force_with_backup: bool = False,
+    locked_root: str,
 ) -> dict[str, Any]:
-    """Mutating install body. Caller must hold ``RootLock`` for ``plan.root``."""
-    root = plan.root
+    """Mutating install body. Caller must hold ``RootLock`` for ``plan.root``.
+
+    ``locked_root`` is the physical tree bound by that lock (may differ from the
+    caller spelling when the leaf skill root is a junction/symlink — #245).
+    All mutations use ``locked_root``, never a repointable junction spelling.
+    """
+    if os.path.realpath(locked_root) != os.path.realpath(plan.root):
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    root = locked_root
     require_no_pending_journal(root)
     # Preflight token is advisory for payload bytes, but ownership identity
     # must still match: if the locked manifest digest diverged, fail busy so
@@ -2191,20 +2207,22 @@ def _execute_install_under_lock(
     # Honor preflight force classification when the Python API calls
     # execute_install(plan) without repeating force_with_backup=True.
     effective_force = force_with_backup or bool(plan.backups)
+    # Rebuild under the locked physical root so plan.root matches mutation paths.
     locked = plan_install(
         host=plan.host,
         scope=plan.scope,
-        root=plan.root,
+        root=root,
         dry_run=False,
         force_with_backup=effective_force,
         sources=plan.sources,
     )
     # Request identity must match; payload/manifest always come from locked rebuild.
+    # claim_key uses realpath, so junction vs physical spellings stay equivalent.
     if (
         locked.host != plan.host
         or locked.scope != plan.scope
         or locked.claim != plan.claim
-        or os.path.realpath(locked.root) != os.path.realpath(plan.root)
+        or os.path.realpath(locked.root) != os.path.realpath(root)
     ):
         raise DiagnosticError("E_INSTALL_BUSY")
     # Digest must still match after replan observation (same locked read path).
@@ -3807,13 +3825,24 @@ def _attempt_rollback(root: str, journal: dict[str, Any]) -> None:
 def recover_root(root: str) -> dict[str, Any]:
     path = journal_path(root)
     legacy_path = _legacy_journal_path(root)
+    # Observational pre-check may use caller spelling; mutations use locked root.
     if not os.path.lexists(path) and not os.path.lexists(legacy_path):
-        return {"ok": True, "recovered": False}
+        # Also probe resolved physical root when leaf is a junction/symlink (#245).
+        try:
+            resolved_probe = resolve_skill_root_for_lock(root)
+        except DiagnosticError:
+            resolved_probe = root
+        if resolved_probe != root:
+            path = journal_path(resolved_probe)
+            legacy_path = _legacy_journal_path(resolved_probe)
+        if not os.path.lexists(path) and not os.path.lexists(legacy_path):
+            return {"ok": True, "recovered": False}
     active = path if os.path.lexists(path) else legacy_path
     if os.path.islink(active) or not os.path.isfile(active):
         raise DiagnosticError("E_RECOVERY_REQUIRED")
     require_mutating_install_platform()
-    with RootLock(root):
+    with RootLock(root) as held:
+        root = held.root
         try:
             # Migration may have moved the journal into .state/ under the lock.
             if os.path.lexists(journal_path(root)):
@@ -4033,7 +4062,9 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
         return {"ok": True, "dry_run": True, "removed_files": removable, "claim": claim}
 
     require_mutating_install_platform()
-    with RootLock(root):
+    with RootLock(root) as held:
+        # Bind mutations to the locked physical skill root (#245).
+        root = held.root
         require_no_pending_journal(root)
         manifest = load_manifest(root)
         if manifest is None or claim not in manifest.claims:

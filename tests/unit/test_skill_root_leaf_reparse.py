@@ -12,7 +12,11 @@ from unittest import mock
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.install.transaction import (
     RootLock,
+    _execute_install_under_lock,
+    execute_install,
+    plan_install,
     resolve_skill_root_for_lock,
+    verify_root,
 )
 
 
@@ -98,6 +102,36 @@ class ResolveSkillRootForLockTests(unittest.TestCase):
                 ):
                     resolved = resolve_skill_root_for_lock(str(leaf))
             self.assertEqual(os.path.realpath(resolved), os.path.realpath(physical))
+
+
+class LockedRootMutationBindingTests(unittest.TestCase):
+    def test_execute_install_under_lock_rejects_mismatched_locked_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "skills"
+            root.mkdir()
+            other = Path(temporary) / "other"
+            other.mkdir()
+            plan = plan_install(host="claude", scope="project", root=str(root))
+            with self.assertRaises(DiagnosticError) as ctx:
+                _execute_install_under_lock(plan, locked_root=str(other))
+            self.assertEqual(ctx.exception.code, "E_INSTALL_CONFLICT")
+
+    def test_execute_install_mutations_use_locked_physical_root(self) -> None:
+        """#245 Codex P1: pin payload/control writes to lock.root, not a repointable spelling."""
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            physical = base / "real-skills"
+            physical.mkdir()
+            leaf = base / "junction-spelling"
+            leaf.symlink_to(physical, target_is_directory=True)
+            plan = plan_install(host="claude", scope="project", root=str(leaf))
+            # Simulate Windows RootLock bind: mutations must target physical root.
+            result = _execute_install_under_lock(plan, locked_root=str(physical))
+            self.assertTrue(result["ok"])
+            self.assertTrue((physical / ".portable-resume" / ".state" / "manifest.json").is_file())
+            # Junction spelling still observes the same tree via the link.
+            verified = verify_root(str(leaf))
+            self.assertTrue(verified["ok"])
 
 
 @unittest.skipUnless(
