@@ -20,9 +20,9 @@ smoke (3 hosts), **not** full 306/306 on Windows. Published `v0.4.0` remains his
 
 **Host evidence boundary:** v0.3.2-era checks cover 7/7 exact native local
 plugin/extension installs, 8/8 host-native headless Skill invocations, 6/6
-compatible public marketplace installs, and Cursor/Kimi pickers. Fresh v0.3.4
-host reinstall/picker flows and Pi/OpenClaw native UI remain **not-run** (still
-not re-run on this tip).
+compatible public marketplace installs, and Cursor/Kimi pickers. Fresh through
+0.4.1 host reinstall/picker flows and Pi/OpenClaw native UI remain **not-run**
+(still not re-run on this tip).
 
 **Current `main` development version:** `0.4.2.dev0`. Explicit build/release
 reports add `+g<commit>[.dirty]` while package metadata keeps the PEP 440 base.
@@ -226,6 +226,6 @@ Apache-2.0. This project is not affiliated with the host vendors. Do not copy `~
 Eight host CLI surfaces have recorded headless slash/name activation evidence;
 Pi native activation remains **not-run**. Public marketplace installation on six
 compatible hosts, including Cursor and Kimi picker flows, is recorded for
-v0.3.2; fresh v0.3.4 host-by-host reinstall remains **not-run**. Other visual
-Skill pickers and vendor-curated directory listings are not claimed; Cursor's
-full bubble graph is not claimed; redaction is not complete DLP.
+v0.3.2; fresh through 0.4.1 host-by-host reinstall remains **not-run**. Other
+visual Skill pickers and vendor-curated directory listings are not claimed;
+Cursor's full bubble graph is not claimed; redaction is not complete DLP.
