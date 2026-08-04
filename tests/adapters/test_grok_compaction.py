@@ -14,7 +14,7 @@ from portable_resume.adapters.grok import FORMAT_ID, GrokAdapter
 from portable_resume.bounds import ReadBudget
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.model import Query
-from portable_resume.reader import main as reader_main
+from portable_resume.reader import run as reader_run
 from tests.helpers.core import tree_snapshot
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -60,25 +60,26 @@ class GrokCompactionTests(unittest.TestCase):
 
     def test_show_latest_via_reader_cli(self) -> None:
         import io
-        from contextlib import redirect_stdout
 
         root = fixture_root("s-gro-07")
         buf = io.StringIO()
-        with redirect_stdout(buf):
-            code = reader_main(
-                [
-                    "grok",
-                    "show",
-                    "latest",
-                    "--cwd",
-                    CWD,
-                    "--source-root",
-                    str(root),
-                    "--format",
-                    "json",
-                ]
-            )
-        self.assertEqual(code, 0)
+        err = io.StringIO()
+        code = reader_run(
+            [
+                "grok",
+                "show",
+                "latest",
+                "--cwd",
+                CWD,
+                "--source-root",
+                str(root),
+                "--format",
+                "json",
+            ],
+            stdout=buf,
+            stderr=err,
+        )
+        self.assertEqual(code, 0, msg=err.getvalue())
         payload = json.loads(buf.getvalue())
         sessions = payload.get("sessions") or []
         self.assertEqual(len(sessions), 1)
