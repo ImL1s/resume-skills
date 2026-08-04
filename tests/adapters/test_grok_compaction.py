@@ -261,6 +261,101 @@ class GrokCompactionTests(unittest.TestCase):
         session = adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), tight)
         self.assertEqual(len([t for t in session.turns if t.tool_name is None]), 4)
 
+    def test_pre_checkpoint_stream_over_limit_still_projects(self) -> None:
+        """Long pre-checkpoint stream must not starve a smaller post-compaction projection."""
+        from portable_resume.bounds import Bounds
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sess = root / "sessions" / "%2Fworkspace%2Fproject" / "grok-long"
+            ck = sess / "compaction_checkpoints"
+            ck.mkdir(parents=True)
+            (sess / "summary.json").write_text(
+                json.dumps({"info": {"id": "grok-long", "cwd": "/workspace/project"}, "generated_title": "long"}),
+                encoding="utf-8",
+            )
+            sid = "grok-long"
+            lines = []
+            for i in range(6):
+                role = "user_message_chunk" if i % 2 == 0 else "agent_message_chunk"
+                text = f"pre-{i}"
+                lines.append(
+                    json.dumps(
+                        {
+                            "timestamp": i + 1,
+                            "method": "session/update",
+                            "params": {
+                                "sessionId": sid,
+                                "update": {
+                                    "sessionUpdate": role,
+                                    "content": {"type": "text", "text": text},
+                                },
+                            },
+                        },
+                        separators=(",", ":"),
+                    )
+                )
+            lines.append(
+                json.dumps(
+                    {
+                        "timestamp": 10,
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": sid,
+                            "update": {
+                                "sessionUpdate": "compaction_checkpoint",
+                                "checkpoint_id": "cp-long",
+                                "schema_version": 1,
+                                "prompt_index_at_compaction": 3,
+                                "checkpoint_file": "cp-long.json",
+                            },
+                        },
+                    },
+                    separators=(",", ":"),
+                )
+            )
+            lines.append(
+                json.dumps(
+                    {
+                        "timestamp": 11,
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": sid,
+                            "update": {
+                                "sessionUpdate": "user_message_chunk",
+                                "content": {"type": "text", "text": "after"},
+                            },
+                        },
+                    },
+                    separators=(",", ":"),
+                )
+            )
+            (sess / "updates.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            (ck / "cp-long.json").write_text(
+                json.dumps(
+                    {
+                        "checkpoint_id": "cp-long",
+                        "schema_version": 1,
+                        "prompt_index_at_compaction": 3,
+                        "created_at": 10,
+                        "compacted_history": [
+                            {"role": "user", "content": "kept-user"},
+                            {"role": "assistant", "content": "kept-asst"},
+                        ],
+                        "original_user_info": {},
+                        "reread_file_paths": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            adapter = GrokAdapter(root=str(root))
+            items = adapter.list(query(root), ReadBudget())
+            # 6 pre chunks would exceed limit=3 if charged mid-stream; final projection is 3 turns.
+            tight = ReadBudget(limits=Bounds(normalized_turns=3))
+            session = adapter.show(resolve(items, "grok-long"), query(root, "grok-long"), tight)
+            texts = [turn.content for turn in session.turns if turn.tool_name is None]
+            self.assertEqual(texts, ["kept-user", "kept-asst", "after"])
+
 
 if __name__ == "__main__":
     unittest.main()

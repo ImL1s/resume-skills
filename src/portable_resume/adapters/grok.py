@@ -664,6 +664,14 @@ class GrokAdapter:
             warnings.append("W_BROKEN_CHAIN")
         if recognized == 0:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+        if include_turns:
+            # Enforce normalized_turns against the *surviving* projection only, after
+            # any compaction replacements (#238). Pre-checkpoint stream length must
+            # not exhaust the ceiling before a smaller checkpointed result is built.
+            ceiling = min(budget.limits.normalized_turns, DEFAULT_BOUNDS.normalized_turns)
+            if len(turns) > ceiling:
+                raise DiagnosticError.limit_exceeded()
+            budget.turns = max(budget.turns, len(turns))
         return ((min(timestamps) if timestamps else None, max(timestamps) if timestamps else None), turns, warnings)
 
     def _apply_compaction_checkpoint(
@@ -742,10 +750,10 @@ class GrokAdapter:
         if _contains_encrypted(sidecar):
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
         # Replace superseded pre-checkpoint projection; re-append public entries only.
-        # Reset turn charges so rebuilt projection does not double-count superseded
-        # history against normalized_turns (#238 Codex P1).
+        # Turn-budget accounting is deferred until the full active projection is
+        # known (end of _parse_updates), so pre-checkpoint charges cannot starve
+        # a smaller surviving projection (#238 Codex P1).
         turns.clear()
-        budget.turns = 0
         for item in history:
             if not isinstance(item, Mapping):
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
@@ -829,7 +837,8 @@ class GrokAdapter:
                 truncated=prior.truncated or turn.truncated or len(turn.content) > room,
             )
             return
-        budget.consume_turns()
+        # Normalized-turn ceiling is enforced once on the surviving projection
+        # after checkpoint replacement (#238); do not charge mid-stream.
         turns.append(turn)
 
     @staticmethod
@@ -852,7 +861,6 @@ class GrokAdapter:
         turn, found = sanitize_turn_record(record, ordinal=len(turns), bounds=bounds)
         warnings.extend(found)
         if turn is not None:
-            budget.consume_turns()
             turns.append(turn)
 
 
