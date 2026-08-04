@@ -6,9 +6,10 @@
   `compaction_checkpoint` events load a session-local sidecar under
   `compaction_checkpoints/`, project public user/assistant `compacted_history`,
   replace superseded pre-checkpoint turns, and continue with post-checkpoint
-  public chunks. Multi-checkpoint reduction is sequential. Sidecar path escape,
-  schema/id mismatch, and missing files fail closed. **`rewind_marker` remains
-  unsupported.**
+  public chunks. Real list-form text blocks are concatenated through the normal
+  sanitizer; non-null `synthetic_reason` records and private roles are omitted.
+  Multi-checkpoint reduction is sequential. Sidecar path escape, schema/id
+  mismatch, and missing files fail closed. **`rewind_marker` remains unsupported.**
 
 ## [0.4.1] — 2026-08-04
 

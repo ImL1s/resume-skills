@@ -45,6 +45,20 @@ def mutate_checkpoint_event(root: Path, mutation) -> None:
     updates.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def mutate_checkpoint_sidecar(root: Path, mutation) -> None:
+    sidecar = (
+        root
+        / "sessions"
+        / "%2Fworkspace%2Fproject"
+        / "grok-compact"
+        / "compaction_checkpoints"
+        / "11111111-1111-4111-8111-111111111111.json"
+    )
+    value = json.loads(sidecar.read_text(encoding="utf-8"))
+    mutation(value)
+    sidecar.write_text(json.dumps(value), encoding="utf-8")
+
+
 class GrokCompactionTests(unittest.TestCase):
     def test_show_success_projects_compacted_and_post_public_once(self) -> None:
         root = fixture_root("s-gro-07")
@@ -66,6 +80,7 @@ class GrokCompactionTests(unittest.TestCase):
         )
         joined = "\n".join(t for _, t in texts)
         self.assertNotIn("PRIVATE", joined)
+        self.assertNotIn("compacted control summary", joined)
         self.assertNotIn("Pre-compact user (raw stream)", joined)
         self.assertNotIn("Pre-compact assistant (raw stream)", joined)
         self.assertEqual(tree_snapshot(root), before)
@@ -84,6 +99,75 @@ class GrokCompactionTests(unittest.TestCase):
             items = adapter.list(query(root), ReadBudget())
             session = adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), ReadBudget())
             self.assertEqual(session.turns[0].content, "Compacted public user")
+
+    def test_real_content_blocks_concatenate_text_and_omit_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copytree(fixture_root("s-gro-07"), root, dirs_exist_ok=True)
+
+            def replace_history(sidecar) -> None:
+                sidecar["compacted_history"] = [
+                    {
+                        "type": "assistant",
+                        "content": [
+                            {"type": "text", "text": "first"},
+                            {"type": "image", "data": "PRIVATE binary metadata"},
+                            {"type": "text", "text": "second"},
+                        ],
+                        "synthetic_reason": None,
+                    },
+                    {
+                        "type": "user",
+                        "content": [{"type": "text", "text": "PRIVATE control metadata"}],
+                        "synthetic_reason": "project_instructions",
+                    },
+                    {
+                        "type": "assistant",
+                        "content": [{"type": "text", "text": "PRIVATE compaction summary"}],
+                        "synthetic_reason": "compaction_meta",
+                    },
+                ]
+
+            mutate_checkpoint_sidecar(root, replace_history)
+            adapter = GrokAdapter(root=str(root))
+            items = adapter.list(query(root), ReadBudget())
+            session = adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), ReadBudget())
+            self.assertEqual(session.turns[0].content, "firstsecond")
+            self.assertIn("W_BINARY_OMITTED", session.warnings)
+            rendered = "\n".join(turn.content for turn in session.turns)
+            self.assertNotIn("PRIVATE binary metadata", rendered)
+            self.assertNotIn("PRIVATE control metadata", rendered)
+            self.assertNotIn("PRIVATE compaction summary", rendered)
+
+    def test_unknown_or_malformed_compaction_entry_shapes_fail_closed(self) -> None:
+        mutations = {
+            "unknown-entry-key": lambda entry: entry.__setitem__("extra", "value"),
+            "bad-synthetic-reason": lambda entry: entry.__setitem__("synthetic_reason", {"private": True}),
+            "unknown-entry-type": lambda entry: entry.__setitem__("type", "unknown"),
+            "non-list-content": lambda entry: entry.__setitem__("content", "invented legacy content"),
+            "non-map-block": lambda entry: entry.__setitem__("content", ["text"]),
+            "non-string-text": lambda entry: entry.__setitem__("content", [{"type": "text", "text": 7}]),
+            "unknown-text-key": lambda entry: entry.__setitem__(
+                "content", [{"type": "text", "text": "safe", "extra": True}]
+            ),
+            "unknown-block-type": lambda entry: entry.__setitem__("content", [{"type": "mystery"}]),
+            "encrypted-block": lambda entry: entry.__setitem__(
+                "content", [{"type": "text", "text": "safe", "ciphertext": "private"}]
+            ),
+        }
+        for label, mutation in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                shutil.copytree(fixture_root("s-gro-07"), root, dirs_exist_ok=True)
+                mutate_checkpoint_sidecar(
+                    root,
+                    lambda sidecar, mutate=mutation: mutate(sidecar["compacted_history"][0]),
+                )
+                adapter = GrokAdapter(root=str(root))
+                items = adapter.list(query(root), ReadBudget())
+                with self.assertRaises(DiagnosticError) as caught:
+                    adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), ReadBudget())
+                self.assertIn(caught.exception.code, {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"})
 
     def test_show_latest_via_reader_cli(self) -> None:
         import io

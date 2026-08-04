@@ -5,35 +5,99 @@
   "created_at": 1767225611,
   "compacted_history": [
     {
-      "role": "user",
-      "content": "Compacted public user"
+      "type": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Compacted public user"
+        }
+      ],
+      "synthetic_reason": null
     },
     {
-      "role": "assistant",
-      "content": "Compacted public assistant"
+      "type": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Compacted public assistant"
+        }
+      ]
     },
     {
-      "role": "system",
-      "content": "PRIVATE system must omit"
+      "type": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE compaction metadata must omit"
+        }
+      ],
+      "synthetic_reason": "compaction_meta"
     },
     {
-      "role": "developer",
-      "content": "PRIVATE developer must omit"
+      "type": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE compacted control summary must omit"
+        }
+      ],
+      "synthetic_reason": "compaction_meta"
     },
     {
-      "role": "reasoning",
-      "content": "PRIVATE reasoning must omit"
+      "type": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE project instructions must omit"
+        }
+      ],
+      "synthetic_reason": "project_instructions"
     },
     {
-      "role": "tool",
-      "content": "PRIVATE tool must omit"
+      "type": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE system must omit"
+        }
+      ],
+      "synthetic_reason": "system_reminder"
     },
     {
-      "role": "assistant",
-      "content": {
-        "type": "text",
-        "text": "Compacted structured assistant"
-      }
+      "type": "developer",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE developer must omit"
+        }
+      ]
+    },
+    {
+      "type": "reasoning",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE reasoning must omit"
+        }
+      ]
+    },
+    {
+      "type": "tool",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE tool must omit"
+        }
+      ]
+    },
+    {
+      "type": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Compacted structured assistant"
+        }
+      ]
     }
   ],
   "original_user_info": {

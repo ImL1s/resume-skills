@@ -75,6 +75,12 @@ _CHECKPOINT_SIDECAR_KEYS = frozenset(
 )
 _COMPACTION_SCHEMA_V1 = 1
 _CHECKPOINT_DIRNAME = "compaction_checkpoints"
+_COMPACTION_ENTRY_KEYS = frozenset({"type", "content", "synthetic_reason"})
+_LEGACY_COMPACTION_ENTRY_KEYS = frozenset({"role", "content"})
+_COMPACTION_ENTRY_TYPES = frozenset(
+    {"user", "assistant", "system", "developer", "reasoning", "tool"}
+)
+_COMPACTION_NON_TEXT_BLOCK_TYPES = frozenset({"image", "audio", "video", "binary"})
 
 
 class _DuplicateKey(ValueError):
@@ -769,26 +775,87 @@ class GrokAdapter:
         for item in history:
             if not isinstance(item, Mapping):
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
-            role = item.get("role")
-            if not isinstance(role, str):
+            role, text_blocks = self._compaction_entry(item, warnings)
+            if role is None:
+                continue
+            # Sanitize and bound every real text block before the existing
+            # same-role chunk reducer concatenates it into the active turn.
+            for text in text_blocks:
+                self._append_chunk(turns, role, text, event_timestamp, query, budget, warnings)
+
+    def _compaction_entry(
+        self,
+        item: Mapping[str, Any],
+        warnings: list[str],
+    ) -> tuple[str | None, tuple[str, ...]]:
+        keys = set(item.keys())
+        if "type" in item:
+            if not {"type", "content"}.issubset(keys) or keys - _COMPACTION_ENTRY_KEYS:
+                raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+            synthetic_reason = item.get("synthetic_reason")
+            if (
+                "synthetic_reason" in item
+                and synthetic_reason is not None
+                and not isinstance(synthetic_reason, str)
+            ):
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
-            role_cf = role.casefold()
-            if role_cf not in {"user", "assistant"}:
-                # system / developer / reasoning / tool / unknown: omit (privacy).
-                continue
-            text = self._compaction_entry_text(item)
-            if text is None:
-                continue
-            self._append_chunk(turns, role_cf, text, event_timestamp, query, budget, warnings)
+            role = item.get("type")
+            content = item.get("content")
+            if not isinstance(content, list):
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+            text_blocks = self._compaction_text_blocks(content, warnings)
+        elif "role" in item:
+            # Backward compatibility for the original synthetic fixture shape.
+            if keys != _LEGACY_COMPACTION_ENTRY_KEYS:
+                raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+            role = item.get("role")
+            text_blocks = (self._legacy_compaction_entry_text(item.get("content")),)
+        else:
+            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+        if not isinstance(role, str):
+            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+        role_cf = role.casefold()
+        if role_cf not in _COMPACTION_ENTRY_TYPES:
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+        if role_cf not in {"user", "assistant"} or (
+            "synthetic_reason" in item and item.get("synthetic_reason") is not None
+        ):
+            # Private roles and synthetic control records (including
+            # ``compaction_meta``) are shape-validated but never rendered.
+            return None, ()
+        return role_cf, text_blocks
+
+    def _compaction_text_blocks(self, content: list[Any], warnings: list[str]) -> tuple[str, ...]:
+        pieces: list[str] = []
+        for block in content:
+            if not isinstance(block, Mapping):
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+            block_type = block.get("type")
+            if not isinstance(block_type, str):
+                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+            block_type_cf = block_type.casefold()
+            if block_type_cf == "text":
+                if set(block.keys()) != {"type", "text"} or not isinstance(block.get("text"), str):
+                    raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+                pieces.append(block["text"])
+            elif block_type_cf in _COMPACTION_NON_TEXT_BLOCK_TYPES:
+                warnings.append("W_BINARY_OMITTED")
+            else:
+                raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+        return tuple(pieces)
 
     @staticmethod
-    def _compaction_entry_text(item: Mapping[str, Any]) -> str | None:
-        content = item.get("content")
+    def _legacy_compaction_entry_text(content: Any) -> str | None:
         if isinstance(content, str):
             return content
-        if isinstance(content, Mapping) and content.get("type") == "text" and isinstance(content.get("text"), str):
+        if (
+            isinstance(content, Mapping)
+            and set(content.keys()) == {"type", "text"}
+            and content.get("type") == "text"
+            and isinstance(content.get("text"), str)
+        ):
             return content["text"]
-        return None
+        raise DiagnosticError("E_CORRUPT_RECORD", source="grok", provider=FORMAT_ID)
 
     @staticmethod
     def _tool_text(update: Mapping[str, Any]) -> str | None:

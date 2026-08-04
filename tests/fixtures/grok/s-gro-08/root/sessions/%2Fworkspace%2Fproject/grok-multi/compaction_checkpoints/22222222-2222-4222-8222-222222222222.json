@@ -5,12 +5,22 @@
   "created_at": 3,
   "compacted_history": [
     {
-      "role": "user",
-      "content": "C1 user"
+      "type": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "C1 user"
+        }
+      ]
     },
     {
-      "role": "assistant",
-      "content": "C1 asst"
+      "type": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "C1 asst"
+        }
+      ]
     }
   ],
   "original_user_info": {},
