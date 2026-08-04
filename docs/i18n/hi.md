@@ -62,7 +62,7 @@ destination host की documented syntax से `resume-<source>` सक्र�
 
 वर्तमान host smoke में 8/8 CLI invocation और 7/7 सटीक local native package installation सफल रहे। सार्वजनिक marketplace installation 6/6 संगत hosts पर सफल रहा; Cursor और Kimi marketplace picker भी सफल रहे। अन्य visual Skill picker और vendor-curated directories को पूर्ण होने का दावा नहीं किया गया है।
 
-ये host-स्तरीय परिणाम v0.3.2 के समय के प्रमाण हैं। v0.4.0 के लिए प्रत्येक host पर पुनः इंस्टॉल और picker flow अभी भी **not-run** हैं।
-<!-- portable-resume-evidence-scope: v0.3.2-hosts v0.3.4-host-reinstall-not-run -->
+ये host-स्तरीय परिणाम v0.3.2 के समय के प्रमाण हैं। 0.4.1 तक प्रत्येक host पर पुनः इंस्टॉल और picker flow अभी भी **not-run** हैं।
+<!-- portable-resume-evidence-scope: v0.3.2-hosts v0.4.1-host-reinstall-not-run -->
 
 सत्यापित दावों और अभी न चले UI／release gates के लिए [project status](../STATUS.md) देखें।
