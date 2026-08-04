@@ -2721,6 +2721,9 @@ def _uninstall_claim_windows(
             pass
 
     manifest.claims.pop(claim, None)
+    from .manifest import recompute_top_package_identity
+
+    recompute_top_package_identity(manifest)
     manifest.generation += 1
 
     if manifest.files:
@@ -3853,7 +3856,12 @@ def _verify_root_locked(root: str, *, claim: str | None = None) -> dict[str, Any
                     raise DiagnosticError("E_VERIFY_MISMATCH")
             except (KeyError, ValueError) as error:
                 raise DiagnosticError("E_VERIFY_MISMATCH") from error
-        if all("package_identity" in meta for meta in manifest.claims.values()):
+        if not manifest.claims:
+            # Generation-zero / claimless empty manifests are schema-valid; files
+            # without claims are corrupt ownership (#242 Codex P2).
+            if manifest.files:
+                raise DiagnosticError("E_VERIFY_MISMATCH")
+        elif all("package_identity" in meta for meta in manifest.claims.values()):
             expected_top_identity = expected_identity_by_claim[sorted(manifest.claims)[0]]
             if manifest.package_identity != expected_top_identity:
                 raise DiagnosticError("E_VERIFY_MISMATCH")
@@ -4034,6 +4042,9 @@ def uninstall_claim(*, host: str, scope: str, root: str, dry_run: bool = False) 
         del manifest.claims[claim]
         for path in drop_from_manifest:
             manifest.files.pop(path, None)
+        from .manifest import recompute_top_package_identity
+
+        recompute_top_package_identity(manifest)
         manifest.generation = target_generation
 
         # No payload/manifest mutation required (claim gone from memory only after

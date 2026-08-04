@@ -303,6 +303,58 @@ class DuplicateScanTests(unittest.TestCase):
         after = list(self.home.rglob("*"))
         self.assertEqual(sorted(p.as_posix() for p in before), sorted(p.as_posix() for p in after))
 
+    def test_explicit_sources_expand_shadow_scan_beyond_partial_claim(self) -> None:
+        """Install --sources expansion must scan newly requested skills (#242 P1)."""
+        from portable_resume.install.transaction import execute_install, plan_install
+
+        selected = self.project / ".claude" / "skills"
+        selected.mkdir(parents=True)
+        # Existing partial claim: codex only.
+        execute_install(
+            plan_install(
+                host="claude",
+                scope="project",
+                root=str(selected),
+                sources=("codex",),
+            )
+        )
+        report_old = scan_skill_duplicates(
+            host="claude",
+            selected_root=str(selected),
+            project_dir=str(self.project),
+            home_dir=str(self.home),
+            selected_scope="project",
+        )
+        self.assertEqual(report_old["skills_scanned"], ["resume-codex"])
+        report_new = scan_skill_duplicates(
+            host="claude",
+            selected_root=str(selected),
+            project_dir=str(self.project),
+            home_dir=str(self.home),
+            selected_scope="project",
+            sources=("codex", "grok"),
+        )
+        self.assertEqual(report_new["skills_scanned"], ["resume-codex", "resume-grok"])
+        # Higher-precedence divergent project skill for the newly requested name
+        # must block when the expanded set is scanned (global install target).
+        global_root = self.home / ".claude" / "skills"
+        global_root.mkdir(parents=True)
+        _write_skill(
+            self.project / ".claude" / "skills",
+            "resume-grok",
+            b"---\nname: resume-grok\n---\nSTALE PROJECT GROK\n",
+        )
+        with self.assertRaises(DiagnosticError) as ctx:
+            require_no_blocking_shadow(
+                host="claude",
+                selected_root=str(global_root),
+                project_dir=str(self.project),
+                home_dir=str(self.home),
+                selected_scope="global",
+                sources=("codex", "grok"),
+            )
+        self.assertEqual(ctx.exception.code, "E_INSTALL_SHADOW")
+
     def test_unknown_precedence_compat_warns(self) -> None:
         selected = self.project / ".cursor" / "skills"
         compat = self.project / ".claude" / "skills"

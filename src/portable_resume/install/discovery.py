@@ -958,20 +958,33 @@ def scan_skill_duplicates(
     home_dir: str,
     skill_names: Iterable[str] | None = None,
     selected_scope: str | None = None,
+    sources: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Scan known discovery roots for same-name ``resume-*`` Skills vs *selected_root*.
 
     Read-only. Does not create support dirs. Does not follow skill-dir symlinks
     into content hashing.
+
+    *sources*, when provided (install ``--sources``), is the authoritative plan
+    for which skills to scan so expanding a partial claim cannot skip shadows
+    for newly requested sources (#242 Codex P1).
     """
 
     if host not in HOST_PROFILES:
         raise DiagnosticError.invalid()
-    selected_sources = _selected_claim_sources(
-        host=host,
-        selected_root=selected_root,
-        selected_scope=selected_scope,
-    )
+    if sources is not None:
+        from .manifest import normalize_claim_sources
+
+        try:
+            selected_sources = normalize_claim_sources(sources)
+        except ValueError as error:
+            raise DiagnosticError.invalid() from error
+    else:
+        selected_sources = _selected_claim_sources(
+            host=host,
+            selected_root=selected_root,
+            selected_scope=selected_scope,
+        )
     if skill_names is not None:
         names = tuple(skill_names)
     elif selected_sources is not None:
@@ -1313,6 +1326,7 @@ def require_no_blocking_shadow(
     project_dir: str | None,
     home_dir: str,
     selected_scope: str | None = None,
+    sources: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Run discovery scan; raise ``E_INSTALL_SHADOW`` when policy is block."""
 
@@ -1322,6 +1336,7 @@ def require_no_blocking_shadow(
         project_dir=project_dir,
         home_dir=home_dir,
         selected_scope=selected_scope,
+        sources=sources,
     )
     if report["aggregate_policy"] == POLICY_BLOCK:
         blockers = [

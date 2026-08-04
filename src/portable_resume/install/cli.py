@@ -407,6 +407,9 @@ def run(argv: Sequence[str] | None = None) -> int:
                 raise DiagnosticError.invalid()
             if ns.scope == "global" and not project_for_scan:
                 project_for_scan = os.getcwd()
+            # Parse --sources before shadow scan so expanding a partial claim
+            # still gates newly requested skills (#242 Codex P1).
+            selected_sources = _parse_install_sources(getattr(ns, "sources", None))
             discovery_by_host: dict[str, dict[str, Any]] = {}
             for host, root in targets:
                 discovery_by_host[host] = require_no_blocking_shadow(
@@ -415,8 +418,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                     project_dir=project_for_scan,
                     home_dir=ns.home,
                     selected_scope=ns.scope,
+                    sources=selected_sources,
                 )
-            selected_sources = _parse_install_sources(getattr(ns, "sources", None))
             if dry_run or len(targets) == 1:
                 plans = [
                     plan_install(

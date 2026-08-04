@@ -245,3 +245,22 @@ def empty_manifest(package_identity: str) -> Manifest:
         claims={},
         files={},
     )
+
+
+def recompute_top_package_identity(manifest: Manifest) -> None:
+    """Align top-level ``package_identity`` with remaining source-aware claims.
+
+    When every remaining claim carries ``package_identity``, the top-level field
+    is the identity of the lexicographically first claim id (same rule as
+    :func:`build_manifest`). Call after uninstall removes a claim so shared-root
+    multi-claim verify does not keep a removed claim's identity (#242 Codex P1).
+    """
+
+    if not manifest.claims:
+        return
+    if not all("package_identity" in meta for meta in manifest.claims.values()):
+        return
+    first = sorted(manifest.claims)[0]
+    identity = manifest.claims[first].get("package_identity")
+    if isinstance(identity, str) and identity:
+        manifest.package_identity = identity

@@ -251,6 +251,58 @@ class InstallerTransactionTests(unittest.TestCase):
         for claim in manifest.claims:
             self.assertTrue(verify_root(shared_root, claim=claim)["ok"])
 
+    def test_uninstall_first_claim_recomputes_top_package_identity(self) -> None:
+        """Shared-root multi-claim: uninstalling lex-first claim must not poison verify (#242 P1)."""
+        shared_root = str(self.project / "identity-after-uninstall")
+        execute_install(
+            plan_install(
+                host="claude",
+                scope="global",
+                root=shared_root,
+                sources=("codex",),
+            )
+        )
+        execute_install(
+            plan_install(
+                host="claude",
+                scope="project",
+                root=shared_root,
+                sources=("codex", "grok"),
+            )
+        )
+        manifest = load_manifest(shared_root)
+        assert manifest is not None
+        claims_sorted = sorted(manifest.claims)
+        self.assertGreaterEqual(len(claims_sorted), 2)
+        first_claim = claims_sorted[0]
+        first_host = manifest.claims[first_claim]["host"]
+        first_scope = manifest.claims[first_claim]["scope"]
+        first_root = manifest.claims[first_claim]["root"]
+        # Uninstall the lexicographically first claim (top-level identity used to stick).
+        uninstall_claim(host=first_host, scope=first_scope, root=first_root)
+        remaining = load_manifest(shared_root)
+        assert remaining is not None
+        self.assertNotIn(first_claim, remaining.claims)
+        self.assertTrue(remaining.claims)
+        if all("package_identity" in meta for meta in remaining.claims.values()):
+            expected = remaining.claims[sorted(remaining.claims)[0]]["package_identity"]
+            self.assertEqual(remaining.package_identity, expected)
+        self.assertTrue(verify_root(shared_root)["ok"])
+
+    def test_claimless_generation_zero_manifest_verifies(self) -> None:
+        """Empty claims+files generation-zero must not IndexError (#242 P2)."""
+        from portable_resume.install.manifest import empty_manifest
+
+        empty = empty_manifest("a" * 64)
+        self.assertEqual(empty.claims, {})
+        self.assertEqual(empty.files, {})
+        transaction_module._atomic_write_support_file(
+            self.root,
+            transaction_module.MANIFEST_NAME,
+            empty.dumps().encode("utf-8"),
+        )
+        self.assertTrue(verify_root(self.root)["ok"])
+
     def test_source_metadata_tampering_fails_closed(self) -> None:
         execute_install(
             plan_install(
