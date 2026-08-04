@@ -201,6 +201,56 @@ def support_dir(root: str) -> str:
     return os.path.join(root, SUPPORT_DIR)
 
 
+# FILE_ATTRIBUTE_REPARSE_POINT — Win32 leaf skill-root junctions/symlinks (#245).
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
+def _is_reparse_or_symlink(st: os.stat_result) -> bool:
+    if stat_mod.S_ISLNK(st.st_mode):
+        return True
+    return bool(getattr(st, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def resolve_skill_root_for_lock(root: str) -> str:
+    """Resolve a skill-root path for exclusive locking / control-state ownership.
+
+    Parity with POSIX leaf-symlink policy (#31 / docs): the **leaf** skill root
+    itself may be a directory symlink or Windows junction/reparse point (common
+    multi-tool skills-sync layouts). Intermediate payload reparse components
+    remain fail-closed in platform_fs mutations.
+
+    Returns a path suitable for creating ``.portable-resume/.state`` and holding
+    ``install.lock`` on the physical directory tree.
+    """
+    abs_root = os.path.abspath(os.path.expanduser(root))
+    try:
+        st = os.lstat(abs_root)
+    except FileNotFoundError:
+        # Missing root: install will create it as a real directory.
+        return abs_root
+    except OSError as error:
+        raise DiagnosticError("E_UNSAFE_PATH") from error
+
+    if _is_reparse_or_symlink(st):
+        # Leaf skill-root reparse/symlink is allowed — resolve once to the real dir.
+        try:
+            resolved = os.path.realpath(abs_root)
+        except OSError as error:
+            raise DiagnosticError("E_UNSAFE_PATH") from error
+        try:
+            resolved_st = os.lstat(resolved)
+        except OSError as error:
+            raise DiagnosticError("E_UNSAFE_PATH") from error
+        # After realpath the target must be a concrete directory (no residual leaf reparse).
+        if _is_reparse_or_symlink(resolved_st) or not stat_mod.S_ISDIR(resolved_st.st_mode):
+            raise DiagnosticError("E_UNSAFE_PATH")
+        return resolved
+
+    if not stat_mod.S_ISDIR(st.st_mode):
+        raise DiagnosticError("E_UNSAFE_PATH")
+    return abs_root
+
+
 class RootLock:
     def __init__(self, root: str, *, wait_seconds: float = 5.0) -> None:
         self.root = root
@@ -211,6 +261,8 @@ class RootLock:
         self.wait_seconds = wait_seconds
         # Windows: hold backend.acquire_exclusive_lock context across RootLock life.
         self._win_lock_cm: Any | None = None
+        # Caller-facing spelling before leaf reparse resolve (junction / symlink).
+        self.requested_root = root
 
     def __enter__(self) -> "RootLock":
         # Windows Phase 3 (#125): exclusive lock via platform_fs Win32 primitive.
@@ -226,6 +278,13 @@ class RootLock:
             raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
         return self._enter_posix()
 
+    def _bind_resolved_root(self, resolved: str) -> None:
+        """Point lock support/state/path at the resolved physical skill root."""
+        self.root = resolved
+        self.support = support_dir(resolved)
+        self.state = control_state_dir(resolved)
+        self.path = os.path.join(self.state, LOCK_NAME)
+
     def _enter_windows(self) -> "RootLock":
         from ..platform_fs import get_filesystem_backend
 
@@ -233,13 +292,11 @@ class RootLock:
         caps = backend.capabilities
         if not caps.exclusive_locking or not caps.handle_locking:
             raise DiagnosticError("E_INSTALL_UNSUPPORTED_PLATFORM")
-        try:
-            st = os.lstat(self.root)
-            if stat_mod.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400):
-                raise DiagnosticError("E_UNSAFE_PATH")
-        except OSError as error:
-            if isinstance(error, DiagnosticError):
-                raise
+        # #245: allow leaf skill-root junction/symlink; lock the resolved real directory.
+        # Do not treat intermediate reparse under payload paths as safe — those stay
+        # fail-closed in WindowsFilesystemBackend relative mutations.
+        resolved = resolve_skill_root_for_lock(self.root)
+        self._bind_resolved_root(resolved)
         _ensure_control_state_directory(self.root)
         deadline = time.monotonic() + self.wait_seconds
         last_error: BaseException | None = None
