@@ -49,6 +49,7 @@ WARNING_CODES = frozenset(
         "W_BROKEN_CHAIN",
         "W_MISSING_BLOB",
         "W_STALE_INDEX",
+        "W_CLI_MESSAGES_LANE",
         "W_OPTIONAL_ZSTD_UNAVAILABLE",
         "W_METADATA_REDACTED",
         "W_CONTROLS_REMOVED",

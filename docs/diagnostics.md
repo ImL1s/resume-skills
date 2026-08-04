@@ -87,6 +87,7 @@ The ordinary list/show warnings below are not stderr diagnostics. They ride insi
 <!-- generated:warning-codes-list:begin (run scripts/render_docs.py --write) -->
 - `W_BINARY_OMITTED`
 - `W_BROKEN_CHAIN`
+- `W_CLI_MESSAGES_LANE`
 - `W_CONTROLS_REMOVED`
 - `W_HOST_DISCOVERY_UNPROVEN`
 - `W_LIVE_SMOKE_NOT_RUN`

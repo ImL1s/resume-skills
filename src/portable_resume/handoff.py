@@ -30,6 +30,7 @@ HANDOFF_WARNING_EXPLANATIONS: dict[str, str] = {
     "W_BROKEN_CHAIN": "parent links were unresolvable; turn order may be wrong.",
     "W_MISSING_BLOB": "referenced persisted content was unavailable; recovered context is incomplete.",
     "W_STALE_INDEX": "persisted metadata may be stale or inconsistent with recovered content.",
+    "W_CLI_MESSAGES_LANE": "transcript.jsonl was empty; recovered via CLI history.jsonl and messages/*.",
     "W_OPTIONAL_ZSTD_UNAVAILABLE": "optional compressed content could not be decoded.",
     "W_METADATA_REDACTED": "potentially sensitive metadata was removed.",
     "W_CONTROLS_REMOVED": "unsafe or invisible control characters were removed.",

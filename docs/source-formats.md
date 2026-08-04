@@ -59,6 +59,16 @@ OpenCode SQLite, file-store, and export providers. Synthetic fixtures: `tests/fi
 
 Antigravity transcript JSONL with optional index hints. Synthetic fixtures: `tests/fixtures/antigravity/`.
 
+**CLI multi-lane (#248):** live Antigravity CLI under `~/.gemini/antigravity-cli` often leaves
+`brain/<id>/.system_generated/logs/transcript.jsonl` as a zero-byte placeholder. When the
+transcript has no records, the adapter falls back to:
+
+1. `history.jsonl` — workspace + user display prompts + `conversationId`
+2. `brain/<id>/.system_generated/messages/*.json` — visible agent messages (`hideFromUser` skipped)
+
+Recovery sets warning `W_CLI_MESSAGES_LANE`. Legacy non-empty transcripts remain authoritative.
+Fixture `s-ant-07` covers empty-transcript + history + messages.
+
 ### grok-grok-updates-jsonl-v1
 
 Grok Build session `updates.jsonl`. Synthetic fixtures: `tests/fixtures/grok/`.

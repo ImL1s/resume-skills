@@ -1,8 +1,17 @@
-"""Fail-closed reader for Antigravity CLI transcript JSONL files.
+"""Fail-closed reader for Antigravity CLI session stores.
 
-Transcript bytes are authoritative.  The optional ``brain/index.json`` is a
-bounded discovery hint only: an absent, private, corrupt, or stale index never
-fabricates a session and never blocks an exact ID/path lookup.
+Primary lane: ``brain/<id>/.system_generated/logs/transcript.jsonl`` when it
+contains records (legacy + live step streams).
+
+CLI product lane (#248): many installs leave ``transcript.jsonl`` as a
+zero-byte placeholder. Durable content then lives in:
+
+- ``history.jsonl`` (workspace + user display prompts + conversationId)
+- ``brain/<id>/.system_generated/messages/*.json`` (visible agent messages)
+
+The optional ``brain/index.json`` is a bounded discovery hint only: an absent,
+private, corrupt, or stale index never fabricates a session and never blocks an
+exact ID/path lookup.
 """
 
 from __future__ import annotations
@@ -24,6 +33,7 @@ from ..snapshot import stable_read_bytes, stable_scan_lines
 
 FORMAT_ID = "antigravity-transcript-jsonl-v1"
 INDEX_FORMAT = "antigravity-index-v1"
+CLI_MESSAGES_WARNING = "W_CLI_MESSAGES_LANE"
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,1023}$")
 _FILTERED_TYPES = frozenset(
     {
@@ -93,6 +103,43 @@ def _rfc3339(value: object) -> str | None:
     if parsed.tzinfo is None:
         return None
     return parsed.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _epoch_ms_to_rfc3339(value: object) -> str | None:
+    """Convert history.jsonl millisecond (or second) timestamps to RFC3339 Z."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str) and value.isdigit():
+        number = float(value)
+    else:
+        return None
+    # History uses millisecond epochs (≈1e12+); seconds stay below that.
+    if number > 1e12:
+        number /= 1000.0
+    try:
+        return datetime.fromtimestamp(number, timezone.utc).isoformat(timespec="seconds").replace(
+            "+00:00", "Z"
+        )
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _min_rfc3339(left: str | None, right: str | None) -> str | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return left if left <= right else right
+
+
+def _max_rfc3339(left: str | None, right: str | None) -> str | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return left if left >= right else right
 
 
 def _eligible(summary: SessionSummary, query: Query) -> bool:
@@ -196,8 +243,102 @@ class AntigravityAdapter:
     def _conversation_path(brain: str, session_id: str) -> str:
         return os.path.join(brain, session_id, ".system_generated", "logs", "transcript.jsonl")
 
+    @staticmethod
+    def _messages_dir(brain: str, session_id: str) -> str:
+        return os.path.join(brain, session_id, ".system_generated", "messages")
+
+    @staticmethod
+    def _history_path(root: str) -> str:
+        return os.path.join(root, "history.jsonl")
+
+    def _session_has_messages(self, brain: str, session_id: str, root: str) -> bool:
+        messages = self._messages_dir(brain, session_id)
+        if os.path.islink(messages) or not is_within(messages, root) or not os.path.isdir(messages):
+            return False
+        try:
+            with os.scandir(messages) as entries:
+                for entry in entries:
+                    if entry.is_file(follow_symlinks=False) and entry.name.endswith(".json"):
+                        return True
+        except OSError:
+            return False
+        return False
+
+    def _load_history_hints(self, root: str, budget: ReadBudget | None = None) -> dict[str, dict[str, Any]]:
+        """Bounded read of CLI history.jsonl → per-session cwd / timestamps / user lines."""
+        path = self._history_path(root)
+        if os.path.islink(path) or not is_within(path, root) or not os.path.isfile(path):
+            return {}
+        hints: dict[str, dict[str, Any]] = {}
+        try:
+            for line in stable_scan_lines(
+                path,
+                root=root,
+                budget=budget,
+                charge_transcript=False,
+                hook=self._read_hook,
+            ):
+                if not line.utf8_valid or not line.text.strip():
+                    continue
+                try:
+                    value = _loads(line.text.strip().encode("utf-8"), index=True)
+                except DiagnosticError:
+                    continue
+                if not isinstance(value, Mapping):
+                    continue
+                try:
+                    session_id = _session_id(value.get("conversationId"))
+                except DiagnosticError:
+                    continue
+                entry = hints.setdefault(
+                    session_id,
+                    {"cwd": None, "created_at": None, "updated_at": None, "user_lines": []},
+                )
+                workspace = value.get("workspace")
+                if isinstance(workspace, str) and workspace.strip():
+                    try:
+                        entry["cwd"] = canonicalize_cwd(workspace)
+                    except DiagnosticError:
+                        pass
+                stamp = _epoch_ms_to_rfc3339(value.get("timestamp"))
+                if stamp is not None:
+                    if entry["created_at"] is None or stamp < entry["created_at"]:
+                        entry["created_at"] = stamp
+                    if entry["updated_at"] is None or stamp > entry["updated_at"]:
+                        entry["updated_at"] = stamp
+                display = value.get("display")
+                kind = value.get("type")
+                if (
+                    isinstance(display, str)
+                    and display.strip()
+                    and kind != "slash_command"
+                    and not display.strip().startswith("/")
+                ):
+                    text = display.strip()
+                    # Skip pure continue-nudges; keep substantive prompts for handoff.
+                    if text in {"繼續", "继续", "continue", "Continue", "ok", "OK", "go", "GO"}:
+                        # Still refresh timestamps via stamp above; do not store as a turn.
+                        continue
+                    # Keep a bounded tail of user displays for handoff.
+                    lines: list[tuple[str | None, str]] = entry["user_lines"]
+                    lines.append((stamp, text))
+                    if len(lines) > 64:
+                        entry["user_lines"] = lines[-64:]
+                        entry["truncated"] = True
+        except DiagnosticError as error:
+            # Busy/unsafe history is optional enrichment; overflow must fail closed
+            # so empty-transcript recovery never silently drops every user prompt.
+            if error.code in {"E_SOURCE_BUSY", "E_UNSAFE_PATH"}:
+                return hints
+            raise
+        return hints
+
     def _scan_brain_transcripts(self, brain: str, root: str) -> list[str]:
-        """When index is missing, discover fixed transcript paths under brain/<id>/…"""
+        """When index is missing, discover transcript paths under brain/<id>/…
+
+        Includes sessions whose transcript exists (even empty) when CLI messages
+        or a non-empty transcript are present (#248).
+        """
         if not os.path.isdir(brain) or os.path.islink(brain):
             return []
         if not is_within(brain, root):
@@ -227,14 +368,30 @@ class AntigravityAdapter:
             path = self._conversation_path(brain, session_id)
             if os.path.islink(path) or not is_within(path, root):
                 continue
-            if os.path.isfile(path):
+            if not os.path.isfile(path):
+                # Messages-only session without transcript placeholder: still admit
+                # via a synthetic messages marker path handled in _read_transcript.
+                if self._session_has_messages(brain, session_id, root):
+                    paths.append(path)
+                continue
+            # Prefer non-empty transcript; empty file only if messages exist.
+            try:
+                size = os.lstat(path).st_size
+            except OSError:
+                size = 0
+            if size > 0 or self._session_has_messages(brain, session_id, root):
                 paths.append(path)
         # Newest transcript first so list/latest is not directory-name order.
         def _mtime_key(p: str) -> float:
             try:
                 return -os.lstat(p).st_mtime
             except OSError:
-                return 0.0
+                # Fall back to messages dir mtime for missing empty placeholders.
+                sid = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(p))))
+                try:
+                    return -os.lstat(self._messages_dir(brain, sid)).st_mtime
+                except OSError:
+                    return 0.0
 
         paths.sort(key=lambda p: (_mtime_key(p), p))
         return paths
@@ -262,7 +419,12 @@ class AntigravityAdapter:
         if _ID.fullmatch(ref) is None or ref in {"latest", ".", ".."}:
             return None
         path = self._conversation_path(brain, ref)
-        return path if os.path.isfile(path) else None
+        if os.path.isfile(path):
+            return path
+        # Exact id may only have messages lane (#248).
+        if self._session_has_messages(brain, ref, root):
+            return path
+        return None
 
     def probe(self, query: Query) -> CapabilityReport:
         root = self._root(query)
@@ -289,6 +451,23 @@ class AntigravityAdapter:
         if direct is not None:
             valid += 1
             evidence.append("brain:exact-transcript")
+        history_path = self._history_path(root)
+        if os.path.isfile(history_path) and not os.path.islink(history_path):
+            evidence.append("cli:history.jsonl")
+            valid += 1
+        if os.path.isdir(brain) and not valid:
+            # Cheap existence probe for CLI messages lane without full scan.
+            try:
+                with os.scandir(brain) as entries:
+                    for entry in list(entries)[: DEFAULT_BOUNDS.scanned_records]:
+                        if entry.is_dir(follow_symlinks=False) and self._session_has_messages(
+                            brain, entry.name, root
+                        ):
+                            valid += 1
+                            evidence.append("cli:messages")
+                            break
+            except OSError:
+                pass
         if not valid:
             if os.path.isdir(brain):
                 return CapabilityReport(
@@ -346,10 +525,37 @@ class AntigravityAdapter:
             candidates.append((direct, None))
         output: list[SessionSummary] = []
         scan_mode = entries is None and not query.ref
+        # History is optional enrichment for non-empty transcripts, but required
+        # for empty-transcript CLI recovery. Load once and reuse (no double charge).
+        # Overflow: fail closed only when some candidate needs the CLI fallback;
+        # otherwise keep listing authoritative non-empty transcripts (Codex P1).
+        needs_history = False
+        for cand_path, _cand_hint in candidates:
+            try:
+                if (not os.path.isfile(cand_path)) or os.lstat(cand_path).st_size == 0:
+                    needs_history = True
+                    break
+            except OSError:
+                needs_history = True
+                break
+        history_hints: dict[str, dict[str, Any]] = {}
+        try:
+            history_hints = self._load_history_hints(root, budget)
+        except DiagnosticError as error:
+            if error.code == "E_LIMIT_EXCEEDED" and not needs_history:
+                history_hints = {}
+            else:
+                raise
         for path, hint in candidates:
             try:
                 summary, _, warnings = self._read_transcript(
-                    path, root, query, budget, include_turns=False, hint=hint
+                    path,
+                    root,
+                    query,
+                    budget,
+                    include_turns=False,
+                    hint=hint,
+                    history_hints=history_hints,
                 )
             except DiagnosticError as error:
                 # Live AGY transcripts may use a different schema; skip only when
@@ -362,19 +568,29 @@ class AntigravityAdapter:
                 }:
                     continue
                 raise
+            hist = history_hints.get(summary.session_id)
             merged = list(summary.warnings)
             merged.extend(warnings)
             if stale:
                 merged.append("W_STALE_INDEX")
+            cwd = summary.cwd
+            created_at = summary.created_at
+            updated_at = summary.updated_at
+            if hist is not None:
+                if cwd is None and isinstance(hist.get("cwd"), str):
+                    cwd = hist["cwd"]
+                created_at = _min_rfc3339(created_at, hist.get("created_at"))
+                # Prefer the later of transcript/messages vs history activity.
+                updated_at = _max_rfc3339(updated_at, hist.get("updated_at"))
             summary = SessionSummary(
                 source=summary.source,
                 session_id=summary.session_id,
                 source_path=summary.source_path,
                 title=summary.title,
-                cwd=summary.cwd,
+                cwd=cwd,
                 branch=summary.branch,
-                created_at=summary.created_at,
-                updated_at=summary.updated_at,
+                created_at=created_at,
+                updated_at=updated_at,
                 source_repo_root=summary.source_repo_root,
                 provider=summary.provider,
                 warnings=tuple(dict.fromkeys(merged)),
@@ -428,6 +644,7 @@ class AntigravityAdapter:
             budget,
             include_turns=True,
             hint=hint,
+            history_hints=None,
         )
         if summary.session_id != ref.session_id:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
@@ -444,13 +661,50 @@ class AntigravityAdapter:
         *,
         include_turns: bool,
         hint: Mapping[str, Any] | None,
+        history_hints: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> tuple[SessionSummary, list[Turn], list[str]]:
         # Stream-reduce via stable_scan_lines; do not retain every outer record (#15).
         # List path (include_turns=False) stops after session header and uses mtime.
         warnings: list[str] = []
         # transcript.jsonl -> logs -> .system_generated -> <conversation-id>
+        # Also accept messages-dir paths for messages-only sessions (#248).
+        if os.path.basename(path) == "messages" or path.replace("\\", "/").endswith(
+            "/.system_generated/messages"
+        ):
+            path_id = os.path.basename(os.path.dirname(os.path.dirname(path)))
+            path_id = _session_id(path_id)
+            return self._read_cli_messages_lane(
+                path_id,
+                path,
+                root,
+                query,
+                budget,
+                include_turns=include_turns,
+                hint=hint,
+                prior_warnings=warnings,
+                history_hints=history_hints,
+            )
         path_id = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path))))
         path_id = _session_id(path_id)
+        # Missing or zero-byte transcript → CLI messages/history lane before scan.
+        try:
+            size = os.lstat(path).st_size if os.path.lexists(path) else 0
+            missing = not os.path.isfile(path)
+        except OSError:
+            size = 0
+            missing = True
+        if missing or size == 0:
+            return self._read_cli_messages_lane(
+                path_id,
+                path,
+                root,
+                query,
+                budget,
+                include_turns=include_turns,
+                hint=hint,
+                prior_warnings=warnings,
+                history_hints=history_hints,
+            )
         header: Mapping[str, Any] | None = None
         turns: list[Turn] = []
         created_values: list[str] = []
@@ -624,7 +878,18 @@ class AntigravityAdapter:
             warnings.append("W_BROKEN_CHAIN")
 
         if not saw_record:
-            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+            # Empty/placeholder transcript.jsonl — try CLI history + messages (#248).
+            return self._read_cli_messages_lane(
+                path_id,
+                path,
+                root,
+                query,
+                budget,
+                include_turns=include_turns,
+                hint=hint,
+                prior_warnings=warnings,
+                history_hints=history_hints,
+            )
 
         header_id = path_id
         cwd: str | None = None
@@ -684,6 +949,175 @@ class AntigravityAdapter:
             source=self.key,
             session_id=header_id,
             source_path=path,
+            title=title,
+            cwd=cwd,
+            created_at=created_at,
+            updated_at=updated_at,
+            provider=FORMAT_ID,
+            warnings=tuple(dict.fromkeys(warnings)),
+        )
+        return summary, turns, warnings
+
+    def _read_cli_messages_lane(
+        self,
+        session_id: str,
+        transcript_path: str,
+        root: str,
+        query: Query,
+        budget: ReadBudget,
+        *,
+        include_turns: bool,
+        hint: Mapping[str, Any] | None,
+        prior_warnings: list[str],
+        history_hints: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> tuple[SessionSummary, list[Turn], list[str]]:
+        """Recover session from history.jsonl + brain/*/messages when transcript is empty."""
+        warnings = list(prior_warnings)
+        warnings.append(CLI_MESSAGES_WARNING)
+        brain = self._brain(root)
+        messages_dir = self._messages_dir(brain, session_id)
+        has_messages = self._session_has_messages(brain, session_id, root)
+        # Prefer caller-supplied hints (list already scanned history once).
+        if history_hints is not None:
+            history = dict(history_hints.get(session_id) or {})
+        else:
+            history = dict(self._load_history_hints(root, budget).get(session_id) or {})
+        if history.pop("truncated", None):
+            warnings.append("W_TRUNCATED")
+        if not has_messages and not history:
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
+
+        turns: list[Turn] = []
+        cwd: str | None = history.get("cwd") if isinstance(history.get("cwd"), str) else None
+        created_at: str | None = history.get("created_at")
+        updated_at: str | None = history.get("updated_at")
+        title: str | None = f"antigravity:{session_id[:8]}"
+
+        if include_turns:
+            # Collect history prompts + message-lane assistants, then order by
+            # persisted timestamps before assigning ordinals (Codex P1 #249).
+            pending: list[tuple[str, int, str, str | None, str]] = []
+            # sort key: (stamp or "", role_rank, source_order, role, content)
+            order = 0
+            for stamp, display in history.get("user_lines") or []:
+                pending.append((stamp or "", 0, f"{order:08d}", "user", display))
+                order += 1
+                created_at = _min_rfc3339(created_at, stamp)
+                updated_at = _max_rfc3339(updated_at, stamp)
+            if has_messages:
+                names: list[str] = []
+                try:
+                    with os.scandir(messages_dir) as entries:
+                        for entry in entries:
+                            if len(names) >= DEFAULT_BOUNDS.scanned_records:
+                                raise DiagnosticError.limit_exceeded()
+                            if entry.is_file(follow_symlinks=False) and entry.name.endswith(".json"):
+                                names.append(entry.name)
+                except DiagnosticError:
+                    raise
+                except OSError as error:
+                    raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
+
+                def _msg_sort_key(name: str) -> tuple[float, str]:
+                    path = os.path.join(messages_dir, name)
+                    try:
+                        return (os.lstat(path).st_mtime, name)
+                    except OSError:
+                        return (0.0, name)
+
+                for name in sorted(names, key=_msg_sort_key):
+                    path = os.path.join(messages_dir, name)
+                    if os.path.islink(path) or not is_within(path, root):
+                        continue
+                    try:
+                        read = stable_read_bytes(path, root=root, budget=budget, hook=self._read_hook)
+                        record = _loads(read.data)
+                    except DiagnosticError as error:
+                        if error.code in {
+                            "E_UNSUPPORTED_FORMAT",
+                            "E_CORRUPT_RECORD",
+                            "E_LIMIT_EXCEEDED",
+                            "E_SOURCE_BUSY",
+                        }:
+                            warnings.append("W_BROKEN_CHAIN")
+                            continue
+                        raise
+                    if not isinstance(record, Mapping):
+                        warnings.append("W_BROKEN_CHAIN")
+                        continue
+                    if record.get("hideFromUser") is True:
+                        continue
+                    content = record.get("content")
+                    if not isinstance(content, str) or not content.strip():
+                        continue
+                    stamp = _rfc3339(record.get("timestamp"))
+                    created_at = _min_rfc3339(created_at, stamp)
+                    updated_at = _max_rfc3339(updated_at, stamp)
+                    details = record.get("renderDetails")
+                    if isinstance(details, Mapping) and isinstance(details.get("messageTitle"), str):
+                        msg_title = details["messageTitle"].strip()
+                        if msg_title and not msg_title.lower().startswith("wait for"):
+                            content = f"{msg_title}\n\n{content}"
+                    pending.append((stamp or "", 1, f"{order:08d}", "assistant", content))
+                    order += 1
+
+            pending.sort(key=lambda item: (item[0], item[1], item[2]))
+            for stamp, _role_rank, _order, role, content in pending:
+                self._append_turn(
+                    turns,
+                    {"role": role, "content": content, "timestamp": stamp or None},
+                    query,
+                    budget,
+                    warnings,
+                )
+
+        if not include_turns:
+            # Freshness: max(history activity, messages-dir mtime). Never drop a
+            # later messages lane when history already set updated_at.
+            try:
+                if has_messages:
+                    mtime = os.lstat(messages_dir).st_mtime
+                    stamp = datetime.fromtimestamp(mtime, timezone.utc).isoformat(
+                        timespec="microseconds"
+                    ).replace("+00:00", "Z")
+                    updated_at = _max_rfc3339(updated_at, stamp)
+                    created_at = _min_rfc3339(created_at, stamp)
+                elif updated_at is None or created_at is None:
+                    mtime = os.lstat(self._history_path(root)).st_mtime
+                    stamp = datetime.fromtimestamp(mtime, timezone.utc).isoformat(
+                        timespec="microseconds"
+                    ).replace("+00:00", "Z")
+                    updated_at = _max_rfc3339(updated_at, stamp)
+                    created_at = _min_rfc3339(created_at, stamp)
+            except OSError:
+                pass
+
+        if hint is not None:
+            if hint.get("id") != session_id:
+                warnings.append("W_STALE_INDEX")
+            if cwd is None and isinstance(hint.get("cwd"), str):
+                try:
+                    cwd = canonicalize_cwd(hint["cwd"])
+                except DiagnosticError:
+                    pass
+            if title is None and isinstance(hint.get("title"), str):
+                title = hint["title"]
+
+        if cwd is None:
+            warnings.append("W_STALE_INDEX")
+            if query.cwd:
+                try:
+                    cwd = canonicalize_cwd(query.cwd)
+                except DiagnosticError:
+                    pass
+
+        # Keep source_path as the transcript path when present so path-based show works;
+        # empty files still resolve via this fallback.
+        source_path = transcript_path if os.path.isfile(transcript_path) else messages_dir
+        summary = SessionSummary(
+            source=self.key,
+            session_id=session_id,
+            source_path=source_path,
             title=title,
             cwd=cwd,
             created_at=created_at,

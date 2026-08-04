@@ -105,7 +105,7 @@ class FixtureManifestTests(unittest.TestCase):
     def test_all_lane_fixture_manifests_are_strict_and_complete(self) -> None:
         expected = {
             "opencode": {f"s-ope-{index:02d}" for index in range(1, 8)},
-            "antigravity": {f"s-ant-{index:02d}" for index in range(1, 7)},
+            "antigravity": {f"s-ant-{index:02d}" for index in range(1, 8)},
             "grok": {f"s-gro-{index:02d}" for index in range(1, 9)},
         }
         for source, cases in expected.items():
@@ -675,6 +675,271 @@ class AntigravityAdapterTests(unittest.TestCase):
             self.assertEqual(session.session_id, "conv-one")
             self.assertTrue(session.turns)
             self.assertIn("W_STALE_INDEX", session.warnings)
+
+    def test_cli_empty_transcript_uses_history_and_messages_lane(self) -> None:
+        """#248: empty transcript.jsonl recovers via history.jsonl + messages/*."""
+        root = fixture_root("antigravity", "s-ant-07")
+        before = tree_snapshot(root)
+        adapter = AntigravityAdapter(root=str(root))
+        list_q = query("antigravity", root, None, within_min=0)
+        summaries = adapter.list(list_q, ReadBudget())
+        self.assertEqual([item.session_id for item in summaries], ["conv-cli"])
+        self.assertIn("W_CLI_MESSAGES_LANE", summaries[0].warnings)
+        show_q = query("antigravity", root, "conv-cli", within_min=0)
+        session = adapter.show(resolve(summaries, "conv-cli"), show_q, ReadBudget())
+        self.assertEqual(session.session_id, "conv-cli")
+        roles = [turn.role for turn in session.turns]
+        self.assertIn("user", roles)
+        self.assertIn("assistant", roles)
+        # Chronological handoff: user prompts and assistant replies interleaved by time.
+        self.assertEqual(
+            [(turn.role, turn.content.splitlines()[0][:40]) for turn in session.turns],
+            [
+                ("user", "fix the windows packager"),
+                ("user", "open WIP PR with size table"),
+                ("assistant", "Message from packaging agent"),
+            ],
+        )
+        joined = " ".join(turn.content for turn in session.turns)
+        self.assertIn("fix the windows packager", joined)
+        self.assertIn("Lite channel", joined)
+        self.assertNotIn("internal timer cancelled noise", joined)
+        self.assertIn("W_CLI_MESSAGES_LANE", session.warnings)
+        self.assertEqual(session.updated_at, "2026-08-04T15:23:51Z")
+        self.assertEqual(tree_snapshot(root), before)
+
+    def test_cli_messages_lane_merges_history_and_messages_chronologically(self) -> None:
+        """#249: merge history + messages before ordinals (not all-users-then-assistants)."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session_id = "conv-interleave"
+            brain = root / "brain" / session_id / ".system_generated"
+            (brain / "logs").mkdir(parents=True)
+            (brain / "messages").mkdir(parents=True)
+            (brain / "logs" / "transcript.jsonl").write_bytes(b"")
+            history = [
+                {
+                    "display": "first user",
+                    "timestamp": 1_785_856_851_015,
+                    "workspace": CWD,
+                    "conversationId": session_id,
+                },
+                {
+                    "display": "second user",
+                    "timestamp": 1_785_856_971_015,
+                    "workspace": CWD,
+                    "conversationId": session_id,
+                },
+            ]
+            (root / "history.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in history),
+                encoding="utf-8",
+            )
+            # Assistant between the two user prompts (by timestamp).
+            (brain / "messages" / "a1.json").write_text(
+                json.dumps(
+                    {
+                        "id": "a1",
+                        "content": "first assistant",
+                        "timestamp": "2026-08-04T15:21:51Z",
+                        "hideFromUser": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (brain / "messages" / "a2.json").write_text(
+                json.dumps(
+                    {
+                        "id": "a2",
+                        "content": "second assistant",
+                        "timestamp": "2026-08-04T15:24:51Z",
+                        "hideFromUser": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            before = tree_snapshot(root)
+            adapter = AntigravityAdapter(root=str(root))
+            list_q = query("antigravity", root, None, within_min=0)
+            summaries = adapter.list(list_q, ReadBudget())
+            session = adapter.show(
+                resolve(summaries, session_id),
+                query("antigravity", root, session_id, within_min=0),
+                ReadBudget(),
+            )
+            self.assertEqual(
+                [(turn.role, turn.content) for turn in session.turns],
+                [
+                    ("user", "first user"),
+                    ("assistant", "first assistant"),
+                    ("user", "second user"),
+                    ("assistant", "second assistant"),
+                ],
+            )
+            self.assertEqual(session.updated_at, "2026-08-04T15:24:51Z")
+            self.assertEqual(tree_snapshot(root), before)
+            # List mode: later messages-dir activity must win over older history prompts.
+            messages_dir = brain / "messages"
+            late = 1_785_857_100.0  # 2026-08-04T15:25:00Z approx
+            os.utime(messages_dir, (late, late))
+            listed = adapter.list(list_q, ReadBudget())
+            self.assertEqual(len(listed), 1)
+            self.assertGreaterEqual(listed[0].updated_at or "", "2026-08-04T15:24:00Z")
+
+    def test_cli_history_overflow_fails_closed(self) -> None:
+        """#249: history.jsonl scan overflow must not silently drop user prompts."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session_id = "conv-overflow"
+            brain = root / "brain" / session_id / ".system_generated"
+            (brain / "logs").mkdir(parents=True)
+            (brain / "messages").mkdir(parents=True)
+            (brain / "logs" / "transcript.jsonl").write_bytes(b"")
+            (brain / "messages" / "a1.json").write_text(
+                json.dumps(
+                    {
+                        "id": "a1",
+                        "content": "assistant only without prompts would be wrong",
+                        "timestamp": "2026-08-04T15:23:51Z",
+                        "hideFromUser": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            # Exceed scanned_records so stable_scan_lines raises E_LIMIT_EXCEEDED
+            # before replaying any verified history lines.
+            lines = []
+            for index in range(DEFAULT_BOUNDS.scanned_records + 5):
+                lines.append(
+                    json.dumps(
+                        {
+                            "display": f"prompt-{index}",
+                            "timestamp": 1_785_856_851_015 + index,
+                            "workspace": CWD,
+                            "conversationId": session_id,
+                        }
+                    )
+                )
+            (root / "history.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            adapter = AntigravityAdapter(root=str(root))
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.list(query("antigravity", root, None, within_min=0), ReadBudget())
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_cli_history_overflow_does_not_block_nonempty_transcripts(self) -> None:
+        """#249: optional history overflow must not hide authoritative transcripts."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session_id = "conv-legacy"
+            brain = root / "brain" / session_id / ".system_generated" / "logs"
+            brain.mkdir(parents=True)
+            # Non-empty authoritative transcript (legacy lane).
+            (brain / "transcript.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "session",
+                                "conversation_id": session_id,
+                                "cwd": CWD,
+                                "title": "legacy",
+                                "created_at": "2026-08-04T15:00:00Z",
+                                "updated_at": "2026-08-04T15:00:00Z",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "role": "user",
+                                "content": "legacy user",
+                                "timestamp": "2026-08-04T15:00:01Z",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": "legacy assistant",
+                                "timestamp": "2026-08-04T15:00:02Z",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            lines = [
+                json.dumps(
+                    {
+                        "display": f"noise-{index}",
+                        "timestamp": 1_785_856_851_015 + index,
+                        "workspace": CWD,
+                        "conversationId": "other-session",
+                    }
+                )
+                for index in range(DEFAULT_BOUNDS.scanned_records + 5)
+            ]
+            (root / "history.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            adapter = AntigravityAdapter(root=str(root))
+            summaries = adapter.list(query("antigravity", root, None, within_min=0), ReadBudget())
+            self.assertEqual([item.session_id for item in summaries], [session_id])
+            session = adapter.show(
+                resolve(summaries, session_id),
+                query("antigravity", root, session_id, within_min=0),
+                ReadBudget(),
+            )
+            self.assertIn("legacy user", " ".join(turn.content for turn in session.turns))
+
+    def test_cli_history_midsize_reuses_hints_without_double_charge(self) -> None:
+        """#249: list must not re-scan history (double budget) for empty transcripts."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session_id = "conv-mid"
+            brain = root / "brain" / session_id / ".system_generated"
+            (brain / "logs").mkdir(parents=True)
+            (brain / "messages").mkdir(parents=True)
+            (brain / "logs" / "transcript.jsonl").write_bytes(b"")
+            (brain / "messages" / "a1.json").write_text(
+                json.dumps(
+                    {
+                        "id": "a1",
+                        "content": "assistant after many prompts",
+                        "timestamp": "2026-08-04T16:00:00Z",
+                        "hideFromUser": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            # Within the 2_000 scanned_records ceiling, but > half so a second
+            # full scan against the same ReadBudget would raise E_LIMIT_EXCEEDED.
+            count = 1_200
+            lines = [
+                json.dumps(
+                    {
+                        "display": f"prompt-{index}",
+                        "timestamp": 1_785_856_851_015 + index,
+                        "workspace": CWD,
+                        "conversationId": session_id,
+                    }
+                )
+                for index in range(count)
+            ]
+            (root / "history.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            adapter = AntigravityAdapter(root=str(root))
+            list_q = query("antigravity", root, None, within_min=0)
+            summaries = adapter.list(list_q, ReadBudget())
+            self.assertEqual([item.session_id for item in summaries], [session_id])
+            session = adapter.show(
+                resolve(summaries, session_id),
+                query("antigravity", root, session_id, within_min=0),
+                ReadBudget(),
+            )
+            roles = [turn.role for turn in session.turns]
+            self.assertIn("user", roles)
+            self.assertIn("assistant", roles)
+            # Tail of history prompts is kept (bounded to 64) with truncation warn.
+            self.assertIn("W_TRUNCATED", session.warnings)
+            self.assertTrue(any("prompt-1199" in turn.content for turn in session.turns))
 
 
 class GrokAdapterTests(unittest.TestCase):
