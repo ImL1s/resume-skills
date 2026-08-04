@@ -1,0 +1,28 @@
+{
+  "checkpoint_id": "22222222-2222-4222-8222-222222222222",
+  "schema_version": 1,
+  "prompt_index_at_compaction": 1,
+  "created_at": 3,
+  "compacted_history": [
+    {
+      "type": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "C1 user"
+        }
+      ]
+    },
+    {
+      "type": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "C1 asst"
+        }
+      ]
+    }
+  ],
+  "original_user_info": {},
+  "reread_file_paths": []
+}

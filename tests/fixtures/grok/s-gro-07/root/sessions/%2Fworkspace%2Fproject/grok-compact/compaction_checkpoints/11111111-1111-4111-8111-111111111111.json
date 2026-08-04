@@ -1,0 +1,111 @@
+{
+  "checkpoint_id": "11111111-1111-4111-8111-111111111111",
+  "schema_version": 1,
+  "prompt_index_at_compaction": 2,
+  "created_at": 1767225611,
+  "compacted_history": [
+    {
+      "type": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Compacted public user"
+        }
+      ],
+      "synthetic_reason": null
+    },
+    {
+      "type": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Compacted public assistant"
+        }
+      ]
+    },
+    {
+      "type": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE compaction metadata must omit"
+        }
+      ],
+      "synthetic_reason": "compaction_meta"
+    },
+    {
+      "type": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE compacted control summary must omit"
+        }
+      ],
+      "synthetic_reason": "compaction_meta"
+    },
+    {
+      "type": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE project instructions must omit"
+        }
+      ],
+      "synthetic_reason": "project_instructions"
+    },
+    {
+      "type": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE system reminder must omit"
+        }
+      ],
+      "synthetic_reason": "system_reminder"
+    },
+    {
+      "type": "system",
+      "content": "PRIVATE system must omit"
+    },
+    {
+      "type": "developer",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE developer must omit"
+        }
+      ]
+    },
+    {
+      "type": "reasoning",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE reasoning must omit"
+        }
+      ]
+    },
+    {
+      "type": "tool",
+      "content": [
+        {
+          "type": "text",
+          "text": "PRIVATE tool must omit"
+        }
+      ]
+    },
+    {
+      "type": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Compacted structured assistant"
+        }
+      ]
+    }
+  ],
+  "original_user_info": {
+    "note": "synthetic only"
+  },
+  "reread_file_paths": []
+}

@@ -161,7 +161,13 @@ surfaced. Qualified **compaction v1** (`compaction_checkpoint` + session-local
 `compaction_checkpoints/<file>` sidecar, `schema_version: 1`) replaces the active public
 projection with allowlisted user/assistant history from `compacted_history`, then continues
 reducing later `updates.jsonl` records (#238). System/developer/reasoning/tool sidecar roles
-are omitted. Missing, escaping, mismatched, or wrong-version sidecars fail closed.
+are omitted, including the real store's string-form private system entry. Entries with a
+non-null `synthetic_reason`, including `compaction_meta`,
+`project_instructions`, and `system_reminder`, are treated as synthetic control metadata:
+their shape is validated but neither the reason nor their content is rendered. Only text
+blocks from user/assistant entries with an absent or null reason enter the public projection;
+known binary blocks are omitted. Missing, escaping, mismatched, or wrong-version sidecars
+fail closed.
 **`rewind_marker` remains unsupported** (fail closed).
 
 ### Qwen Code
