@@ -324,6 +324,7 @@ class AntigravityAdapter:
                     lines.append((stamp, text))
                     if len(lines) > 64:
                         entry["user_lines"] = lines[-64:]
+                        entry["truncated"] = True
         except DiagnosticError as error:
             # Busy/unsafe history is optional enrichment; overflow must fail closed
             # so empty-transcript recovery never silently drops every user prompt.
@@ -524,11 +525,19 @@ class AntigravityAdapter:
             candidates.append((direct, None))
         output: list[SessionSummary] = []
         scan_mode = entries is None and not query.ref
+        # Load once and reuse in empty-transcript fallback — a second scan would
+        # double-charge scanned_records and skip valid mid-size history files.
         history_hints = self._load_history_hints(root, budget)
         for path, hint in candidates:
             try:
                 summary, _, warnings = self._read_transcript(
-                    path, root, query, budget, include_turns=False, hint=hint
+                    path,
+                    root,
+                    query,
+                    budget,
+                    include_turns=False,
+                    hint=hint,
+                    history_hints=history_hints,
                 )
             except DiagnosticError as error:
                 # Live AGY transcripts may use a different schema; skip only when
@@ -617,6 +626,7 @@ class AntigravityAdapter:
             budget,
             include_turns=True,
             hint=hint,
+            history_hints=None,
         )
         if summary.session_id != ref.session_id:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
@@ -633,6 +643,7 @@ class AntigravityAdapter:
         *,
         include_turns: bool,
         hint: Mapping[str, Any] | None,
+        history_hints: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> tuple[SessionSummary, list[Turn], list[str]]:
         # Stream-reduce via stable_scan_lines; do not retain every outer record (#15).
         # List path (include_turns=False) stops after session header and uses mtime.
@@ -653,6 +664,7 @@ class AntigravityAdapter:
                 include_turns=include_turns,
                 hint=hint,
                 prior_warnings=warnings,
+                history_hints=history_hints,
             )
         path_id = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path))))
         path_id = _session_id(path_id)
@@ -673,6 +685,7 @@ class AntigravityAdapter:
                 include_turns=include_turns,
                 hint=hint,
                 prior_warnings=warnings,
+                history_hints=history_hints,
             )
         header: Mapping[str, Any] | None = None
         turns: list[Turn] = []
@@ -857,6 +870,7 @@ class AntigravityAdapter:
                 include_turns=include_turns,
                 hint=hint,
                 prior_warnings=warnings,
+                history_hints=history_hints,
             )
 
         header_id = path_id
@@ -937,6 +951,7 @@ class AntigravityAdapter:
         include_turns: bool,
         hint: Mapping[str, Any] | None,
         prior_warnings: list[str],
+        history_hints: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> tuple[SessionSummary, list[Turn], list[str]]:
         """Recover session from history.jsonl + brain/*/messages when transcript is empty."""
         warnings = list(prior_warnings)
@@ -944,7 +959,13 @@ class AntigravityAdapter:
         brain = self._brain(root)
         messages_dir = self._messages_dir(brain, session_id)
         has_messages = self._session_has_messages(brain, session_id, root)
-        history = self._load_history_hints(root, budget).get(session_id, {})
+        # Prefer caller-supplied hints (list already scanned history once).
+        if history_hints is not None:
+            history = dict(history_hints.get(session_id) or {})
+        else:
+            history = dict(self._load_history_hints(root, budget).get(session_id) or {})
+        if history.pop("truncated", None):
+            warnings.append("W_TRUNCATED")
         if not has_messages and not history:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
 

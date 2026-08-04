@@ -826,6 +826,57 @@ class AntigravityAdapterTests(unittest.TestCase):
                 adapter.list(query("antigravity", root, None, within_min=0), ReadBudget())
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
+    def test_cli_history_midsize_reuses_hints_without_double_charge(self) -> None:
+        """#249: list must not re-scan history (double budget) for empty transcripts."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session_id = "conv-mid"
+            brain = root / "brain" / session_id / ".system_generated"
+            (brain / "logs").mkdir(parents=True)
+            (brain / "messages").mkdir(parents=True)
+            (brain / "logs" / "transcript.jsonl").write_bytes(b"")
+            (brain / "messages" / "a1.json").write_text(
+                json.dumps(
+                    {
+                        "id": "a1",
+                        "content": "assistant after many prompts",
+                        "timestamp": "2026-08-04T16:00:00Z",
+                        "hideFromUser": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            # Within the 2_000 scanned_records ceiling, but > half so a second
+            # full scan against the same ReadBudget would raise E_LIMIT_EXCEEDED.
+            count = 1_200
+            lines = [
+                json.dumps(
+                    {
+                        "display": f"prompt-{index}",
+                        "timestamp": 1_785_856_851_015 + index,
+                        "workspace": CWD,
+                        "conversationId": session_id,
+                    }
+                )
+                for index in range(count)
+            ]
+            (root / "history.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            adapter = AntigravityAdapter(root=str(root))
+            list_q = query("antigravity", root, None, within_min=0)
+            summaries = adapter.list(list_q, ReadBudget())
+            self.assertEqual([item.session_id for item in summaries], [session_id])
+            session = adapter.show(
+                resolve(summaries, session_id),
+                query("antigravity", root, session_id, within_min=0),
+                ReadBudget(),
+            )
+            roles = [turn.role for turn in session.turns]
+            self.assertIn("user", roles)
+            self.assertIn("assistant", roles)
+            # Tail of history prompts is kept (bounded to 64) with truncation warn.
+            self.assertIn("W_TRUNCATED", session.warnings)
+            self.assertTrue(any("prompt-1199" in turn.content for turn in session.turns))
+
 
 class GrokAdapterTests(unittest.TestCase):
     def test_exact_show_ignores_large_nonpublic_raw_output_array(self) -> None:
