@@ -594,15 +594,14 @@ class GrokAdapter:
                 raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
             kind = kind.casefold()
             public_update = {key: item for key, item in update.items() if key != "rawOutput"}
-            if _contains_encrypted(public_update):
-                recognized += 1
-                continue
             if kind in _ESSENTIAL_UNSUPPORTED:
                 raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
-            if kind in _FILTERED_UPDATES:
-                recognized += 1
-                continue
+            # Timeline controls must not be soft-skipped when encrypted-looking keys appear
+            # on the control object (#238 Codex P1): fail closed instead of keeping
+            # superseded pre-checkpoint turns.
             if kind == "compaction_checkpoint":
+                if _contains_encrypted(public_update):
+                    raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
                 # list/metadata path: recognize without sidecar load (#238).
                 if not include_turns:
                     recognized += 1
@@ -617,6 +616,12 @@ class GrokAdapter:
                     warnings=warnings,
                     event_timestamp=timestamp,
                 )
+                recognized += 1
+                continue
+            if _contains_encrypted(public_update):
+                recognized += 1
+                continue
+            if kind in _FILTERED_UPDATES:
                 recognized += 1
                 continue
             if kind in {"user_message_chunk", "agent_message_chunk"}:
@@ -737,7 +742,10 @@ class GrokAdapter:
         if _contains_encrypted(sidecar):
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=FORMAT_ID)
         # Replace superseded pre-checkpoint projection; re-append public entries only.
+        # Reset turn charges so rebuilt projection does not double-count superseded
+        # history against normalized_turns (#238 Codex P1).
         turns.clear()
+        budget.turns = 0
         for item in history:
             if not isinstance(item, Mapping):
                 raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)

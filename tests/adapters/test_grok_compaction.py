@@ -228,6 +228,39 @@ class GrokCompactionTests(unittest.TestCase):
             items = adapter.list(query(root), ReadBudget())
             self.assertEqual([item.session_id for item in items], ["grok-compact"])
 
+    def test_encrypted_checkpoint_control_fail_closed(self) -> None:
+        """Checkpoint controls with encrypted-looking keys must not soft-skip (#238 P1)."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copytree(fixture_root("s-gro-07"), root, dirs_exist_ok=True)
+            updates = root / "sessions" / "%2Fworkspace%2Fproject" / "grok-compact" / "updates.jsonl"
+            lines = []
+            for line in updates.read_text(encoding="utf-8").splitlines():
+                obj = json.loads(line)
+                update = obj["params"]["update"]
+                if update.get("sessionUpdate") == "compaction_checkpoint":
+                    update["signature"] = "synthetic-not-a-secret"
+                lines.append(json.dumps(obj, separators=(",", ":")))
+            updates.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            adapter = GrokAdapter(root=str(root))
+            items = adapter.list(query(root), ReadBudget())
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), ReadBudget())
+            self.assertEqual(caught.exception.code, "E_UNSUPPORTED_FORMAT")
+
+    def test_checkpoint_resets_turn_budget_charges(self) -> None:
+        """Surviving projection is bounded; superseded pre-checkpoint turns are not double-counted."""
+        from portable_resume.bounds import Bounds
+
+        root = fixture_root("s-gro-07")
+        adapter = GrokAdapter(root=str(root))
+        items = adapter.list(query(root), ReadBudget())
+        # Ceiling tight enough that double-counting pre+post would fail, but true
+        # final projection (4 public turns after coalesce) still fits.
+        tight = ReadBudget(limits=Bounds(normalized_turns=4))
+        session = adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), tight)
+        self.assertEqual(len([t for t in session.turns if t.tool_name is None]), 4)
+
 
 if __name__ == "__main__":
     unittest.main()
