@@ -1,16 +1,16 @@
 {
-  "checkpoint_id": "cp-b",
+  "checkpoint_id": "22222222-2222-4222-8222-222222222222",
   "schema_version": 1,
-  "prompt_index_at_compaction": 2,
-  "created_at": 6,
+  "prompt_index_at_compaction": 1,
+  "created_at": 3,
   "compacted_history": [
     {
       "role": "user",
-      "content": "C2 user"
+      "content": "C1 user"
     },
     {
       "role": "assistant",
-      "content": "C2 asst"
+      "content": "C1 asst"
     }
   ],
   "original_user_info": {},

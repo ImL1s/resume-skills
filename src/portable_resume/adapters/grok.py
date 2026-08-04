@@ -59,6 +59,7 @@ _CHECKPOINT_EVENT_KEYS = frozenset(
         "schema_version",
         "prompt_index_at_compaction",
         "checkpoint_file",
+        "created_at",
     }
 )
 _CHECKPOINT_SIDECAR_KEYS = frozenset(
@@ -699,20 +700,30 @@ class GrokAdapter:
         prompt_index = update.get("prompt_index_at_compaction")
         if type(prompt_index) is not int or prompt_index < 0:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
+        created_at = update.get("created_at")
+        if not isinstance(created_at, str) or _timestamp(created_at) is None:
+            raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
         checkpoint_file = update.get("checkpoint_file")
         if not isinstance(checkpoint_file, str) or not checkpoint_file:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
-        # Basename only — reject absolute paths, traversal, and nested segments.
-        if checkpoint_file in {".", ".."} or "/" in checkpoint_file or "\\" in checkpoint_file:
+        # Grok's real store uses ``compaction_checkpoints/<name>``. Retain the
+        # legacy basename spelling, but accept no other directory shape.
+        if os.path.isabs(checkpoint_file) or "\\" in checkpoint_file:
             raise DiagnosticError.unsafe_path()
-        if os.path.basename(checkpoint_file) != checkpoint_file:
+        parts = checkpoint_file.split("/")
+        if len(parts) == 1:
+            filename = parts[0]
+        elif len(parts) == 2 and parts[0] == _CHECKPOINT_DIRNAME:
+            filename = parts[1]
+        else:
+            raise DiagnosticError.unsafe_path()
+        if any(part in {"", ".", ".."} for part in parts):
             raise DiagnosticError.unsafe_path()
         # Allow `.json` suffix while reusing identifier charset on the stem.
-        stem, ext = os.path.splitext(checkpoint_file)
+        stem, ext = os.path.splitext(filename)
         if ext not in {"", ".json"} or not stem or _ID.fullmatch(stem) is None:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
-        checkpoint_dir = os.path.join(session_dir, _CHECKPOINT_DIRNAME)
-        sidecar_path = os.path.join(checkpoint_dir, checkpoint_file)
+        sidecar_path = os.path.join(session_dir, _CHECKPOINT_DIRNAME, filename)
         if not is_within(sidecar_path, root) or not is_within(sidecar_path, session_dir):
             raise DiagnosticError.unsafe_path()
         if not os.path.isfile(sidecar_path) or os.path.islink(sidecar_path):

@@ -33,6 +33,18 @@ def resolve(items, session_id: str):
     return ResolvedRef.from_summary(next(item for item in items if item.session_id == session_id))
 
 
+def mutate_checkpoint_event(root: Path, mutation) -> None:
+    updates = root / "sessions" / "%2Fworkspace%2Fproject" / "grok-compact" / "updates.jsonl"
+    lines = []
+    for line in updates.read_text(encoding="utf-8").splitlines():
+        obj = json.loads(line)
+        update = obj["params"]["update"]
+        if update.get("sessionUpdate") == "compaction_checkpoint":
+            mutation(update)
+        lines.append(json.dumps(obj, separators=(",", ":")))
+    updates.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 class GrokCompactionTests(unittest.TestCase):
     def test_show_success_projects_compacted_and_post_public_once(self) -> None:
         root = fixture_root("s-gro-07")
@@ -57,6 +69,21 @@ class GrokCompactionTests(unittest.TestCase):
         self.assertNotIn("Pre-compact user (raw stream)", joined)
         self.assertNotIn("Pre-compact assistant (raw stream)", joined)
         self.assertEqual(tree_snapshot(root), before)
+
+    def test_legacy_basename_checkpoint_file_still_projects(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copytree(fixture_root("s-gro-07"), root, dirs_exist_ok=True)
+            mutate_checkpoint_event(
+                root,
+                lambda update: update.__setitem__(
+                    "checkpoint_file", "11111111-1111-4111-8111-111111111111.json"
+                ),
+            )
+            adapter = GrokAdapter(root=str(root))
+            items = adapter.list(query(root), ReadBudget())
+            session = adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), ReadBudget())
+            self.assertEqual(session.turns[0].content, "Compacted public user")
 
     def test_show_latest_via_reader_cli(self) -> None:
         import io
@@ -137,7 +164,7 @@ class GrokCompactionTests(unittest.TestCase):
                 / "%2Fworkspace%2Fproject"
                 / "grok-compact"
                 / "compaction_checkpoints"
-                / "cp-001.json"
+                / "11111111-1111-4111-8111-111111111111.json"
             )
             sidecar.unlink()
             adapter = GrokAdapter(root=str(root))
@@ -146,25 +173,80 @@ class GrokCompactionTests(unittest.TestCase):
                 adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), ReadBudget())
             self.assertIn(caught.exception.code, {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT", "E_UNSAFE_PATH"})
 
-    def test_path_escape_checkpoint_file_fail_closed(self) -> None:
+    def test_adversarial_checkpoint_paths_fail_closed(self) -> None:
+        hostile_paths = (
+            "/tmp/11111111-1111-4111-8111-111111111111.json",
+            "compaction_checkpoints\\11111111-1111-4111-8111-111111111111.json",
+            "../summary.json",
+            "./11111111-1111-4111-8111-111111111111.json",
+            "compaction_checkpoints/../summary.json",
+            "compaction_checkpoints/./11111111-1111-4111-8111-111111111111.json",
+            "compaction_checkpoints/nested/11111111-1111-4111-8111-111111111111.json",
+            "other/11111111-1111-4111-8111-111111111111.json",
+        )
+        for checkpoint_file in hostile_paths:
+            with self.subTest(checkpoint_file=checkpoint_file), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                shutil.copytree(fixture_root("s-gro-07"), root, dirs_exist_ok=True)
+                mutate_checkpoint_event(
+                    root,
+                    lambda update, value=checkpoint_file: update.__setitem__("checkpoint_file", value),
+                )
+                adapter = GrokAdapter(root=str(root))
+                items = adapter.list(query(root), ReadBudget())
+                with self.assertRaises(DiagnosticError) as caught:
+                    adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), ReadBudget())
+                self.assertIn(caught.exception.code, {"E_UNSAFE_PATH", "E_CORRUPT_RECORD"})
+
+    def test_unknown_checkpoint_event_key_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             shutil.copytree(fixture_root("s-gro-07"), root, dirs_exist_ok=True)
-            updates = root / "sessions" / "%2Fworkspace%2Fproject" / "grok-compact" / "updates.jsonl"
-            lines = updates.read_text(encoding="utf-8").splitlines()
-            out = []
-            for line in lines:
-                obj = json.loads(line)
-                update = obj["params"]["update"]
-                if update.get("sessionUpdate") == "compaction_checkpoint":
-                    update["checkpoint_file"] = "../summary.json"
-                out.append(json.dumps(obj, separators=(",", ":")))
-            updates.write_text("\n".join(out) + "\n", encoding="utf-8")
+            mutate_checkpoint_event(root, lambda update: update.__setitem__("unknown_control", True))
             adapter = GrokAdapter(root=str(root))
             items = adapter.list(query(root), ReadBudget())
             with self.assertRaises(DiagnosticError) as caught:
                 adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), ReadBudget())
-            self.assertIn(caught.exception.code, {"E_UNSAFE_PATH", "E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"})
+            self.assertEqual(caught.exception.code, "E_UNSUPPORTED_FORMAT")
+
+    def test_checkpoint_created_at_requires_qualified_timestamp(self) -> None:
+        for created_at in (None, 1767225611, True, "not-a-timestamp", "2026-01-01T00:00:00"):
+            with self.subTest(created_at=created_at), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                shutil.copytree(fixture_root("s-gro-07"), root, dirs_exist_ok=True)
+                mutate_checkpoint_event(
+                    root,
+                    lambda update, value=created_at: update.__setitem__("created_at", value),
+                )
+                adapter = GrokAdapter(root=str(root))
+                items = adapter.list(query(root), ReadBudget())
+                with self.assertRaises(DiagnosticError) as caught:
+                    adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), ReadBudget())
+                self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
+    def test_symlinked_checkpoint_file_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copytree(fixture_root("s-gro-07"), root, dirs_exist_ok=True)
+            sidecar = (
+                root
+                / "sessions"
+                / "%2Fworkspace%2Fproject"
+                / "grok-compact"
+                / "compaction_checkpoints"
+                / "11111111-1111-4111-8111-111111111111.json"
+            )
+            target = sidecar.with_name("target.json")
+            sidecar.rename(target)
+            try:
+                sidecar.symlink_to(target.name)
+            except (NotImplementedError, OSError):
+                self.skipTest("symlinks unavailable")
+            adapter = GrokAdapter(root=str(root))
+            items = adapter.list(query(root), ReadBudget())
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), ReadBudget())
+            self.assertIn(caught.exception.code, {"E_UNSAFE_PATH", "E_CORRUPT_RECORD"})
 
     def test_schema_mismatch_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -176,7 +258,7 @@ class GrokCompactionTests(unittest.TestCase):
                 / "%2Fworkspace%2Fproject"
                 / "grok-compact"
                 / "compaction_checkpoints"
-                / "cp-001.json"
+                / "11111111-1111-4111-8111-111111111111.json"
             )
             data = json.loads(sidecar.read_text(encoding="utf-8"))
             data["schema_version"] = 99
@@ -197,10 +279,31 @@ class GrokCompactionTests(unittest.TestCase):
                 / "%2Fworkspace%2Fproject"
                 / "grok-compact"
                 / "compaction_checkpoints"
-                / "cp-001.json"
+                / "11111111-1111-4111-8111-111111111111.json"
             )
             data = json.loads(sidecar.read_text(encoding="utf-8"))
             data["checkpoint_id"] = "other-id"
+            sidecar.write_text(json.dumps(data), encoding="utf-8")
+            adapter = GrokAdapter(root=str(root))
+            items = adapter.list(query(root), ReadBudget())
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.show(resolve(items, "grok-compact"), query(root, "grok-compact"), ReadBudget())
+            self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
+    def test_checkpoint_prompt_index_mismatch_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copytree(fixture_root("s-gro-07"), root, dirs_exist_ok=True)
+            sidecar = (
+                root
+                / "sessions"
+                / "%2Fworkspace%2Fproject"
+                / "grok-compact"
+                / "compaction_checkpoints"
+                / "11111111-1111-4111-8111-111111111111.json"
+            )
+            data = json.loads(sidecar.read_text(encoding="utf-8"))
+            data["prompt_index_at_compaction"] += 1
             sidecar.write_text(json.dumps(data), encoding="utf-8")
             adapter = GrokAdapter(root=str(root))
             items = adapter.list(query(root), ReadBudget())
@@ -221,7 +324,7 @@ class GrokCompactionTests(unittest.TestCase):
                 / "%2Fworkspace%2Fproject"
                 / "grok-compact"
                 / "compaction_checkpoints"
-                / "cp-001.json"
+                / "11111111-1111-4111-8111-111111111111.json"
             )
             sidecar.unlink()
             adapter = GrokAdapter(root=str(root))
@@ -328,6 +431,7 @@ class GrokCompactionTests(unittest.TestCase):
                                 "schema_version": 1,
                                 "prompt_index_at_compaction": 3,
                                 "checkpoint_file": "cp-long.json",
+                                "created_at": "2026-01-01T00:00:10Z",
                             },
                         },
                     },
