@@ -94,12 +94,17 @@ class MultiRootTransactionTests(unittest.TestCase):
         original = transaction_module.execute_install
         calls = 0
 
-        def fail_second(plan, *, force_with_backup=False, lock=None):
+        def fail_second(plan, *, force_with_backup=False, lock=None, locked_root=None):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise OSError("injected")
-            return original(plan, force_with_backup=force_with_backup, lock=lock)
+            return original(
+                plan,
+                force_with_backup=force_with_backup,
+                lock=lock,
+                locked_root=locked_root,
+            )
 
         with mock.patch.object(transaction_module, "execute_install", side_effect=fail_second):
             with self.assertRaises(OSError):
@@ -132,12 +137,17 @@ class MultiRootTransactionTests(unittest.TestCase):
         original = transaction_module.execute_install
         calls = {"n": 0}
 
-        def slow_first(plan, *, force_with_backup=False, lock=None):
+        def slow_first(plan, *, force_with_backup=False, lock=None, locked_root=None):
             calls["n"] += 1
             if calls["n"] == 1:
                 ready.set()
                 hold.wait(timeout=5.0)
-            return original(plan, force_with_backup=force_with_backup, lock=lock)
+            return original(
+                plan,
+                force_with_backup=force_with_backup,
+                lock=lock,
+                locked_root=locked_root,
+            )
 
         def worker() -> None:
             with mock.patch.object(transaction_module, "execute_install", side_effect=slow_first):

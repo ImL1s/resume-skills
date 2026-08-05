@@ -364,12 +364,17 @@ class InstallerTests(unittest.TestCase):
         original_execute = transaction_module.execute_install
         calls = 0
 
-        def fail_later_root(plan, *, force_with_backup=False, lock=None):
+        def fail_later_root(plan, *, force_with_backup=False, lock=None, locked_root=None):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise OSError("injected later-root failure")
-            return original_execute(plan, force_with_backup=force_with_backup, lock=lock)
+            return original_execute(
+                plan,
+                force_with_backup=force_with_backup,
+                lock=lock,
+                locked_root=locked_root,
+            )
 
         stdout = StringIO()
         stderr = StringIO()
@@ -411,12 +416,17 @@ class InstallerTests(unittest.TestCase):
         original_execute = transaction_module.execute_install
         calls = 0
 
-        def fail_later_root(plan, *, force_with_backup=False, lock=None):
+        def fail_later_root(plan, *, force_with_backup=False, lock=None, locked_root=None):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise OSError("injected later-root failure")
-            return original_execute(plan, force_with_backup=force_with_backup, lock=lock)
+            return original_execute(
+                plan,
+                force_with_backup=force_with_backup,
+                lock=lock,
+                locked_root=locked_root,
+            )
 
         with (
             mock.patch.object(install_cli_module, "_hosts", return_value=["claude", "grok"]),
@@ -450,12 +460,17 @@ class InstallerTests(unittest.TestCase):
         original_execute = transaction_module.execute_install
         calls = 0
 
-        def fail_later_root(plan, *, force_with_backup=False, lock=None):
+        def fail_later_root(plan, *, force_with_backup=False, lock=None, locked_root=None):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise OSError("injected later-root failure")
-            return original_execute(plan, force_with_backup=force_with_backup, lock=lock)
+            return original_execute(
+                plan,
+                force_with_backup=force_with_backup,
+                lock=lock,
+                locked_root=locked_root,
+            )
 
         stderr = StringIO()
         with (
