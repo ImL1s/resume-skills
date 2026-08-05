@@ -4019,6 +4019,9 @@ def restore_install_checkpoint(
                 finally:
                     if owns_parent:
                         os.close(parent_fd)
+            # Pathname branch only when no pin was available (Windows residual / legacy).
+            if root_fd is not None:
+                continue
             if not os.path.lexists(dest):
                 continue
             if os.path.islink(dest) or not os.path.isfile(dest):
@@ -4028,11 +4031,36 @@ def restore_install_checkpoint(
             os.remove(dest)
             removed.append(rel)
     finally:
+        # Pathname cleanup only when ``root`` still names the same inode as the pin
+        # (#254: never rmdir/walk a replacement tree after rename).
+        path_cleanup_ok = root_fd is None
+        if root_fd is not None:
+            try:
+                path_probe: int | None = None
+                try:
+                    path_probe = _open_directory_from_slash(
+                        root, allow_leaf_symlink=False
+                    )
+                    path_cleanup_ok = _fd_identity(path_probe) == _fd_identity(root_fd)
+                finally:
+                    if path_probe is not None:
+                        try:
+                            os.close(path_probe)
+                        except OSError:
+                            pass
+            except DiagnosticError:
+                path_cleanup_ok = False
         if pin_owned and root_fd is not None:
-            os.close(root_fd)
-    if backup_root:
-        _delete_authorized_support_subtree(root, backup_root, role="backup")
-    _cleanup_empty_dirs(root, removed_paths=removed)
+            try:
+                os.close(root_fd)
+            except OSError:
+                pass
+            root_fd = None
+    if path_cleanup_ok:
+        if backup_root:
+            _delete_authorized_support_subtree(root, backup_root, role="backup")
+        _cleanup_empty_dirs(root, removed_paths=removed)
+    # else: files already restored via pin; skip free-pathname backup/empty cleanup.
 
 
 def install_multi_targets(

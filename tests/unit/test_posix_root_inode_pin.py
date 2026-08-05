@@ -228,24 +228,28 @@ class PosixRootInodePinTests(unittest.TestCase):
             original = transaction_module.execute_install
             calls = {"n": 0}
             phys_a_path = str(phys_a.resolve())
-            replacement = base / "replacement_a"
 
             def fail_second(plan, *, force_with_backup=False, lock=None, locked_root=None):
                 calls["n"] += 1
-                result = original(
+                if calls["n"] == 2:
+                    # First target fully completed (in ``completed``); then rename its
+                    # physical root before failing the second target so compensation
+                    # runs under the still-held pin (#254).
+                    if os.path.isdir(phys_a_path) and not os.path.islink(phys_a_path):
+                        os.rename(phys_a_path, str(base / "phys_a_moved"))
+                        os.mkdir(phys_a_path)
+                        (Path(phys_a_path) / "replacement-sentinel.txt").write_bytes(
+                            b"keep"
+                        )
+                        # Pre-seed empty skill dir to detect wrongful path cleanup.
+                        (Path(phys_a_path) / "resume-claude").mkdir()
+                    raise OSError("injected second-target failure")
+                return original(
                     plan,
                     force_with_backup=force_with_backup,
                     lock=lock,
                     locked_root=locked_root,
                 )
-                if calls["n"] == 1:
-                    # After first success: rename A and put empty real dir at old path.
-                    os.rename(phys_a_path, str(base / "phys_a_moved"))
-                    os.mkdir(phys_a_path)
-                    (Path(phys_a_path) / "replacement-sentinel.txt").write_bytes(b"keep")
-                    replacement.mkdir(exist_ok=True)
-                    raise OSError("injected second-target failure")
-                return result
 
             with mock.patch.object(
                 transaction_module, "execute_install", side_effect=fail_second
@@ -263,12 +267,20 @@ class PosixRootInodePinTests(unittest.TestCase):
                 (repl_path / "replacement-sentinel.txt").read_bytes(), b"keep"
             )
             self.assertIsNone(load_manifest(str(repl_path)))
-            # Original inode either restored or cleanly compensated under moved path.
+            # Pre-seeded empty dir must survive (pathname cleanup must not touch it).
+            self.assertTrue((repl_path / "resume-claude").is_dir())
+            self.assertEqual(list((repl_path / "resume-claude").iterdir()), [])
+            # Original inode compensated via pin (install rolled back).
+            # Empty ancestor dirs may remain when pathname cleanup is skipped after
+            # rename (#254); payload + ownership must be gone.
             moved = base / "phys_a_moved"
-            if moved.exists():
-                # Compensation may remove ownership from original inode.
-                # Replacement must remain untouched regardless.
-                pass
+            self.assertTrue(moved.is_dir())
+            self.assertIsNone(load_manifest(str(moved)))
+            self.assertFalse((moved / "resume-claude" / "SKILL.md").exists())
+            self.assertFalse(
+                any(moved.rglob("SKILL.md")),
+                msg="compensated pin must not retain skill payloads",
+            )
 
     def test_initial_leaf_symlink_happy_path(self) -> None:
         """#245–#253: initial leaf symlink still installs into the physical tree."""
@@ -284,9 +296,11 @@ class PosixRootInodePinTests(unittest.TestCase):
             )
             self.assertTrue(all(r["ok"] for r in results))
             self.assertIsNotNone(load_manifest(str(physical)))
-            self.assertTrue((physical / "resume-claude").exists() or True)
+            self.assertTrue((physical / "resume-claude").is_dir())
+            self.assertTrue((physical / "resume-claude" / "SKILL.md").is_file())
             # Shared physical root — single ownership tree.
-            self.assertFalse(leaf.is_dir() and not leaf.is_symlink())
+            self.assertTrue(leaf.is_symlink())
+            self.assertEqual(os.path.realpath(leaf), os.path.realpath(physical))
 
 
 if __name__ == "__main__":
