@@ -2192,12 +2192,19 @@ def execute_install(
     *,
     force_with_backup: bool = False,
     lock: RootLock | None = None,
+    locked_root: str | None = None,
 ) -> dict[str, Any]:
     """Install one claim into ``plan.root``.
 
     When ``lock`` is provided (multi-root orchestration, #23), the caller must
     already hold that exclusive ``RootLock`` for ``plan.root``; this path will
     not re-acquire (locks are not re-entrant).
+
+    ``locked_root`` is the frozen physical mutation root for external-lock callers
+    (multi-target must pass ``binding.physical_key``). When omitted with an
+    external lock, ``plan.root`` is used only if it still matches the held lock's
+    physical tree — never fall back to a leaf-symlink spelling on ``lock.root``
+    alone for the mutation body (#253 residual).
     """
     root = plan.root
     if plan.dry_run:
@@ -2210,17 +2217,26 @@ def execute_install(
 
     require_mutating_install_platform()
     if lock is not None:
-        _require_held_root_lock(lock, root)
+        # Prefer explicit frozen physical root; do not default to lock.root which
+        # may still be a POSIX leaf-symlink spelling after RootLock enter.
+        mutation_root = locked_root if locked_root is not None else plan.root
+        _require_held_root_lock(lock, mutation_root)
         return _execute_install_under_lock(
             plan,
             force_with_backup=force_with_backup,
-            locked_root=lock.root,
+            locked_root=mutation_root,
         )
     with RootLock(root) as held:
+        # Pin mutations to the realpath of the held root so leaf symlink spellings
+        # are not re-followed after identity checks.
+        try:
+            held_physical = os.path.realpath(held.root)
+        except OSError as error:
+            raise DiagnosticError("E_INSTALL_CONFLICT") from error
         return _execute_install_under_lock(
             plan,
             force_with_backup=force_with_backup,
-            locked_root=held.root,
+            locked_root=held_physical,
         )
 
 
@@ -2241,11 +2257,18 @@ def _execute_install_under_lock(
 
     ``locked_root`` is the physical tree bound by that lock (may differ from the
     caller spelling when the leaf skill root is a junction/symlink — #245).
-    All mutations use ``locked_root``, never a repointable junction spelling.
+    All mutations use a once-resolved physical path, never a repointable leaf
+    symlink/junction spelling (#253).
     """
-    if os.path.realpath(locked_root) != os.path.realpath(plan.root):
+    try:
+        plan_physical = os.path.realpath(plan.root)
+        mutation_physical = os.path.realpath(locked_root)
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    if mutation_physical != plan_physical:
         raise DiagnosticError("E_INSTALL_CONFLICT")
-    root = locked_root
+    # Freeze the resolved path string so later leaf retargets cannot redirect opens.
+    root = mutation_physical
     require_no_pending_journal(root)
     # Preflight token is advisory for payload bytes, but ownership identity
     # must still match: if the locked manifest digest diverged, fail busy so
@@ -3369,6 +3392,7 @@ def install_multi_targets(
                 live_plan,
                 force_with_backup=force_with_backup,
                 lock=lock,
+                locked_root=binding.physical_key,
             )
             results.append(result)
             completed.append((binding.host, checkpoint, result))

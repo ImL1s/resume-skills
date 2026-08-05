@@ -124,6 +124,141 @@ class MultiTargetPostLockRetargetTests(unittest.TestCase):
             self.assertIsNone(load_manifest(str(phys_a)))
             self.assertIsNone(load_manifest(str(phys_b)))
 
+    def test_late_retarget_after_claim_check_does_not_mutate_wrong_tree(self) -> None:
+        """#253: retarget leaf only after locked replan/claim, during mutation classify.
+
+        Preflight ``plan_install`` may still classify the leaf spelling; that is
+        not the residual window. Only record/assert classify roots while
+        ``execute_install`` is on the stack (mutation body). Mutation roots must
+        be frozen physical paths so a late leaf retarget cannot redirect writes.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            phys_a = base / "phys_a"
+            phys_b = base / "phys_b"
+            phys_a.mkdir()
+            phys_b.mkdir()
+            # Marker so we can prove phys_b payload was not clobbered by a hijack.
+            sentinel = phys_b / "pre-existing.txt"
+            sentinel.write_bytes(b"keep")
+            leaf_a = base / "leaf_a"
+            leaf_b = base / "leaf_b"
+            leaf_a.symlink_to(phys_a, target_is_directory=True)
+            leaf_b.symlink_to(phys_b, target_is_directory=True)
+
+            original_classify = transaction_module._classify_dest
+            original_execute = transaction_module.execute_install
+            retargeted = {"done": False}
+            in_execute = {"active": False}
+            mutation_classify_roots: list[str] = []
+
+            def retarget_on_mutation_classify(*, root: str, **kwargs: object):
+                # Ignore preflight / locked replan classify noise (leaf spellings).
+                if in_execute["active"]:
+                    mutation_classify_roots.append(root)
+                    # Inject after identity/claim checks entered the mutation body.
+                    if not retargeted["done"]:
+                        if leaf_a.is_symlink() or leaf_a.exists():
+                            leaf_a.unlink()
+                        leaf_a.symlink_to(phys_b, target_is_directory=True)
+                        retargeted["done"] = True
+                return original_classify(root=root, **kwargs)
+
+            def wrap_execute(plan, *, force_with_backup=False, lock=None, locked_root=None):
+                in_execute["active"] = True
+                try:
+                    return original_execute(
+                        plan,
+                        force_with_backup=force_with_backup,
+                        lock=lock,
+                        locked_root=locked_root,
+                    )
+                finally:
+                    in_execute["active"] = False
+
+            with mock.patch.object(
+                transaction_module,
+                "_classify_dest",
+                side_effect=retarget_on_mutation_classify,
+            ), mock.patch.object(
+                transaction_module,
+                "execute_install",
+                side_effect=wrap_execute,
+            ):
+                results = install_multi_targets(
+                    [("claude", str(leaf_a)), ("grok", str(leaf_b))],
+                    scope="global",
+                )
+            self.assertTrue(retargeted["done"])
+            self.assertTrue(all(r["ok"] for r in results))
+            self.assertTrue(mutation_classify_roots)
+            phys_keys = {
+                os.path.realpath(str(phys_a)),
+                os.path.realpath(str(phys_b)),
+            }
+            for seen in mutation_classify_roots:
+                # Mutations never used the leaf spelling (would re-follow retarget).
+                self.assertNotEqual(seen, str(leaf_a))
+                self.assertFalse(os.path.islink(seen))
+                self.assertIn(os.path.realpath(seen), phys_keys)
+            # Correct trees installed; retarget destination payload not hijacked.
+            self.assertIsNotNone(load_manifest(str(phys_a)))
+            self.assertIsNotNone(load_manifest(str(phys_b)))
+            self.assertEqual(sentinel.read_bytes(), b"keep")
+
+    def test_execute_install_threads_frozen_locked_root_not_lock_root(self) -> None:
+        """Multi-target must pass locked_root=physical_key into execute_install."""
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            phys_a = base / "phys_a"
+            phys_b = base / "phys_b"
+            phys_a.mkdir()
+            phys_b.mkdir()
+            leaf_a = base / "leaf_a"
+            leaf_b = base / "leaf_b"
+            leaf_a.symlink_to(phys_a, target_is_directory=True)
+            leaf_b.symlink_to(phys_b, target_is_directory=True)
+
+            captured: list[dict[str, object]] = []
+            original = transaction_module.execute_install
+
+            def capture_execute(plan, *, force_with_backup=False, lock=None, locked_root=None):
+                captured.append(
+                    {
+                        "plan_root": plan.root,
+                        "lock_root": None if lock is None else lock.root,
+                        "locked_root": locked_root,
+                    }
+                )
+                return original(
+                    plan,
+                    force_with_backup=force_with_backup,
+                    lock=lock,
+                    locked_root=locked_root,
+                )
+
+            with mock.patch.object(
+                transaction_module,
+                "execute_install",
+                side_effect=capture_execute,
+            ):
+                install_multi_targets(
+                    [("claude", str(leaf_a)), ("grok", str(leaf_b))],
+                    scope="global",
+                )
+            self.assertEqual(len(captured), 2)
+            for item in captured:
+                self.assertIsNotNone(item["locked_root"])
+                # Frozen root is physical, not the leaf symlink spelling.
+                self.assertFalse(os.path.islink(str(item["locked_root"])))
+                self.assertEqual(
+                    os.path.realpath(str(item["locked_root"])),
+                    os.path.realpath(str(item["plan_root"])),
+                )
+                # Must not pass only lock.root as mutation root when leaf symlink.
+                if os.path.islink(str(item["lock_root"])):
+                    self.assertNotEqual(item["locked_root"], item["lock_root"])
+
 
 if __name__ == "__main__":
     unittest.main()
