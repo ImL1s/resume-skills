@@ -1,8 +1,10 @@
-# Project status (2026-08-04)
+# Project status (2026-08-05)
 
-## Current release: 0.4.1
+## Current release: 0.4.2 (candidate pin on main)
 
-Current `main` advances to `0.4.2.dev0` after publishing immutable `v0.4.1`.
+Release candidate package version is exact **`0.4.2`** for annotated tag `v0.4.2`
+(advances from published immutable `v0.4.1`). After publish, `main` must advance
+to `0.4.3.dev0`.
 It no longer reuses immutable published `v0.3.4` as the package base. Explicit build/release tooling includes Git
 state plus deterministic registry/source digests. One canonical pre-build pin is
 embedded byte-for-byte in wheel, sdist, all 18 direct-host ZIPs, and all seven

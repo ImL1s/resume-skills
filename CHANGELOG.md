@@ -2,12 +2,21 @@
 
 ## Unreleased
 
+## [0.4.2] — 2026-08-05
+
+- **Security (installer P1):** pin POSIX multi-target / RootLock mutations to the
+  locked skill-root **dirfd + (st_dev, st_ino)** so concurrent `rename` plus
+  symlink or real-directory replacement at the frozen path cannot receive
+  journal/manifest/payload/compensation writes without holding that tree’s lock
+  (#255, PR #256). Leaf junction/symlink retarget chain #245–#253 remains closed;
+  residual `recover_root` pathname reopen is follow-up only.
+- Multi-target lock binding freezes `physical_key` before exclusive locks;
+  replan/checkpoint/execute use that key (then the pin) rather than re-resolving
+  caller leaf spellings (#251–#253).
 - Installer verify/uninstall honesty after source-aware claims (#242 follow-up):
   recompute top-level `package_identity` when a claim is removed; parse
   `--sources` before shadow scan so expanded installs cannot skip new skill
   names; claimless generation-zero manifests no longer IndexError on verify.
-
-
 - Installer selected-source verification (#240): ownership claims now record a
   normalized explicit source set, and read-only verify/discovery reconstruct the
   manifest-authoritative plan instead of assuming every enabled source. Legacy

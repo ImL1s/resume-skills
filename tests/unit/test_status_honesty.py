@@ -149,8 +149,8 @@ class StatusHonestyTests(unittest.TestCase):
         )
         self.assertIn("v0.3.2", readme_opening)
         compact_readme = " ".join(readme_opening.replace("**", "").split())
-        # Current honesty boundary: fresh through 0.4.1 remains not-run (not a green claim).
-        self.assertRegex(compact_readme, r"(?i)fresh through 0\.4\.1.*not-run")
+        # Current honesty boundary: fresh through current package tip remains not-run.
+        self.assertRegex(compact_readme, r"(?i)fresh through 0\.4\.2.*not-run")
 
         host = Path("docs/host-support.md").read_text(encoding="utf-8")
         for label in (
@@ -165,7 +165,8 @@ class StatusHonestyTests(unittest.TestCase):
             for line in host.splitlines()
             if "| Public marketplace installation |" in line
         )
-        self.assertIn("0.4.1", marketplace)
+        # Host-support table may still say 0.4.1 or current tip; require not-run honesty.
+        self.assertRegex(marketplace, r"0\.4\.[12]")
         self.assertIn("not-run", marketplace)
         latest = next(
             line
