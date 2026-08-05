@@ -15,11 +15,16 @@ from pathlib import Path
 
 from portable_resume.diagnostics import DiagnosticError, ExitCode
 from portable_resume.install.catalog import resolve_skill_root
+from unittest import mock
+
+from portable_resume.install import transaction as transaction_module
 from portable_resume.install.transaction import (
     RootLock,
     _allow_windows_install_for_tests,
     _is_windows_install_allowed_for_tests,
     execute_install,
+    install_multi_targets,
+    load_manifest,
     plan_install,
     recover_root,
     require_mutating_install_platform,
@@ -507,6 +512,49 @@ class WindowsJunctionAttackStressTests(unittest.TestCase):
 
         # Physical target receives support state; that is intentional for shared skill roots.
         self.assertTrue((self.external_dir / ".portable-resume" / ".state").is_dir())
+
+    def test_multi_target_post_lock_junction_retarget_fails_closed(self) -> None:
+        """After locks are held, retarget leaf A→B must fail closed (no wrong mutation)."""
+        if _winapi is None:
+            self.skipTest("_winapi unavailable")
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            phys_a = base / "phys_a"
+            phys_b = base / "phys_b"
+            phys_a.mkdir()
+            phys_b.mkdir()
+            leaf_a = base / "leaf_a"
+            leaf_b = base / "leaf_b"
+            # CreateJunction(target, junction_path) — match existing suite call order.
+            _winapi.CreateJunction(str(phys_a), str(leaf_a))
+            _winapi.CreateJunction(str(phys_b), str(leaf_b))
+
+            original = transaction_module.require_no_pending_journal
+            retargeted = {"done": False}
+
+            def retarget_after_locks(root: str) -> None:
+                if not retargeted["done"]:
+                    # Drop junction A and repoint it at phys_b while locks are held.
+                    if leaf_a.exists() or leaf_a.is_symlink():
+                        leaf_a.unlink()
+                    _winapi.CreateJunction(str(phys_b), str(leaf_a))
+                    retargeted["done"] = True
+                return original(root)
+
+            with mock.patch.object(
+                transaction_module,
+                "require_no_pending_journal",
+                side_effect=retarget_after_locks,
+            ):
+                with self.assertRaises(DiagnosticError) as ctx:
+                    install_multi_targets(
+                        [("claude", str(leaf_a)), ("grok", str(leaf_b))],
+                        scope="global",
+                    )
+            self.assertEqual(ctx.exception.code, "E_INSTALL_CONFLICT")
+            self.assertTrue(retargeted["done"])
+            self.assertIsNone(load_manifest(str(phys_a)))
+            self.assertIsNone(load_manifest(str(phys_b)))
 
 
 if __name__ == "__main__":
