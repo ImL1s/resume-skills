@@ -131,6 +131,59 @@ class InstallCheckpoint:
     paths: dict[str, dict[str, Any]]
 
 
+@dataclass(frozen=True, slots=True)
+class MultiTargetBinding:
+    """Immutable host→root binding captured **before** exclusive locks (#250 residual P1).
+
+    ``physical_key`` is ``os.path.realpath(requested_root)`` at bind time. After locks
+    are held, lock selection must use only this key — never re-resolve
+    ``requested_root`` (leaf junctions can be retargeted mid-transaction).
+    """
+
+    host: str
+    requested_root: str
+    physical_key: str
+
+
+def bind_multi_target_roots(targets: list[tuple[str, str]]) -> list[MultiTargetBinding]:
+    """Build pre-lock immutable bindings for multi-target install.
+
+    Each entry freezes the host, the caller's root spelling, and the physical
+    key used for lock acquisition / selection.
+    """
+    bindings: list[MultiTargetBinding] = []
+    for host, root in targets:
+        requested = os.path.abspath(os.path.expanduser(root))
+        try:
+            physical_key = os.path.realpath(requested)
+        except OSError as error:
+            raise DiagnosticError("E_INSTALL_CONFLICT") from error
+        bindings.append(
+            MultiTargetBinding(
+                host=host,
+                requested_root=requested,
+                physical_key=physical_key,
+            )
+        )
+    return bindings
+
+
+def _assert_binding_still_matches_lock(
+    binding: MultiTargetBinding,
+    lock: "RootLock",
+) -> None:
+    """Fail closed if requested root or held lock drifted from the pre-lock key."""
+    try:
+        current_requested = os.path.realpath(binding.requested_root)
+        lock_physical = os.path.realpath(lock.root)
+    except OSError as error:
+        raise DiagnosticError("E_INSTALL_CONFLICT") from error
+    if current_requested != binding.physical_key:
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    if lock_physical != binding.physical_key:
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+
+
 _test_harness_state = threading.local()
 
 
@@ -3230,12 +3283,13 @@ def install_multi_targets(
             sources=sources,
         )
 
-    # Canonical unique physical roots (dedupe shared destinations).
-    physical_to_roots: dict[str, str] = {}
-    for _host, root in targets:
-        key = os.path.realpath(root)
-        physical_to_roots.setdefault(key, root)
-    ordered_keys = sorted(physical_to_roots.keys())
+    # Immutable bindings before any exclusive lock. Post-lock lock selection must
+    # use only physical_key — never re-resolve requested_root (junction retarget).
+    bindings = bind_multi_target_roots(targets)
+    physical_to_requested: dict[str, str] = {}
+    for binding in bindings:
+        physical_to_requested.setdefault(binding.physical_key, binding.requested_root)
+    ordered_keys = sorted(physical_to_requested.keys())
 
     held: list[tuple[str, RootLock]] = []
     checkpoints: list[InstallCheckpoint] = []
@@ -3243,34 +3297,43 @@ def install_multi_targets(
     results: list[dict[str, Any]] = []
     try:
         for key in ordered_keys:
-            lock = RootLock(physical_to_roots[key])
+            lock = RootLock(physical_to_requested[key])
             lock.__enter__()
+            # RootLock may resolve a leaf junction; the physical key must still match.
+            if os.path.realpath(lock.root) != key:
+                raise DiagnosticError("E_INSTALL_CONFLICT")
             held.append((key, lock))
 
         lock_by_key = {key: lock for key, lock in held}
 
-        # Journals + replan only after every lock is held.
-        for key, lock in held:
+        # Journals only after every lock is held.
+        for _key, lock in held:
             require_no_pending_journal(lock.root)
 
-        plans: list[ActionPlan] = []
-        for host, root in targets:
-            key = os.path.realpath(root)
-            locked_root = lock_by_key[key].root
+        # Fail closed if any leaf root was retargeted while locks were acquired.
+        for binding in bindings:
+            lock = lock_by_key[binding.physical_key]
+            _assert_binding_still_matches_lock(binding, lock)
+
+        plans: list[tuple[MultiTargetBinding, ActionPlan]] = []
+        for binding in bindings:
+            lock = lock_by_key[binding.physical_key]
+            _assert_binding_still_matches_lock(binding, lock)
+            locked_root = lock.root
             plan = plan_install(
-                host=host,
+                host=binding.host,
                 scope=scope,
                 root=locked_root,
                 dry_run=False,
                 force_with_backup=force_with_backup,
                 sources=sources,
             )
-            plans.append(plan)
+            plans.append((binding, plan))
 
-        # Shared-root package identity recheck under locks.
+        # Shared-root package identity recheck under locks (group by pre-lock key).
         groups: dict[str, list[str]] = {}
-        for plan in plans:
-            groups.setdefault(os.path.realpath(plan.root), []).append(plan.host)
+        for binding, _plan in plans:
+            groups.setdefault(binding.physical_key, []).append(binding.host)
         for hosts in groups.values():
             if len(hosts) < 2:
                 continue
@@ -3280,15 +3343,13 @@ def install_multi_targets(
             if len(identities) > 1:
                 raise DiagnosticError("E_INSTALL_CONFLICT", family=tuple(sorted(hosts)))
 
-        for plan in plans:
-            key = os.path.realpath(plan.root)
-            lock = lock_by_key[key]
-            # Replan + checkpoint against the locked physical root (#245), never a
-            # repointable leaf junction spelling, so compensation restores the
-            # same tree that was locked and mutated.
+        for binding, plan in plans:
+            lock = lock_by_key[binding.physical_key]
+            _assert_binding_still_matches_lock(binding, lock)
+            # Replan + checkpoint against the locked physical root only.
             locked_root = lock.root
             live_plan = plan_install(
-                host=plan.host,
+                host=binding.host,
                 scope=scope,
                 root=locked_root,
                 dry_run=False,
@@ -3297,6 +3358,8 @@ def install_multi_targets(
             )
             if os.path.realpath(live_plan.root) != os.path.realpath(locked_root):
                 raise DiagnosticError("E_INSTALL_CONFLICT")
+            if live_plan.host != binding.host or live_plan.claim != plan.claim:
+                raise DiagnosticError("E_INSTALL_BUSY")
             checkpoint = capture_install_checkpoint(live_plan)
             checkpoints.append(checkpoint)
             result = execute_install(
@@ -3305,7 +3368,7 @@ def install_multi_targets(
                 lock=lock,
             )
             results.append(result)
-            completed.append((plan.host, checkpoint, result))
+            completed.append((binding.host, checkpoint, result))
         return results
     except Exception:
         compensation_failures: list[str] = []
