@@ -1,5 +1,16 @@
 # Evidence summary
 
+## v0.4.2 (2026-08-05)
+
+- Tag: `v0.4.2` → commit `3e12823932c2f2c9622cb0d8c10dbfaa4572a8d9`
+- Release workflow: [Actions run 31018019355](https://github.com/ImL1s/resume-skills/actions/runs/31018019355) (success)
+- GitHub Release: https://github.com/ImL1s/resume-skills/releases/tag/v0.4.2
+- PyPI: https://pypi.org/project/portable-resume/0.4.2/
+- Highlights: POSIX installer root inode/dirfd pin (#255/PR #256); multi-target physical_key freeze (#251–#253); selected-source verify (#240); verify honesty (#242); Grok compaction v1 (#238)
+- Windows installed-runner: focused product-install smoke only (not full 306/306 on Windows)
+- Host UI / marketplace reinstall on this tip: **not-run**
+- Build identity: `source_sha256=fcb9e802977edbe703654766f5bc39dd6a7228c5552aa5c3466cdd31f11bef0a` `registry_sha256=1a9725210209390ab86d84de465a0b5850e90d0e115f20d8edeb8ccc48c90d5e`
+
 
 ## v0.4.1 (2026-08-03)
 

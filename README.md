@@ -25,11 +25,10 @@ compatible public marketplace installs, and Cursor/Kimi pickers. Fresh through
 0.4.2 host reinstall/picker flows and Pi/OpenClaw native UI remain **not-run**
 (still not re-run on this tip).
 
-**Release candidate on `main`:** exact package version `0.4.2` (tag `v0.4.2`).
-Build/release reports still add `+g<commit>[.dirty]` only for dirty/dev checkouts;
-this release pin uses the clean exact version. Artifact builds pin one canonical
-identity before producing bytes. Repository-level immutable `v*` tag enforcement
-remains active ([ruleset `20148806`](https://github.com/ImL1s/resume-skills/rules/20148806)).
+**Current `main` development version:** `0.4.3.dev0`. Explicit build/release
+reports add `+g<commit>[.dirty]` while package metadata keeps the PEP 440 base.
+Artifact builds pin one canonical identity before producing bytes. Repository-level
+immutable `v*` tag enforcement remains active ([ruleset `20148806`](https://github.com/ImL1s/resume-skills/rules/20148806)).
 
 ## Sources and destinations
 

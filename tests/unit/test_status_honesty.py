@@ -149,7 +149,7 @@ class StatusHonestyTests(unittest.TestCase):
         )
         self.assertIn("v0.3.2", readme_opening)
         compact_readme = " ".join(readme_opening.replace("**", "").split())
-        # Current honesty boundary: fresh through current package tip remains not-run.
+        # Current honesty boundary: fresh through last published tip remains not-run.
         self.assertRegex(compact_readme, r"(?i)fresh through 0\.4\.2.*not-run")
 
         host = Path("docs/host-support.md").read_text(encoding="utf-8")
