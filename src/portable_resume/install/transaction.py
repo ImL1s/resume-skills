@@ -3319,7 +3319,10 @@ def install_multi_targets(
         for binding in bindings:
             lock = lock_by_key[binding.physical_key]
             _assert_binding_still_matches_lock(binding, lock)
-            locked_root = lock.root
+            # Prefer frozen physical_key (not caller/symlink spelling). On Windows
+            # RootLock already rebinds lock.root to the real dir; on POSIX lock.root
+            # may still be a leaf symlink — mutations must not re-follow it.
+            locked_root = binding.physical_key
             plan = plan_install(
                 host=binding.host,
                 scope=scope,
@@ -3346,8 +3349,8 @@ def install_multi_targets(
         for binding, plan in plans:
             lock = lock_by_key[binding.physical_key]
             _assert_binding_still_matches_lock(binding, lock)
-            # Replan + checkpoint against the locked physical root only.
-            locked_root = lock.root
+            # Replan + checkpoint against the frozen physical key only.
+            locked_root = binding.physical_key
             live_plan = plan_install(
                 host=binding.host,
                 scope=scope,
