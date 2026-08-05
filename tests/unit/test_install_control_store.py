@@ -244,7 +244,14 @@ class InstallControlStoreTests(unittest.TestCase):
         skill = Path(self.root) / "resume-claude" / "SKILL.md"
         skill.write_bytes(skill.read_bytes() + b"\n# reinstall-tamper\n")
         plan = plan_install(host="claude", scope="project", root=self.root)
+        # POSIX pin path (#254) writes journal via dirfd helpers.
+        original_write_fd = transaction_module._write_journal_under_fd
         original_write = transaction_module._write_journal
+
+        def fail_only_complete_fd(root_fd: int, journal: dict) -> None:
+            if journal.get("state") == "complete":
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            original_write_fd(root_fd, journal)
 
         def fail_only_complete(root: str, journal: dict) -> None:
             if journal.get("state") == "complete":
@@ -252,7 +259,13 @@ class InstallControlStoreTests(unittest.TestCase):
             original_write(root, journal)
 
         # Keep a stale on-disk journal after publish so recover_root is exercised.
+        original_unlink_fd = transaction_module._unlink_support_control_file_under_fd
         original_unlink = transaction_module._unlink_support_control_file
+
+        def refuse_journal_unlink_fd(root_fd: int, name: str) -> None:
+            if name == JOURNAL_NAME:
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            original_unlink_fd(root_fd, name)
 
         def refuse_journal_unlink(root: str, name: str) -> None:
             if name == JOURNAL_NAME:
@@ -260,7 +273,19 @@ class InstallControlStoreTests(unittest.TestCase):
             original_unlink(root, name)
 
         with (
-            mock.patch.object(transaction_module, "_write_journal", side_effect=fail_only_complete),
+            mock.patch.object(
+                transaction_module,
+                "_write_journal_under_fd",
+                side_effect=fail_only_complete_fd,
+            ),
+            mock.patch.object(
+                transaction_module, "_write_journal", side_effect=fail_only_complete
+            ),
+            mock.patch.object(
+                transaction_module,
+                "_unlink_support_control_file_under_fd",
+                side_effect=refuse_journal_unlink_fd,
+            ),
             mock.patch.object(
                 transaction_module,
                 "_unlink_support_control_file",
