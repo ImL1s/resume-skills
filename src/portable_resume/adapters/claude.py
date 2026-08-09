@@ -12,6 +12,7 @@ import json
 import math
 import os
 import stat
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field, replace
@@ -1319,6 +1320,186 @@ def _summary(path: str, root: str, query: Query, budget: ReadBudget) -> SessionS
     )
 
 
+def _assemble_from_index(
+    observation: FileSnapshot,
+    index: _TranscriptIndex,
+    path: str,
+    ref: ResolvedRef,
+    query: Query,
+    budget: ReadBudget,
+) -> Session:
+    if _metadata_session_id(path, index.metadata) != ref.session_id:
+        raise DiagnosticError("E_CORRUPT_RECORD", source="claude", provider=FORMAT_ID)
+    cwd = index.metadata.selected_cwd(query.cwd)
+    if query.cwd is not None and cwd is None:
+        raise DiagnosticError("E_NO_MATCH", source="claude", provider=FORMAT_ID)
+    lineage, lineage_warnings = _indexed_lineage(index)
+    records = _load_lineage_records(
+        observation,
+        lineage,
+        maximum_record=budget.limits.record_bytes,
+    )
+    turns: list[Turn] = []
+    all_warnings = list((*index.warnings, *lineage_warnings))
+    turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
+    tool_calls = _ToolCallContext(
+        maximum_pending=min(
+            budget.limits.scanned_records,
+            DEFAULT_BOUNDS.scanned_records,
+        ),
+        maximum_chars=query.max_tool_chars,
+    )
+
+    def append_turn(raw: Mapping[str, Any]) -> None:
+        turn, turn_warnings = sanitize_turn_record(
+            raw,
+            ordinal=len(turns),
+            bounds=turn_bounds,
+        )
+        all_warnings.extend(turn_warnings)
+        if turn is not None:
+            if raw.get("_pretruncated") is True and not turn.truncated:
+                turn = replace(turn, truncated=True)
+            budget.consume_turns()
+            turns.append(turn)
+
+    for record in records:
+        for raw in _turn_records(record, tool_calls):
+            append_turn(raw)
+    for raw in tool_calls.missing_results():
+        append_turn(raw)
+    all_warnings.extend(tool_calls.warnings)
+    last_user = next(
+        (turn.content for turn in reversed(turns) if turn.role == "user"),
+        None,
+    )
+    last_assistant = next(
+        (turn.content for turn in reversed(turns) if turn.role == "assistant"),
+        None,
+    )
+    return Session(
+        source="claude",
+        session_id=ref.session_id,
+        source_path=path,
+        title=index.metadata.title,
+        cwd=cwd,
+        branch=index.metadata.branch,
+        created_at=index.metadata.created_at,
+        updated_at=_mtime(observation),
+        last_user_request=last_user,
+        last_assistant_action=last_assistant,
+        turns=tuple(turns),
+        warnings=tuple(dict.fromkeys(all_warnings)),
+    )
+
+
+def _build_tail_graph(
+    path: str,
+    root: str,
+    budget: ReadBudget,
+) -> tuple[FileSnapshot, _TranscriptIndex]:
+    """Soft-degraded suffix graph for oversized sessions (#258).
+
+    Called only after the full snapshot/index path raised E_LIMIT_EXCEEDED.
+    Admits the stable tail window under remaining ``source_read_bytes`` /
+    ``transcript_records``, mirrors the admitted lines into a private temp
+    file (bounded), indexes them, and returns a synthetic FileSnapshot so the
+    shared lineage/turn assembly can reuse ``_load_lineage_records``.
+    """
+
+    _validate_claude_bounds(budget)
+    maximum_record = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
+    try:
+        before = os.lstat(path)
+    except OSError as error:
+        raise DiagnosticError.source_busy(source="claude", provider=FORMAT_ID) from error
+    temporary = tempfile.TemporaryDirectory(prefix="portable-resume-claude-tail-")
+    try:
+        target = Path(temporary.name) / "tail.jsonl"
+        metadata = _TranscriptMetadata()
+        nodes: dict[str, _TranscriptNode] = {}
+        bridge: dict[str, str | None] = {}
+        digests: dict[str, str] = {}
+        warnings: list[str] = ["W_TRUNCATED"]
+        index = 0
+        lines = stable_scan_tail_lines(
+            path,
+            root=root,
+            budget=budget,
+            charge_transcript=True,
+            max_line_bytes=maximum_record,
+        )
+        with open(target, "wb") as handle:
+            for line in lines:
+                offset = handle.tell()
+                raw = line.text.encode("utf-8")
+                if line.terminated:
+                    raw += b"\n"
+                handle.write(raw)
+                if len(raw) > maximum_record:
+                    raise DiagnosticError.limit_exceeded()
+                record, warning = _decode_record(
+                    raw, terminal_partial=not line.terminated
+                )
+                if warning is not None:
+                    warnings.append(warning)
+                if record is None:
+                    if warning == "W_PARTIAL_TAIL":
+                        break
+                    index += 1
+                    continue
+                metadata.observe(record)
+                observed = _observe_replay_record(record, digests=digests, bridge=bridge)
+                if observed is not None and record.get("type") in _UUID_RECORD_TYPES:
+                    identifier, digest = observed
+                    if record.get("isSidechain") is not True:
+                        nodes[identifier] = _TranscriptNode(
+                            identifier=identifier,
+                            index=index,
+                            offset=offset,
+                            digest=digest,
+                            record=_graph_record(record),
+                        )
+                index += 1
+        try:
+            after = os.lstat(path)
+        except OSError as error:
+            raise DiagnosticError.source_busy(source="claude", provider=FORMAT_ID) from error
+        if (
+            before.st_dev != after.st_dev
+            or before.st_ino != after.st_ino
+            or before.st_mtime_ns != after.st_mtime_ns
+            or before.st_size != after.st_size
+        ):
+            raise DiagnosticError.source_busy(source="claude", provider=FORMAT_ID)
+        if metadata.records_seen == 0 or not nodes:
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="claude", provider=FORMAT_ID)
+        fingerprint = FileFingerprint(
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+        )
+        observation = FileSnapshot(
+            directory=temporary.name,
+            path=str(target),
+            source_name=os.path.basename(path),
+            fingerprint=fingerprint,
+            attempts=1,
+            _temporary=temporary,
+        )
+        return observation, _TranscriptIndex(
+            metadata=metadata,
+            nodes=nodes,
+            bridge=bridge,
+            warnings=tuple(dict.fromkeys(warnings)),
+        )
+    except BaseException:
+        temporary.cleanup()
+        raise
+
+
 class ClaudeAdapter:
     key = "claude"
 
@@ -1525,79 +1706,33 @@ class ClaudeAdapter:
                     if path is None:
                         raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
         _validate_claude_bounds(budget)
-        with snapshot_regular_file(
-            path,
-            root=root,
-            bounds=budget.limits,
-            attempts=budget.limits.snapshot_attempts,
-            membership_limit=budget.limits.scanned_records,
-            budget=budget,
-            provider=FORMAT_ID,
-        ) as observation:
-            index = _index_snapshot(observation, budget)
-            if _metadata_session_id(path, index.metadata) != ref.session_id:
-                raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=FORMAT_ID)
-            cwd = index.metadata.selected_cwd(query.cwd)
-            if query.cwd is not None and cwd is None:
-                raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
-            lineage, lineage_warnings = _indexed_lineage(index)
-            records = _load_lineage_records(
-                observation,
-                lineage,
-                maximum_record=budget.limits.record_bytes,
-            )
-            turns: list[Turn] = []
-            all_warnings = list((*index.warnings, *lineage_warnings))
-            turn_bounds = replace(DEFAULT_BOUNDS, tool_output_chars=query.max_tool_chars)
-            tool_calls = _ToolCallContext(
-                maximum_pending=min(
-                    budget.limits.scanned_records,
-                    DEFAULT_BOUNDS.scanned_records,
-                ),
-                maximum_chars=query.max_tool_chars,
-            )
-
-            def append_turn(raw: Mapping[str, Any]) -> None:
-                turn, turn_warnings = sanitize_turn_record(
-                    raw,
-                    ordinal=len(turns),
-                    bounds=turn_bounds,
+        counters = (budget.records, budget.transcript_records_read, budget.bytes_read)
+        try:
+            with snapshot_regular_file(
+                path,
+                root=root,
+                bounds=budget.limits,
+                attempts=budget.limits.snapshot_attempts,
+                membership_limit=budget.limits.scanned_records,
+                budget=budget,
+                provider=FORMAT_ID,
+            ) as observation:
+                index = _index_snapshot(observation, budget)
+                return _assemble_from_index(
+                    observation, index, path, ref, query, budget
                 )
-                all_warnings.extend(turn_warnings)
-                if turn is not None:
-                    if raw.get("_pretruncated") is True and not turn.truncated:
-                        turn = replace(turn, truncated=True)
-                    budget.consume_turns()
-                    turns.append(turn)
-
-            for record in records:
-                for raw in _turn_records(record, tool_calls):
-                    append_turn(raw)
-            for raw in tool_calls.missing_results():
-                append_turn(raw)
-            all_warnings.extend(tool_calls.warnings)
-            last_user = next(
-                (turn.content for turn in reversed(turns) if turn.role == "user"),
-                None,
-            )
-            last_assistant = next(
-                (turn.content for turn in reversed(turns) if turn.role == "assistant"),
-                None,
-            )
-            return Session(
-                source=self.key,
-                session_id=ref.session_id,
-                source_path=path,
-                title=index.metadata.title,
-                cwd=cwd,
-                branch=index.metadata.branch,
-                created_at=index.metadata.created_at,
-                updated_at=_mtime(observation),
-                last_user_request=last_user,
-                last_assistant_action=last_assistant,
-                turns=tuple(turns),
-                warnings=tuple(dict.fromkeys(all_warnings)),
-            )
+        except DiagnosticError as error:
+            if error.code != "E_LIMIT_EXCEEDED":
+                raise
+            # The failed full path consumed budget counters before raising;
+            # discard that partial consumption so the tail fallback can admit
+            # the window under the caller's original allowances.
+            budget.records, budget.transcript_records_read, budget.bytes_read = counters
+            observation, index = _build_tail_graph(path, root, budget)
+            with observation:
+                return _assemble_from_index(
+                    observation, index, path, ref, query, budget
+                )
 
 
 ADAPTER = ClaudeAdapter()

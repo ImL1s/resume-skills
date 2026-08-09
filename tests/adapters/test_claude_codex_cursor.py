@@ -706,13 +706,13 @@ class ClaudeAdapterTests(unittest.TestCase):
             ReadBudget(enough),
         )
         self.assertEqual([turn.content for turn in session.turns], ["request", "answer"])
-        with self.assertRaises(DiagnosticError) as lines:
-            claude.ADAPTER.show(
-                ResolvedRef(session_id, str(path)),
-                self.query(),
-                ReadBudget(Bounds(transcript_records=len(records) - 1, scanned_records=1)),
-            )
-        self.assertEqual(lines.exception.code, "E_LIMIT_EXCEEDED")
+        session = claude.ADAPTER.show(
+            ResolvedRef(session_id, str(path)),
+            self.query(),
+            ReadBudget(Bounds(transcript_records=len(records) - 1, scanned_records=1)),
+        )
+        self.assertEqual(session.last_assistant_action, "answer")
+        self.assertIn("W_TRUNCATED", session.warnings)
 
         one_record = self.turn(
             "user",
