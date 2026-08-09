@@ -249,3 +249,31 @@ class StableScanTailLinesTests(unittest.TestCase):
                     )
                 )
             self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+
+
+class CommitProvisionalConcurrencyTests(unittest.TestCase):
+    def test_concurrent_charge_not_double_counted_by_commit(self) -> None:
+        from portable_resume.adapters.claude import _provisional_metadata_budget
+
+        budget = ReadBudget(Bounds(scanned_records=2_000))
+        baseline = _provisional_metadata_budget(budget)
+        # Simulate a concurrent charge landing on the live budget between the
+        # baseline snapshot and the commit (barrier-free deterministic probe).
+        budget.consume_records(3)
+        provisional = _provisional_metadata_budget(baseline)
+        provisional.consume_records(10)
+        budget.commit_provisional(baseline, provisional)
+        self.assertEqual(budget.records, 13)
+
+    def test_commit_respects_ceiling_under_concurrent_consumption(self) -> None:
+        from portable_resume.adapters.claude import _provisional_metadata_budget
+
+        budget = ReadBudget(Bounds(scanned_records=10))
+        baseline = _provisional_metadata_budget(budget)
+        budget.consume_records(8)
+        provisional = _provisional_metadata_budget(baseline)
+        provisional.consume_records(3)
+        with self.assertRaises(DiagnosticError) as caught:
+            budget.commit_provisional(baseline, provisional)
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+        self.assertEqual(budget.records, 8)

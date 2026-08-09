@@ -192,12 +192,13 @@ class ClaudeTailOverflowTests(unittest.TestCase):
         session_id = str(uuid.uuid4())
         user_id = str(uuid.uuid4())
         assistant_id = str(uuid.uuid4())
-        record_bytes = 200
+        record_bytes = 1024
         records = [
             self.turn("user", user_id, None, "request", -2, sessionId=session_id),
             self.turn("assistant", assistant_id, user_id, "answer", -1, sessionId=session_id),
         ]
         _, path = self.session(records, identifier=session_id)
+        self.assertLess(path.stat().st_size, record_bytes)
         # Terminal CRLF record: physical len == record_bytes + 1, LF-only == -1.
         meta = '{"type":"meta","pad":"' + "x" * (record_bytes - 25) + '"}'
         self.assertEqual(len(meta.encode()), record_bytes - 1)
@@ -278,3 +279,53 @@ class ClaudeTailOverflowTests(unittest.TestCase):
                 ResolvedRef(session_id, str(path)), self.query(), budget
             )
         self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+
+    def test_commit_provisional_barrier_no_double_charge(self) -> None:
+        # Barrier-controlled concurrency probe: a concurrent charge between the
+        # baseline snapshot and the provisional snapshot must NOT be counted
+        # twice (codex re-review P1-1).
+        import threading
+
+        budget = ReadBudget(Bounds(scanned_records=10))
+        baseline = claude._provisional_metadata_budget(budget)
+        gate = threading.Barrier(2)
+        results: dict[str, int] = {}
+
+        def concurrent_charge() -> None:
+            gate.wait()
+            budget.consume_records(3)
+
+        thread = threading.Thread(target=concurrent_charge)
+        thread.start()
+        gate.wait()
+        # Simulate the full path consuming 2 records on the provisional budget
+        # while the live budget is concurrently charged by the other thread.
+        provisional = claude._provisional_metadata_budget(baseline)
+        provisional.consume_records(2)
+        budget.commit_provisional(baseline, provisional)
+        thread.join()
+        results["records"] = budget.records
+        # 3 concurrent + 2 full-path = 5, never 3 + 2 + 2.
+        self.assertEqual(results["records"], 5)
+
+    def test_zero_precharged_budget_preserves_limit_diagnostic(self) -> None:
+        # A fully precharged transcript budget must surface E_LIMIT_EXCEEDED
+        # (not E_UNSUPPORTED_FORMAT) when the fallback cannot admit any node.
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        records = [
+            self.turn("user", user_id, None, "request", -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        budget = ReadBudget(
+            Bounds(
+                transcript_records=1,
+                scanned_records=100,
+            )
+        )
+        budget.consume_transcript_records(1)  # fully precharged
+        with self.assertRaises(DiagnosticError) as caught:
+            claude.ADAPTER.show(
+                ResolvedRef(session_id, str(path)), self.query(), budget
+            )
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")

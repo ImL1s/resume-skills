@@ -34,7 +34,6 @@ from ..sanitize import sanitize_text, sanitize_turn_record
 from ..snapshot import (
     FileFingerprint,
     FileSnapshot,
-    ScannedLine,
     StableWindows,
     snapshot_regular_file,
     stable_read_windows,
@@ -1411,7 +1410,7 @@ def _build_tail_graph(
     try:
         before = os.lstat(path)
     except OSError as error:
-        raise DiagnosticError.source_busy(source="claude", provider=FORMAT_ID) from error
+        raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
     temporary = tempfile.TemporaryDirectory(prefix="portable-resume-claude-tail-")
     try:
         target = Path(temporary.name) / "tail.jsonl"
@@ -1430,6 +1429,13 @@ def _build_tail_graph(
         )
         with open(target, "wb") as handle:
             for line in lines:
+                if not line.utf8_valid:
+                    # Terminal partial UTF-8: mirror fast-path W_PARTIAL_TAIL
+                    # (re-encoding U+FFFD would exceed record_bytes).
+                    if not line.terminated:
+                        warnings.append("W_PARTIAL_TAIL")
+                        break
+                    raise DiagnosticError("E_CORRUPT_RECORD", source="claude", provider=FORMAT_ID)
                 offset = handle.tell()
                 raw = line.text.encode("utf-8")
                 if line.terminated:
@@ -1465,14 +1471,14 @@ def _build_tail_graph(
         try:
             after = os.lstat(path)
         except OSError as error:
-            raise DiagnosticError.source_busy(source="claude", provider=FORMAT_ID) from error
+            raise DiagnosticError.source_busy(provider=FORMAT_ID) from error
         if (
             before.st_dev != after.st_dev
             or before.st_ino != after.st_ino
             or before.st_mtime_ns != after.st_mtime_ns
             or before.st_size != after.st_size
         ):
-            raise DiagnosticError.source_busy(source="claude", provider=FORMAT_ID)
+            raise DiagnosticError.source_busy(provider=FORMAT_ID)
         if metadata.records_seen == 0 or not nodes:
             # Fallback runs only after the full path raised E_LIMIT_EXCEEDED.
             raise DiagnosticError("E_LIMIT_EXCEEDED", source="claude", provider=FORMAT_ID)
@@ -1709,7 +1715,7 @@ class ClaudeAdapter:
                         raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
         _validate_claude_bounds(budget)
         baseline = _provisional_metadata_budget(budget)
-        provisional = _provisional_metadata_budget(budget)
+        provisional = _provisional_metadata_budget(baseline)
         observation: FileSnapshot | None = None
         try:
             observation = snapshot_regular_file(

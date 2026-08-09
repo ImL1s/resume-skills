@@ -745,24 +745,24 @@ def _spool_window_bytes(
     return digest.hexdigest(), total
 
 
-def _parse_window_lines(
+def _count_window_lines(
     spool: BinaryIO,
     *,
     max_line_bytes: int,
     discard_first: bool,
-) -> Iterator[ScannedLine]:
-    """Split a raw window spool into ScannedLine records (replay pass).
+) -> int:
+    """Count lines in a raw window spool without building ScannedLine objects.
 
-    Applies ``record_bytes`` per line (``E_LIMIT_EXCEEDED``), UTF-8 validation
-    (``E_CORRUPT_RECORD``), CRLF detection (``crlf`` flag), and the optional
-    first-partial-line discard. Byte offsets are relative to the window start.
+    Applies the incremental ``record_bytes`` limit and the optional
+    first-partial-line discard, but defers UTF-8 validation to the decode pass
+    (which only visits the admitted suffix). Used to locate the trim boundary
+    without materializing the whole window (codex re-review P1-3).
     """
 
     spool.seek(0)
     buffer = bytearray()
-    absolute_offset = 0
-    ordinal = 0
     first = True
+    total = 0
     while True:
         chunk = spool.read(64 * 1024)
         if not chunk:
@@ -771,6 +771,59 @@ def _parse_window_lines(
         while True:
             newline_index = buffer.find(b"\n")
             if newline_index < 0:
+                # Unterminated line: fail early if it already exceeds the limit.
+                effective = len(buffer) - (1 if buffer[-1:] == b"\r" else 0)
+                if effective > max_line_bytes:
+                    raise DiagnosticError.limit_exceeded()
+                break
+            del buffer[: newline_index + 1]
+            if first and discard_first:
+                first = False
+                continue
+            first = False
+            total += 1
+    if buffer:
+        if not (first and discard_first):
+            total += 1
+    return total
+
+
+def _parse_window_lines(
+    spool: BinaryIO,
+    *,
+    max_line_bytes: int,
+    discard_first: bool,
+    skip: int = 0,
+) -> Iterator[ScannedLine]:
+    """Split a raw window spool into ScannedLine records (replay pass).
+
+    Applies ``record_bytes`` per line (``E_LIMIT_EXCEEDED``), UTF-8 validation
+    (``E_CORRUPT_RECORD``), CRLF detection (``crlf`` flag), and the optional
+    first-partial-line discard. Byte offsets are relative to the window start.
+
+    ``skip`` drops the first N complete lines without decoding them, locating
+    the admitted suffix without a second full decode pass (re-review P1-3).
+    """
+
+    spool.seek(0)
+    buffer = bytearray()
+    absolute_offset = 0
+    ordinal = 0
+    first = True
+    remaining_skip = skip
+    while True:
+        chunk = spool.read(64 * 1024)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        while True:
+            newline_index = buffer.find(b"\n")
+            if newline_index < 0:
+                # Unterminated line: fail early if it already exceeds the limit
+                # (a trailing CR does not count toward the content ceiling).
+                effective = len(buffer) - (1 if buffer[-1:] == b"\r" else 0)
+                if effective > max_line_bytes:
+                    raise DiagnosticError.limit_exceeded()
                 break
             line_bytes = bytes(buffer[: newline_index + 1])
             del buffer[: newline_index + 1]
@@ -779,6 +832,10 @@ def _parse_window_lines(
                 absolute_offset += len(line_bytes)
                 continue
             first = False
+            if remaining_skip > 0:
+                remaining_skip -= 1
+                absolute_offset += len(line_bytes)
+                continue
             payload = line_bytes[:-1]
             crlf = payload.endswith(b"\r")
             if crlf:
@@ -799,7 +856,7 @@ def _parse_window_lines(
             ordinal += 1
             absolute_offset += len(line_bytes)
     if buffer:
-        if first and discard_first:
+        if first and discard_first or remaining_skip > 0:
             return
         payload = bytes(buffer)
         crlf = payload.endswith(b"\r")
@@ -1005,15 +1062,12 @@ def stable_scan_tail_lines(
                 else:
                     effective_budget.consume_records(admitted)
                 verified_spool.seek(0)
-                skipped = 0
                 for line in _parse_window_lines(
                     verified_spool,
                     max_line_bytes=line_limit,
                     discard_first=starts_mid_line,
+                    skip=skip,
                 ):
-                    if skipped < skip:
-                        skipped += 1
-                        continue
                     yield line
             finally:
                 verified_spool.close()
