@@ -551,9 +551,6 @@ def _collect_scanned_lines(
                 discard_first_line = False
                 absolute_offset += len(line_bytes)
                 continue
-            if line_ordinal == 0 and not payload:
-                absolute_offset += len(line_bytes)
-                continue
             pending_records += 1
             try:
                 text = payload.decode("utf-8")

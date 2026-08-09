@@ -7,7 +7,7 @@ from pathlib import Path
 
 from portable_resume.bounds import Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
-from portable_resume.snapshot import _collect_scanned_lines, stable_scan_tail_lines
+from portable_resume.snapshot import _collect_scanned_lines
 
 
 class CollectScannedTailParamsTests(unittest.TestCase):
@@ -35,7 +35,7 @@ class CollectScannedTailParamsTests(unittest.TestCase):
 
     def test_without_discard_first_line_keeps_complete_first_line(self) -> None:
         descriptor, _path = self._descriptor(b'{"a":1}\n{"b":2}\n')
-        os.lseek(descriptor, 7, os.SEEK_SET)  # exactly at the boundary after \n
+        os.lseek(descriptor, 8, os.SEEK_SET)  # exactly at the boundary after \n
         lines, _b, pending_records, _ = _collect_scanned_lines(
             descriptor,
             max_line_bytes=1024,
