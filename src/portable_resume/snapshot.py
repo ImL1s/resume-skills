@@ -1057,6 +1057,27 @@ def _hash_descriptor(descriptor: int, *, maximum: int) -> tuple[str, int]:
     return digest.hexdigest(), total
 
 
+def _hash_descriptor_window(descriptor: int, *, start: int, maximum: int) -> tuple[str, int]:
+    """SHA-256 of one bounded ``[start, EOF)`` window (no whole-file hash).
+
+    Used by the end-anchored tail scanner (#258) so verification never reads
+    bytes before ``start`` (a multi-GB file must not be hashed in full).
+    """
+
+    os.lseek(descriptor, start, os.SEEK_SET)
+    digest = hashlib.sha256()
+    total = 0
+    while True:
+        block = os.read(descriptor, 64 * 1024)
+        if not block:
+            break
+        total += len(block)
+        if total > maximum:
+            raise DiagnosticError.limit_exceeded()
+        digest.update(block)
+    return digest.hexdigest(), total
+
+
 def _family_paths(database: str) -> dict[str, str]:
     return {
         "main": database,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 import unittest
@@ -7,7 +8,7 @@ from pathlib import Path
 
 from portable_resume.bounds import Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
-from portable_resume.snapshot import _collect_scanned_lines
+from portable_resume.snapshot import _collect_scanned_lines, _hash_descriptor_window
 
 
 class CollectScannedTailParamsTests(unittest.TestCase):
@@ -73,3 +74,25 @@ class CollectScannedTailParamsTests(unittest.TestCase):
                 enforce_record_budget=True,
             )
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+
+class HashDescriptorWindowTests(unittest.TestCase):
+    def test_hashes_only_the_requested_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "w.jsonl"
+            path.write_bytes(b"AAAA\nBBBB\n")
+            descriptor = os.open(str(path), os.O_RDONLY)
+            self.addCleanup(os.close, descriptor)
+            digest, total = _hash_descriptor_window(descriptor, start=5, maximum=1024)
+            self.assertEqual(total, 5)  # "BBBB\n"
+            self.assertEqual(digest, hashlib.sha256(b"BBBB\n").hexdigest())
+
+    def test_window_over_maximum_raises_limit_exceeded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "w.jsonl"
+            path.write_bytes(b"ABCDEF")
+            descriptor = os.open(str(path), os.O_RDONLY)
+            self.addCleanup(os.close, descriptor)
+            with self.assertRaises(DiagnosticError) as caught:
+                _hash_descriptor_window(descriptor, start=0, maximum=3)
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
