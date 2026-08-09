@@ -725,6 +725,164 @@ def stable_scan_lines(
     raise DiagnosticError.source_busy(attempts=attempts, family=family)
 
 
+def stable_scan_tail_lines(
+    path: str | os.PathLike[str],
+    *,
+    root: str | os.PathLike[str],
+    budget: ReadBudget | None = None,
+    max_line_bytes: int | None = None,
+    charge_transcript: bool = False,
+    hook: AttemptHook | None = None,
+) -> Iterator[ScannedLine]:
+    """Yield UTF-8 lines from a stable end-anchored window (#258).
+
+    Same no-follow / containment / attempt-verification rules as
+    ``stable_scan_lines``, but when the file exceeds the remaining
+    ``source_read_bytes`` budget the scanner admits only the final
+    ``remaining`` bytes (``tail_start = st_size - remaining``) instead of
+    hard-failing. The first line is discarded when the window begins
+    mid-record. After verification the admitted line count is trimmed to the
+    remaining ``transcript_records`` (or ``scanned_records`` when
+    ``charge_transcript`` is false), charging only the admitted records and
+    the unique window bytes. The whole file is never hashed or buffered.
+    """
+
+    effective_budget = budget if budget is not None else ReadBudget()
+    budget_line_cap = min(
+        effective_budget.limits.record_bytes,
+        DEFAULT_BOUNDS.record_bytes,
+    )
+    if max_line_bytes is None:
+        line_limit = budget_line_cap
+    else:
+        if max_line_bytes < 0:
+            raise DiagnosticError.invalid()
+        line_limit = min(max_line_bytes, budget_line_cap)
+    max_file_bytes = min(
+        DEFAULT_BOUNDS.source_read_bytes,
+        effective_budget.limits.source_read_bytes,
+    )
+    safe, base = require_regular_no_symlinks(path, root)
+    parent = os.path.dirname(safe)
+    basename = os.path.basename(safe)
+    attempts = min(
+        effective_budget.limits.snapshot_attempts,
+        DEFAULT_BOUNDS.snapshot_attempts,
+    )
+    if attempts < 1:
+        raise DiagnosticError.invalid()
+    for attempt in range(1, attempts + 1):
+        before_entry = _target_entry_fingerprint(parent, basename, root=base)
+        descriptor = _open_no_follow(safe, base)
+        spool: tempfile.SpooledTemporaryFile | None = None
+        verified_spool: tempfile.SpooledTemporaryFile | None = None
+        pending_bytes = 0
+        pending_records = 0
+        tail_start = 0
+        try:
+            before_stat = os.fstat(descriptor)
+            if not _entry_identity_matches(before_entry, before_stat):
+                continue
+            remaining = max(0, max_file_bytes - effective_budget.bytes_read)
+            tail_start = max(0, before_stat.st_size - remaining)
+            starts_mid_line = False
+            if tail_start > 0:
+                os.lseek(descriptor, tail_start - 1, os.SEEK_SET)
+                probe = os.read(descriptor, 1)
+                starts_mid_line = probe != b"\n"
+            if hook:
+                hook("before-read", attempt, safe)
+            os.lseek(descriptor, tail_start, os.SEEK_SET)
+            spool = tempfile.SpooledTemporaryFile(max_size=_SPOOL_RAM_CAP, mode="w+b")
+            try:
+                _list, pending_bytes, pending_records, content_hash = _collect_scanned_lines(
+                    descriptor,
+                    max_line_bytes=line_limit,
+                    budget=effective_budget,
+                    charge_transcript=False,
+                    spool=spool,
+                    discard_first_line=starts_mid_line,
+                    enforce_record_budget=False,
+                )
+            except DiagnosticError as error:
+                # File grew past the admitted window mid-read: unstable, retry.
+                if (
+                    error.code == "E_LIMIT_EXCEEDED"
+                    and os.fstat(descriptor).st_size > before_stat.st_size
+                ):
+                    continue
+                raise
+            observed = _fingerprint(before_stat, content_hash)
+            if hook:
+                hook("after-read", attempt, safe)
+            verified_hash, verified_size = _hash_descriptor_window(
+                descriptor,
+                start=tail_start,
+                maximum=max_file_bytes,
+            )
+            verified = _fingerprint(os.fstat(descriptor), verified_hash)
+            if hook:
+                hook("after-verify-read", attempt, safe)
+            middle_entry = _target_entry_fingerprint(parent, basename, root=base)
+            final_hash, final_size = _hash_descriptor_window(
+                descriptor,
+                start=tail_start,
+                maximum=max_file_bytes,
+            )
+            final_stat = os.fstat(descriptor)
+            final = _fingerprint(final_stat, final_hash)
+            after_entry = _target_entry_fingerprint(parent, basename, root=base)
+            if not (
+                observed == verified == final
+                and before_entry == middle_entry == after_entry
+                and _entry_identity_matches(before_entry, before_stat)
+                and _entry_identity_matches(after_entry, final_stat)
+                and pending_bytes == verified_size == final_size
+                == before_stat.st_size - tail_start
+            ):
+                continue
+            # Hand off spool for post-close replay so the source fd is never
+            # held open while yielding to callers.
+            verified_spool = spool
+            spool = None
+        finally:
+            os.close(descriptor)
+            if spool is not None:
+                spool.close()
+        if verified_spool is not None:
+            effective_budget.consume_bytes(pending_bytes)
+            if charge_transcript:
+                record_max = min(
+                    effective_budget.limits.transcript_records,
+                    DEFAULT_BOUNDS.transcript_records,
+                )
+                remaining_records = record_max - effective_budget.transcript_records_read
+            else:
+                record_max = min(
+                    effective_budget.limits.scanned_records,
+                    DEFAULT_BOUNDS.scanned_records,
+                )
+                remaining_records = record_max - effective_budget.records
+            skip = max(0, pending_records - remaining_records)
+            admitted = pending_records - skip
+            if charge_transcript:
+                effective_budget.consume_transcript_records(admitted)
+            else:
+                effective_budget.consume_records(admitted)
+            try:
+                verified_spool.seek(0)
+                for line in _spool_iter_lines(verified_spool):
+                    if skip > 0:
+                        skip -= 1
+                        continue
+                    yield line
+            finally:
+                verified_spool.close()
+            return
+    family = (os.path.basename(safe),)
+    raise DiagnosticError.source_busy(attempts=attempts, family=family)
+
+
 def stable_read_windows(
     path: str | os.PathLike[str],
     *,
