@@ -1429,16 +1429,16 @@ def _build_tail_graph(
             max_line_bytes=maximum_record,
         )
         with open(target, "wb") as handle:
-            pending: ScannedLine | None = None
-            stop = False
-
-            def flush(line: ScannedLine) -> bool:
-                nonlocal index
+            for line in lines:
                 offset = handle.tell()
                 raw = line.text.encode("utf-8")
                 if line.terminated:
                     raw += b"\n"
                 handle.write(raw)
+                # ORIGINAL physical length (incl. CRLF) cannot exceed record_bytes;
+                # the LF-reconstructed mirror would otherwise shrink CRLF records.
+                if len(raw) + (1 if line.crlf else 0) > maximum_record:
+                    raise DiagnosticError.limit_exceeded()
                 record, warning = _decode_record(
                     raw, terminal_partial=not line.terminated
                 )
@@ -1446,9 +1446,9 @@ def _build_tail_graph(
                     warnings.append(warning)
                 if record is None:
                     if warning == "W_PARTIAL_TAIL":
-                        return False
+                        break
                     index += 1
-                    return True
+                    continue
                 metadata.observe(record)
                 observed = _observe_replay_record(record, digests=digests, bridge=bridge)
                 if observed is not None and record.get("type") in _UUID_RECORD_TYPES:
@@ -1462,28 +1462,6 @@ def _build_tail_graph(
                             record=_graph_record(record),
                         )
                 index += 1
-                return True
-
-            for line in lines:
-                if stop:
-                    break
-                if pending is not None:
-                    # Enforce the ORIGINAL physical length (incl. CRLF terminator)
-                    # so a CRLF record cannot shrink below record_bytes in the
-                    # LF-reconstructed mirror (#258 codex-review P1-4).
-                    if line.byte_offset - pending.byte_offset > maximum_record:
-                        raise DiagnosticError.limit_exceeded()
-                    if not flush(pending):
-                        stop = True
-                        break
-                pending = line
-            if pending is not None and not stop:
-                raw = pending.text.encode("utf-8")
-                if pending.terminated:
-                    raw += b"\n"
-                if len(raw) > maximum_record:
-                    raise DiagnosticError.limit_exceeded()
-                flush(pending)
         try:
             after = os.lstat(path)
         except OSError as error:
@@ -1496,7 +1474,8 @@ def _build_tail_graph(
         ):
             raise DiagnosticError.source_busy(source="claude", provider=FORMAT_ID)
         if metadata.records_seen == 0 or not nodes:
-            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="claude", provider=FORMAT_ID)
+            # Fallback runs only after the full path raised E_LIMIT_EXCEEDED.
+            raise DiagnosticError("E_LIMIT_EXCEEDED", source="claude", provider=FORMAT_ID)
         fingerprint = FileFingerprint(
             before.st_dev,
             before.st_ino,
@@ -1729,6 +1708,7 @@ class ClaudeAdapter:
                     if path is None:
                         raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
         _validate_claude_bounds(budget)
+        baseline = _provisional_metadata_budget(budget)
         provisional = _provisional_metadata_budget(budget)
         observation: FileSnapshot | None = None
         try:
@@ -1755,12 +1735,8 @@ class ClaudeAdapter:
                     observation, index, path, ref, query, budget
                 )
         # Commit full-path charges before assembly so turns-exhaustion hard-fails.
-        budget.consume_records(provisional.records - budget.records)
-        budget.consume_transcript_records(
-            provisional.transcript_records_read - budget.transcript_records_read
-        )
-        budget.consume_bytes(provisional.bytes_read - budget.bytes_read)
         try:
+            budget.commit_provisional(baseline, provisional)
             return _assemble_from_index(observation, index, path, ref, query, budget)
         finally:
             observation.close()

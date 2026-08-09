@@ -155,6 +155,40 @@ class ReadBudget:
                 raise DiagnosticError.limit_exceeded()
             setattr(self, field_name, current + amount)
 
+    def commit_provisional(self, baseline: "ReadBudget", provisional: "ReadBudget") -> None:
+        """Fold verified provisional charges (vs ``baseline``) into this budget.
+
+        A single lock acquisition covers all three counters, so a concurrent
+        charge cannot interleave between the record/byte updates (the reviewer
+        concern for the previous three separate ``consume_*`` calls).
+        """
+
+        records_delta = provisional.records - baseline.records
+        transcript_delta = provisional.transcript_records_read - baseline.transcript_records_read
+        bytes_delta = provisional.bytes_read - baseline.bytes_read
+        with self._lock:
+            if self.records + records_delta > min(
+                self.limits.scanned_records, DEFAULT_BOUNDS.scanned_records
+            ):
+                from .diagnostics import DiagnosticError
+
+                raise DiagnosticError.limit_exceeded()
+            if self.transcript_records_read + transcript_delta > min(
+                self.limits.transcript_records, DEFAULT_BOUNDS.transcript_records
+            ):
+                from .diagnostics import DiagnosticError
+
+                raise DiagnosticError.limit_exceeded()
+            if self.bytes_read + bytes_delta > min(
+                self.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes
+            ):
+                from .diagnostics import DiagnosticError
+
+                raise DiagnosticError.limit_exceeded()
+            self.records += records_delta
+            self.transcript_records_read += transcript_delta
+            self.bytes_read += bytes_delta
+
 
 # Ensure the dataclass field set matches the ceiling table (fail closed at import).
 assert {item.name for item in fields(Bounds)} == set(_CEILINGS)

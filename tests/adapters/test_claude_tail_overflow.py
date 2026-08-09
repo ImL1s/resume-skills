@@ -6,6 +6,7 @@ import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from portable_resume.adapters import claude
 from portable_resume.adapters.base import ResolvedRef
@@ -191,23 +192,16 @@ class ClaudeTailOverflowTests(unittest.TestCase):
         session_id = str(uuid.uuid4())
         user_id = str(uuid.uuid4())
         assistant_id = str(uuid.uuid4())
-        _, path = self.session(
-            [
-                self.turn("user", user_id, None, "request", -3, sessionId=session_id),
-                {"type": "meta"},
-                self.turn("assistant", assistant_id, user_id, "answer", -1, sessionId=session_id),
-            ],
-            identifier=session_id,
-        )
-        # Insert a CRLF record whose ORIGINAL physical length (payload + \r\n)
-        # exceeds record_bytes, but whose LF-reconstructed payload alone does not.
-        # The fallback mirror must reject it exactly like the full-graph path.
-        record_bytes = 256
-        meta = '{"type":"meta","pad":"' + "x" * (record_bytes - 24) + '"}'
-        self.assertEqual(len(meta.encode()), record_bytes)
-        path.write_bytes(
-            path.read_bytes().replace(b'{"type":"meta"}\n', meta.encode() + b"\r\n")
-        )
+        record_bytes = 200
+        records = [
+            self.turn("user", user_id, None, "request", -2, sessionId=session_id),
+            self.turn("assistant", assistant_id, user_id, "answer", -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        # Terminal CRLF record: physical len == record_bytes + 1, LF-only == -1.
+        meta = '{"type":"meta","pad":"' + "x" * (record_bytes - 25) + '"}'
+        self.assertEqual(len(meta.encode()), record_bytes - 1)
+        path.write_bytes(path.read_bytes() + meta.encode() + b"\r\n")
         budget = ReadBudget(
             Bounds(
                 record_bytes=record_bytes,
@@ -233,10 +227,16 @@ class ClaudeTailOverflowTests(unittest.TestCase):
         budget = ReadBudget(
             Bounds(normalized_turns=1, transcript_records=10, scanned_records=100)
         )
-        with self.assertRaises(DiagnosticError) as caught:
-            claude.ADAPTER.show(
-                ResolvedRef(session_id, str(path)), self.query(), budget
-            )
+        # Turns exhaustion must propagate, not re-enter the tail fallback.
+        with mock.patch.object(
+            claude,
+            "_build_tail_graph",
+            side_effect=AssertionError("fallback must not run on turns exhaustion"),
+        ):
+            with self.assertRaises(DiagnosticError) as caught:
+                claude.ADAPTER.show(
+                    ResolvedRef(session_id, str(path)), self.query(), budget
+                )
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
     def test_budget_counters_match_full_path_after_show(self) -> None:
@@ -262,14 +262,16 @@ class ClaudeTailOverflowTests(unittest.TestCase):
         replay["message"] = {"role": "user", "content": "changed"}
         records = [
             {"type": "meta"},
+            {"type": "meta"},
             base,
             replay,
             self.turn("assistant", assistant_id, user_id, "answer", -1, sessionId=session_id),
         ]
         _, path = self.session(records, identifier=session_id)
-        # transcript_records=3 forces the tail fallback (4 records > 3); the
-        # admitted suffix still contains base + replay, so the digest conflict
-        # must surface as E_CORRUPT_RECORD, not a soft handoff.
+        # transcript_records=3: fast path consumes 5 records and exhausts the
+        # budget BEFORE observing the base/replay conflict (records 3-4), so the
+        # tail fallback runs; the admitted suffix (last 3) still contains both
+        # base and replay, so the digest conflict surfaces as E_CORRUPT_RECORD.
         budget = ReadBudget(Bounds(transcript_records=3, scanned_records=100))
         with self.assertRaises(DiagnosticError) as caught:
             claude.ADAPTER.show(

@@ -44,6 +44,7 @@ class ScannedLine:
     byte_offset: int
     terminated: bool
     utf8_valid: bool = True
+    crlf: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -470,8 +471,6 @@ def _collect_scanned_lines(
     budget: ReadBudget | None,
     charge_transcript: bool,
     spool: BinaryIO | None = None,
-    discard_first_line: bool = False,
-    enforce_record_budget: bool = True,
 ) -> tuple[list[ScannedLine] | None, int, int, str]:
     """Stream lines from an open descriptor.
 
@@ -500,7 +499,7 @@ def _collect_scanned_lines(
             raise DiagnosticError.limit_exceeded()
 
     def check_record_budget() -> None:
-        if budget is None or not enforce_record_budget:
+        if budget is None:
             return
         if charge_transcript:
             maximum = min(
@@ -531,7 +530,7 @@ def _collect_scanned_lines(
         line_ordinal += 1
 
     def drain_complete_lines() -> None:
-        nonlocal absolute_offset, pending_records, discard_first_line
+        nonlocal absolute_offset, pending_records
         while True:
             newline_index = buffer.find(b"\n")
             if newline_index < 0:
@@ -547,10 +546,6 @@ def _collect_scanned_lines(
             if len(payload) > max_line_bytes:
                 raise DiagnosticError.limit_exceeded()
             check_record_budget()
-            if discard_first_line and line_ordinal == 0:
-                discard_first_line = False
-                absolute_offset += len(line_bytes)
-                continue
             pending_records += 1
             try:
                 text = payload.decode("utf-8")
@@ -583,25 +578,24 @@ def _collect_scanned_lines(
     # downgrade the unterminated record to W_PARTIAL_TAIL.
     if buffer:
         check_record_budget()
-        if not (discard_first_line and line_ordinal == 0):
-            pending_records += 1
-            utf8_valid = True
-            try:
-                text = bytes(buffer).decode("utf-8").removesuffix("\r")
-            except UnicodeDecodeError as error:
-                if error.reason != "unexpected end of data" or error.end != len(buffer):
-                    raise DiagnosticError("E_CORRUPT_RECORD") from error
-                text = bytes(buffer).decode("utf-8", errors="replace").removesuffix("\r")
-                utf8_valid = False
-            emit(
-                ScannedLine(
-                    ordinal=line_ordinal,
-                    text=text,
-                    byte_offset=absolute_offset,
-                    terminated=False,
-                    utf8_valid=utf8_valid,
-                )
+        pending_records += 1
+        utf8_valid = True
+        try:
+            text = bytes(buffer).decode("utf-8").removesuffix("\r")
+        except UnicodeDecodeError as error:
+            if error.reason != "unexpected end of data" or error.end != len(buffer):
+                raise DiagnosticError("E_CORRUPT_RECORD") from error
+            text = bytes(buffer).decode("utf-8", errors="replace").removesuffix("\r")
+            utf8_valid = False
+        emit(
+            ScannedLine(
+                ordinal=line_ordinal,
+                text=text,
+                byte_offset=absolute_offset,
+                terminated=False,
+                utf8_valid=utf8_valid,
             )
+        )
     return collected, pending_bytes, pending_records, digest.hexdigest()
 
 
@@ -725,6 +719,112 @@ def stable_scan_lines(
     raise DiagnosticError.source_busy(attempts=attempts, family=family)
 
 
+def _spool_window_bytes(
+    descriptor: int,
+    spool: BinaryIO,
+    *,
+    maximum: int,
+) -> tuple[str, int]:
+    """Copy ``[current_pos, EOF)`` raw bytes into a spool, hashing as we go.
+
+    The tail scanner uses this instead of the per-line spool so a bounded
+    window cannot be amplified by per-record headers (#258 re-review P1).
+    """
+
+    digest = hashlib.sha256()
+    total = 0
+    while True:
+        block = os.read(descriptor, 64 * 1024)
+        if not block:
+            break
+        total += len(block)
+        if total > maximum:
+            raise DiagnosticError.limit_exceeded()
+        digest.update(block)
+        spool.write(block)
+    return digest.hexdigest(), total
+
+
+def _parse_window_lines(
+    spool: BinaryIO,
+    *,
+    max_line_bytes: int,
+    discard_first: bool,
+) -> Iterator[ScannedLine]:
+    """Split a raw window spool into ScannedLine records (replay pass).
+
+    Applies ``record_bytes`` per line (``E_LIMIT_EXCEEDED``), UTF-8 validation
+    (``E_CORRUPT_RECORD``), CRLF detection (``crlf`` flag), and the optional
+    first-partial-line discard. Byte offsets are relative to the window start.
+    """
+
+    spool.seek(0)
+    buffer = bytearray()
+    absolute_offset = 0
+    ordinal = 0
+    first = True
+    while True:
+        chunk = spool.read(64 * 1024)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        while True:
+            newline_index = buffer.find(b"\n")
+            if newline_index < 0:
+                break
+            line_bytes = bytes(buffer[: newline_index + 1])
+            del buffer[: newline_index + 1]
+            if first and discard_first:
+                first = False
+                absolute_offset += len(line_bytes)
+                continue
+            first = False
+            payload = line_bytes[:-1]
+            crlf = payload.endswith(b"\r")
+            if crlf:
+                payload = payload[:-1]
+            if len(payload) > max_line_bytes:
+                raise DiagnosticError.limit_exceeded()
+            try:
+                text = payload.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise DiagnosticError("E_CORRUPT_RECORD") from error
+            yield ScannedLine(
+                ordinal=ordinal,
+                text=text,
+                byte_offset=absolute_offset,
+                terminated=True,
+                crlf=crlf,
+            )
+            ordinal += 1
+            absolute_offset += len(line_bytes)
+    if buffer:
+        if first and discard_first:
+            return
+        payload = bytes(buffer)
+        crlf = payload.endswith(b"\r")
+        if crlf:
+            payload = payload[:-1]
+        if len(payload) > max_line_bytes:
+            raise DiagnosticError.limit_exceeded()
+        utf8_valid = True
+        try:
+            text = payload.decode("utf-8")
+        except UnicodeDecodeError as error:
+            if error.reason != "unexpected end of data" or error.end != len(buffer):
+                raise DiagnosticError("E_CORRUPT_RECORD") from error
+            text = payload.decode("utf-8", errors="replace")
+            utf8_valid = False
+        yield ScannedLine(
+            ordinal=ordinal,
+            text=text,
+            byte_offset=absolute_offset,
+            terminated=False,
+            utf8_valid=utf8_valid,
+            crlf=crlf,
+        )
+
+
 def stable_scan_tail_lines(
     path: str | os.PathLike[str],
     *,
@@ -777,8 +877,8 @@ def stable_scan_tail_lines(
         spool: tempfile.SpooledTemporaryFile | None = None
         verified_spool: tempfile.SpooledTemporaryFile | None = None
         pending_bytes = 0
-        pending_records = 0
         tail_start = 0
+        starts_mid_line = False
         try:
             before_stat = os.fstat(descriptor)
             if not _entry_identity_matches(before_entry, before_stat):
@@ -796,14 +896,10 @@ def stable_scan_tail_lines(
             os.lseek(descriptor, tail_start, os.SEEK_SET)
             spool = tempfile.SpooledTemporaryFile(max_size=_SPOOL_RAM_CAP, mode="w+b")
             try:
-                _list, pending_bytes, pending_records, content_hash = _collect_scanned_lines(
+                content_hash, pending_bytes = _spool_window_bytes(
                     descriptor,
-                    max_line_bytes=line_limit,
-                    budget=effective_budget,
-                    charge_transcript=False,
-                    spool=spool,
-                    discard_first_line=starts_mid_line,
-                    enforce_record_budget=False,
+                    spool,
+                    maximum=max_file_bytes,
                 )
             except DiagnosticError as error:
                 # File grew past the admitted window mid-read: unstable, retry.
@@ -881,29 +977,42 @@ def stable_scan_tail_lines(
                 spool.close()
         if verified_spool is not None:
             effective_budget.consume_bytes(pending_bytes)
-            if charge_transcript:
-                record_max = min(
-                    effective_budget.limits.transcript_records,
-                    DEFAULT_BOUNDS.transcript_records,
-                )
-                remaining_records = record_max - effective_budget.transcript_records_read
-            else:
-                record_max = min(
-                    effective_budget.limits.scanned_records,
-                    DEFAULT_BOUNDS.scanned_records,
-                )
-                remaining_records = record_max - effective_budget.records
-            skip = max(0, pending_records - remaining_records)
-            admitted = pending_records - skip
-            if charge_transcript:
-                effective_budget.consume_transcript_records(admitted)
-            else:
-                effective_budget.consume_records(admitted)
             try:
                 verified_spool.seek(0)
-                for line in _spool_iter_lines(verified_spool):
-                    if skip > 0:
-                        skip -= 1
+                total = 0
+                for _line in _parse_window_lines(
+                    verified_spool,
+                    max_line_bytes=line_limit,
+                    discard_first=starts_mid_line,
+                ):
+                    total += 1
+                if charge_transcript:
+                    record_max = min(
+                        effective_budget.limits.transcript_records,
+                        DEFAULT_BOUNDS.transcript_records,
+                    )
+                    remaining_records = record_max - effective_budget.transcript_records_read
+                else:
+                    record_max = min(
+                        effective_budget.limits.scanned_records,
+                        DEFAULT_BOUNDS.scanned_records,
+                    )
+                    remaining_records = record_max - effective_budget.records
+                skip = max(0, total - remaining_records)
+                admitted = total - skip
+                if charge_transcript:
+                    effective_budget.consume_transcript_records(admitted)
+                else:
+                    effective_budget.consume_records(admitted)
+                verified_spool.seek(0)
+                skipped = 0
+                for line in _parse_window_lines(
+                    verified_spool,
+                    max_line_bytes=line_limit,
+                    discard_first=starts_mid_line,
+                ):
+                    if skipped < skip:
+                        skipped += 1
                         continue
                     yield line
             finally:

@@ -9,75 +9,51 @@ from pathlib import Path
 from portable_resume.bounds import Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.snapshot import (
-    _collect_scanned_lines,
     _hash_descriptor_window,
+    _parse_window_lines,
     stable_scan_tail_lines,
 )
 
 
-class CollectScannedTailParamsTests(unittest.TestCase):
-    def _descriptor(self, payload: bytes) -> tuple[int, Path]:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "f.jsonl"
-            path.write_bytes(payload)
-            descriptor = os.open(str(path), os.O_RDONLY)
-            self.addCleanup(os.close, descriptor)
-            return descriptor, path
+class ParseWindowLinesTests(unittest.TestCase):
+    def _spool(self, payload: bytes):
+        spool = tempfile.SpooledTemporaryFile(mode="w+b")
+        spool.write(payload)
+        return spool
 
-    def test_discard_first_line_skips_partial_window_head(self) -> None:
-        descriptor, _path = self._descriptor(b'{"a":1}\n{"b":2}\n')
-        os.lseek(descriptor, 3, os.SEEK_SET)  # mid-line inside {"a":1}
-        lines, pending_bytes, pending_records, _ = _collect_scanned_lines(
-            descriptor,
-            max_line_bytes=1024,
-            budget=None,
-            charge_transcript=False,
-            discard_first_line=True,
-        )
+    def test_discard_first_skips_partial_window_head(self) -> None:
+        spool = self._spool(b'{"a":1}\n{"b":2}\n')
+        lines = list(_parse_window_lines(spool, max_line_bytes=1024, discard_first=True))
         self.assertEqual([line.text for line in lines], ['{"b":2}'])
-        self.assertEqual(pending_records, 1)
-        self.assertGreater(pending_bytes, 0)
+        self.assertTrue(lines[0].terminated)
+        spool.close()
 
-    def test_without_discard_first_line_keeps_complete_first_line(self) -> None:
-        descriptor, _path = self._descriptor(b'{"a":1}\n{"b":2}\n')
-        os.lseek(descriptor, 8, os.SEEK_SET)  # exactly at the boundary after \n
-        lines, _b, pending_records, _ = _collect_scanned_lines(
-            descriptor,
-            max_line_bytes=1024,
-            budget=None,
-            charge_transcript=False,
-            discard_first_line=False,
-        )
-        self.assertEqual([line.text for line in lines], ['{"b":2}'])
-        self.assertEqual(pending_records, 1)
+    def test_without_discard_first_keeps_complete_first_line(self) -> None:
+        spool = self._spool(b'{"a":1}\n{"b":2}\n')
+        lines = list(_parse_window_lines(spool, max_line_bytes=1024, discard_first=False))
+        self.assertEqual([line.text for line in lines], ['{"a":1}', '{"b":2}'])
+        spool.close()
 
-    def test_enforce_record_budget_false_counts_without_charging(self) -> None:
-        descriptor, _path = self._descriptor(b'{"n":1}\n' * 5)
-        budget = ReadBudget(Bounds(scanned_records=2, transcript_records=2))
-        lines, _b, pending_records, _ = _collect_scanned_lines(
-            descriptor,
-            max_line_bytes=1024,
-            budget=budget,
-            charge_transcript=False,
-            enforce_record_budget=False,
-        )
-        self.assertEqual(len(lines), 5)
-        self.assertEqual(pending_records, 5)
-        self.assertEqual(budget.records, 0)
-        self.assertEqual(budget.transcript_records_read, 0)
+    def test_crlf_flag_detected_on_terminated_lines(self) -> None:
+        spool = self._spool(b'{"a":1}\r\n{"b":2}\n')
+        lines = list(_parse_window_lines(spool, max_line_bytes=1024, discard_first=False))
+        self.assertEqual([line.text for line in lines], ['{"a":1}', '{"b":2}'])
+        self.assertEqual([line.crlf for line in lines], [True, False])
+        spool.close()
 
-    def test_enforce_record_budget_true_still_raises_limit(self) -> None:
-        descriptor, _path = self._descriptor(b'{"n":1}\n' * 5)
-        budget = ReadBudget(Bounds(scanned_records=2, transcript_records=2))
+    def test_oversize_line_raises_limit_exceeded(self) -> None:
+        spool = self._spool(b'{"a":1}\n' + b"x" * 32 + b"\n")
         with self.assertRaises(DiagnosticError) as caught:
-            _collect_scanned_lines(
-                descriptor,
-                max_line_bytes=1024,
-                budget=budget,
-                charge_transcript=False,
-                enforce_record_budget=True,
-            )
+            list(_parse_window_lines(spool, max_line_bytes=16, discard_first=False))
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+        spool.close()
+
+    def test_interior_corruption_raises_corrupt_record(self) -> None:
+        spool = self._spool(b'{"a":1}\n{\xff\xfe}\n')
+        with self.assertRaises(DiagnosticError) as caught:
+            list(_parse_window_lines(spool, max_line_bytes=1024, discard_first=False))
+        self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
+        spool.close()
 
 
 class HashDescriptorWindowTests(unittest.TestCase):
@@ -226,11 +202,14 @@ class StableScanTailLinesTests(unittest.TestCase):
             tail_start = path.stat().st_size - 512
 
             def flip_boundary(_stage: str, _attempt: int, _safe: str) -> None:
+                original = path.stat()
                 with open(path, "r+b") as handle:
                     handle.seek(tail_start - 1)
                     current = handle.read(1)
                     handle.seek(tail_start - 1)
                     handle.write(b"x" if current == b"\n" else b"\n")
+                # Restore mtime so only the boundary byte differs (probe check).
+                os.utime(path, ns=(original.st_atime_ns, original.st_mtime_ns))
 
             with self.assertRaises(DiagnosticError) as caught:
                 list(
@@ -253,8 +232,9 @@ class StableScanTailLinesTests(unittest.TestCase):
                 Bounds(source_read_bytes=512, transcript_records=5_000, scanned_records=500)
             )
 
+            # Append after the first hash so the FINAL hash sees growth (retry).
             def append(_stage: str, _attempt: int, _safe: str) -> None:
-                if _stage == "after-read":
+                if _stage == "after-verify-read":
                     with open(path, "a", encoding="utf-8") as handle:
                         handle.write('{"n":99}\n')
 
