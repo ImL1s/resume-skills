@@ -30,7 +30,14 @@ from ..paths import (
     same_cwd,
 )
 from ..sanitize import sanitize_text, sanitize_turn_record
-from ..snapshot import FileSnapshot, StableWindows, snapshot_regular_file, stable_read_windows
+from ..snapshot import (
+    FileFingerprint,
+    FileSnapshot,
+    StableWindows,
+    snapshot_regular_file,
+    stable_read_windows,
+    stable_scan_tail_lines,
+)
 from .base import CapabilityReport, ResolvedRef
 
 FORMAT_ID = "claude-jsonl-v1"
@@ -667,18 +674,30 @@ def _metadata_windows(
     cwd_only: bool = False,
 ) -> tuple[StableWindows, _TranscriptMetadata, tuple[str, ...]]:
     _validate_claude_bounds(budget)
+    remaining = max(
+        0,
+        min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes)
+        - budget.bytes_read,
+    )
+    head_bytes = min(_METADATA_HEAD_BYTES, remaining)
+    tail_bytes = min(_METADATA_TAIL_BYTES, max(0, remaining - head_bytes))
     observation = stable_read_windows(
         path,
         root=root,
-        head_bytes=_METADATA_HEAD_BYTES,
-        tail_bytes=_METADATA_TAIL_BYTES,
+        head_bytes=head_bytes,
+        tail_bytes=tail_bytes,
         max_bytes=min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes),
         attempts=min(budget.limits.snapshot_attempts, DEFAULT_BOUNDS.snapshot_attempts),
         membership_limit=min(budget.limits.scanned_records, DEFAULT_BOUNDS.scanned_records),
         budget=budget,
+        require_size_within_max=False,
     )
     metadata = _TranscriptMetadata()
     warnings: list[str] = []
+    if observation.fingerprint.size > min(
+        budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes
+    ):
+        warnings.append("W_TRUNCATED")
     full_in_head = observation.fingerprint.size <= len(observation.head)
     _scan_metadata_chunk(
         observation.head,
