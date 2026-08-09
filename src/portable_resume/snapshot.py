@@ -470,6 +470,8 @@ def _collect_scanned_lines(
     budget: ReadBudget | None,
     charge_transcript: bool,
     spool: BinaryIO | None = None,
+    discard_first_line: bool = False,
+    enforce_record_budget: bool = True,
 ) -> tuple[list[ScannedLine] | None, int, int, str]:
     """Stream lines from an open descriptor.
 
@@ -498,7 +500,7 @@ def _collect_scanned_lines(
             raise DiagnosticError.limit_exceeded()
 
     def check_record_budget() -> None:
-        if budget is None:
+        if budget is None or not enforce_record_budget:
             return
         if charge_transcript:
             maximum = min(
@@ -529,7 +531,7 @@ def _collect_scanned_lines(
         line_ordinal += 1
 
     def drain_complete_lines() -> None:
-        nonlocal absolute_offset, pending_records
+        nonlocal absolute_offset, pending_records, discard_first_line
         while True:
             newline_index = buffer.find(b"\n")
             if newline_index < 0:
@@ -545,6 +547,13 @@ def _collect_scanned_lines(
             if len(payload) > max_line_bytes:
                 raise DiagnosticError.limit_exceeded()
             check_record_budget()
+            if discard_first_line and line_ordinal == 0:
+                discard_first_line = False
+                absolute_offset += len(line_bytes)
+                continue
+            if line_ordinal == 0 and not payload:
+                absolute_offset += len(line_bytes)
+                continue
             pending_records += 1
             try:
                 text = payload.decode("utf-8")
@@ -577,24 +586,25 @@ def _collect_scanned_lines(
     # downgrade the unterminated record to W_PARTIAL_TAIL.
     if buffer:
         check_record_budget()
-        pending_records += 1
-        utf8_valid = True
-        try:
-            text = bytes(buffer).decode("utf-8").removesuffix("\r")
-        except UnicodeDecodeError as error:
-            if error.reason != "unexpected end of data" or error.end != len(buffer):
-                raise DiagnosticError("E_CORRUPT_RECORD") from error
-            text = bytes(buffer).decode("utf-8", errors="replace").removesuffix("\r")
-            utf8_valid = False
-        emit(
-            ScannedLine(
-                ordinal=line_ordinal,
-                text=text,
-                byte_offset=absolute_offset,
-                terminated=False,
-                utf8_valid=utf8_valid,
+        if not (discard_first_line and line_ordinal == 0):
+            pending_records += 1
+            utf8_valid = True
+            try:
+                text = bytes(buffer).decode("utf-8").removesuffix("\r")
+            except UnicodeDecodeError as error:
+                if error.reason != "unexpected end of data" or error.end != len(buffer):
+                    raise DiagnosticError("E_CORRUPT_RECORD") from error
+                text = bytes(buffer).decode("utf-8", errors="replace").removesuffix("\r")
+                utf8_valid = False
+            emit(
+                ScannedLine(
+                    ordinal=line_ordinal,
+                    text=text,
+                    byte_offset=absolute_offset,
+                    terminated=False,
+                    utf8_valid=utf8_valid,
+                )
             )
-        )
     return collected, pending_bytes, pending_records, digest.hexdigest()
 
 
