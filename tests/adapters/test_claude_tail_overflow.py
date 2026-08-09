@@ -329,3 +329,18 @@ class ClaudeTailOverflowTests(unittest.TestCase):
                 ResolvedRef(session_id, str(path)), self.query(), budget
             )
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_zero_precharged_byte_budget_list_preserves_limit(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        records = [
+            self.turn("user", user_id, None, "request", -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        budget = ReadBudget(
+            Bounds(source_read_bytes=1024, transcript_records=100, scanned_records=100)
+        )
+        budget.consume_bytes(1024)  # fully precharged
+        with self.assertRaises(DiagnosticError) as caught:
+            claude.ADAPTER.list(self.query(), budget)
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")

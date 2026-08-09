@@ -1035,14 +1035,11 @@ def stable_scan_tail_lines(
         if verified_spool is not None:
             effective_budget.consume_bytes(pending_bytes)
             try:
-                verified_spool.seek(0)
-                total = 0
-                for _line in _parse_window_lines(
+                total = _count_window_lines(
                     verified_spool,
                     max_line_bytes=line_limit,
                     discard_first=starts_mid_line,
-                ):
-                    total += 1
+                )
                 if charge_transcript:
                     record_max = min(
                         effective_budget.limits.transcript_records,
@@ -1061,7 +1058,6 @@ def stable_scan_tail_lines(
                     effective_budget.consume_transcript_records(admitted)
                 else:
                     effective_budget.consume_records(admitted)
-                verified_spool.seek(0)
                 for line in _parse_window_lines(
                     verified_spool,
                     max_line_bytes=line_limit,

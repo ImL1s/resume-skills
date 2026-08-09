@@ -726,6 +726,9 @@ def _metadata_windows(
             stop_when_cwd_ready=cwd_only,
         )
     if metadata.records_seen == 0:
+        # Precharged/zero byte budget: keep the limit diagnostic.
+        if remaining <= 0 or observation.fingerprint.size > head_bytes + tail_bytes:
+            raise DiagnosticError("E_LIMIT_EXCEEDED", source="claude", provider=FORMAT_ID)
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="claude", provider=FORMAT_ID)
     return observation, metadata, tuple(dict.fromkeys(warnings))
 
