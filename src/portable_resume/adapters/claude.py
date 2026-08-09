@@ -34,6 +34,7 @@ from ..sanitize import sanitize_text, sanitize_turn_record
 from ..snapshot import (
     FileFingerprint,
     FileSnapshot,
+    ScannedLine,
     StableWindows,
     snapshot_regular_file,
     stable_read_windows,
@@ -695,9 +696,7 @@ def _metadata_windows(
     )
     metadata = _TranscriptMetadata()
     warnings: list[str] = []
-    if observation.fingerprint.size > min(
-        budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes
-    ):
+    if observation.fingerprint.size > head_bytes + tail_bytes:
         warnings.append("W_TRUNCATED")
     full_in_head = observation.fingerprint.size <= len(observation.head)
     _scan_metadata_chunk(
@@ -1430,14 +1429,16 @@ def _build_tail_graph(
             max_line_bytes=maximum_record,
         )
         with open(target, "wb") as handle:
-            for line in lines:
+            pending: ScannedLine | None = None
+            stop = False
+
+            def flush(line: ScannedLine) -> bool:
+                nonlocal index
                 offset = handle.tell()
                 raw = line.text.encode("utf-8")
                 if line.terminated:
                     raw += b"\n"
                 handle.write(raw)
-                if len(raw) > maximum_record:
-                    raise DiagnosticError.limit_exceeded()
                 record, warning = _decode_record(
                     raw, terminal_partial=not line.terminated
                 )
@@ -1445,9 +1446,9 @@ def _build_tail_graph(
                     warnings.append(warning)
                 if record is None:
                     if warning == "W_PARTIAL_TAIL":
-                        break
+                        return False
                     index += 1
-                    continue
+                    return True
                 metadata.observe(record)
                 observed = _observe_replay_record(record, digests=digests, bridge=bridge)
                 if observed is not None and record.get("type") in _UUID_RECORD_TYPES:
@@ -1461,6 +1462,28 @@ def _build_tail_graph(
                             record=_graph_record(record),
                         )
                 index += 1
+                return True
+
+            for line in lines:
+                if stop:
+                    break
+                if pending is not None:
+                    # Enforce the ORIGINAL physical length (incl. CRLF terminator)
+                    # so a CRLF record cannot shrink below record_bytes in the
+                    # LF-reconstructed mirror (#258 codex-review P1-4).
+                    if line.byte_offset - pending.byte_offset > maximum_record:
+                        raise DiagnosticError.limit_exceeded()
+                    if not flush(pending):
+                        stop = True
+                        break
+                pending = line
+            if pending is not None and not stop:
+                raw = pending.text.encode("utf-8")
+                if pending.terminated:
+                    raw += b"\n"
+                if len(raw) > maximum_record:
+                    raise DiagnosticError.limit_exceeded()
+                flush(pending)
         try:
             after = os.lstat(path)
         except OSError as error:
@@ -1706,33 +1729,41 @@ class ClaudeAdapter:
                     if path is None:
                         raise DiagnosticError("E_NO_MATCH", source=self.key, provider=FORMAT_ID)
         _validate_claude_bounds(budget)
-        counters = (budget.records, budget.transcript_records_read, budget.bytes_read)
+        provisional = _provisional_metadata_budget(budget)
+        observation: FileSnapshot | None = None
         try:
-            with snapshot_regular_file(
+            observation = snapshot_regular_file(
                 path,
                 root=root,
                 bounds=budget.limits,
                 attempts=budget.limits.snapshot_attempts,
                 membership_limit=budget.limits.scanned_records,
-                budget=budget,
+                budget=provisional,
                 provider=FORMAT_ID,
-            ) as observation:
-                index = _index_snapshot(observation, budget)
-                return _assemble_from_index(
-                    observation, index, path, ref, query, budget
-                )
+            )
+            try:
+                index = _index_snapshot(observation, provisional)
+            except BaseException:
+                observation.close()
+                raise
         except DiagnosticError as error:
             if error.code != "E_LIMIT_EXCEEDED":
                 raise
-            # The failed full path consumed budget counters before raising;
-            # discard that partial consumption so the tail fallback can admit
-            # the window under the caller's original allowances.
-            budget.records, budget.transcript_records_read, budget.bytes_read = counters
             observation, index = _build_tail_graph(path, root, budget)
             with observation:
                 return _assemble_from_index(
                     observation, index, path, ref, query, budget
                 )
+        # Commit full-path charges before assembly so turns-exhaustion hard-fails.
+        budget.consume_records(provisional.records - budget.records)
+        budget.consume_transcript_records(
+            provisional.transcript_records_read - budget.transcript_records_read
+        )
+        budget.consume_bytes(provisional.bytes_read - budget.bytes_read)
+        try:
+            return _assemble_from_index(observation, index, path, ref, query, budget)
+        finally:
+            observation.close()
 
 
 ADAPTER = ClaudeAdapter()

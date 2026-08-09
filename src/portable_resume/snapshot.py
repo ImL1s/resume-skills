@@ -786,10 +786,11 @@ def stable_scan_tail_lines(
             remaining = max(0, max_file_bytes - effective_budget.bytes_read)
             tail_start = max(0, before_stat.st_size - remaining)
             starts_mid_line = False
+            boundary_probe: bytes | None = None
             if tail_start > 0:
                 os.lseek(descriptor, tail_start - 1, os.SEEK_SET)
-                probe = os.read(descriptor, 1)
-                starts_mid_line = probe != b"\n"
+                boundary_probe = os.read(descriptor, 1)
+                starts_mid_line = boundary_probe != b"\n"
             if hook:
                 hook("before-read", attempt, safe)
             os.lseek(descriptor, tail_start, os.SEEK_SET)
@@ -815,20 +816,48 @@ def stable_scan_tail_lines(
             observed = _fingerprint(before_stat, content_hash)
             if hook:
                 hook("after-read", attempt, safe)
-            verified_hash, verified_size = _hash_descriptor_window(
-                descriptor,
-                start=tail_start,
-                maximum=max_file_bytes,
-            )
+            if tail_start > 0:
+                os.lseek(descriptor, tail_start - 1, os.SEEK_SET)
+                probe_verify = os.read(descriptor, 1)
+            else:
+                probe_verify = None
+            try:
+                verified_hash, verified_size = _hash_descriptor_window(
+                    descriptor,
+                    start=tail_start,
+                    maximum=max_file_bytes,
+                )
+            except DiagnosticError as error:
+                # Verification-time growth: retry, not hard-fail.
+                if (
+                    error.code == "E_LIMIT_EXCEEDED"
+                    and os.fstat(descriptor).st_size > before_stat.st_size
+                ):
+                    continue
+                raise
             verified = _fingerprint(os.fstat(descriptor), verified_hash)
             if hook:
                 hook("after-verify-read", attempt, safe)
             middle_entry = _target_entry_fingerprint(parent, basename, root=base)
-            final_hash, final_size = _hash_descriptor_window(
-                descriptor,
-                start=tail_start,
-                maximum=max_file_bytes,
-            )
+            if tail_start > 0:
+                os.lseek(descriptor, tail_start - 1, os.SEEK_SET)
+                probe_final = os.read(descriptor, 1)
+            else:
+                probe_final = None
+            try:
+                final_hash, final_size = _hash_descriptor_window(
+                    descriptor,
+                    start=tail_start,
+                    maximum=max_file_bytes,
+                )
+            except DiagnosticError as error:
+                # Verification-time growth: retry.
+                if (
+                    error.code == "E_LIMIT_EXCEEDED"
+                    and os.fstat(descriptor).st_size > before_stat.st_size
+                ):
+                    continue
+                raise
             final_stat = os.fstat(descriptor)
             final = _fingerprint(final_stat, final_hash)
             after_entry = _target_entry_fingerprint(parent, basename, root=base)
@@ -839,6 +868,7 @@ def stable_scan_tail_lines(
                 and _entry_identity_matches(after_entry, final_stat)
                 and pending_bytes == verified_size == final_size
                 == before_stat.st_size - tail_start
+                and boundary_probe == probe_verify == probe_final
             ):
                 continue
             # Hand off spool for post-close replay so the source fd is never

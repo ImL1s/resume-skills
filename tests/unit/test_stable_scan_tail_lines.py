@@ -214,3 +214,58 @@ class StableScanTailLinesTests(unittest.TestCase):
             before = tree_snapshot(str(root))
             list(stable_scan_tail_lines(str(path), root=str(root)))
             self.assertEqual(tree_snapshot(str(root)), before)
+
+    def test_boundary_byte_mutation_retries_then_source_busy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "boundary.jsonl"
+            path.write_text("".join(f'{{"n":{i}}}\n' for i in range(200)), encoding="utf-8")
+            budget = ReadBudget(
+                Bounds(source_read_bytes=512, transcript_records=5_000, scanned_records=500)
+            )
+            tail_start = path.stat().st_size - 512
+
+            def flip_boundary(_stage: str, _attempt: int, _safe: str) -> None:
+                with open(path, "r+b") as handle:
+                    handle.seek(tail_start - 1)
+                    current = handle.read(1)
+                    handle.seek(tail_start - 1)
+                    handle.write(b"x" if current == b"\n" else b"\n")
+
+            with self.assertRaises(DiagnosticError) as caught:
+                list(
+                    stable_scan_tail_lines(
+                        str(path),
+                        root=str(root),
+                        budget=budget,
+                        charge_transcript=True,
+                        hook=flip_boundary,
+                    )
+                )
+            self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+
+    def test_verification_time_growth_retries_then_source_busy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "grow.jsonl"
+            path.write_text("".join(f'{{"n":{i}}}\n' for i in range(200)), encoding="utf-8")
+            budget = ReadBudget(
+                Bounds(source_read_bytes=512, transcript_records=5_000, scanned_records=500)
+            )
+
+            def append(_stage: str, _attempt: int, _safe: str) -> None:
+                if _stage == "after-read":
+                    with open(path, "a", encoding="utf-8") as handle:
+                        handle.write('{"n":99}\n')
+
+            with self.assertRaises(DiagnosticError) as caught:
+                list(
+                    stable_scan_tail_lines(
+                        str(path),
+                        root=str(root),
+                        budget=budget,
+                        charge_transcript=True,
+                        hook=append,
+                    )
+                )
+            self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")

@@ -186,3 +186,93 @@ class ClaudeTailOverflowTests(unittest.TestCase):
         )
         claude.ADAPTER.show(ResolvedRef(session_id, str(path)), self.query(), budget)
         self.assertEqual(tree_snapshot(str(self.root)), before)
+
+    def test_crlf_record_original_length_limit_preserved_in_fallback(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        assistant_id = str(uuid.uuid4())
+        _, path = self.session(
+            [
+                self.turn("user", user_id, None, "request", -3, sessionId=session_id),
+                {"type": "meta"},
+                self.turn("assistant", assistant_id, user_id, "answer", -1, sessionId=session_id),
+            ],
+            identifier=session_id,
+        )
+        # Insert a CRLF record whose ORIGINAL physical length (payload + \r\n)
+        # exceeds record_bytes, but whose LF-reconstructed payload alone does not.
+        # The fallback mirror must reject it exactly like the full-graph path.
+        record_bytes = 256
+        meta = '{"type":"meta","pad":"' + "x" * (record_bytes - 24) + '"}'
+        self.assertEqual(len(meta.encode()), record_bytes)
+        path.write_bytes(
+            path.read_bytes().replace(b'{"type":"meta"}\n', meta.encode() + b"\r\n")
+        )
+        budget = ReadBudget(
+            Bounds(
+                record_bytes=record_bytes,
+                transcript_records=10,
+                scanned_records=100,
+            )
+        )
+        with self.assertRaises(DiagnosticError) as caught:
+            claude.ADAPTER.show(
+                ResolvedRef(session_id, str(path)), self.query(), budget
+            )
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_normalized_turns_exhaustion_hard_fails_no_fallback_loop(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        assistant_id = str(uuid.uuid4())
+        records = [
+            self.turn("user", user_id, None, "request", -2, sessionId=session_id),
+            self.turn("assistant", assistant_id, user_id, "answer", -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        budget = ReadBudget(
+            Bounds(normalized_turns=1, transcript_records=10, scanned_records=100)
+        )
+        with self.assertRaises(DiagnosticError) as caught:
+            claude.ADAPTER.show(
+                ResolvedRef(session_id, str(path)), self.query(), budget
+            )
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_budget_counters_match_full_path_after_show(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        assistant_id = str(uuid.uuid4())
+        records = [
+            self.turn("user", user_id, None, "request", -2, sessionId=session_id),
+            self.turn("assistant", assistant_id, user_id, "answer", -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        budget = ReadBudget()
+        claude.ADAPTER.show(ResolvedRef(session_id, str(path)), self.query(), budget)
+        self.assertEqual(budget.bytes_read, path.stat().st_size)
+        self.assertEqual(budget.transcript_records_read, len(records))
+
+    def test_replay_conflict_inside_fallback_window_stays_corrupt(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        assistant_id = str(uuid.uuid4())
+        base = self.turn("user", user_id, None, "request", -3, sessionId=session_id)
+        replay = dict(base)
+        replay["message"] = {"role": "user", "content": "changed"}
+        records = [
+            {"type": "meta"},
+            base,
+            replay,
+            self.turn("assistant", assistant_id, user_id, "answer", -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        # transcript_records=3 forces the tail fallback (4 records > 3); the
+        # admitted suffix still contains base + replay, so the digest conflict
+        # must surface as E_CORRUPT_RECORD, not a soft handoff.
+        budget = ReadBudget(Bounds(transcript_records=3, scanned_records=100))
+        with self.assertRaises(DiagnosticError) as caught:
+            claude.ADAPTER.show(
+                ResolvedRef(session_id, str(path)), self.query(), budget
+            )
+        self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")
