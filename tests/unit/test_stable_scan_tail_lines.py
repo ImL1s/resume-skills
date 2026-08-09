@@ -291,7 +291,11 @@ class CommitProvisionalConcurrencyTests(unittest.TestCase):
             with self.assertRaises(DiagnosticError) as caught:
                 list(
                     stable_scan_tail_lines(
-                        str(path), root=str(root), budget=budget, max_line_bytes=16
+                        str(path),
+                        root=str(root),
+                        budget=budget,
+                        max_line_bytes=16,
+                        charge_transcript=True,
                     )
                 )
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
@@ -308,7 +312,11 @@ class CommitProvisionalConcurrencyTests(unittest.TestCase):
             with self.assertRaises(DiagnosticError) as caught:
                 list(
                     stable_scan_tail_lines(
-                        str(path), root=str(root), budget=budget, max_line_bytes=16
+                        str(path),
+                        root=str(root),
+                        budget=budget,
+                        max_line_bytes=16,
+                        charge_transcript=True,
                     )
                 )
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
@@ -325,7 +333,55 @@ class CommitProvisionalConcurrencyTests(unittest.TestCase):
             with self.assertRaises(DiagnosticError) as caught:
                 list(
                     stable_scan_tail_lines(
-                        str(path), root=str(root), budget=budget, max_line_bytes=16
+                        str(path),
+                        root=str(root),
+                        budget=budget,
+                        max_line_bytes=16,
+                        charge_transcript=True,
                     )
                 )
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_count_pass_skip_range_calibration(self) -> None:
+        # With charge_transcript=True and transcript_records=1, a 3-line file
+        # must admit ONLY the final line (skip=2): proves the count pass runs
+        # and the boundary tests above exercise the pre-skip length check.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "calibrate.jsonl"
+            path.write_bytes(b'{"n":1}\n{"n":2}\n{"n":3}\n')
+            budget = ReadBudget(
+                Bounds(source_read_bytes=512, transcript_records=1, scanned_records=100)
+            )
+            lines = list(
+                stable_scan_tail_lines(
+                    str(path),
+                    root=str(root),
+                    budget=budget,
+                    charge_transcript=True,
+                )
+            )
+            self.assertEqual([line.text for line in lines], ['{"n":3}'])
+            self.assertEqual(budget.transcript_records_read, 1)
+
+    def test_skip_range_calibration_trims_to_last_line(self) -> None:
+        # Calibrate that transcript_records=1 with charge_transcript=True really
+        # trims to the last line (skip=2), so the oversize-boundary tests above
+        # genuinely exercise the count-pass check BEFORE skipping (round-7).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "calibrate.jsonl"
+            path.write_bytes(b'{"n":1}\n{"n":2}\n{"n":3}\n')
+            budget = ReadBudget(
+                Bounds(source_read_bytes=512, transcript_records=1, scanned_records=100)
+            )
+            lines = list(
+                stable_scan_tail_lines(
+                    str(path),
+                    root=str(root),
+                    budget=budget,
+                    charge_transcript=True,
+                )
+            )
+            self.assertEqual([line.text for line in lines], ['{"n":3}'])
+            self.assertEqual(budget.transcript_records_read, 1)
