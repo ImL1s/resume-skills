@@ -277,3 +277,22 @@ class CommitProvisionalConcurrencyTests(unittest.TestCase):
             budget.commit_provisional(baseline, provisional)
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
         self.assertEqual(budget.records, 8)
+
+    def test_count_pass_rejects_oversize_terminated_line(self) -> None:
+        # The allocation-free count pass must still enforce record_bytes on
+        # terminated lines; otherwise a skipped oversize line would silently
+        # suppress the hard E_LIMIT_EXCEEDED (codex round-5 BLOCKER).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "oversize.jsonl"
+            path.write_bytes(b'{"n":1}\n' + b"x" * 32 + b"\n" + b'{"n":3}\n')
+            budget = ReadBudget(
+                Bounds(source_read_bytes=512, transcript_records=100, scanned_records=100)
+            )
+            with self.assertRaises(DiagnosticError) as caught:
+                list(
+                    stable_scan_tail_lines(
+                        str(path), root=str(root), budget=budget, max_line_bytes=16
+                    )
+                )
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")

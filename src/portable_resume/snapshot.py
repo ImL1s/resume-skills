@@ -776,11 +776,17 @@ def _count_window_lines(
                 if effective > max_line_bytes:
                     raise DiagnosticError.limit_exceeded()
                 break
+            line_bytes = bytes(buffer[: newline_index + 1])
             del buffer[: newline_index + 1]
             if first and discard_first:
                 first = False
                 continue
             first = False
+            payload = line_bytes[:-1]
+            if payload.endswith(b"\r"):
+                payload = payload[:-1]
+            if len(payload) > max_line_bytes:
+                raise DiagnosticError.limit_exceeded()
             total += 1
     if buffer:
         if not (first and discard_first):
