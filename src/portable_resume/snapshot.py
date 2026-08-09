@@ -782,10 +782,9 @@ def _count_window_lines(
                 first = False
                 continue
             first = False
-            payload = line_bytes[:-1]
-            if payload.endswith(b"\r"):
-                payload = payload[:-1]
-            if len(payload) > max_line_bytes:
+            # Physical length INCLUDING the LF (and any CR) terminator, matching
+            # the full-path readline(maximum_record + 1) contract (round-6 P1).
+            if len(line_bytes) > max_line_bytes:
                 raise DiagnosticError.limit_exceeded()
             total += 1
     if buffer:
