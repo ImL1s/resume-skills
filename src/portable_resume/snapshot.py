@@ -881,7 +881,9 @@ def _parse_window_lines(
             ordinal=ordinal,
             text=text,
             byte_offset=absolute_offset,
-            terminated=False,
+            # A trailing CR terminates the record (full-path readline parity);
+            # malformed JSON must surface as E_CORRUPT_RECORD, not W_PARTIAL_TAIL.
+            terminated=crlf,
             utf8_valid=utf8_valid,
             crlf=crlf,
         )

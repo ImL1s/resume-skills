@@ -695,7 +695,9 @@ def _metadata_windows(
     )
     metadata = _TranscriptMetadata()
     warnings: list[str] = []
-    if observation.fingerprint.size > head_bytes + tail_bytes:
+    # Compare against the remaining byte budget, not the internal sample size
+    # (a healthy 17 MiB session under 256 MiB must not be flagged).
+    if observation.fingerprint.size > remaining:
         warnings.append("W_TRUNCATED")
     full_in_head = observation.fingerprint.size <= len(observation.head)
     _scan_metadata_chunk(
@@ -726,8 +728,9 @@ def _metadata_windows(
             stop_when_cwd_ready=cwd_only,
         )
     if metadata.records_seen == 0:
-        # Precharged/zero byte budget: keep the limit diagnostic.
-        if remaining <= 0 or observation.fingerprint.size > head_bytes + tail_bytes:
+        # Precharged/zero byte budget: keep the limit diagnostic. Missing
+        # sampled metadata under a healthy budget stays E_UNSUPPORTED_FORMAT.
+        if remaining <= 0 or observation.fingerprint.size > remaining:
             raise DiagnosticError("E_LIMIT_EXCEEDED", source="claude", provider=FORMAT_ID)
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="claude", provider=FORMAT_ID)
     return observation, metadata, tuple(dict.fromkeys(warnings))
