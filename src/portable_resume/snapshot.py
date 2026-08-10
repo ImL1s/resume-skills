@@ -44,6 +44,7 @@ class ScannedLine:
     byte_offset: int
     terminated: bool
     utf8_valid: bool = True
+    crlf: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -718,6 +719,366 @@ def stable_scan_lines(
     raise DiagnosticError.source_busy(attempts=attempts, family=family)
 
 
+def _spool_window_bytes(
+    descriptor: int,
+    spool: BinaryIO,
+    *,
+    maximum: int,
+) -> tuple[str, int]:
+    """Copy ``[current_pos, EOF)`` raw bytes into a spool, hashing as we go.
+
+    The tail scanner uses this instead of the per-line spool so a bounded
+    window cannot be amplified by per-record headers (#258 re-review P1).
+    """
+
+    digest = hashlib.sha256()
+    total = 0
+    while True:
+        block = os.read(descriptor, 64 * 1024)
+        if not block:
+            break
+        total += len(block)
+        if total > maximum:
+            raise DiagnosticError.limit_exceeded()
+        digest.update(block)
+        spool.write(block)
+    return digest.hexdigest(), total
+
+
+def _count_window_lines(
+    spool: BinaryIO,
+    *,
+    max_line_bytes: int,
+    discard_first: bool,
+) -> int:
+    """Count lines in a raw window spool without building ScannedLine objects.
+
+    Applies the incremental ``record_bytes`` limit and the optional
+    first-partial-line discard, but defers UTF-8 validation to the decode pass
+    (which only visits the admitted suffix). Used to locate the trim boundary
+    without materializing the whole window (codex re-review P1-3).
+    """
+
+    spool.seek(0)
+    buffer = bytearray()
+    first = True
+    total = 0
+    while True:
+        chunk = spool.read(64 * 1024)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        while True:
+            newline_index = buffer.find(b"\n")
+            if newline_index < 0:
+                # Unterminated line: fail early if it already exceeds the limit.
+                effective = len(buffer) - (1 if buffer[-1:] == b"\r" else 0)
+                if effective > max_line_bytes:
+                    raise DiagnosticError.limit_exceeded()
+                break
+            line_bytes = bytes(buffer[: newline_index + 1])
+            del buffer[: newline_index + 1]
+            if first and discard_first:
+                first = False
+                continue
+            first = False
+            # Physical length INCLUDING the LF (and any CR) terminator, matching
+            # the full-path readline(maximum_record + 1) contract (round-6 P1).
+            if len(line_bytes) > max_line_bytes:
+                raise DiagnosticError.limit_exceeded()
+            total += 1
+    if buffer:
+        if not (first and discard_first):
+            total += 1
+    return total
+
+
+def _parse_window_lines(
+    spool: BinaryIO,
+    *,
+    max_line_bytes: int,
+    discard_first: bool,
+    skip: int = 0,
+) -> Iterator[ScannedLine]:
+    """Split a raw window spool into ScannedLine records (replay pass).
+
+    Applies ``record_bytes`` per line (``E_LIMIT_EXCEEDED``), UTF-8 validation
+    (``E_CORRUPT_RECORD``), CRLF detection (``crlf`` flag), and the optional
+    first-partial-line discard. Byte offsets are relative to the window start.
+
+    ``skip`` drops the first N complete lines without decoding them, locating
+    the admitted suffix without a second full decode pass (re-review P1-3).
+    """
+
+    spool.seek(0)
+    buffer = bytearray()
+    absolute_offset = 0
+    ordinal = 0
+    first = True
+    remaining_skip = skip
+    while True:
+        chunk = spool.read(64 * 1024)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        while True:
+            newline_index = buffer.find(b"\n")
+            if newline_index < 0:
+                # Unterminated line: fail early if it already exceeds the limit
+                # (a trailing CR does not count toward the content ceiling).
+                effective = len(buffer) - (1 if buffer[-1:] == b"\r" else 0)
+                if effective > max_line_bytes:
+                    raise DiagnosticError.limit_exceeded()
+                break
+            line_bytes = bytes(buffer[: newline_index + 1])
+            del buffer[: newline_index + 1]
+            if first and discard_first:
+                first = False
+                absolute_offset += len(line_bytes)
+                continue
+            first = False
+            if remaining_skip > 0:
+                remaining_skip -= 1
+                absolute_offset += len(line_bytes)
+                continue
+            payload = line_bytes[:-1]
+            crlf = payload.endswith(b"\r")
+            if crlf:
+                payload = payload[:-1]
+            if len(payload) > max_line_bytes:
+                raise DiagnosticError.limit_exceeded()
+            try:
+                text = payload.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise DiagnosticError("E_CORRUPT_RECORD") from error
+            yield ScannedLine(
+                ordinal=ordinal,
+                text=text,
+                byte_offset=absolute_offset,
+                terminated=True,
+                crlf=crlf,
+            )
+            ordinal += 1
+            absolute_offset += len(line_bytes)
+    if buffer:
+        if first and discard_first or remaining_skip > 0:
+            return
+        payload = bytes(buffer)
+        bare_cr = payload.endswith(b"\r")
+        if bare_cr:
+            payload = payload[:-1]
+        if len(payload) > max_line_bytes:
+            raise DiagnosticError.limit_exceeded()
+        utf8_valid = True
+        try:
+            text = payload.decode("utf-8")
+        except UnicodeDecodeError as error:
+            if error.reason != "unexpected end of data" or error.end != len(buffer):
+                raise DiagnosticError("E_CORRUPT_RECORD") from error
+            text = payload.decode("utf-8", errors="replace")
+            utf8_valid = False
+        yield ScannedLine(
+            ordinal=ordinal,
+            text=text,
+            byte_offset=absolute_offset,
+            # Bare trailing CR terminates (readline parity) but is not a CRLF
+            # pair: the mirror's reconstructed LF accounts for that CR.
+            terminated=bare_cr,
+            utf8_valid=utf8_valid,
+            crlf=False,
+        )
+
+
+def stable_scan_tail_lines(
+    path: str | os.PathLike[str],
+    *,
+    root: str | os.PathLike[str],
+    budget: ReadBudget | None = None,
+    max_line_bytes: int | None = None,
+    charge_transcript: bool = False,
+    hook: AttemptHook | None = None,
+) -> Iterator[ScannedLine]:
+    """Yield UTF-8 lines from a stable end-anchored window (#258).
+
+    Same no-follow / containment / attempt-verification rules as
+    ``stable_scan_lines``, but when the file exceeds the remaining
+    ``source_read_bytes`` budget the scanner admits only the final
+    ``remaining`` bytes (``tail_start = st_size - remaining``) instead of
+    hard-failing. The first line is discarded when the window begins
+    mid-record. After verification the admitted line count is trimmed to the
+    remaining ``transcript_records`` (or ``scanned_records`` when
+    ``charge_transcript`` is false), charging only the admitted records and
+    the unique window bytes. The whole file is never hashed or buffered.
+    """
+
+    effective_budget = budget if budget is not None else ReadBudget()
+    budget_line_cap = min(
+        effective_budget.limits.record_bytes,
+        DEFAULT_BOUNDS.record_bytes,
+    )
+    if max_line_bytes is None:
+        line_limit = budget_line_cap
+    else:
+        if max_line_bytes < 0:
+            raise DiagnosticError.invalid()
+        line_limit = min(max_line_bytes, budget_line_cap)
+    max_file_bytes = min(
+        DEFAULT_BOUNDS.source_read_bytes,
+        effective_budget.limits.source_read_bytes,
+    )
+    safe, base = require_regular_no_symlinks(path, root)
+    parent = os.path.dirname(safe)
+    basename = os.path.basename(safe)
+    attempts = min(
+        effective_budget.limits.snapshot_attempts,
+        DEFAULT_BOUNDS.snapshot_attempts,
+    )
+    if attempts < 1:
+        raise DiagnosticError.invalid()
+    for attempt in range(1, attempts + 1):
+        before_entry = _target_entry_fingerprint(parent, basename, root=base)
+        descriptor = _open_no_follow(safe, base)
+        spool: tempfile.SpooledTemporaryFile | None = None
+        verified_spool: tempfile.SpooledTemporaryFile | None = None
+        pending_bytes = 0
+        tail_start = 0
+        starts_mid_line = False
+        try:
+            before_stat = os.fstat(descriptor)
+            if not _entry_identity_matches(before_entry, before_stat):
+                continue
+            remaining = max(0, max_file_bytes - effective_budget.bytes_read)
+            tail_start = max(0, before_stat.st_size - remaining)
+            starts_mid_line = False
+            boundary_probe: bytes | None = None
+            if tail_start > 0:
+                os.lseek(descriptor, tail_start - 1, os.SEEK_SET)
+                boundary_probe = os.read(descriptor, 1)
+                starts_mid_line = boundary_probe != b"\n"
+            if hook:
+                hook("before-read", attempt, safe)
+            os.lseek(descriptor, tail_start, os.SEEK_SET)
+            spool = tempfile.SpooledTemporaryFile(max_size=_SPOOL_RAM_CAP, mode="w+b")
+            try:
+                content_hash, pending_bytes = _spool_window_bytes(
+                    descriptor,
+                    spool,
+                    maximum=max_file_bytes,
+                )
+            except DiagnosticError as error:
+                # File grew past the admitted window mid-read: unstable, retry.
+                if (
+                    error.code == "E_LIMIT_EXCEEDED"
+                    and os.fstat(descriptor).st_size > before_stat.st_size
+                ):
+                    continue
+                raise
+            observed = _fingerprint(before_stat, content_hash)
+            if hook:
+                hook("after-read", attempt, safe)
+            if tail_start > 0:
+                os.lseek(descriptor, tail_start - 1, os.SEEK_SET)
+                probe_verify = os.read(descriptor, 1)
+            else:
+                probe_verify = None
+            try:
+                verified_hash, verified_size = _hash_descriptor_window(
+                    descriptor,
+                    start=tail_start,
+                    maximum=max_file_bytes,
+                )
+            except DiagnosticError as error:
+                # Verification-time growth: retry, not hard-fail.
+                if (
+                    error.code == "E_LIMIT_EXCEEDED"
+                    and os.fstat(descriptor).st_size > before_stat.st_size
+                ):
+                    continue
+                raise
+            verified = _fingerprint(os.fstat(descriptor), verified_hash)
+            if hook:
+                hook("after-verify-read", attempt, safe)
+            middle_entry = _target_entry_fingerprint(parent, basename, root=base)
+            if tail_start > 0:
+                os.lseek(descriptor, tail_start - 1, os.SEEK_SET)
+                probe_final = os.read(descriptor, 1)
+            else:
+                probe_final = None
+            try:
+                final_hash, final_size = _hash_descriptor_window(
+                    descriptor,
+                    start=tail_start,
+                    maximum=max_file_bytes,
+                )
+            except DiagnosticError as error:
+                # Verification-time growth: retry.
+                if (
+                    error.code == "E_LIMIT_EXCEEDED"
+                    and os.fstat(descriptor).st_size > before_stat.st_size
+                ):
+                    continue
+                raise
+            final_stat = os.fstat(descriptor)
+            final = _fingerprint(final_stat, final_hash)
+            after_entry = _target_entry_fingerprint(parent, basename, root=base)
+            if not (
+                observed == verified == final
+                and before_entry == middle_entry == after_entry
+                and _entry_identity_matches(before_entry, before_stat)
+                and _entry_identity_matches(after_entry, final_stat)
+                and pending_bytes == verified_size == final_size
+                == before_stat.st_size - tail_start
+                and boundary_probe == probe_verify == probe_final
+            ):
+                continue
+            # Hand off spool for post-close replay so the source fd is never
+            # held open while yielding to callers.
+            verified_spool = spool
+            spool = None
+        finally:
+            os.close(descriptor)
+            if spool is not None:
+                spool.close()
+        if verified_spool is not None:
+            effective_budget.consume_bytes(pending_bytes)
+            try:
+                total = _count_window_lines(
+                    verified_spool,
+                    max_line_bytes=line_limit,
+                    discard_first=starts_mid_line,
+                )
+                if charge_transcript:
+                    record_max = min(
+                        effective_budget.limits.transcript_records,
+                        DEFAULT_BOUNDS.transcript_records,
+                    )
+                    remaining_records = record_max - effective_budget.transcript_records_read
+                else:
+                    record_max = min(
+                        effective_budget.limits.scanned_records,
+                        DEFAULT_BOUNDS.scanned_records,
+                    )
+                    remaining_records = record_max - effective_budget.records
+                skip = max(0, total - remaining_records)
+                admitted = total - skip
+                if charge_transcript:
+                    effective_budget.consume_transcript_records(admitted)
+                else:
+                    effective_budget.consume_records(admitted)
+                for line in _parse_window_lines(
+                    verified_spool,
+                    max_line_bytes=line_limit,
+                    discard_first=starts_mid_line,
+                    skip=skip,
+                ):
+                    yield line
+            finally:
+                verified_spool.close()
+            return
+    family = (os.path.basename(safe),)
+    raise DiagnosticError.source_busy(attempts=attempts, family=family)
+
+
 def stable_read_windows(
     path: str | os.PathLike[str],
     *,
@@ -1037,6 +1398,27 @@ def _copy_bounded_descriptor(descriptor: int, destination: str, *, maximum: int)
 
 def _hash_descriptor(descriptor: int, *, maximum: int) -> tuple[str, int]:
     os.lseek(descriptor, 0, os.SEEK_SET)
+    digest = hashlib.sha256()
+    total = 0
+    while True:
+        block = os.read(descriptor, 64 * 1024)
+        if not block:
+            break
+        total += len(block)
+        if total > maximum:
+            raise DiagnosticError.limit_exceeded()
+        digest.update(block)
+    return digest.hexdigest(), total
+
+
+def _hash_descriptor_window(descriptor: int, *, start: int, maximum: int) -> tuple[str, int]:
+    """SHA-256 of one bounded ``[start, EOF)`` window (no whole-file hash).
+
+    Used by the end-anchored tail scanner (#258) so verification never reads
+    bytes before ``start`` (a multi-GB file must not be hashed in full).
+    """
+
+    os.lseek(descriptor, start, os.SEEK_SET)
     digest = hashlib.sha256()
     total = 0
     while True:
