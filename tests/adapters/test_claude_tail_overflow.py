@@ -344,3 +344,23 @@ class ClaudeTailOverflowTests(unittest.TestCase):
         with self.assertRaises(DiagnosticError) as caught:
             claude.ADAPTER.list(self.query(), budget)
         self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_trailing_bare_cr_malformed_json_is_corrupt_not_partial(self) -> None:
+        # Full-path readline parity: a final bare-CR record with malformed JSON
+        # must surface as E_CORRUPT_RECORD, not W_PARTIAL_TAIL (grok round-9
+        # P2-2; the fallback mirror terminates on a bare CR).
+        session_id = str(uuid.uuid4())
+        _, path = self.session(
+            [self.turn("user", str(uuid.uuid4()), None, "request", -2, sessionId=session_id)],
+            identifier=session_id,
+        )
+        with path.open("ab") as handle:
+            handle.write(b'{"type":"user"\r')  # malformed JSON, bare CR
+        budget = ReadBudget(
+            Bounds(source_read_bytes=512, transcript_records=10, scanned_records=100)
+        )
+        with self.assertRaises(DiagnosticError) as caught:
+            claude.ADAPTER.show(
+                ResolvedRef(session_id, str(path)), self.query(), budget
+            )
+        self.assertEqual(caught.exception.code, "E_CORRUPT_RECORD")

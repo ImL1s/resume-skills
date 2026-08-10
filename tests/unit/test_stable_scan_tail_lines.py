@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import tempfile
 import unittest
@@ -385,3 +386,34 @@ class CommitProvisionalConcurrencyTests(unittest.TestCase):
             )
             self.assertEqual([line.text for line in lines], ['{"n":3}'])
             self.assertEqual(budget.transcript_records_read, 1)
+
+    def test_trailing_bare_cr_terminates_and_is_not_crlf_pair(self) -> None:
+        # A final record ending in a bare CR (no LF) is terminated per full-path
+        # readline parity, and must NOT be flagged as a CRLF pair (the mirror
+        # length accounting would add a phantom byte) (grok round-9 P2-1/P2-2).
+        from portable_resume.snapshot import _parse_window_lines
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "bare-cr.jsonl"
+            path.write_bytes(b'{"type":"user"\r')
+            budget = ReadBudget(
+                Bounds(source_read_bytes=512, transcript_records=10, scanned_records=100)
+            )
+            lines = list(
+                stable_scan_tail_lines(
+                    str(path),
+                    root=str(root),
+                    budget=budget,
+                    charge_transcript=True,
+                )
+            )
+            self.assertEqual(len(lines), 1)
+            self.assertTrue(lines[0].terminated)
+            self.assertFalse(lines[0].crlf)
+
+            raw = path.read_bytes()
+            parsed = list(_parse_window_lines(io.BytesIO(raw), max_line_bytes=1024, discard_first=False))
+            self.assertEqual(len(parsed), 1)
+            self.assertTrue(parsed[0].terminated)
+            self.assertFalse(parsed[0].crlf)

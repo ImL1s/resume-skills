@@ -864,8 +864,8 @@ def _parse_window_lines(
         if first and discard_first or remaining_skip > 0:
             return
         payload = bytes(buffer)
-        crlf = payload.endswith(b"\r")
-        if crlf:
+        bare_cr = payload.endswith(b"\r")
+        if bare_cr:
             payload = payload[:-1]
         if len(payload) > max_line_bytes:
             raise DiagnosticError.limit_exceeded()
@@ -881,11 +881,11 @@ def _parse_window_lines(
             ordinal=ordinal,
             text=text,
             byte_offset=absolute_offset,
-            # A trailing CR terminates the record (full-path readline parity);
-            # malformed JSON must surface as E_CORRUPT_RECORD, not W_PARTIAL_TAIL.
-            terminated=crlf,
+            # Bare trailing CR terminates (readline parity) but is not a CRLF
+            # pair: the mirror's reconstructed LF accounts for that CR.
+            terminated=bare_cr,
             utf8_valid=utf8_valid,
-            crlf=crlf,
+            crlf=False,
         )
 
 
