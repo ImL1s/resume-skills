@@ -365,28 +365,6 @@ class CommitProvisionalConcurrencyTests(unittest.TestCase):
             self.assertEqual([line.text for line in lines], ['{"n":3}'])
             self.assertEqual(budget.transcript_records_read, 1)
 
-    def test_skip_range_calibration_trims_to_last_line(self) -> None:
-        # Calibrate that transcript_records=1 with charge_transcript=True really
-        # trims to the last line (skip=2), so the oversize-boundary tests above
-        # genuinely exercise the count-pass check BEFORE skipping (round-7).
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            path = root / "calibrate.jsonl"
-            path.write_bytes(b'{"n":1}\n{"n":2}\n{"n":3}\n')
-            budget = ReadBudget(
-                Bounds(source_read_bytes=512, transcript_records=1, scanned_records=100)
-            )
-            lines = list(
-                stable_scan_tail_lines(
-                    str(path),
-                    root=str(root),
-                    budget=budget,
-                    charge_transcript=True,
-                )
-            )
-            self.assertEqual([line.text for line in lines], ['{"n":3}'])
-            self.assertEqual(budget.transcript_records_read, 1)
-
     def test_trailing_bare_cr_terminates_and_is_not_crlf_pair(self) -> None:
         # A final record ending in a bare CR (no LF) is terminated per full-path
         # readline parity, and must NOT be flagged as a CRLF pair (the mirror
