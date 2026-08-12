@@ -24,10 +24,8 @@ from .discovery import audit_host_report, require_no_blocking_shadow, scan_skill
 from .manifest import claim_key
 from .render import materialize_plan, package_identity
 from .transaction import (
-    execute_install,
     install_multi_targets,
     matrix_report,
-    plan_install,
     recover_root,
     uninstall_claim,
     verify_root,
@@ -216,7 +214,7 @@ def _parse_install_sources(raw: str | None) -> tuple[str, ...] | None:
 
 def _root_for(host: str, scope: str, project: str | None, home: str, override: str | None) -> str:
     if override:
-        return os.path.realpath(override)
+        return os.path.abspath(os.path.expanduser(override))
     return resolve_skill_root(host=host, scope=scope, project_dir=project, home_dir=home)
 
 
@@ -426,30 +424,13 @@ def run(argv: Sequence[str] | None = None) -> int:
                     selected_scope=ns.scope,
                     sources=shadow_sources,
                 )
-            if dry_run or len(targets) == 1:
-                plans = [
-                    plan_install(
-                        host=host,
-                        scope=ns.scope,
-                        root=root,
-                        dry_run=dry_run,
-                        force_with_backup=force,
-                        sources=selected_sources,
-                    )
-                    for host, root in targets
-                ]
-                results = [
-                    execute_install(plan, force_with_backup=force)
-                    for plan in plans
-                ]
-            else:
-                results = install_multi_targets(
-                    targets,
-                    scope=ns.scope,
-                    dry_run=False,
-                    force_with_backup=force,
-                    sources=selected_sources,
-                )
+            results = install_multi_targets(
+                targets,
+                scope=ns.scope,
+                dry_run=dry_run,
+                force_with_backup=force,
+                sources=selected_sources,
+            )
             # Attach discovery + host identity to each result.
             for idx, (host, _root) in enumerate(targets):
                 if idx < len(results) and isinstance(results[idx], dict):

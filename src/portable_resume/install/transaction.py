@@ -22,11 +22,13 @@ from ..diagnostics import DiagnosticError
 from .catalog import BUNDLE_VERSION, HOST_PROFILES, MANIFEST_SCHEMA
 from .control_schema import ControlSchemaError, parse_journal_document
 from .manifest import (
+    FileEntry,
     OWNER_MARKER,
     Manifest,
     build_manifest,
     claim_key,
     empty_manifest,
+    normalize_claim_sources,
     resolve_claim_sources,
     sha256_bytes,
     sha256_file,
@@ -72,6 +74,7 @@ _CONTROL_BASENAMES = frozenset({LOCK_NAME, JOURNAL_NAME, MANIFEST_NAME})
 
 # Content identity for the previous ownership manifest (not generation alone).
 _MANIFEST_ABSENT = "absent"
+_LIVE_MANIFEST = object()
 
 
 def manifest_content_digest(manifest: Manifest | None) -> str:
@@ -103,6 +106,8 @@ class ActionPlan:
     base_manifest_digest: str = _MANIFEST_ABSENT
     # Selected source Skills for this install (#151); None means all enabled.
     sources: tuple[str, ...] | None = None
+    # Internal physical-group transition. Every tuple is (host, physical root).
+    coordinated_targets: tuple[tuple[str, str], ...] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -185,6 +190,46 @@ def _assert_binding_still_matches_lock(
         raise DiagnosticError("E_INSTALL_CONFLICT")
     if lock_physical != binding.physical_key:
         raise DiagnosticError("E_INSTALL_CONFLICT")
+
+
+def _validate_requested_root_containment(binding: MultiTargetBinding) -> None:
+    """Validate the caller spelling without creating support/control state."""
+    if _supports_descriptor_relative_commit():
+        probe = binding.requested_root
+        allow_leaf_symlink = True
+        while not os.path.lexists(probe):
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            probe = parent
+            allow_leaf_symlink = False
+        root_fd = _open_directory_from_slash(
+            probe,
+            allow_leaf_symlink=allow_leaf_symlink,
+        )
+        try:
+            if os.path.realpath(binding.requested_root) != binding.physical_key:
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+        finally:
+            os.close(root_fd)
+        return
+    # Windows must validate the requested parent chain, not only a bare physical
+    # realpath. Permit only the skill-root leaf itself to be a junction/reparse.
+    if os.name == "nt" and sys.platform.startswith("win"):
+        absolute = os.path.abspath(binding.requested_root)
+        drive, tail = os.path.splitdrive(absolute)
+        current = drive + os.sep
+        parts = [part for part in tail.replace("/", "\\").split("\\") if part]
+        for index, part in enumerate(parts):
+            current = os.path.join(current, part)
+            try:
+                st = os.lstat(current)
+            except FileNotFoundError:
+                break
+            except OSError as error:
+                raise DiagnosticError("E_UNSAFE_PATH") from error
+            if index < len(parts) - 1 and _is_reparse_or_symlink(st):
+                raise DiagnosticError("E_UNSAFE_PATH")
 
 
 _test_harness_state = threading.local()
@@ -631,6 +676,8 @@ def plan_install(
     dry_run: bool = False,
     force_with_backup: bool = False,
     sources: tuple[str, ...] | None = None,
+    _existing_manifest: Manifest | None | object = _LIVE_MANIFEST,
+    _assume_manifest_files: bool = False,
 ) -> ActionPlan:
     """Build an advisory install plan from the current root state.
 
@@ -644,7 +691,13 @@ def plan_install(
     files = materialize_plan(host, sources=sources)
     identity = package_identity(files)
     claim = claim_key(host=host, scope=scope, root=root)
-    existing = load_manifest(root)
+    existing = (
+        load_manifest(root)
+        if _existing_manifest is _LIVE_MANIFEST
+        else _existing_manifest
+    )
+    if existing is not None and not isinstance(existing, Manifest):
+        raise DiagnosticError("E_INVARIANT")
     base_generation = None if existing is None else existing.generation
     base_digest = manifest_content_digest(existing)
     if existing is not None and existing.bundle_version != BUNDLE_VERSION and existing.claims:
@@ -679,6 +732,7 @@ def plan_install(
             existing=existing,
             claim=claim,
             force_with_backup=force_with_backup,
+            assume_manifest_files=_assume_manifest_files,
         )
         if kind == "create":
             creates.append(rel)
@@ -709,6 +763,165 @@ def plan_install(
         base_manifest_digest=base_digest,
         sources=sources,
     )
+
+
+def _plan_coordinated_group(
+    *,
+    entries: list[tuple[int, MultiTargetBinding]],
+    scope: str,
+    existing: Manifest,
+    dry_run: bool,
+    force_with_backup: bool,
+    sources: tuple[str, ...] | None,
+    classify_paths: bool = True,
+) -> tuple[ActionPlan, list[tuple[int, ActionPlan]]]:
+    """Fold a represented old multi-claim root into one current generation."""
+    if not entries or not existing.claims:
+        raise DiagnosticError("E_INVARIANT")
+    root = entries[0][1].physical_key
+    requested_claims = {
+        claim_key(host=binding.host, scope=scope, root=root)
+        for _index, binding in entries
+    }
+    if not set(existing.claims).issubset(requested_claims):
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+
+    target_generation = existing.generation + 1
+    per_host: list[tuple[int, ActionPlan]] = []
+    identities: set[str] = set()
+    seen_claims: set[str] = set()
+    claim_plans: list[tuple[int, MultiTargetBinding, str, dict[str, bytes], str]] = []
+    for index, binding in entries:
+        files = materialize_plan(binding.host, sources=sources)
+        identity = package_identity(files)
+        identities.add(identity)
+        claim = claim_key(host=binding.host, scope=scope, root=root)
+        if claim in seen_claims:
+            prior = next(plan for _idx, plan in per_host if plan.claim == claim)
+            per_host.append((index, prior))
+            continue
+        seen_claims.add(claim)
+        claim_plans.append((index, binding, claim, files, identity))
+        per_host.append(
+            (
+                index,
+                ActionPlan(
+                    root=root,
+                    claim=claim,
+                    host=binding.host,
+                    scope=scope,
+                    generation=target_generation,
+                    package_identity=identity,
+                    files=files,
+                    manifest=existing,
+                    creates=[],
+                    replaces=[],
+                    backups=[],
+                    retains=sorted(files),
+                    dry_run=dry_run,
+                    base_generation=existing.generation,
+                    base_manifest_digest=manifest_content_digest(existing),
+                    sources=sources,
+                ),
+            )
+        )
+    if len(identities) != 1:
+        raise DiagnosticError(
+            "E_INSTALL_CONFLICT",
+            family=tuple(sorted(binding.host for _idx, binding in entries)),
+        )
+    claims: dict[str, dict[str, Any]] = {}
+    file_map: dict[str, FileEntry] = {}
+    for _index, binding, claim, files, identity in claim_plans:
+        claims[claim] = {
+            "host": binding.host,
+            "scope": scope,
+            "root": root,
+            "bundle_version": BUNDLE_VERSION,
+            "package_identity": identity,
+            "sources": list(normalize_claim_sources(sources)),
+        }
+        for rel, data in files.items():
+            safe = validate_rel_path(rel)
+            digest = sha256_bytes(data)
+            mode = 0o755 if safe.endswith("run_reader.py") else 0o644
+            entry = file_map.get(safe)
+            if entry is None:
+                file_map[safe] = FileEntry(
+                    path=safe,
+                    sha256=digest,
+                    claims=[claim],
+                    mode=mode,
+                )
+            elif entry.sha256 != digest or entry.mode != mode:
+                raise DiagnosticError("E_INSTALL_CONFLICT")
+            elif claim not in entry.claims:
+                entry.claims.append(claim)
+    projected = Manifest(
+        schema_version=MANIFEST_SCHEMA,
+        bundle_version=BUNDLE_VERSION,
+        generation=target_generation,
+        package_identity=claims[sorted(claims)[0]]["package_identity"],
+        claims=claims,
+        files=file_map,
+    )
+    representative = per_host[0][1]
+    creates: list[str] = []
+    replaces: list[str] = []
+    backups: list[str] = []
+    retains: list[str] = []
+    for rel, data in sorted(representative.files.items()):
+        kind = (
+            _classify_dest(
+                root=root,
+                rel=rel,
+                data=data,
+                existing=existing,
+                claim=representative.claim,
+                force_with_backup=force_with_backup,
+            )
+            if classify_paths
+            else "retain"
+        )
+        if kind == "create":
+            creates.append(rel)
+        elif kind == "retain":
+            retains.append(rel)
+        elif kind == "replace":
+            replaces.append(rel)
+        elif kind == "backup":
+            replaces.append(rel)
+            backups.append(rel)
+        else:
+            raise DiagnosticError("E_INVARIANT")
+    representative.creates = creates
+    representative.replaces = replaces
+    representative.backups = backups
+    representative.retains = retains
+    final = ActionPlan(
+        root=root,
+        claim=representative.claim,
+        host=representative.host,
+        scope=scope,
+        generation=target_generation,
+        package_identity=representative.package_identity,
+        files=representative.files,
+        manifest=projected,
+        creates=creates,
+        replaces=replaces,
+        backups=backups,
+        retains=retains,
+        dry_run=dry_run,
+        base_generation=existing.generation,
+        base_manifest_digest=manifest_content_digest(existing),
+        sources=sources,
+        coordinated_targets=tuple(
+            (binding.host, binding.physical_key) for _index, binding in entries
+        ),
+    )
+    for _index, plan in per_host:
+        plan.manifest = projected
+    return final, per_host
 
 
 def _safe_rel_path(rel: str) -> str:
@@ -2649,6 +2862,7 @@ def _classify_dest(
     existing: Manifest | None,
     claim: str,
     force_with_backup: bool,
+    assume_manifest_files: bool = False,
 ) -> str:
     """Return create|retain|replace|backup under current disk state.
 
@@ -2658,12 +2872,19 @@ def _classify_dest(
     """
 
     dest = _dest_under_root(root, rel)
+    expected = sha256_bytes(data)
+    if (
+        assume_manifest_files
+        and existing is not None
+        and rel in existing.files
+        and existing.files[rel].sha256 == expected
+    ):
+        return "retain"
     if not os.path.lexists(dest):
         return "create"
     if os.path.islink(dest) or not os.path.isfile(dest):
         raise DiagnosticError("E_INSTALL_CONFLICT")
     current = sha256_file(dest)
-    expected = sha256_bytes(data)
     if current == expected:
         return "retain"
     if existing is not None and rel in existing.files:
@@ -2865,7 +3086,37 @@ def _execute_install_under_lock(
                 except OSError:
                     pass
 
-    if replan_via_path:
+    if plan.coordinated_targets is not None:
+        if existing_pre is None:
+            if pin_owned and pin_root_fd is not None:
+                os.close(pin_root_fd)
+            raise DiagnosticError("E_INSTALL_BUSY")
+        coordinated_entries = [
+            (
+                index,
+                MultiTargetBinding(
+                    host=host,
+                    requested_root=target_root,
+                    physical_key=target_root,
+                ),
+            )
+            for index, (host, target_root) in enumerate(plan.coordinated_targets)
+        ]
+        locked, _per_host = _plan_coordinated_group(
+            entries=coordinated_entries,
+            scope=plan.scope,
+            existing=existing_pre,
+            dry_run=False,
+            force_with_backup=effective_force,
+            sources=plan.sources,
+            classify_paths=False,
+        )
+        if locked.base_manifest_digest != plan.base_manifest_digest:
+            if pin_owned and pin_root_fd is not None:
+                os.close(pin_root_fd)
+            raise DiagnosticError("E_INSTALL_BUSY")
+        plan = locked
+    elif replan_via_path:
         try:
             locked = plan_install(
                 host=plan.host,
@@ -4082,49 +4333,133 @@ def install_multi_targets(
     """
     if not targets:
         return []
+
+    # Freeze every caller spelling before grouping or locking. A shared physical
+    # root may need its legacy owner upgraded before sibling claims can be planned.
+    bindings = bind_multi_target_roots(targets)
+    grouped: dict[str, list[tuple[int, MultiTargetBinding]]] = {}
+    for index, binding in enumerate(bindings):
+        grouped.setdefault(binding.physical_key, []).append((index, binding))
+    ordered_keys = sorted(grouped)
+
+    # Reject already-retargeted caller spellings before planning or creating any
+    # lock/control state. The frozen physical key remains the only lock target if
+    # a spelling changes after this check.
+    for binding in bindings:
+        _validate_requested_root_containment(binding)
+        try:
+            current_requested = os.path.realpath(binding.requested_root)
+        except OSError as error:
+            raise DiagnosticError("E_INSTALL_CONFLICT") from error
+        if current_requested != binding.physical_key:
+            raise DiagnosticError("E_INSTALL_CONFLICT")
+
+    def owner_first(
+        key: str,
+        existing: Manifest | None,
+    ) -> list[tuple[int, MultiTargetBinding]]:
+        entries = grouped[key]
+        if existing is None or not existing.claims:
+            return list(entries)
+        return sorted(
+            entries,
+            key=lambda item: (
+                claim_key(
+                    host=item[1].host,
+                    scope=scope,
+                    root=item[1].physical_key,
+                )
+                not in existing.claims,
+                item[0],
+            ),
+        )
+
     if dry_run:
-        results: list[dict[str, Any]] = []
-        for host, root in targets:
-            plan = plan_install(
-                host=host,
-                scope=scope,
-                root=root,
-                dry_run=True,
-                force_with_backup=force_with_backup,
-                sources=sources,
-            )
-            results.append(execute_install(plan, force_with_backup=force_with_backup))
-        return results
+        projected = {key: load_manifest(key) for key in ordered_keys}
+        results_by_index: dict[int, dict[str, Any]] = {}
+        for key in ordered_keys:
+            existing = projected[key]
+            if (
+                existing is not None
+                and existing.bundle_version != BUNDLE_VERSION
+                and existing.claims
+            ):
+                _final, per_host = _plan_coordinated_group(
+                    entries=owner_first(key, existing),
+                    scope=scope,
+                    existing=existing,
+                    dry_run=True,
+                    force_with_backup=force_with_backup,
+                    sources=sources,
+                )
+                for index, plan in per_host:
+                    results_by_index[index] = execute_install(
+                        plan,
+                        force_with_backup=force_with_backup,
+                    )
+                continue
+            assume_manifest_files = False
+            for index, binding in owner_first(key, existing):
+                plan = plan_install(
+                    host=binding.host,
+                    scope=scope,
+                    root=binding.physical_key,
+                    dry_run=True,
+                    force_with_backup=force_with_backup,
+                    sources=sources,
+                    _existing_manifest=projected[key],
+                    _assume_manifest_files=assume_manifest_files,
+                )
+                results_by_index[index] = execute_install(
+                    plan,
+                    force_with_backup=force_with_backup,
+                )
+                projected[key] = plan.manifest
+                assume_manifest_files = True
+        return [results_by_index[index] for index in range(len(bindings))]
 
     require_mutating_install_platform()
 
-    # Unlocked preflight: catch deterministic conflicts (foreign files, plans)
-    # before creating support/lock trees on every target root.
-    for host, root in targets:
-        plan_install(
-            host=host,
-            scope=scope,
-            root=root,
-            dry_run=False,
-            force_with_backup=force_with_backup,
-            sources=sources,
+    # Unlocked advisory preflight: for a legacy shared root, only its represented
+    # owner can be valid before the upgrade. Other groups retain full preflight.
+    for key in ordered_keys:
+        existing = load_manifest(key)
+        entries = owner_first(key, existing)
+        coordinated = (
+            existing is not None
+            and existing.bundle_version != BUNDLE_VERSION
+            and existing.claims
         )
-
-    # Immutable bindings before any exclusive lock. Post-lock lock selection must
-    # use only physical_key — never re-resolve requested_root (junction retarget).
-    bindings = bind_multi_target_roots(targets)
-    physical_to_requested: dict[str, str] = {}
-    for binding in bindings:
-        physical_to_requested.setdefault(binding.physical_key, binding.requested_root)
-    ordered_keys = sorted(physical_to_requested.keys())
+        if coordinated:
+            _plan_coordinated_group(
+                entries=entries,
+                scope=scope,
+                existing=existing,
+                dry_run=False,
+                force_with_backup=force_with_backup,
+                sources=sources,
+            )
+            continue
+        for _index, binding in entries:
+            plan_install(
+                host=binding.host,
+                scope=scope,
+                root=binding.physical_key,
+                dry_run=False,
+                force_with_backup=force_with_backup,
+                sources=sources,
+            )
 
     held: list[tuple[str, RootLock]] = []
     checkpoints: list[InstallCheckpoint] = []
-    completed: list[tuple[str, InstallCheckpoint, dict[str, Any]]] = []
-    results: list[dict[str, Any]] = []
+    completed: list[tuple[str, InstallCheckpoint, dict[str, Any], RootLock]] = []
+    results_by_index: dict[int, dict[str, Any]] = {}
     try:
         for key in ordered_keys:
-            lock = RootLock(physical_to_requested[key])
+            # Acquire only through the frozen physical key. Re-following a caller
+            # alias here could create control state in a retargeted tree before
+            # the later binding validation rejects the transaction.
+            lock = RootLock(key)
             lock.__enter__()
             # RootLock may resolve a leaf junction; the physical key must still match.
             if os.path.realpath(lock.root) != key:
@@ -4142,29 +4477,9 @@ def install_multi_targets(
             lock = lock_by_key[binding.physical_key]
             _assert_binding_still_matches_lock(binding, lock)
 
-        plans: list[tuple[MultiTargetBinding, ActionPlan]] = []
-        for binding in bindings:
-            lock = lock_by_key[binding.physical_key]
-            _assert_binding_still_matches_lock(binding, lock)
-            # Prefer frozen physical_key (not caller/symlink spelling). On Windows
-            # RootLock already rebinds lock.root to the real dir; on POSIX lock.root
-            # may still be a leaf symlink — mutations must not re-follow it.
-            locked_root = binding.physical_key
-            plan = plan_install(
-                host=binding.host,
-                scope=scope,
-                root=locked_root,
-                dry_run=False,
-                force_with_backup=force_with_backup,
-                sources=sources,
-            )
-            plans.append((binding, plan))
-
         # Shared-root package identity recheck under locks (group by pre-lock key).
-        groups: dict[str, list[str]] = {}
-        for binding, _plan in plans:
-            groups.setdefault(binding.physical_key, []).append(binding.host)
-        for hosts in groups.values():
+        for entries in grouped.values():
+            hosts = [binding.host for _index, binding in entries]
             if len(hosts) < 2:
                 continue
             identities = {
@@ -4173,38 +4488,70 @@ def install_multi_targets(
             if len(identities) > 1:
                 raise DiagnosticError("E_INSTALL_CONFLICT", family=tuple(sorted(hosts)))
 
-        for binding, plan in plans:
-            lock = lock_by_key[binding.physical_key]
-            _assert_binding_still_matches_lock(binding, lock)
-            # Replan + checkpoint against the frozen physical key only.
-            locked_root = binding.physical_key
-            live_plan = plan_install(
-                host=binding.host,
-                scope=scope,
-                root=locked_root,
-                dry_run=False,
-                force_with_backup=force_with_backup,
-                sources=sources,
-            )
-            if os.path.realpath(live_plan.root) != os.path.realpath(locked_root):
-                raise DiagnosticError("E_INSTALL_CONFLICT")
-            if live_plan.host != binding.host or live_plan.claim != plan.claim:
-                raise DiagnosticError("E_INSTALL_BUSY")
-            checkpoint = capture_install_checkpoint(
-                live_plan,
-                root_fd=lock.borrow_root_fd(),
-                root_identity=lock.root_identity,
-            )
-            checkpoints.append(checkpoint)
-            result = execute_install(
-                live_plan,
-                force_with_backup=force_with_backup,
-                lock=lock,
-                locked_root=binding.physical_key,
-            )
-            results.append(result)
-            completed.append((binding.host, checkpoint, result, lock))
-        return results
+        for key in ordered_keys:
+            lock = lock_by_key[key]
+            existing = load_manifest(key)
+            entries = owner_first(key, existing)
+            if (
+                existing is not None
+                and existing.bundle_version != BUNDLE_VERSION
+                and existing.claims
+            ):
+                final_plan, per_host = _plan_coordinated_group(
+                    entries=entries,
+                    scope=scope,
+                    existing=existing,
+                    dry_run=False,
+                    force_with_backup=force_with_backup,
+                    sources=sources,
+                )
+                checkpoint = capture_install_checkpoint(
+                    final_plan,
+                    root_fd=lock.borrow_root_fd(),
+                    root_identity=lock.root_identity,
+                )
+                checkpoints.append(checkpoint)
+                result = execute_install(
+                    final_plan,
+                    force_with_backup=force_with_backup,
+                    lock=lock,
+                    locked_root=key,
+                )
+                completed.append((final_plan.host, checkpoint, result, lock))
+                for index, projected_plan in per_host:
+                    results_by_index[index] = {
+                        **result,
+                        "plan": projected_plan.to_dict(),
+                    }
+                continue
+            for index, binding in entries:
+                _assert_binding_still_matches_lock(binding, lock)
+                # Replan each sibling only after the prior claim is represented.
+                live_plan = plan_install(
+                    host=binding.host,
+                    scope=scope,
+                    root=binding.physical_key,
+                    dry_run=False,
+                    force_with_backup=force_with_backup,
+                    sources=sources,
+                )
+                if os.path.realpath(live_plan.root) != binding.physical_key:
+                    raise DiagnosticError("E_INSTALL_CONFLICT")
+                checkpoint = capture_install_checkpoint(
+                    live_plan,
+                    root_fd=lock.borrow_root_fd(),
+                    root_identity=lock.root_identity,
+                )
+                checkpoints.append(checkpoint)
+                result = execute_install(
+                    live_plan,
+                    force_with_backup=force_with_backup,
+                    lock=lock,
+                    locked_root=binding.physical_key,
+                )
+                results_by_index[index] = result
+                completed.append((binding.host, checkpoint, result, lock))
+        return [results_by_index[index] for index in range(len(bindings))]
     except Exception:
         compensation_failures: list[str] = []
         for host, checkpoint, result, lock in reversed(completed):
