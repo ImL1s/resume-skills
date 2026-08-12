@@ -29,7 +29,13 @@ from ..paths import (
     same_cwd,
 )
 from ..sanitize import sanitize_turn_record
-from ..snapshot import StableRead, stable_read_bytes, stable_read_windows, stable_scan_lines
+from ..snapshot import (
+    StableRead,
+    stable_read_bytes,
+    stable_read_windows,
+    stable_scan_lines,
+    stable_scan_tail_lines,
+)
 from .base import CapabilityReport, ResolvedRef
 
 ROLLOUT_FORMAT = "codex-rollout-jsonl-v1"
@@ -716,6 +722,218 @@ def _feed_history(
         turns.append(turn)
 
 
+def _feed_tail_history(
+    turns: list[dict[str, Any]],
+    record: Mapping[str, Any],
+    warnings: list[str],
+) -> None:
+    """Apply tail records without leaking rollback history across the cut."""
+
+    payload = record.get("payload")
+    if record.get("type") == "event_msg" and isinstance(payload, Mapping):
+        if payload.get("type") == "thread_rolled_back":
+            raw_n = payload.get("num_turns")
+            if raw_n is None:
+                raw_n = payload.get("turns")
+            try:
+                requested = int(raw_n) if raw_n is not None else 0
+            except (TypeError, ValueError):
+                requested = 0
+            admitted_users = sum(turn.get("role") == "user" for turn in turns)
+            if requested > admitted_users:
+                # The rollback boundary lies before the admitted suffix. Every
+                # admitted turn may belong to rolled-back history, including an
+                # assistant whose user boundary was clipped at the tail cut.
+                turns.clear()
+                warnings.append("W_BROKEN_CHAIN")
+                return
+    _feed_history(turns, record, warnings)
+
+
+def _parse_bounded_head_records(
+    data: bytes,
+    *,
+    full_in_head: bool,
+    provider: str,
+    maximum_record: int,
+    physical_limit: int | None = None,
+    budget: ReadBudget | None = None,
+) -> tuple[list[dict[str, Any]], list[str], str | None]:
+    """Decode a bounded verified rollout head for discovery and tail recovery."""
+
+    raw_lines = data.splitlines(keepends=True)
+    if raw_lines and not full_in_head and not raw_lines[-1].endswith((b"\n", b"\r")):
+        raw_lines.pop()
+    records: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    updated_hint: str | None = None
+    lines_seen = 0
+    for raw in raw_lines:
+        if physical_limit is not None and (
+            len(records) >= physical_limit or lines_seen >= physical_limit
+        ):
+            break
+        lines_seen += 1
+        if budget is not None:
+            budget.consume_records()
+        terminated = raw.endswith((b"\n", b"\r"))
+        body = raw[:-1] if terminated and raw.endswith(b"\n") else raw
+        if body.endswith(b"\r"):
+            body = body[:-1]
+        if len(body) > maximum_record:
+            raise DiagnosticError.limit_exceeded()
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError as error:
+            if not terminated and full_in_head:
+                warnings.append("W_PARTIAL_TAIL")
+                break
+            raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider) from error
+        record = _decode_outer_record(
+            text,
+            provider=provider,
+            partial=not terminated,
+            warnings=warnings,
+        )
+        if record is None:
+            if warnings and warnings[-1] == "W_PARTIAL_TAIL" and not terminated:
+                break
+            continue
+        records.append(record)
+        stamp = record.get("timestamp")
+        if isinstance(stamp, str):
+            updated_hint = stamp
+    return records, warnings, updated_hint
+
+
+def _bounded_head_metadata(
+    data: bytes,
+    *,
+    complete: bool,
+    expected_id: str,
+    provider: str,
+    maximum_record: int,
+    warnings: list[str],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Parse authoritative metadata from a verified, bounded rollout head."""
+
+    records, head_warnings, _updated_hint = _parse_bounded_head_records(
+        data,
+        full_in_head=complete,
+        provider=provider,
+        maximum_record=maximum_record,
+    )
+    warnings.extend(head_warnings)
+    try:
+        metadata = _session_meta(records, expected_id, provider)
+    except DiagnosticError as error:
+        if error.code == "E_UNSUPPORTED_FORMAT":
+            return None, None
+        raise
+    created_at = _rfc3339(
+        next(
+            (
+                record.get("timestamp")
+                for record in records
+                if record.get("type") == "session_meta"
+                and record.get("payload") == metadata
+            ),
+            None,
+        )
+    )
+    return metadata, created_at
+
+
+def _read_rollout_plain_tail(
+    path: str,
+    root: str,
+    budget: ReadBudget,
+    expected_id: str,
+    initial: os.stat_result,
+) -> tuple[dict[str, Any], list[dict[str, Any]], tuple[str, ...], str, str | None, str]:
+    """Recover an oversized plain rollout from one stable head/tail generation."""
+
+    provider = ROLLOUT_FORMAT
+    warnings: list[str] = ["W_TRUNCATED"]
+    turns: list[dict[str, Any]] = []
+    meta_payload: dict[str, Any] | None = None
+    created_at: str | None = None
+    maximum_source = min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes)
+    remaining = max(0, maximum_source - budget.bytes_read)
+    if remaining <= 0:
+        raise DiagnosticError.limit_exceeded()
+    maximum_record = min(budget.limits.record_bytes, DEFAULT_BOUNDS.record_bytes)
+    # Preserve a useful suffix while admitting enough verified head for the
+    # authoritative session_meta. Missing metadata remains an honest hard limit.
+    head_bytes = min(_PROBE_HEAD_BYTES, maximum_record, remaining // 2)
+    if head_bytes <= 0:
+        raise DiagnosticError.limit_exceeded()
+
+    def observe_head(data: bytes, complete: bool) -> None:
+        nonlocal meta_payload, created_at
+        meta_payload, created_at = _bounded_head_metadata(
+            data,
+            complete=complete,
+            expected_id=expected_id,
+            provider=provider,
+            maximum_record=maximum_record,
+            warnings=warnings,
+        )
+
+    saw_record = False
+    for line in stable_scan_tail_lines(
+        path,
+        root=root,
+        budget=budget,
+        charge_transcript=True,
+        max_line_bytes=maximum_record,
+        stable_head_bytes=head_bytes,
+        on_stable_head=observe_head,
+    ):
+        if not line.utf8_valid:
+            if not line.terminated:
+                warnings.append("W_PARTIAL_TAIL")
+                break
+            raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider)
+        record = _decode_outer_record(
+            line.text,
+            provider=provider,
+            partial=not line.terminated,
+            warnings=warnings,
+        )
+        if record is None:
+            if warnings and warnings[-1] == "W_PARTIAL_TAIL" and not line.terminated:
+                break
+            continue
+        saw_record = True
+        # Head metadata is authoritative. Tail session_meta records are replay
+        # control noise and must not change cwd/source/branch.
+        _feed_tail_history(turns, record, warnings)
+    try:
+        after = os.lstat(path)
+    except OSError as error:
+        raise DiagnosticError.source_busy(provider=provider) from error
+    if (
+        initial.st_dev != after.st_dev
+        or initial.st_ino != after.st_ino
+        or initial.st_mode != after.st_mode
+        or initial.st_mtime_ns != after.st_mtime_ns
+        or initial.st_size != after.st_size
+    ):
+        raise DiagnosticError.source_busy(provider=provider)
+    if meta_payload is None:
+        raise DiagnosticError("E_LIMIT_EXCEEDED", source="codex", provider=provider)
+    if not saw_record:
+        raise DiagnosticError("E_LIMIT_EXCEEDED", source="codex", provider=provider)
+    source = meta_payload.get("source")
+    if source not in {"cli", "vscode"}:
+        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
+    updated_at = datetime.fromtimestamp(initial.st_mtime_ns / 1_000_000_000, timezone.utc).isoformat(
+        timespec="microseconds"
+    ).replace("+00:00", "Z")
+    return meta_payload, turns, tuple(dict.fromkeys(warnings)), provider, created_at, updated_at
+
+
 def _read_rollout_plain_stream(
     path: str,
     root: str,
@@ -740,6 +958,10 @@ def _read_rollout_plain_stream(
         before = os.lstat(path)
     except OSError as error:
         raise DiagnosticError.source_busy(provider=provider) from error
+    maximum_source = min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes)
+    remaining = max(0, maximum_source - budget.bytes_read)
+    if before.st_size > remaining:
+        return _read_rollout_plain_tail(path, root, budget, expected_id, before)
     for line in stable_scan_lines(
         path,
         root=root,
@@ -928,63 +1150,16 @@ def _read_rollout_head(
     )
     data = windows.head
     full_in_head = windows.fingerprint.size <= len(data)
-    # Drop a trailing incomplete line when the window cuts mid-record.
-    raw_lines = data.splitlines(keepends=True)
-    if raw_lines and not full_in_head:
-        last = raw_lines[-1]
-        if not last.endswith((b"\n", b"\r")):
-            raw_lines = raw_lines[:-1]
-    records: list[dict[str, Any]] = []
-    warnings: list[str] = []
-    updated_hint: str | None = None
     # Cap physical head lines (not only retained records) so skipped outer types
     # cannot burn the discovery budget before session_meta is seen (#7 P2).
-    lines_seen = 0
-    for raw in raw_lines:
-        if len(records) >= limit or lines_seen >= limit:
-            break
-        lines_seen += 1
-        budget.consume_records()
-        terminated = raw.endswith((b"\n", b"\r"))
-        body = raw[:-1] if terminated and raw.endswith(b"\n") else raw
-        if body.endswith(b"\r"):
-            body = body[:-1]
-        if len(body) > maximum_record:
-            raise DiagnosticError.limit_exceeded()
-        try:
-            text = body.decode("utf-8")
-            utf8_valid = True
-        except UnicodeDecodeError:
-            utf8_valid = False
-            text = ""
-        if not utf8_valid:
-            if not terminated and full_in_head:
-                warnings.append("W_PARTIAL_TAIL")
-                break
-            raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider)
-        stripped = text.strip()
-        if not stripped:
-            continue
-        try:
-            value = json.loads(stripped, object_pairs_hook=_object)
-        except (json.JSONDecodeError, _DuplicateKey, RecursionError) as error:
-            if not terminated and full_in_head:
-                warnings.append("W_PARTIAL_TAIL")
-                break
-            raise DiagnosticError("E_CORRUPT_RECORD", source="codex", provider=provider) from error
-        if not isinstance(value, dict):
-            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
-        outer = value.get("type")
-        payload = value.get("payload")
-        if outer in _SKIP_OUTER_TYPES or (isinstance(outer, str) and outer not in _OUTER_TYPES):
-            warnings.append("W_UNKNOWN_RECORD_SKIPPED")
-            continue
-        if outer not in _OUTER_TYPES or not isinstance(payload, dict):
-            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
-        records.append(value)
-        stamp = value.get("timestamp")
-        if isinstance(stamp, str):
-            updated_hint = stamp
+    records, warnings, updated_hint = _parse_bounded_head_records(
+        data,
+        full_in_head=full_in_head,
+        provider=provider,
+        maximum_record=maximum_record,
+        physical_limit=limit,
+        budget=budget,
+    )
     if not records:
         raise DiagnosticError("E_UNSUPPORTED_FORMAT", source="codex", provider=provider)
     updated_at = datetime.fromtimestamp(

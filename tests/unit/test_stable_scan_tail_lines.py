@@ -78,6 +78,33 @@ class HashDescriptorWindowTests(unittest.TestCase):
                 _hash_descriptor_window(descriptor, start=0, maximum=3)
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
+    def test_discarded_partial_prefix_still_enforces_observed_record_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "partial-oversize.jsonl"
+            path.write_bytes(b"x" * 100 + b"\n" + b'{"n":2}\n')
+            budget = ReadBudget(
+                Bounds(
+                    source_read_bytes=64,
+                    record_bytes=16,
+                    transcript_records=100,
+                    scanned_records=100,
+                )
+            )
+
+            with self.assertRaises(DiagnosticError) as caught:
+                list(
+                    stable_scan_tail_lines(
+                        path,
+                        root=root,
+                        budget=budget,
+                        max_line_bytes=16,
+                        charge_transcript=True,
+                    )
+                )
+
+            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
 
 class StableScanTailLinesTests(unittest.TestCase):
     def test_whole_file_when_within_budget(self) -> None:
@@ -301,8 +328,9 @@ class CommitProvisionalConcurrencyTests(unittest.TestCase):
                 )
             self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
 
-    def test_count_pass_physical_length_includes_lf_terminator(self) -> None:
-        # 16B payload + LF = 17B physical > 16B, in the skip range: hard-fail.
+    def test_count_pass_lf_terminator_does_not_consume_payload_ceiling(self) -> None:
+        # The full scanner excludes LF from record_bytes. The count pass must
+        # preserve that contract even for an exact-ceiling line in skip range.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             path = root / "lf-boundary.jsonl"
@@ -310,38 +338,36 @@ class CommitProvisionalConcurrencyTests(unittest.TestCase):
             budget = ReadBudget(
                 Bounds(source_read_bytes=512, transcript_records=1, scanned_records=100)
             )
-            with self.assertRaises(DiagnosticError) as caught:
-                list(
-                    stable_scan_tail_lines(
-                        str(path),
-                        root=str(root),
-                        budget=budget,
-                        max_line_bytes=16,
-                        charge_transcript=True,
-                    )
+            lines = list(
+                stable_scan_tail_lines(
+                    str(path),
+                    root=str(root),
+                    budget=budget,
+                    max_line_bytes=16,
+                    charge_transcript=True,
                 )
-            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+            )
+            self.assertEqual([line.text for line in lines], ['{"n":3}'])
 
-    def test_count_pass_physical_length_includes_crlf_terminator(self) -> None:
-        # 15B payload + CRLF = 17B physical > 16B, in the skip range: hard-fail.
+    def test_count_pass_crlf_terminator_does_not_consume_payload_ceiling(self) -> None:
+        # Optional CR and LF are both excluded, matching stable_scan_lines.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             path = root / "crlf-boundary.jsonl"
-            path.write_bytes(b'{"n":1}\n' + b"x" * 15 + b"\r\n" + b'{"n":3}\n')
+            path.write_bytes(b'{"n":1}\n' + b"x" * 16 + b"\r\n" + b'{"n":3}\n')
             budget = ReadBudget(
                 Bounds(source_read_bytes=512, transcript_records=1, scanned_records=100)
             )
-            with self.assertRaises(DiagnosticError) as caught:
-                list(
-                    stable_scan_tail_lines(
-                        str(path),
-                        root=str(root),
-                        budget=budget,
-                        max_line_bytes=16,
-                        charge_transcript=True,
-                    )
+            lines = list(
+                stable_scan_tail_lines(
+                    str(path),
+                    root=str(root),
+                    budget=budget,
+                    max_line_bytes=16,
+                    charge_transcript=True,
                 )
-            self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+            )
+            self.assertEqual([line.text for line in lines], ['{"n":3}'])
 
     def test_count_pass_skip_range_calibration(self) -> None:
         # With charge_transcript=True and transcript_records=1, a 3-line file
