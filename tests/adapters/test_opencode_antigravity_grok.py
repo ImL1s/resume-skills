@@ -5,6 +5,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 from dataclasses import replace
@@ -24,6 +25,7 @@ from portable_resume.bounds import Bounds, DEFAULT_BOUNDS, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.handoff import render_handoff
 from portable_resume.model import Envelope, Query
+from portable_resume.platform_fs.darwin_apfs import is_apfs_fd
 from portable_resume.select import AmbiguousSelection, select_session
 from tests.helpers.core import tree_snapshot
 from tests.helpers.fixture_manifest import validate_fixture_tree
@@ -43,6 +45,16 @@ def query(source: str, root: Path, ref: str | None = None, **kwargs: object) -> 
 
 def resolve(items, session_id: str):
     return ResolvedRef.from_summary(next(item for item in items if item.session_id == session_id))
+
+
+def _raise_cow_unavailable(*_args: object, **_kwargs: object) -> None:
+    raise DiagnosticError(
+        "E_SQLITE_LIVE_WAL",
+        source="opencode",
+        provider=SQLITE_FORMAT,
+        attempts=0,
+        family=("opencode.db-wal", "opencode.db-shm"),
+    )
 
 
 def _opencode_schema(connection: sqlite3.Connection) -> None:
@@ -116,6 +128,16 @@ class FixtureManifestTests(unittest.TestCase):
 
 
 class OpenCodeAdapterTests(unittest.TestCase):
+    def _require_real_apfs(self, path: Path) -> None:
+        if sys.platform != "darwin":
+            self.skipTest("real OpenCode COW integration runs on Darwin")
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            if not is_apfs_fd(descriptor):
+                self.skipTest("real OpenCode COW integration requires APFS")
+        finally:
+            os.close(descriptor)
+
     def _live_wal_root(self, temporary: str, *, fallback: bool) -> Path:
         root = Path(temporary)
         if fallback:
@@ -152,7 +174,13 @@ class OpenCodeAdapterTests(unittest.TestCase):
             adapter = OpenCodeAdapter(root=str(root))
             current = query("opencode", root)
             lowered = replace(DEFAULT_BOUNDS, sqlite_snapshot_bytes=1)
-            with mock.patch("portable_resume.adapters.opencode.DEFAULT_BOUNDS", lowered):
+            with (
+                mock.patch("portable_resume.adapters.opencode.DEFAULT_BOUNDS", lowered),
+                mock.patch(
+                    "portable_resume.adapters.opencode.private_sqlite_connection_live_wal_cow",
+                    side_effect=_raise_cow_unavailable,
+                ),
+            ):
                 for operation in (lambda: adapter.probe(current), lambda: adapter.list(current, ReadBudget())):
                     with self.subTest(operation=operation), self.assertRaises(DiagnosticError) as caught:
                         operation()
@@ -184,7 +212,13 @@ class OpenCodeAdapterTests(unittest.TestCase):
                     source_root=str(root),
                 )
                 lowered = replace(DEFAULT_BOUNDS, sqlite_snapshot_bytes=1)
-                with mock.patch("portable_resume.adapters.opencode.DEFAULT_BOUNDS", lowered):
+                with (
+                    mock.patch("portable_resume.adapters.opencode.DEFAULT_BOUNDS", lowered),
+                    mock.patch(
+                        "portable_resume.adapters.opencode.private_sqlite_connection_live_wal_cow",
+                        side_effect=_raise_cow_unavailable,
+                    ),
+                ):
                     for operation in (
                         lambda: adapter.probe(current),
                         lambda: adapter.list(current, ReadBudget()),
@@ -202,7 +236,13 @@ class OpenCodeAdapterTests(unittest.TestCase):
             )
             current = query("opencode", root, "missing")
             lowered = replace(DEFAULT_BOUNDS, sqlite_snapshot_bytes=1)
-            with mock.patch("portable_resume.adapters.opencode.DEFAULT_BOUNDS", lowered):
+            with (
+                mock.patch("portable_resume.adapters.opencode.DEFAULT_BOUNDS", lowered),
+                mock.patch(
+                    "portable_resume.adapters.opencode.private_sqlite_connection_live_wal_cow",
+                    side_effect=_raise_cow_unavailable,
+                ),
+            ):
                 with self.assertRaises(DiagnosticError) as caught:
                     OpenCodeAdapter(root=str(root)).list(current, ReadBudget())
             self.assertEqual(caught.exception.code, "E_SQLITE_LIVE_WAL")
@@ -241,6 +281,102 @@ class OpenCodeAdapterTests(unittest.TestCase):
             self.assertEqual([item.provider for item in summaries], [SQLITE_FORMAT])
             self.assertNotIn("W_SOURCE_PROVIDER_SKIPPED", summaries[0].warnings)
             self.assertNotIn("W_SOURCE_PROVIDER_SKIPPED", shown.warnings)
+
+    def test_issue263_cow_list_show_cross_lowered_snapshot_ceiling(self) -> None:
+        import portable_resume.adapters.opencode as opencode_module
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database = root / "opencode.db"
+            writer = sqlite3.connect(database)
+            try:
+                writer.execute("PRAGMA journal_mode=WAL")
+                writer.execute("PRAGMA wal_autocheckpoint=0")
+                _opencode_schema(writer)
+                writer.execute(
+                    "INSERT INTO session VALUES (?,?,?,?,?)",
+                    ("cow-session", CWD, "COW", 1, 4),
+                )
+                writer.execute(
+                    "INSERT INTO message VALUES (?,?,?,?)",
+                    (
+                        "cow-message",
+                        "cow-session",
+                        2,
+                        json.dumps({"role": "user", "content": "question"}),
+                    ),
+                )
+                writer.execute(
+                    "INSERT INTO part VALUES (?,?,?,?,?)",
+                    (
+                        "cow-part",
+                        "cow-message",
+                        "cow-session",
+                        3,
+                        json.dumps({"type": "text", "text": "question"}),
+                    ),
+                )
+                writer.commit()
+                adapter = OpenCodeAdapter(root=str(root))
+                current = query("opencode", root, "cow-session")
+                lowered = replace(DEFAULT_BOUNDS, sqlite_snapshot_bytes=1)
+                with (
+                    mock.patch.object(opencode_module, "DEFAULT_BOUNDS", lowered),
+                    mock.patch.object(
+                        opencode_module,
+                        "private_sqlite_connection_live_wal_cow",
+                        wraps=opencode_module.private_sqlite_connection_live_wal_cow,
+                    ) as cow,
+                ):
+                    summaries = adapter.list(current, ReadBudget())
+                    shown = adapter.show(resolve(summaries, "cow-session"), current, ReadBudget())
+                self.assertEqual([item.session_id for item in summaries], ["cow-session"])
+                self.assertEqual(shown.session_id, "cow-session")
+                self.assertTrue(shown.turns)
+                self.assertGreaterEqual(cow.call_count, 2)
+            finally:
+                writer.close()
+
+    def test_issue263_cow_connection_validates_opencode_schema_and_private_uri(self) -> None:
+        import portable_resume.sqlite_cow as cow_module
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database = root / "opencode.db"
+            writer = sqlite3.connect(database)
+            real_connect = cow_module.sqlite3.connect
+            uris: list[str] = []
+
+            def record_connect(database_arg: str, *args: object, **kwargs: object) -> sqlite3.Connection:
+                uris.append(str(database_arg))
+                return real_connect(database_arg, *args, **kwargs)
+
+            try:
+                writer.execute("PRAGMA journal_mode=WAL")
+                writer.execute("PRAGMA wal_autocheckpoint=0")
+                _opencode_schema(writer)
+                writer.execute(
+                    "INSERT INTO session VALUES (?,?,?,?,?)",
+                    ("schema-cow", CWD, "schema", 1, 2),
+                )
+                writer.commit()
+                current = query("opencode", root, "schema-cow")
+                lowered = replace(DEFAULT_BOUNDS, sqlite_snapshot_bytes=1)
+                adapter = OpenCodeAdapter(root=str(root))
+                with (
+                    mock.patch("portable_resume.adapters.opencode.DEFAULT_BOUNDS", lowered),
+                    mock.patch.object(cow_module.sqlite3, "connect", side_effect=record_connect),
+                ):
+                    summaries = adapter.list(current, ReadBudget())
+                self.assertEqual([item.session_id for item in summaries], ["schema-cow"])
+                self.assertTrue(uris)
+                self.assertTrue(all(uri.startswith("file:") for uri in uris))
+                self.assertTrue(all("mode=ro&cache=private" in uri for uri in uris))
+                self.assertTrue(all(str(root) not in uri for uri in uris))
+            finally:
+                writer.close()
 
     def test_issue263_exact_fallback_ref_stays_bound_when_sqlite_recovers(self) -> None:
         root = fixture_root("opencode", "s-ope-02")

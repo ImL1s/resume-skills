@@ -89,6 +89,42 @@ class WalPrefixTests(unittest.TestCase):
         self.assertEqual(prefix.committed_pages, 3)
         self.assertEqual(prefix.raw_header, data[:32])
 
+    def test_restarted_wal_excludes_previous_generation_physical_tail(self) -> None:
+        current = _wal_bytes(
+            [(1, 1, b"a" * 512)],
+            checkpoint_sequence=8,
+            salts=(17, 19),
+        )
+        previous = _wal_bytes(
+            [(2, 2, b"b" * 512), (3, 3, b"c" * 512)],
+            checkpoint_sequence=7,
+            salts=(11, 13),
+        )
+
+        prefix = self._validate(current + previous[32:])
+
+        self.assertEqual(prefix.length, len(current))
+        self.assertEqual(prefix.frame_count, 1)
+        self.assertEqual(prefix.last_commit_frame, 1)
+        self.assertEqual(prefix.committed_pages, 1)
+
+    def test_previous_generation_tail_requires_current_commit_boundary(self) -> None:
+        current_uncommitted = _wal_bytes(
+            [(1, 0, b"a" * 512)],
+            checkpoint_sequence=8,
+            salts=(17, 19),
+        )
+        previous = _wal_bytes(
+            [(2, 2, b"b" * 512)],
+            checkpoint_sequence=7,
+            salts=(11, 13),
+        )
+
+        with self.assertRaises(DiagnosticError) as caught:
+            self._validate(current_uncommitted + previous[32:])
+
+        self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+
     def test_reset_shrink_header_salt_and_interior_rewrite_rejected(self) -> None:
         data = bytearray(_wal_bytes([(1, 1, b"a" * 512)]))
         cases: dict[str, bytes] = {}

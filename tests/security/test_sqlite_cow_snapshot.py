@@ -1,0 +1,665 @@
+"""Security and coherence tests for the Darwin/APFS SQLite COW path."""
+
+from __future__ import annotations
+
+import dataclasses
+import errno
+import hashlib
+import os
+import sqlite3
+import stat
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+from portable_resume.bounds import DEFAULT_BOUNDS
+from portable_resume.diagnostics import DiagnosticError
+from portable_resume.platform_fs.darwin_apfs import DarwinCloneUnavailable, is_apfs_fd
+from portable_resume.snapshot import private_sqlite_connection_live_wal_cow
+
+
+class SQLiteCowSnapshotTests(unittest.TestCase):
+    def _live_database(self, root: Path, *, subdirectory: bool = False) -> tuple[Path, sqlite3.Connection]:
+        parent = root / "store" if subdirectory else root
+        parent.mkdir(exist_ok=True)
+        database = parent / "opencode.db"
+        writer = sqlite3.connect(database)
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("CREATE TABLE session(id TEXT PRIMARY KEY, value TEXT)")
+        writer.execute("INSERT INTO session VALUES ('anchor', 'visible')")
+        writer.commit()
+        self.assertTrue(Path(str(database) + "-wal").is_file())
+        self.assertTrue(Path(str(database) + "-shm").is_file())
+        return database, writer
+
+    def _require_real_apfs(self, path: Path) -> None:
+        if sys.platform != "darwin":
+            self.skipTest("real fclonefileat proof runs on Darwin")
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            if not is_apfs_fd(descriptor):
+                self.skipTest("real fclonefileat proof requires APFS")
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def _scratch_entries() -> set[str]:
+        root = Path(tempfile.gettempdir())
+        return {str(path) for path in root.glob("portable-resume-cow-*")}
+
+    @staticmethod
+    def _file_state(path: Path) -> tuple[tuple[int, int, int, int, int], str, tuple[tuple[str, bytes], ...]]:
+        current = path.lstat()
+        names: list[str] = []
+        if hasattr(os, "listxattr"):
+            try:
+                names = sorted(os.listxattr(path, follow_symlinks=False))
+            except OSError:
+                names = []
+        attributes: list[tuple[str, bytes]] = []
+        for name in names:
+            try:
+                attributes.append((name, os.getxattr(path, name, follow_symlinks=False)))
+            except OSError:
+                pass
+        identity = (
+            current.st_dev,
+            current.st_ino,
+            stat.S_IMODE(current.st_mode),
+            current.st_size,
+            current.st_mtime_ns,
+        )
+        return identity, hashlib.sha256(path.read_bytes()).hexdigest(), tuple(attributes)
+
+    def test_private_query_only_connection_rebuilds_only_private_shm_and_passes_integrity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database, writer = self._live_database(root)
+            try:
+                with private_sqlite_connection_live_wal_cow(
+                    database,
+                    root=root,
+                    provider="opencode-sqlite-v1",
+                ) as connection:
+                    self.assertEqual(connection.execute("PRAGMA query_only").fetchone(), (1,))
+                    self.assertEqual(connection.execute("PRAGMA integrity_check(1)").fetchone(), ("ok",))
+                    self.assertEqual(
+                        connection.execute("SELECT value FROM session WHERE id='anchor'").fetchone(),
+                        ("visible",),
+                    )
+                    private_database = Path(connection.execute("PRAGMA database_list").fetchone()[2])
+                    self.assertNotEqual(private_database, database)
+                    self.assertFalse(str(private_database).startswith(str(root)))
+                    self.assertTrue(private_database.with_name(private_database.name + "-shm").exists())
+            finally:
+                writer.close()
+
+    def test_unsupported_linux_other_non_apfs_and_missing_symbol_fail_live_wal_contract(self) -> None:
+        scenarios = (
+            (mock.patch("portable_resume.sqlite_cow.sys.platform", "linux"),),
+            (
+                mock.patch("portable_resume.sqlite_cow.sys.platform", "darwin"),
+                mock.patch("portable_resume.sqlite_cow.is_apfs_fd", return_value=False),
+            ),
+            (
+                mock.patch("portable_resume.sqlite_cow.sys.platform", "darwin"),
+                mock.patch("portable_resume.sqlite_cow.is_apfs_fd", return_value=True),
+                mock.patch(
+                    "portable_resume.sqlite_cow.clone_file_from_fd",
+                    side_effect=DarwinCloneUnavailable("missing"),
+                ),
+            ),
+        )
+        for patches in scenarios:
+            with self.subTest(count=len(patches)), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                database, writer = self._live_database(root)
+                before = self._scratch_entries()
+                try:
+                    entered = []
+                    for item in patches:
+                        entered.append(item.__enter__())
+                    with self.assertRaises(DiagnosticError) as caught:
+                        with private_sqlite_connection_live_wal_cow(
+                            database,
+                            root=root,
+                            provider="opencode-sqlite-v1",
+                        ):
+                            self.fail("unsupported backend must not yield")
+                    self.assertEqual(caught.exception.code, "E_SQLITE_LIVE_WAL")
+                    self.assertEqual(caught.exception.exit_code, 6)
+                    self.assertEqual(caught.exception.attempts, 0)
+                    self.assertEqual(caught.exception.provider, "opencode-sqlite-v1")
+                    self.assertIn("opencode.db-wal", caught.exception.family)
+                    self.assertIsNotNone(caught.exception.hint)
+                    self.assertEqual(self._scratch_entries(), before)
+                finally:
+                    for item in reversed(patches):
+                        item.__exit__(None, None, None)
+                    writer.close()
+
+    def test_append_beyond_accepted_prefix_is_deferred_without_losing_committed_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database, writer = self._live_database(root)
+            appended = False
+
+            def hook(stage: str, _attempt: int, _source: str) -> None:
+                nonlocal appended
+                if stage == "after-wal-prefix" and not appended:
+                    writer.execute("INSERT INTO session VALUES ('future', 'later')")
+                    writer.commit()
+                    appended = True
+
+            try:
+                with private_sqlite_connection_live_wal_cow(
+                    database,
+                    root=root,
+                    attempts=1,
+                    hook=hook,
+                    provider="opencode-sqlite-v1",
+                ) as connection:
+                    self.assertEqual(
+                        connection.execute("SELECT value FROM session WHERE id='anchor'").fetchone(),
+                        ("visible",),
+                    )
+                    # The transaction committed strictly after N is explicitly
+                    # permitted to wait for the next reader run.
+                    self.assertIsNone(
+                        connection.execute("SELECT value FROM session WHERE id='future'").fetchone()
+                    )
+            finally:
+                writer.close()
+
+    def test_restarted_wal_stale_tail_survives_repeated_checkpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database, writer = self._live_database(root)
+            try:
+                # Populate and checkpoint a longer first generation. SQLite
+                # subsequently restarts this file in place and leaves its old
+                # frames beyond the new logical end.
+                for index in range(8):
+                    writer.execute(
+                        "INSERT INTO session VALUES (?, ?)",
+                        (f"seed-{index}", "seed"),
+                    )
+                    writer.commit()
+                self.assertEqual(writer.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()[0], 0)
+                physical_size = Path(str(database) + "-wal").stat().st_size
+
+                for cycle in range(3):
+                    session_id = f"restart-{cycle}"
+                    writer.execute(
+                        "INSERT INTO session VALUES (?, ?)",
+                        (session_id, "visible"),
+                    )
+                    writer.commit()
+                    self.assertEqual(Path(str(database) + "-wal").stat().st_size, physical_size)
+                    fired = False
+
+                    def hook(stage: str, _attempt: int, _source: str) -> None:
+                        nonlocal fired
+                        if stage == "after-family-pin" and not fired:
+                            fired = True
+                            self.assertEqual(
+                                writer.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()[0],
+                                0,
+                            )
+
+                    with private_sqlite_connection_live_wal_cow(
+                        database,
+                        root=root,
+                        attempts=1,
+                        hook=hook,
+                        provider="opencode-sqlite-v1",
+                    ) as connection:
+                        self.assertEqual(
+                            connection.execute(
+                                "SELECT value FROM session WHERE id=?",
+                                (session_id,),
+                            ).fetchone(),
+                            ("visible",),
+                        )
+                    self.assertTrue(fired)
+            finally:
+                writer.close()
+
+    def test_generation_reset_truncate_replace_and_prefix_mutation_are_busy_and_cleanup(self) -> None:
+        scenarios = ("truncate_regrow", "wal_replace", "header_salt", "prefix_mutation")
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self._require_real_apfs(root)
+                database, writer = self._live_database(root)
+                wal = Path(str(database) + "-wal")
+                saved = wal.with_suffix(wal.suffix + ".saved")
+                before_scratch = self._scratch_entries()
+                fired = False
+
+                def hook(stage: str, _attempt: int, _source: str) -> None:
+                    nonlocal fired
+                    target_stage = "after-wal-copy" if scenario != "header_salt" else "after-clone"
+                    if fired or stage != target_stage:
+                        return
+                    fired = True
+                    data = wal.read_bytes()
+                    if scenario == "truncate_regrow":
+                        time.sleep(0.002)
+                        descriptor = os.open(wal, os.O_RDWR)
+                        try:
+                            os.ftruncate(descriptor, 32)
+                            os.fsync(descriptor)
+                            os.pwrite(descriptor, data[32:], 32)
+                            os.fsync(descriptor)
+                        finally:
+                            os.close(descriptor)
+                    elif scenario == "wal_replace":
+                        wal.rename(saved)
+                        wal.write_bytes(data)
+                    elif scenario == "header_salt":
+                        descriptor = os.open(wal, os.O_RDWR)
+                        try:
+                            os.pwrite(descriptor, bytes([data[16] ^ 1]), 16)
+                            os.fsync(descriptor)
+                        finally:
+                            os.close(descriptor)
+                    else:
+                        descriptor = os.open(wal, os.O_RDWR)
+                        try:
+                            os.pwrite(descriptor, bytes([data[56] ^ 1]), 56)
+                            os.fsync(descriptor)
+                        finally:
+                            os.close(descriptor)
+
+                try:
+                    with self.assertRaises(DiagnosticError) as caught:
+                        with private_sqlite_connection_live_wal_cow(
+                            database,
+                            root=root,
+                            attempts=1,
+                            hook=hook,
+                            provider="opencode-sqlite-v1",
+                        ):
+                            self.fail("mutated generation must not yield")
+                    self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+                    self.assertEqual(caught.exception.attempts, 1)
+                    self.assertEqual(self._scratch_entries(), before_scratch)
+                finally:
+                    if saved.exists():
+                        if wal.exists():
+                            wal.unlink()
+                        saved.rename(wal)
+                    try:
+                        writer.close()
+                    except sqlite3.Error:
+                        pass
+
+    def test_source_main_wal_shm_symlink_and_nonregular_are_unsafe_without_side_effect(self) -> None:
+        for member in ("main", "wal", "shm"):
+            for kind in ("symlink", "directory"):
+                with self.subTest(member=member, kind=kind), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    database, writer = self._live_database(root)
+                    target = {
+                        "main": database,
+                        "wal": Path(str(database) + "-wal"),
+                        "shm": Path(str(database) + "-shm"),
+                    }[member]
+                    saved = target.with_name(target.name + ".saved")
+                    target.rename(saved)
+                    if kind == "symlink":
+                        target.symlink_to(saved.name)
+                    else:
+                        target.mkdir()
+                    entries = tuple(sorted(path.name for path in root.iterdir()))
+                    try:
+                        with self.assertRaises(DiagnosticError) as caught:
+                            with private_sqlite_connection_live_wal_cow(
+                                database,
+                                root=root,
+                                attempts=1,
+                                provider="opencode-sqlite-v1",
+                            ):
+                                self.fail("unsafe family must not yield")
+                        self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+                        self.assertEqual(tuple(sorted(path.name for path in root.iterdir())), entries)
+                    finally:
+                        if target.is_symlink():
+                            target.unlink()
+                        elif target.is_dir():
+                            target.rmdir()
+                        saved.rename(target)
+                        try:
+                            writer.close()
+                        except sqlite3.Error:
+                            pass
+
+    def test_source_parent_main_wal_and_scratch_path_swaps_fail_closed(self) -> None:
+        for scenario in ("parent", "main", "wal"):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self._require_real_apfs(root)
+                database, writer = self._live_database(root, subdirectory=True)
+                parent = database.parent
+                saved_parent = root / "store.saved"
+                target = database if scenario == "main" else Path(str(database) + "-wal")
+                saved_target = target.with_name(target.name + ".saved")
+                fired = False
+
+                def hook(stage: str, _attempt: int, _source: str) -> None:
+                    nonlocal fired
+                    if fired or stage != "after-wal-copy":
+                        return
+                    fired = True
+                    if scenario == "parent":
+                        parent.rename(saved_parent)
+                        parent.mkdir()
+                    else:
+                        data = target.read_bytes()
+                        target.rename(saved_target)
+                        target.write_bytes(data)
+
+                try:
+                    with self.assertRaises(DiagnosticError) as caught:
+                        with private_sqlite_connection_live_wal_cow(
+                            database,
+                            root=root,
+                            attempts=1,
+                            hook=hook,
+                            provider="opencode-sqlite-v1",
+                        ):
+                            self.fail("source pathname swap must not yield")
+                    self.assertIn(caught.exception.code, {"E_SOURCE_BUSY", "E_UNSAFE_PATH"})
+                finally:
+                    if scenario == "parent" and saved_parent.exists():
+                        if parent.exists():
+                            parent.rmdir()
+                        saved_parent.rename(parent)
+                    elif saved_target.exists():
+                        if target.exists():
+                            target.unlink()
+                        saved_target.rename(target)
+                    try:
+                        writer.close()
+                    except sqlite3.Error:
+                        pass
+
+        with self.subTest(scenario="scratch"), tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database, writer = self._live_database(root)
+            baseline = self._scratch_entries()
+            replacement: Path | None = None
+            moved: Path | None = None
+
+            def swap_scratch(stage: str, _attempt: int, _source: str) -> None:
+                nonlocal replacement, moved
+                if stage != "before-private-connect" or replacement is not None:
+                    return
+                created = self._scratch_entries() - baseline
+                self.assertEqual(len(created), 1)
+                replacement = Path(next(iter(created)))
+                moved = replacement.with_name(replacement.name + ".moved")
+                replacement.rename(moved)
+                replacement.mkdir(mode=0o700)
+
+            try:
+                with self.assertRaises(DiagnosticError) as caught:
+                    with private_sqlite_connection_live_wal_cow(
+                        database,
+                        root=root,
+                        attempts=1,
+                        hook=swap_scratch,
+                        provider="opencode-sqlite-v1",
+                    ):
+                        self.fail("scratch pathname swap must not yield")
+                self.assertEqual(caught.exception.code, "E_INVARIANT")
+                self.assertIsNotNone(moved)
+                self.assertFalse(moved.exists())  # pinned reader-owned scratch was cleaned
+                self.assertIsNotNone(replacement)
+                self.assertTrue(replacement.is_dir())  # attacker replacement was not touched
+            finally:
+                if replacement is not None and replacement.exists():
+                    replacement.rmdir()
+                if moved is not None and moved.exists():
+                    moved.rmdir()
+                writer.close()
+            self.assertEqual(self._scratch_entries(), baseline)
+
+    def test_transient_main_path_swap_restore_cannot_change_fd_clone_source(self) -> None:
+        import portable_resume.sqlite_cow as cow
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database, writer = self._live_database(root)
+            saved = database.with_name("pinned-main.saved")
+            decoy = database.with_name("decoy-main.sqlite")
+            replacement = sqlite3.connect(decoy)
+            replacement.execute("CREATE TABLE decoy(value TEXT)")
+            replacement.execute("INSERT INTO decoy VALUES ('wrong')")
+            replacement.commit()
+            replacement.close()
+            original_clone = cow.clone_file_from_fd
+            fired = False
+
+            def clone(source_fd: int, destination_fd: int, name: str, **kwargs: object) -> None:
+                nonlocal fired
+                database.rename(saved)
+                decoy.rename(database)
+                try:
+                    original_clone(source_fd, destination_fd, name, **kwargs)
+                    fired = True
+                finally:
+                    database.rename(decoy)
+                    saved.rename(database)
+
+            try:
+                with mock.patch.object(cow, "clone_file_from_fd", side_effect=clone):
+                    with private_sqlite_connection_live_wal_cow(
+                        database,
+                        root=root,
+                        attempts=1,
+                        provider="opencode-sqlite-v1",
+                    ) as connection:
+                        self.assertEqual(
+                            connection.execute("SELECT value FROM session WHERE id='anchor'").fetchone(),
+                            ("visible",),
+                        )
+                        self.assertTrue(fired)
+            finally:
+                writer.close()
+
+    def test_quiescent_source_main_wal_shm_digest_inode_mode_mtime_xattr_and_entries_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database, writer = self._live_database(root)
+            members = (database, Path(str(database) + "-wal"), Path(str(database) + "-shm"))
+            if hasattr(os, "setxattr"):
+                try:
+                    os.setxattr(database, "com.portable-resume.synthetic", b"fixture")
+                except OSError:
+                    pass
+            before = {path.name: self._file_state(path) for path in members}
+            before_entries = tuple(sorted(path.name for path in root.iterdir()))
+            try:
+                with private_sqlite_connection_live_wal_cow(
+                    database,
+                    root=root,
+                    attempts=1,
+                    provider="opencode-sqlite-v1",
+                ) as connection:
+                    self.assertEqual(connection.execute("SELECT COUNT(*) FROM session").fetchone(), (1,))
+                after = {path.name: self._file_state(path) for path in members}
+                self.assertEqual(after, before)
+                self.assertEqual(tuple(sorted(path.name for path in root.iterdir())), before_entries)
+            finally:
+                writer.close()
+
+    def test_reader_mutation_and_connect_audit_never_targets_source_root(self) -> None:
+        import portable_resume.sqlite_cow as cow
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database, writer = self._live_database(root)
+            real_connect = cow.sqlite3.connect
+            uris: list[str] = []
+            appended = False
+
+            def audited_connect(database_arg: str, *args: object, **kwargs: object) -> sqlite3.Connection:
+                uris.append(str(database_arg))
+                return real_connect(database_arg, *args, **kwargs)
+
+            def hook(stage: str, _attempt: int, _source: str) -> None:
+                nonlocal appended
+                if stage == "after-wal-prefix" and not appended:
+                    writer.execute("INSERT INTO session VALUES ('writer', 'owned')")
+                    writer.commit()
+                    appended = True
+
+            try:
+                with mock.patch.object(cow.sqlite3, "connect", side_effect=audited_connect):
+                    with private_sqlite_connection_live_wal_cow(
+                        database,
+                        root=root,
+                        attempts=1,
+                        hook=hook,
+                        provider="opencode-sqlite-v1",
+                    ) as connection:
+                        self.assertEqual(connection.execute("SELECT COUNT(*) FROM session").fetchone(), (1,))
+                self.assertTrue(uris)
+                self.assertTrue(all(str(root) not in uri for uri in uris))
+                self.assertEqual(writer.execute("SELECT value FROM session WHERE id='writer'").fetchone(), ("owned",))
+            finally:
+                writer.close()
+
+    def test_same_volume_free_space_headroom_deadline_cancellation_and_cleanup(self) -> None:
+        import portable_resume.sqlite_cow as cow
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database, writer = self._live_database(root)
+            before = self._scratch_entries()
+            try:
+                too_small = dataclasses.replace(
+                    DEFAULT_BOUNDS,
+                    sqlite_cow_logical_bytes=max(0, database.stat().st_size - 1),
+                )
+                with self.assertRaises(DiagnosticError) as logical:
+                    with private_sqlite_connection_live_wal_cow(
+                        database, root=root, bounds=too_small, attempts=1
+                    ):
+                        self.fail("logical bound must reject")
+                self.assertEqual(logical.exception.code, "E_LIMIT_EXCEEDED")
+
+                expired = dataclasses.replace(DEFAULT_BOUNDS, sqlite_snapshot_deadline_ms=0)
+                with self.assertRaises(DiagnosticError) as deadline:
+                    with private_sqlite_connection_live_wal_cow(
+                        database, root=root, bounds=expired, attempts=1
+                    ):
+                        self.fail("deadline must reject")
+                self.assertEqual(deadline.exception.code, "E_SOURCE_BUSY")
+
+                no_space = SimpleNamespace(f_frsize=4096, f_bsize=4096, f_bavail=0)
+                with mock.patch.object(cow.os, "fstatvfs", return_value=no_space):
+                    with self.assertRaises(DiagnosticError) as space:
+                        with private_sqlite_connection_live_wal_cow(
+                            database, root=root, attempts=1
+                        ):
+                            self.fail("free-space preflight must reject")
+                self.assertEqual(space.exception.code, "E_LIMIT_EXCEEDED")
+
+                class ConsumerCancelled(Exception):
+                    pass
+
+                with self.assertRaises(ConsumerCancelled):
+                    with private_sqlite_connection_live_wal_cow(
+                        database, root=root, attempts=1
+                    ):
+                        raise ConsumerCancelled()
+                self.assertEqual(self._scratch_entries(), before)
+            finally:
+                writer.close()
+
+    def test_clone_errno_capability_mapping(self) -> None:
+        import portable_resume.sqlite_cow as cow
+
+        cases = {
+            getattr(errno, "ENOTSUP", errno.EINVAL): "E_SQLITE_LIVE_WAL",
+            errno.EXDEV: "E_SQLITE_LIVE_WAL",
+            errno.ENOSPC: "E_LIMIT_EXCEEDED",
+            errno.EFBIG: "E_LIMIT_EXCEEDED",
+            errno.EBUSY: "E_SOURCE_BUSY",
+            errno.EIO: "E_SOURCE_BUSY",
+            errno.ENOENT: "E_UNSAFE_PATH",
+            9999: "E_SQLITE_LIVE_WAL",
+        }
+        for number, expected in cases.items():
+            with self.subTest(errno=number), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                database, writer = self._live_database(root)
+                before = self._scratch_entries()
+                try:
+                    with (
+                        mock.patch.object(cow.sys, "platform", "darwin"),
+                        mock.patch.object(cow, "is_apfs_fd", return_value=True),
+                        mock.patch.object(
+                            cow,
+                            "clone_file_from_fd",
+                            side_effect=OSError(number, "synthetic"),
+                        ),
+                    ):
+                        with self.assertRaises(DiagnosticError) as caught:
+                            with private_sqlite_connection_live_wal_cow(
+                                database, root=root, attempts=1, provider="opencode-sqlite-v1"
+                            ):
+                                self.fail("clone error must not yield")
+                    self.assertEqual(caught.exception.code, expected)
+                    self.assertEqual(self._scratch_entries(), before)
+                finally:
+                    writer.close()
+
+    def test_rollback_journal_created_between_validation_and_acceptance_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database, writer = self._live_database(root)
+            journal = Path(str(database) + "-journal")
+            fired = False
+
+            def hook(stage: str, _attempt: int, _source: str) -> None:
+                nonlocal fired
+                if stage == "before-accept" and not fired:
+                    journal.write_bytes(b"synthetic-hot-journal")
+                    fired = True
+
+            try:
+                with self.assertRaises(DiagnosticError) as caught:
+                    with private_sqlite_connection_live_wal_cow(
+                        database,
+                        root=root,
+                        attempts=1,
+                        hook=hook,
+                        provider="opencode-sqlite-v1",
+                    ):
+                        self.fail("late journal must not yield")
+                self.assertEqual(caught.exception.code, "E_SQLITE_HOT_JOURNAL")
+            finally:
+                journal.unlink(missing_ok=True)
+                writer.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

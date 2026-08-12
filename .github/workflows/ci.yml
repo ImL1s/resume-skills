@@ -111,6 +111,38 @@ jobs:
           PYTHONPATH: src
         run: python scripts/smoke_windows_product_install.py
 
+  issue263-apfs-proof:
+    name: issue #263 real APFS COW proof
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Prove descriptor-bound APFS live-WAL snapshots
+        env:
+          PYTHONPATH: src
+        run: |
+          python scripts/prove_issue263_macos_apfs.py \
+            --iterations 200 \
+            --output issue263-proof/issue263-apfs-proof.json
+
+      - name: Upload sanitized APFS proof
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue263-apfs-proof-${{ github.sha }}
+          path: issue263-proof/issue263-apfs-proof.json
+          if-no-files-found: error
+          retention-days: 30
+
   package:
     name: build and smoke distributions
     needs: [test, test-windows, quality]

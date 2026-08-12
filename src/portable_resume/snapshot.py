@@ -1717,6 +1717,36 @@ def private_sqlite_connection(
 
 
 @contextlib.contextmanager
+def private_sqlite_connection_live_wal_cow(
+    database: str | os.PathLike[str],
+    *,
+    root: str | os.PathLike[str],
+    bounds: Bounds = DEFAULT_BOUNDS,
+    attempts: int | None = None,
+    hook: AttemptHook | None = None,
+    provider: str | None = None,
+) -> Iterator[sqlite3.Connection]:
+    """Yield a private Darwin/APFS clone plus validated live-WAL prefix.
+
+    The implementation import is intentionally lazy: ``sqlite_cow`` reuses
+    descriptor helpers from this module, while unsupported installed hosts must
+    still be able to import the stdlib-only runtime normally.
+    """
+
+    from .sqlite_cow import private_sqlite_connection_live_wal_cow_impl
+
+    with private_sqlite_connection_live_wal_cow_impl(
+        database,
+        root=root,
+        bounds=bounds,
+        attempts=attempts,
+        hook=hook,
+        provider=provider,
+    ) as connection:
+        yield connection
+
+
+@contextlib.contextmanager
 def query_only_live_sqlite(
     database: str | os.PathLike[str],
     *,

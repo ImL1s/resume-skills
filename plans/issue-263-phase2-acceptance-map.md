@@ -73,19 +73,26 @@ and the consumer query.
    identity, and force mode `0600`.
 7. Re-read the pinned source WAL header. Any raw-header/generation change,
    reset, shrink, or replacement rejects this attempt as `E_SOURCE_BUSY`.
-8. Capture the largest physically complete prefix:
+8. Capture the bounded current-generation prefix from the physically complete
+   frames:
 
    ```text
    frame_size = 24 + page_size
    N = 32 + floor((wal_size - 32) / frame_size) * frame_size
    ```
 
-   Stream exactly `[0,N)` with bounded `pread`; validate every frame's nonzero
-   page number, salts, cumulative checksum, and database-size commit marker
-   using SQLite's documented WAL byte order. A physically complete but invalid
-   frame is never silently shortened into success. Track the last valid commit
-   frame and committed database-page count. A partial physical tail after `N`
-   is deferred to a future run.
+   First bound `N` by the WAL byte/frame ceilings. Stream with bounded `pread`
+   and validate every current-generation frame's nonzero page number,
+   cumulative checksum, and database-size commit marker using SQLite's
+   documented WAL byte order. SQLite may restart a fully checkpointed WAL in
+   place without shrinking it: the first physically complete frame whose salts
+   differ from the validated current header explicitly ends the logical prefix,
+   and the remaining prior-generation bytes are not copied, but only after the
+   current generation has established a checksum-valid commit boundary. A
+   same-generation invalid page/checksum and a salt transition before any
+   current commit are never shortened into success. Track the last valid commit
+   frame and committed database-page count. A partial physical tail is deferred
+   to a future run.
 9. Write only `snapshot.sqlite-wal` in private scratch (`0600`, create-exclusive,
    no-follow). Re-read or digest-and-compare the exact accepted source prefix,
    require current source WAL length `>= N`, and require unchanged full header,
@@ -168,7 +175,9 @@ mocked clone, retry-after-flake, or result from an older SHA is not proof.
 ### 3. Normal live WAL
 
 - `tests/unit/test_sqlite_wal_prefix.py::WalPrefixTests.test_complete_checksum_valid_prefix_tracks_last_commit`
+- `tests/unit/test_sqlite_wal_prefix.py::WalPrefixTests.test_restarted_wal_excludes_previous_generation_physical_tail`
 - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_append_beyond_accepted_prefix_is_deferred_without_losing_committed_prefix`
+- `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_restarted_wal_stale_tail_survives_repeated_checkpoints`
 - Real scenarios `continuous_append`, `checkpoint_before_clone`, and
   `checkpoint_after_clone`.
 - Every success has `integrity_check=ok`, sees the anchor commit, and does not

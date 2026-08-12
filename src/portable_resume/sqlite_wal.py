@@ -21,6 +21,17 @@ DeadlineCheck = Callable[[], None]
 
 
 @dataclass(frozen=True, slots=True)
+class WalHeader:
+    raw: bytes
+    checkpoint_sequence: int
+    page_size: int
+    salt1: int
+    salt2: int
+    big_endian_checksum: bool
+    checksum: tuple[int, int]
+
+
+@dataclass(frozen=True, slots=True)
 class WalPrefix:
     """Validated, physically complete prefix from one pinned WAL descriptor."""
 
@@ -76,6 +87,40 @@ def _page_size(encoded: int) -> int:
     return value
 
 
+def validate_wal_header(
+    descriptor: int,
+    *,
+    deadline_check: DeadlineCheck | None = None,
+) -> WalHeader:
+    """Validate and return the complete 32-byte header from a pinned WAL."""
+
+    if type(descriptor) is not int or descriptor < 0:
+        raise DiagnosticError.invalid()
+    check = deadline_check or (lambda: None)
+    check()
+    raw = _pread_exact(descriptor, _WAL_HEADER_BYTES, 0)
+    magic, version, encoded_page_size, sequence, salt1, salt2, stored0, stored1 = struct.unpack(
+        ">8I", raw
+    )
+    if magic not in {_WAL_MAGIC_LITTLE, _WAL_MAGIC_BIG} or version != _WAL_VERSION:
+        raise _busy()
+    page_size = _page_size(encoded_page_size)
+    big_endian = magic == _WAL_MAGIC_BIG
+    state = _checksum(raw[:24], big_endian=big_endian)
+    if state != (stored0, stored1):
+        raise _busy()
+    check()
+    return WalHeader(
+        raw=raw,
+        checkpoint_sequence=sequence,
+        page_size=page_size,
+        salt1=salt1,
+        salt2=salt2,
+        big_endian_checksum=big_endian,
+        checksum=state,
+    )
+
+
 def validate_wal_prefix(
     descriptor: int,
     *,
@@ -84,11 +129,14 @@ def validate_wal_prefix(
     max_frames: int,
     deadline_check: DeadlineCheck | None = None,
 ) -> WalPrefix:
-    """Validate the largest physically complete WAL prefix from ``descriptor``.
+    """Validate the current generation's complete WAL prefix.
 
     The source descriptor is never reopened by path. A partial final frame is
-    excluded; every admitted frame must satisfy SQLite's cumulative checksum
-    and salt rules. Callers revalidate generation and prefix digest before
+    excluded. SQLite may restart a WAL in place after checkpointing without
+    shrinking the file, so a first frame with different salts terminates the
+    current generation and leaves the previous generation's physical tail
+    unadmitted. Every frame with current salts must satisfy SQLite's cumulative
+    checksum rules. Callers revalidate generation and prefix digest before
     accepting a paired private main-file clone.
     """
 
@@ -104,51 +152,58 @@ def validate_wal_prefix(
     ):
         raise DiagnosticError.invalid()
     check = deadline_check or (lambda: None)
-    check()
-    header = _pread_exact(descriptor, _WAL_HEADER_BYTES, 0)
-    magic, version, encoded_page_size, _sequence, salt1, salt2, stored0, stored1 = struct.unpack(
-        ">8I", header
-    )
-    if magic not in {_WAL_MAGIC_LITTLE, _WAL_MAGIC_BIG} or version != _WAL_VERSION:
-        raise _busy()
-    page_size = _page_size(encoded_page_size)
-    big_endian = magic == _WAL_MAGIC_BIG
-    state = _checksum(header[:24], big_endian=big_endian)
-    if state != (stored0, stored1):
-        raise _busy()
+    header = validate_wal_header(descriptor, deadline_check=check)
+    page_size = header.page_size
+    state = header.checksum
 
     frame_size = _WAL_FRAME_HEADER_BYTES + page_size
-    frame_count = (source_size - _WAL_HEADER_BYTES) // frame_size
-    prefix_length = _WAL_HEADER_BYTES + frame_count * frame_size
-    if prefix_length > max_bytes or frame_count > max_frames:
+    physical_frame_count = (source_size - _WAL_HEADER_BYTES) // frame_size
+    physical_prefix_length = _WAL_HEADER_BYTES + physical_frame_count * frame_size
+    if physical_prefix_length > max_bytes or physical_frame_count > max_frames:
         raise DiagnosticError.limit_exceeded()
 
-    digest = hashlib.sha256(header)
+    digest = hashlib.sha256(header.raw)
+    frame_count = 0
     last_commit_frame = 0
     committed_pages = 0
-    for frame_number in range(1, frame_count + 1):
+    for frame_number in range(1, physical_frame_count + 1):
         check()
         offset = _WAL_HEADER_BYTES + (frame_number - 1) * frame_size
         frame = _pread_exact(descriptor, frame_size, offset)
         page_number, database_pages, frame_salt1, frame_salt2, checksum0, checksum1 = struct.unpack(
             ">6I", frame[:_WAL_FRAME_HEADER_BYTES]
         )
-        if page_number == 0 or (frame_salt1, frame_salt2) != (salt1, salt2):
+        if (frame_salt1, frame_salt2) != (header.salt1, header.salt2):
+            # SQLite reuses a checkpointed WAL in place.  Bytes beyond the
+            # current mxFrame keep the prior generation's salts and are not
+            # part of the current logical WAL even though they remain physical
+            # complete frames.  Same-generation corruption never takes this
+            # branch and remains a closed failure below.
+            if last_commit_frame == 0:
+                # A previous-generation tail is useful only after the current
+                # generation has established a complete committed boundary.
+                # Otherwise a rewritten header could make an arbitrary WAL
+                # disappear into a header-only snapshot.
+                raise _busy()
+            break
+        if page_number == 0:
             raise _busy()
         state = _checksum(
             frame[:8] + frame[_WAL_FRAME_HEADER_BYTES:],
-            big_endian=big_endian,
+            big_endian=header.big_endian_checksum,
             state=state,
         )
         if state != (checksum0, checksum1):
             raise _busy()
+        frame_count = frame_number
         if database_pages:
             last_commit_frame = frame_number
             committed_pages = database_pages
         digest.update(frame)
     check()
+    prefix_length = _WAL_HEADER_BYTES + frame_count * frame_size
     return WalPrefix(
-        raw_header=header,
+        raw_header=header.raw,
         length=prefix_length,
         page_size=page_size,
         frame_count=frame_count,
