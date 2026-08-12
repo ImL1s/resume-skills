@@ -896,6 +896,8 @@ def stable_scan_tail_lines(
     budget: ReadBudget | None = None,
     max_line_bytes: int | None = None,
     charge_transcript: bool = False,
+    stable_head_bytes: int = 0,
+    on_stable_head: Callable[[bytes, bool], None] | None = None,
     hook: AttemptHook | None = None,
 ) -> Iterator[ScannedLine]:
     """Yield UTF-8 lines from a stable end-anchored window (#258).
@@ -909,6 +911,10 @@ def stable_scan_tail_lines(
     remaining ``transcript_records`` (or ``scanned_records`` when
     ``charge_transcript`` is false), charging only the admitted records and
     the unique window bytes. The whole file is never hashed or buffered.
+
+    ``stable_head_bytes`` optionally verifies a bounded head sample in the
+    same descriptor generation and supplies it to ``on_stable_head`` before
+    suffix trimming. Overlap with the tail is charged only once.
     """
 
     effective_budget = budget if budget is not None else ReadBudget()
@@ -922,6 +928,8 @@ def stable_scan_tail_lines(
         if max_line_bytes < 0:
             raise DiagnosticError.invalid()
         line_limit = min(max_line_bytes, budget_line_cap)
+    if stable_head_bytes < 0 or stable_head_bytes > 4 * 1024 * 1024:
+        raise DiagnosticError.invalid()
     max_file_bytes = min(
         DEFAULT_BOUNDS.source_read_bytes,
         effective_budget.limits.source_read_bytes,
@@ -943,12 +951,18 @@ def stable_scan_tail_lines(
         pending_bytes = 0
         tail_start = 0
         starts_mid_line = False
+        stable_head: bytes | None = None
         try:
             before_stat = os.fstat(descriptor)
             if not _entry_identity_matches(before_entry, before_stat):
                 continue
             remaining = max(0, max_file_bytes - effective_budget.bytes_read)
-            tail_start = max(0, before_stat.st_size - remaining)
+            head_size = min(before_stat.st_size, stable_head_bytes)
+            if before_stat.st_size <= remaining:
+                tail_start = 0
+            else:
+                tail_capacity = max(0, remaining - head_size)
+                tail_start = max(head_size, before_stat.st_size - tail_capacity)
             starts_mid_line = False
             boundary_probe: bytes | None = None
             if tail_start > 0:
@@ -957,6 +971,11 @@ def stable_scan_tail_lines(
                 starts_mid_line = boundary_probe != b"\n"
             if hook:
                 hook("before-read", attempt, safe)
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            first_head = _read_exact_descriptor(
+                descriptor,
+                min(before_stat.st_size, stable_head_bytes),
+            )
             os.lseek(descriptor, tail_start, os.SEEK_SET)
             spool = tempfile.SpooledTemporaryFile(max_size=_SPOOL_RAM_CAP, mode="w+b")
             try:
@@ -976,6 +995,8 @@ def stable_scan_tail_lines(
             observed = _fingerprint(before_stat, content_hash)
             if hook:
                 hook("after-read", attempt, safe)
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            second_head = _read_exact_descriptor(descriptor, len(first_head))
             if tail_start > 0:
                 os.lseek(descriptor, tail_start - 1, os.SEEK_SET)
                 probe_verify = os.read(descriptor, 1)
@@ -999,6 +1020,8 @@ def stable_scan_tail_lines(
             if hook:
                 hook("after-verify-read", attempt, safe)
             middle_entry = _target_entry_fingerprint(parent, basename, root=base)
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            third_head = _read_exact_descriptor(descriptor, len(first_head))
             if tail_start > 0:
                 os.lseek(descriptor, tail_start - 1, os.SEEK_SET)
                 probe_final = os.read(descriptor, 1)
@@ -1029,19 +1052,28 @@ def stable_scan_tail_lines(
                 and pending_bytes == verified_size == final_size
                 == before_stat.st_size - tail_start
                 and boundary_probe == probe_verify == probe_final
+                and first_head == second_head == third_head
             ):
                 continue
             # Hand off spool for post-close replay so the source fd is never
             # held open while yielding to callers.
             verified_spool = spool
             spool = None
+            stable_head = first_head
         finally:
             os.close(descriptor)
             if spool is not None:
                 spool.close()
         if verified_spool is not None:
-            effective_budget.consume_bytes(pending_bytes)
             try:
+                effective_budget.consume_bytes(
+                    pending_bytes + min(len(stable_head or b""), tail_start)
+                )
+                if on_stable_head is not None:
+                    on_stable_head(
+                        stable_head or b"",
+                        before_stat.st_size <= len(stable_head or b""),
+                    )
                 total = _count_window_lines(
                     verified_spool,
                     max_line_bytes=line_limit,

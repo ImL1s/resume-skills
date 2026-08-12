@@ -1426,12 +1426,40 @@ def _build_tail_graph(
         digests: dict[str, str] = {}
         warnings: list[str] = ["W_TRUNCATED"]
         index = 0
+        remaining = max(
+            0,
+            min(budget.limits.source_read_bytes, DEFAULT_BOUNDS.source_read_bytes)
+            - budget.bytes_read,
+        )
+        if before.st_size <= remaining:
+            head_bytes = min(_METADATA_HEAD_BYTES, maximum_record, remaining)
+        else:
+            head_bytes = min(
+                _METADATA_HEAD_BYTES,
+                maximum_record,
+                max(0, remaining - min(maximum_record, remaining)),
+            )
+
+        def observe_stable_head(data: bytes, complete: bool) -> None:
+            _scan_metadata_chunk(
+                data,
+                budget=budget,
+                metadata=metadata,
+                warnings=warnings,
+                starts_mid_line=False,
+                ends_at_eof=complete,
+                stop_when_primary_ready=False,
+                stop_when_cwd_ready=True,
+            )
+
         lines = stable_scan_tail_lines(
             path,
             root=root,
             budget=budget,
             charge_transcript=True,
             max_line_bytes=maximum_record,
+            stable_head_bytes=head_bytes,
+            on_stable_head=observe_stable_head,
         )
         with open(target, "wb") as handle:
             for line in lines:
