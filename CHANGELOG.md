@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Windows installer DX now documents a dynamic Python user Scripts-directory
+  lookup, explicit User PATH/new-shell setup, per-host verification, shared
+  physical-root ownership, and the focused Windows evidence boundary. Static,
+  content-free hints for `E_UNSAFE_PATH` and `E_VERIFY_MISMATCH` point operators
+  to that workflow without exposing selected paths (#247).
+
 ## [0.4.2] — 2026-08-05
 
 - **Security (installer P1):** pin POSIX multi-target / RootLock mutations to the

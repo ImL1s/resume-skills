@@ -53,7 +53,7 @@ The table is generated from `ERROR_EXIT_CODES` and the fixed `DiagnosticError` m
 | `E_AMBIGUOUS` | 4 | More than one eligible session matched the request. | Reader |
 | `E_UNSUPPORTED_FORMAT` | 5 | No supported persisted-session format was detected. | Reader |
 | `E_CAPABILITY_UNAVAILABLE` | 5 | The requested source capability is unavailable. | Reader |
-| `E_UNSAFE_PATH` | 6 | The requested path is outside an approved safe root or is not a regular file. | Reader |
+| `E_UNSAFE_PATH` | 6 | The requested path is outside an approved safe root or is not a regular file. | Reader and installer |
 | `E_SOURCE_BUSY` | 6 | The source changed during bounded stable-read attempts. | Reader |
 | `E_SQLITE_HOT_JOURNAL` | 6 | The SQLite family contains an unproven rollback journal. | Reader |
 | `E_LIMIT_EXCEEDED` | 7 | A configured resource bound was exceeded. | Reader |
@@ -116,3 +116,10 @@ fail, and prefer parent `cli`/`vscode` rollouts when present.
 ## Installer result exits
 
 Installer commands return versioned result documents on stdout. In addition to JSON diagnostics, `matrix` returns exit 7 when its result is not OK, while `audit-host` returns exit 6 for a blocking aggregate result. `verify` can emit `E_VERIFY_MISMATCH` with exit 7 when installed files do not match the owned manifest. Callers should therefore inspect both the process status and the command's stdout result document.
+
+`E_UNSAFE_PATH` and `E_VERIFY_MISMATCH` include static, content-free installer
+remediation hints. They never include the selected or discovered filesystem
+path. For shared Windows Skill roots, follow the
+[Windows user install and shared Skill roots](install-hosts.md#windows-user-install-and-shared-skill-roots)
+workflow: prefer the physical root spelling, install all intended claims, and
+verify every host separately.
