@@ -83,6 +83,74 @@ class BindMultiTargetRootsTests(unittest.TestCase):
     "dirfd multi-root path (POSIX)",
 )
 class MultiTargetPostLockRetargetTests(unittest.TestCase):
+    @staticmethod
+    def _tree_entries(root: Path) -> list[tuple[str, str, bytes | None]]:
+        entries: list[tuple[str, str, bytes | None]] = []
+        for path in sorted(root.rglob("*")):
+            rel = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                entries.append((rel, "symlink", os.readlink(path).encode()))
+            elif path.is_dir():
+                entries.append((rel, "dir", None))
+            else:
+                entries.append((rel, "file", path.read_bytes()))
+        return entries
+
+    def test_retarget_between_bind_and_lock_never_touches_new_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            phys_a = base / "phys_a"
+            phys_b = base / "phys_b"
+            phys_a.mkdir()
+            phys_b.mkdir()
+            (phys_a / "a.txt").write_bytes(b"a")
+            (phys_b / "b.txt").write_bytes(b"b")
+            leaf = base / "leaf"
+            leaf.symlink_to(phys_a, target_is_directory=True)
+            before_a = self._tree_entries(phys_a)
+            before_b = self._tree_entries(phys_b)
+            original_bind = transaction_module.bind_multi_target_roots
+
+            def bind_then_retarget(
+                targets: list[tuple[str, str]],
+            ) -> list[MultiTargetBinding]:
+                bindings = original_bind(targets)
+                leaf.unlink()
+                leaf.symlink_to(phys_b, target_is_directory=True)
+                return bindings
+
+            with mock.patch.object(
+                transaction_module,
+                "bind_multi_target_roots",
+                side_effect=bind_then_retarget,
+            ):
+                with self.assertRaises(DiagnosticError) as ctx:
+                    install_multi_targets([("claude", str(leaf))], scope="global")
+
+            self.assertEqual(ctx.exception.code, "E_INSTALL_CONFLICT")
+            self.assertEqual(self._tree_entries(phys_a), before_a)
+            self.assertEqual(self._tree_entries(phys_b), before_b)
+
+    def test_intermediate_symlink_root_is_rejected_before_outside_control_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            outside = base / "outside"
+            outside.mkdir()
+            skills = outside / "skills"
+            skills.mkdir()
+            (skills / "sentinel.txt").write_bytes(b"keep")
+            layout = base / "layout"
+            layout.mkdir()
+            (layout / "link").symlink_to(outside, target_is_directory=True)
+            requested = layout / "link" / "skills"
+            before = self._tree_entries(outside)
+
+            with self.assertRaises(DiagnosticError) as caught:
+                install_multi_targets([("claude", str(requested))], scope="global")
+
+            self.assertIn(caught.exception.code, {"E_UNSAFE_PATH", "E_INSTALL_CONFLICT"})
+            self.assertEqual(self._tree_entries(outside), before)
+
     def test_post_lock_leaf_symlink_retarget_fails_closed(self) -> None:
         """After locks are held, retarget leaf A→B must fail the whole txn."""
         with tempfile.TemporaryDirectory() as temporary:

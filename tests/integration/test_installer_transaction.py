@@ -6,16 +6,21 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest import mock
 
 from portable_resume.diagnostics import DiagnosticError, SOURCE_KEYS
+import portable_resume.install.cli as install_cli_module
+from portable_resume.install.cli import run as install_cli_run
 from portable_resume.install.catalog import BUNDLE_VERSION, MANIFEST_SCHEMA, resolve_skill_root
-from portable_resume.install.manifest import sha256_bytes
+from portable_resume.install.manifest import claim_key, sha256_bytes
 from portable_resume.install.render import materialize_plan
 import portable_resume.install.transaction as transaction_module
 from portable_resume.install.transaction import (
     execute_install,
+    install_multi_targets,
     journal_path,
     load_manifest,
     plan_install,
@@ -44,6 +49,300 @@ class InstallerTransactionTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._tmpdir.cleanup()
+
+    @staticmethod
+    def _file_bytes(root: Path) -> dict[str, bytes]:
+        return {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        }
+
+    def _legacy_shared_root_targets(self) -> tuple[Path, list[tuple[str, str]]]:
+        shared = self.home / ".claude" / "skills"
+        aliases = [
+            ("gemini", self.home / ".gemini" / "skills"),
+            ("antigravity", self.home / ".gemini" / "config" / "skills"),
+            ("github-copilot", self.home / ".copilot" / "skills"),
+        ]
+        execute_install(
+            plan_install(host="claude", scope="global", root=str(shared))
+        )
+        manifest_file = Path(manifest_path(str(shared)))
+        legacy = json.loads(manifest_file.read_text(encoding="utf-8"))
+        legacy["bundle_version"] = "0.3.3"
+        for claim in legacy["claims"].values():
+            claim["bundle_version"] = "0.3.3"
+        manifest_file.write_text(
+            json.dumps(legacy, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        for _host, alias in aliases:
+            alias.parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(shared, alias)
+        # Deliberately put the legacy owner last: execution may reorder, results may not.
+        return shared, [aliases[0], aliases[1], aliases[2], ("claude", str(shared))]
+
+    def _legacy_multi_claim_targets(self) -> tuple[Path, list[tuple[str, str]]]:
+        shared = self.home / ".claude" / "skills"
+        gemini = self.home / ".gemini" / "skills"
+        gemini.parent.mkdir(parents=True)
+        os.symlink(shared, gemini)
+        execute_install(plan_install(host="claude", scope="global", root=str(shared)))
+        execute_install(plan_install(host="gemini", scope="global", root=str(shared)))
+        manifest_file = Path(manifest_path(str(shared)))
+        legacy = json.loads(manifest_file.read_text(encoding="utf-8"))
+        legacy["bundle_version"] = "0.4.2"
+        for claim in legacy["claims"].values():
+            claim["bundle_version"] = "0.4.2"
+        shared_changes = sorted(
+            rel
+            for rel, entry in legacy["files"].items()
+            if len(entry["claims"]) == 2
+        )[:6]
+        self.assertEqual(len(shared_changes), 6)
+        for index, rel in enumerate(shared_changes):
+            old_bytes = f"released-0.4.2-shared-{index}\n".encode()
+            (shared / rel).write_bytes(old_bytes)
+            legacy["files"][rel]["sha256"] = sha256_bytes(old_bytes)
+        manifest_file.write_text(
+            json.dumps(legacy, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return shared, [("gemini", str(gemini)), ("claude", str(shared))]
+
+    def test_multi_target_upgrade_sequences_legacy_owner_before_shared_aliases(self) -> None:
+        shared, targets = self._legacy_shared_root_targets()
+        before = self._file_bytes(shared)
+        payload = shared / "resume-codex" / "SKILL.md"
+        payload_mtime = payload.stat().st_mtime_ns
+
+        preview = install_multi_targets(
+            targets,
+            scope="global",
+            dry_run=True,
+            force_with_backup=True,
+        )
+
+        self.assertEqual(self._file_bytes(shared), before)
+        self.assertEqual(
+            [result["plan"]["host"] for result in preview],
+            [host for host, _root in targets],
+        )
+        self.assertTrue(all(not result["plan"]["replaces"] for result in preview))
+
+        results = install_multi_targets(
+            targets,
+            scope="global",
+            force_with_backup=True,
+        )
+
+        self.assertEqual(
+            [result["plan"]["host"] for result in results],
+            [host for host, _root in targets],
+        )
+        self.assertEqual(payload.stat().st_mtime_ns, payload_mtime)
+        self.assertTrue(all(not result["plan"]["replaces"] for result in results))
+        manifest = load_manifest(str(shared))
+        assert manifest is not None
+        self.assertEqual(manifest.bundle_version, BUNDLE_VERSION)
+        self.assertEqual(len(manifest.claims), len(targets))
+        for host, root in targets:
+            requested_claim = claim_key(host=host, scope="global", root=root)
+            self.assertTrue(verify_root(root, claim=requested_claim)["ok"])
+
+    def test_quick_install_all_dry_run_projects_legacy_owner_upgrade(self) -> None:
+        shared, targets = self._legacy_shared_root_targets()
+        before = self._file_bytes(shared)
+
+        stdout = StringIO()
+        stderr = StringIO()
+        with (
+            mock.patch.object(
+                install_cli_module,
+                "_hosts",
+                return_value=[host for host, _root in targets],
+            ),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            code = install_cli_run(
+                [
+                    "quick-install",
+                    "all",
+                    "--home",
+                    str(self.home),
+                    "--dry-run",
+                    "--force-with-backup",
+                ]
+            )
+
+        self.assertEqual(code, 0, stderr.getvalue())
+        self.assertEqual(self._file_bytes(shared), before)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["schema_version"], "portable-resume/install-result-v1")
+        self.assertEqual(
+            [result["host"] for result in payload["results"]],
+            [host for host, _root in targets],
+        )
+        self.assertTrue(all(result["dry_run"] for result in payload["results"]))
+
+    def test_multi_claim_released_root_upgrades_with_one_manifest_publish(self) -> None:
+        shared, targets = self._legacy_multi_claim_targets()
+        before = load_manifest(str(shared))
+        assert before is not None
+
+        preview = install_multi_targets(
+            targets,
+            scope="global",
+            dry_run=True,
+            force_with_backup=True,
+        )
+        self.assertEqual([item["plan"]["host"] for item in preview], ["gemini", "claude"])
+        self.assertEqual(load_manifest(str(shared)).bundle_version, "0.4.2")
+
+        original_write = transaction_module._atomic_write_support_file_under_fd
+        manifest_writes = 0
+
+        def count_manifest_write(root_fd, name, data, **kwargs):
+            nonlocal manifest_writes
+            if name == transaction_module.MANIFEST_NAME:
+                manifest_writes += 1
+            return original_write(root_fd, name, data, **kwargs)
+
+        with mock.patch.object(
+            transaction_module,
+            "_atomic_write_support_file_under_fd",
+            side_effect=count_manifest_write,
+        ):
+            results = install_multi_targets(
+                targets,
+                scope="global",
+                force_with_backup=True,
+            )
+
+        self.assertEqual(manifest_writes, 1)
+        self.assertEqual([item["plan"]["host"] for item in results], ["gemini", "claude"])
+        final = load_manifest(str(shared))
+        assert final is not None
+        self.assertEqual(final.generation, before.generation + 1)
+        self.assertEqual(final.bundle_version, BUNDLE_VERSION)
+        self.assertEqual(len(final.claims), 2)
+
+    def test_quick_install_all_upgrades_released_multi_claim_root(self) -> None:
+        shared, targets = self._legacy_multi_claim_targets()
+        before = self._file_bytes(shared)
+        hosts = [host for host, _root in targets]
+
+        for dry_run in (True, False):
+            stdout = StringIO()
+            stderr = StringIO()
+            argv = [
+                "quick-install",
+                "all",
+                "--home",
+                str(self.home),
+                "--force-with-backup",
+            ]
+            if dry_run:
+                argv.append("--dry-run")
+            with (
+                mock.patch.object(install_cli_module, "_hosts", return_value=hosts),
+                redirect_stdout(stdout),
+                redirect_stderr(stderr),
+            ):
+                code = install_cli_run(argv)
+            self.assertEqual(code, 0, stderr.getvalue())
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual([item["host"] for item in payload["results"]], hosts)
+            if dry_run:
+                self.assertEqual(self._file_bytes(shared), before)
+
+        self.assertEqual(load_manifest(str(shared)).bundle_version, BUNDLE_VERSION)
+
+    def test_multi_claim_upgrade_rejects_unrequested_old_claim_without_mutation(self) -> None:
+        shared, targets = self._legacy_multi_claim_targets()
+        before = self._file_bytes(shared)
+
+        with self.assertRaises(DiagnosticError) as caught:
+            install_multi_targets(
+                [targets[1]],
+                scope="global",
+                force_with_backup=True,
+            )
+
+        self.assertEqual(caught.exception.code, "E_INSTALL_CONFLICT")
+        self.assertEqual(self._file_bytes(shared), before)
+
+    def test_coordinated_upgrade_backs_up_foreign_payload(self) -> None:
+        shared, targets = self._legacy_multi_claim_targets()
+        rel = "resume-codex/SKILL.md"
+        manifest_file = Path(manifest_path(str(shared)))
+        legacy = json.loads(manifest_file.read_text(encoding="utf-8"))
+        del legacy["files"][rel]
+        manifest_file.write_text(json.dumps(legacy, sort_keys=True), encoding="utf-8")
+        foreign = shared / rel
+        foreign.write_text("foreign\n", encoding="utf-8")
+
+        preview = install_multi_targets(
+            targets,
+            scope="global",
+            dry_run=True,
+            force_with_backup=True,
+        )
+        self.assertIn(rel, preview[0]["plan"]["backups"])
+
+        results = install_multi_targets(
+            targets,
+            scope="global",
+            force_with_backup=True,
+        )
+        backup_root = Path(results[0]["backup_root"])
+        self.assertEqual((backup_root / rel).read_text(encoding="utf-8"), "foreign\n")
+        self.assertTrue(verify_root(str(shared))["ok"])
+
+    def test_multi_target_legacy_owner_upgrade_compensates_sibling_failure(self) -> None:
+        shared, targets = self._legacy_shared_root_targets()
+        targets.append(("grok", str(self.home / ".grok" / "skills")))
+        before = self._file_bytes(shared)
+        original_execute = transaction_module.execute_install
+        calls = 0
+
+        def fail_first_sibling(plan, *, force_with_backup=False, lock=None, locked_root=None):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("injected shared-root sibling failure")
+            return original_execute(
+                plan,
+                force_with_backup=force_with_backup,
+                lock=lock,
+                locked_root=locked_root,
+            )
+
+        with mock.patch.object(
+            transaction_module,
+            "execute_install",
+            side_effect=fail_first_sibling,
+        ):
+            with self.assertRaises(OSError):
+                install_multi_targets(
+                    targets,
+                    scope="global",
+                    force_with_backup=True,
+                )
+
+        def without_lock(tree: dict[str, bytes]) -> dict[str, bytes]:
+            return {
+                path: data
+                for path, data in tree.items()
+                if not path.endswith("install.lock")
+            }
+        self.assertEqual(without_lock(self._file_bytes(shared)), without_lock(before))
+        restored = load_manifest(str(shared))
+        assert restored is not None
+        self.assertEqual(restored.bundle_version, "0.3.3")
+        self.assertEqual(len(restored.claims), 1)
 
     def test_pending_journal_blocks_mutation_until_recover(self) -> None:
         plan = plan_install(host="claude", scope="project", root=self.root)
