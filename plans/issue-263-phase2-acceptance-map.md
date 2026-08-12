@@ -1,17 +1,18 @@
 # Issue #263 Phase 2: coherent live-WAL snapshot acceptance map
 
-Status: **production implementation blocked pending an independent security
-review of this map**.
+Status: **mapping approved; production implementation and exact-head proof are
+under review in PR #268**.
 
-This document is the pre-production contract for the macOS/APFS phase of
-issue #263. It does not enable live-WAL recovery by itself. Phase 1 retains the
-closed `E_SQLITE_LIVE_WAL` behavior on every unsupported path.
+This document is the reviewed contract for the macOS/APFS phase of issue #263.
+The map itself does not enable live-WAL recovery. Production changes remain
+subject to the exact-head gates below, and every unsupported path retains the
+closed `E_SQLITE_LIVE_WAL` behavior.
 
-Phase 1 PR #269 is an explicit prerequisite. This Phase 2 branch and draft PR
-must remain stacked on the current reviewed Phase 1 HEAD until #269 merges,
-then be rebased onto that merge before production work begins. Consequently,
-all Phase 1 regression IDs named below must already exist on this mapping
-commit's exact HEAD; future placeholder test names do not satisfy the gate.
+Phase 1 PR #269 merged as `fa897ca`; Phase 2 is rebased on that merge. The
+independent review approved all rows 1-11 and accepted the documented deadline
+boundary before production implementation began. Phase 1 regression IDs named
+below must exist on the final Phase 2 HEAD; placeholder names do not satisfy the
+gate.
 
 ## Scope and fixed safety boundary
 
@@ -305,9 +306,17 @@ backend or close #263.
 
 ## Security-review decision record
 
-Production files may be edited only after an independent reviewer records:
+The pre-production gate was satisfied on mapping commit `ca3e7b80d5` before
+production files were edited:
 
-1. PASS/BLOCK for every row 1-11;
-2. ACCEPT/BLOCK for the non-preemptible atomic clone deadline boundary;
-3. any required minimal mapping corrections; and
-4. an overall APPROVE/REQUEST_CHANGES verdict on the exact mapping commit.
+1. rows 1-10: **PASS** in the detailed review;
+2. row 11: **PASS** after adding the final descriptor-relative journal gate;
+3. non-preemptible atomic clone deadline boundary: **ACCEPT**; and
+4. overall mapping verdict: **APPROVE-equivalent / no remaining BLOCK row**.
+
+Evidence: [decision record](https://github.com/ImL1s/resume-skills/pull/268#issuecomment-5266166606)
+and two exact-mapping Codex callbacks with no major issues
+([first](https://github.com/ImL1s/resume-skills/pull/268#issuecomment-5266014882),
+[second](https://github.com/ImL1s/resume-skills/pull/268#issuecomment-5266080079)).
+Those callbacks approve only the map. The production implementation still
+requires fresh exact-head gates, real APFS proof, CI artifact, and Codex review.

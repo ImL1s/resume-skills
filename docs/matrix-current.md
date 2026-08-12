@@ -28,7 +28,8 @@ Historical published products (for example `0.3.4` **9×9=81**) belong in
 changelog / evidence archives and must not replace the live counts above.
 
 Matrix inclusion does not imply every provider tier is readable in every live
-state. In particular, #263 Phase 1 keeps the OpenCode cell enabled through
-qualified file-store/export fallback while oversized live-WAL SQLite remains
-fail-closed as `E_SQLITE_LIVE_WAL`; a live COW backend is not implemented or
-claimed.
+state. For #263, OpenCode live-WAL SQLite recovery is capability-gated to a real
+same-volume Darwin/APFS descriptor clone plus validated private WAL prefix.
+Linux, Windows, non-APFS, cross-volume, missing-symbol, and failed-capability
+paths remain `E_SQLITE_LIVE_WAL`; qualified file-store/export fallback keeps the
+OpenCode matrix cell enabled without claiming universal live-WAL support.

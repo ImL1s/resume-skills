@@ -115,17 +115,23 @@ fall through to bounded plain JSONL discovery under `sessions/` and surface
 Callers should treat that warning as degraded metadata, not as a total hard
 fail, and prefer parent `cli`/`vscode` rollouts when present.
 
-### OpenCode note: oversized live WAL (#263 Phase 1)
+### OpenCode note: oversized live WAL (#263)
 
 `E_SQLITE_LIVE_WAL` is exit 6 with `attempts: 0` when regular live WAL/SHM
-sidecars prevent a safe descriptor-only query. The static hint directs the
-operator to close or quiesce OpenCode and retry once. If the diagnostic persists
-after SQLite removes live sidecars, the main database remains in persistent WAL
-mode and this reader cannot open it safely on that host; use an eligible
-persisted file-store or explicit export fallback instead. Never delete or
-checkpoint WAL manually. OpenCode may return a qualified fallback with
-`W_SOURCE_PROVIDER_SKIPPED`. This is fallback/diagnostic behavior only; no live
-copy-on-write SQLite snapshot backend is implemented or claimed.
+sidecars cannot be handled by the proven backend on the current host. On Darwin,
+OpenCode first attempts a bounded descriptor-bound snapshot only when the source
+and private scratch are same-volume APFS and real `fclonefileat` succeeds. The
+source main/WAL/SHM are pinned no-follow; only a checksum-valid current-generation
+WAL prefix is copied beside an atomic private main clone, and SQLite opens only
+that private family with query-only enabled. Linux, Windows, non-APFS,
+cross-volume, missing-symbol, and failed-capability paths retain this diagnostic.
+
+The static hint directs the operator to close or quiesce OpenCode and retry once.
+If the diagnostic persists after SQLite removes live sidecars, the main database
+remains in persistent WAL mode and this reader cannot open it safely on that
+host; use an eligible persisted file-store or explicit export fallback instead.
+Never delete or checkpoint WAL manually. OpenCode may return a qualified
+fallback with `W_SOURCE_PROVIDER_SKIPPED`.
 
 ## Installer result exits
 

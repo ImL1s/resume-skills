@@ -54,15 +54,18 @@ OpenCode SQLite, file-store, and export providers. Synthetic fixtures: `tests/fi
 - **Export:** an explicit export JSON document is bounded by
   `source_read_bytes` (one source document), not the single-record
   `record_bytes` ceiling.
-- **Oversized live WAL (Phase 1):** regular WAL/SHM members are validated before
-  SQLite access. Without a proven private snapshot backend the SQLite provider
-  returns `E_SQLITE_LIVE_WAL` (`attempts: 0`) and is never opened. A qualified
-  independent file-store or explicit export may still be listed/shown with
-  `W_SOURCE_PROVIDER_SKIPPED`; its provider and source path remain authoritative.
-  After quiescing, retry once; a persistent-WAL-mode main may remain unavailable
-  even after SQLite removes live sidecars, so use an eligible persisted fallback
+- **Oversized live WAL (#263):** regular main/WAL/SHM members are pinned and
+  validated before use. Darwin may recover through a real same-volume APFS
+  `fclonefileat` of the pinned main descriptor plus a bounded checksum-valid
+  current-generation WAL prefix in private `0700` scratch. SQLite, integrity,
+  schema, list, and show access only the query-only private family; source SHM is
+  validated but never copied. Unsupported hosts/capabilities return
+  `E_SQLITE_LIVE_WAL` (`attempts: 0`). A qualified independent file-store or
+  explicit export may still be listed/shown with `W_SOURCE_PROVIDER_SKIPPED`;
+  its provider and source path remain authoritative. After quiescing, retry
+  once; a persistent-WAL-mode main may remain unavailable on an unsupported
+  host even after sidecars disappear, so use an eligible persisted fallback
   rather than deleting or checkpointing WAL manually.
-  Live copy-on-write snapshot support is not implemented or claimed.
 
 ### antigravity-antigravity-transcript-jsonl-v1
 

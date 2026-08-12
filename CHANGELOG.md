@@ -12,11 +12,15 @@
   physical-root ownership, and the focused Windows evidence boundary. Static,
   content-free hints for `E_UNSAFE_PATH` and `E_VERIFY_MISMATCH` point operators
   to that workflow without exposing selected paths (#247).
-- OpenCode Phase 1 live-WAL handling (#263): oversized live SQLite families now
-  return the closed `E_SQLITE_LIVE_WAL` diagnostic with zero attempts and a
-  static quiesce-and-retry hint. Independent qualified file-store/export
-  providers remain usable with `W_SOURCE_PROVIDER_SKIPPED`. This does **not**
-  implement or prove a live copy-on-write SQLite snapshot backend.
+- OpenCode live-WAL handling (#263): oversized/live SQLite families use a
+  bounded, descriptor-pinned private snapshot only on Darwin with real APFS
+  `fclonefileat`, same-volume private scratch, checksum-valid current-generation
+  WAL prefix, source-family revalidation, query-only private SQLite, and one
+  absolute deadline. Unsupported hosts remain closed as `E_SQLITE_LIVE_WAL`;
+  independent qualified file-store/export providers remain usable with
+  `W_SOURCE_PROVIDER_SKIPPED`. A real macOS/APFS CI proof archives content-free
+  exact-head evidence; no source SQLite connection, SHM copy, WAL deletion,
+  checkpoint, `immutable=1`, or new dependency is used.
 - SQLite-family initial state capture now participates in bounded retry
   accounting, preserving unsafe/limit/hot-journal hard failures and cleanup.
 - Reconciled the two shipped schema warning enums with runtime `WARNING_CODES`
