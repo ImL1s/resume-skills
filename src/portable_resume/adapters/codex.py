@@ -49,6 +49,9 @@ _PROBE_HEAD_BYTES = 256 * 1024
 # Probe sessions sample: soft-stop caps — never raise E_LIMIT_EXCEEDED from tree size.
 _PROBE_VISIT_CAP = 128
 _PROBE_FILE_CAP = 8
+_DEGRADABLE_INDEX_CODES = frozenset(
+    {"E_SQLITE_HOT_JOURNAL", "E_SQLITE_LIVE_WAL", "E_SOURCE_BUSY"}
+)
 
 _STATE_DB = re.compile(r"^state_(\d{1,3})\.sqlite$")
 _ROLLOUT = re.compile(
@@ -1428,7 +1431,7 @@ class CodexAdapter:
                 return CapabilityReport(self.key, None, "unavailable")
             index_degraded = False
             # 1) Recognized SQLite signature is enough — never walk sessions/ (#7).
-            # Busy/hot journal must NOT erase rollout capability (#196): continue
+            # Busy/hot/live-WAL index must NOT erase rollout capability (#196): continue
             # to the bounded plain-rollout sample instead of returning hard-unsafe.
             for database in _state_databases(root):
                 try:
@@ -1451,7 +1454,7 @@ class CodexAdapter:
                                 warnings=warnings,
                             )
                 except DiagnosticError as error:
-                    if error.code in {"E_SQLITE_HOT_JOURNAL", "E_SOURCE_BUSY"}:
+                    if error.code in _DEGRADABLE_INDEX_CODES:
                         index_degraded = True
                         continue
                     if error.code == "E_UNSAFE_PATH":
@@ -1550,8 +1553,8 @@ class CodexAdapter:
             try:
                 supported, rows, unresolved = _database_summaries(database, root, query, budget)
             except DiagnosticError as error:
-                # Hot/busy SQLite must not erase FS rollout recovery (#196).
-                if error.code in {"E_SOURCE_BUSY", "E_SQLITE_HOT_JOURNAL"}:
+                # Hot/busy/live-WAL SQLite must not erase FS rollout recovery (#196).
+                if error.code in _DEGRADABLE_INDEX_CODES:
                     index_degraded = True
                     continue
                 raise
@@ -1684,7 +1687,7 @@ class CodexAdapter:
         if fs_truncated:
             extra_warnings.append("W_TRUNCATED")
         if index_degraded:
-            # Index was busy/hot; summaries came from FS rollouts only (#196).
+            # Index was busy/hot/live-WAL; summaries came from FS rollouts only (#196).
             extra_warnings.append("W_STALE_INDEX")
         if extra_warnings:
             ranked = [
@@ -1749,6 +1752,12 @@ class CodexAdapter:
                 )
             )
             all_warnings = list(stream_warnings)
+        # W_TRUNCATED on a list ref describes incomplete candidate discovery or
+        # a bounded metadata head. A complete show must derive transcript
+        # truncation from its own reader; provider warnings such as
+        # W_STALE_INDEX still carry through resolution.
+        ref_warnings = tuple(warning for warning in ref.warnings if warning != "W_TRUNCATED")
+        all_warnings = list(dict.fromkeys((*ref_warnings, *all_warnings)))
         try:
             cwd = canonicalize_cwd(metadata["cwd"])
         except DiagnosticError as error:

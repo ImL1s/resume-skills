@@ -48,6 +48,24 @@ class DiagnosticHintTests(unittest.TestCase):
         self.assertIsNone(value["hint"])
         self.assertIsNone(json.loads(error.to_json())["hint"])
 
+    def test_e_sqlite_live_wal_has_actionable_persistent_mode_hint(self) -> None:
+        error = DiagnosticError(
+            "E_SQLITE_LIVE_WAL",
+            source="opencode",
+            provider="opencode-sqlite-v1",
+            attempts=0,
+            family=("opencode.db-wal", "opencode.db-shm"),
+        )
+        value = error.to_dict()
+        validate_diagnostic(value)
+        self.assertEqual(value["exit_code"], 6)
+        self.assertEqual(value["attempts"], 0)
+        self.assertIn("quiesce", value["hint"].lower())
+        self.assertIn("retry once", value["hint"].lower())
+        self.assertIn("persistent WAL mode", value["hint"])
+        self.assertIn("persisted file or export fallback", value["hint"])
+        self.assertIn("Do not delete or checkpoint WAL manually", value["hint"])
+
     def test_message_and_hint_not_caller_injectable(self) -> None:
         # Synthetic path token (no real home absolute path — hygiene gate).
         attacker_message = "attacker path /tmp/evil-secret-marker"

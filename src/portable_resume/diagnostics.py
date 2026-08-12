@@ -31,6 +31,7 @@ ERROR_EXIT_CODES: dict[str, ExitCode] = {
     "E_UNSAFE_PATH": ExitCode.UNSAFE_OR_BUSY,
     "E_SOURCE_BUSY": ExitCode.UNSAFE_OR_BUSY,
     "E_SQLITE_HOT_JOURNAL": ExitCode.UNSAFE_OR_BUSY,
+    "E_SQLITE_LIVE_WAL": ExitCode.UNSAFE_OR_BUSY,
     "E_LIMIT_EXCEEDED": ExitCode.CORRUPT_OR_LIMIT,
     "E_CORRUPT_RECORD": ExitCode.CORRUPT_OR_LIMIT,
     "E_INVARIANT": ExitCode.INVARIANT,
@@ -60,6 +61,7 @@ WARNING_CODES = frozenset(
         "W_SKILL_SHADOW",
         "W_SKILL_DUPLICATE",
         "W_RUNTIME_IDENTITY_DRIFT",
+        "W_SOURCE_PROVIDER_SKIPPED",
     }
 )
 
@@ -72,6 +74,7 @@ _DEFAULT_MESSAGES = {
     "E_UNSAFE_PATH": "The requested path is outside an approved safe root or is not a regular file.",
     "E_SOURCE_BUSY": "The source changed during bounded stable-read attempts.",
     "E_SQLITE_HOT_JOURNAL": "The SQLite family contains an unproven rollback journal.",
+    "E_SQLITE_LIVE_WAL": "The SQLite database has live WAL sidecars that cannot be read safely on this host.",
     "E_LIMIT_EXCEEDED": "A configured resource bound was exceeded.",
     "E_CORRUPT_RECORD": "A persisted record is corrupt or invalid.",
     "E_INVARIANT": "An internal contract invariant failed.",
@@ -95,6 +98,12 @@ _DEFAULT_HINTS: dict[str, str] = {
         "installer roots, select the physical Skill directory with --root, then retry. "
         "See https://github.com/ImL1s/resume-skills/blob/main/docs/install-hosts.md"
         "#windows-user-install-and-shared-skill-roots."
+    ),
+    "E_SQLITE_LIVE_WAL": (
+        "Close or quiesce all processes and database connections using this source, then retry once. "
+        "If this diagnostic persists after SQLite removes live sidecars, the database remains in "
+        "persistent WAL mode and this reader cannot open it safely on this host; use an eligible "
+        "persisted file or export fallback. Do not delete or checkpoint WAL manually."
     ),
     "E_INSTALL_SHADOW": (
         "Run 'install-resume-skills audit-host --host <host> --scope <scope>' "

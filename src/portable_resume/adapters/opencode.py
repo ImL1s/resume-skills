@@ -48,6 +48,7 @@ from ..snapshot import private_sqlite_connection, query_only_live_sqlite, stable
 SQLITE_FORMAT = "opencode-sqlite-v1"
 FILE_FORMAT = "opencode-file-store-v1"
 EXPORT_PROVIDER = "opencode-export-file-v1"
+_DEGRADABLE_SQLITE_CODES = frozenset({"E_SQLITE_LIVE_WAL", "E_SOURCE_BUSY"})
 
 _DATABASE_NAMES = ("opencode.db", "opencode.sqlite")
 _REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
@@ -84,6 +85,20 @@ _CONTROL_PARTS = frozenset(
         "system",
     }
 )
+
+
+def _opencode_sqlite_diagnostic(error: DiagnosticError) -> DiagnosticError:
+    """Bind a shared snapshot diagnostic to this source without losing details."""
+
+    return DiagnosticError(
+        error.code,
+        source="opencode",
+        provider=error.provider or SQLITE_FORMAT,
+        attempts=error.attempts,
+        family=error.family,
+    )
+
+
 _BINARY_PARTS = frozenset({"file", "image", "audio", "video", "attachment"})
 
 
@@ -343,7 +358,7 @@ class OpenCodeAdapter:
         except sqlite3.DatabaseError:
             return False
         except DiagnosticError as error:
-            if error.code in {"E_UNSUPPORTED_FORMAT", "E_LIMIT_EXCEEDED"}:
+            if error.code == "E_UNSUPPORTED_FORMAT":
                 return False
             raise
 
@@ -378,32 +393,62 @@ class OpenCodeAdapter:
         evidence: list[str] = []
         unsupported = False
         sqlite_ok = False
+        skipped_sqlite: DiagnosticError | None = None
         for database in self._database_paths(root):
-            if self._sqlite_supported(database, root):
-                sqlite_ok = True
-                evidence.append(f"sqlite:{os.path.basename(database)}")
-            else:
-                unsupported = True
-        file_ok = self._file_store(root) is not None
+            try:
+                if self._sqlite_supported(database, root):
+                    sqlite_ok = True
+                    evidence.append(f"sqlite:{os.path.basename(database)}")
+                else:
+                    unsupported = True
+            except DiagnosticError as error:
+                if error.code not in _DEGRADABLE_SQLITE_CODES:
+                    raise
+                skipped_sqlite = _opencode_sqlite_diagnostic(error)
+        storage = self._file_store(root)
+        file_ok = False
+        if not sqlite_ok and storage is not None:
+            file_ok = any(
+                _eligible(item, query)
+                for item in self._list_file_store(storage, root, ReadBudget())
+            )
         if file_ok:
             evidence.append("file-store:storage")
         export_ok = False
-        export_budget = ReadBudget()
-        for path in self._explicit_exports(root, query):
-            try:
-                self._read_export(path, root, budget=export_budget)
-                export_ok = True
-                evidence.append("export:explicit-json")
-            except DiagnosticError as error:
-                if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
-                    unsupported = True
-                else:
-                    raise
+        if not sqlite_ok:
+            export_budget = ReadBudget()
+            for path in self._explicit_exports(root, query):
+                try:
+                    summary, _ = self._read_export(path, root, budget=export_budget)
+                    if _eligible(summary, query):
+                        export_ok = True
+                        evidence.append("export:explicit-json")
+                except DiagnosticError as error:
+                    if error.code in {"E_CORRUPT_RECORD", "E_UNSUPPORTED_FORMAT"}:
+                        unsupported = True
+                    else:
+                        raise
         if not (sqlite_ok or file_ok or export_ok):
+            if skipped_sqlite is not None:
+                raise skipped_sqlite
             return CapabilityReport(self.key, SQLITE_FORMAT if self._database_paths(root) else None, "unsupported", root=root)
         format_id = SQLITE_FORMAT if sqlite_ok else FILE_FORMAT
-        state = "partial" if unsupported else "supported"
-        return CapabilityReport(self.key, format_id, state, root=root, evidence=tuple(evidence))
+        # The warning means output actually came from an independent fallback,
+        # not merely that one alternate SQLite filename was unavailable.
+        warnings = (
+            ("W_SOURCE_PROVIDER_SKIPPED",)
+            if skipped_sqlite is not None and not sqlite_ok and (file_ok or export_ok)
+            else ()
+        )
+        state = "partial" if unsupported or skipped_sqlite is not None else "supported"
+        return CapabilityReport(
+            self.key,
+            format_id,
+            state,
+            root=root,
+            evidence=tuple(evidence),
+            warnings=warnings,
+        )
 
     def list(self, query: Query, budget: ReadBudget) -> list[SessionSummary]:
         root = self._root(query, required=True)
@@ -411,12 +456,16 @@ class OpenCodeAdapter:
         output: list[SessionSummary] = []
         databases = self._database_paths(root)
         supported_database = False
+        skipped_sqlite: DiagnosticError | None = None
         for database in databases:
             try:
                 summaries = self._list_sqlite(database, root, budget, query=query)
                 supported_database = True
                 output.extend(item for item in summaries if _eligible(item, query))
             except DiagnosticError as error:
+                if error.code in _DEGRADABLE_SQLITE_CODES:
+                    skipped_sqlite = _opencode_sqlite_diagnostic(error)
+                    continue
                 if error.code != "E_UNSUPPORTED_FORMAT":
                     raise
         storage = self._file_store(root)
@@ -426,6 +475,20 @@ class OpenCodeAdapter:
             summary, _ = self._read_export(export, root, budget=budget)
             if _eligible(summary, query):
                 output.append(summary)
+        if skipped_sqlite is not None:
+            if not output:
+                raise skipped_sqlite
+            output = [
+                replace(
+                    item,
+                    warnings=tuple(
+                        dict.fromkeys((*item.warnings, "W_SOURCE_PROVIDER_SKIPPED"))
+                    ),
+                )
+                if item.provider != SQLITE_FORMAT
+                else item
+                for item in output
+            ]
         if not output and databases and not supported_database and storage is None:
             raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=SQLITE_FORMAT)
         if not (databases or storage is not None or self._explicit_exports(root, query)):
@@ -491,6 +554,10 @@ class OpenCodeAdapter:
                     rows = _fetch(connection)
         except sqlite3.DatabaseError as error:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=SQLITE_FORMAT) from error
+        except DiagnosticError as error:
+            if error.code in _DEGRADABLE_SQLITE_CODES and error.source is None:
+                raise _opencode_sqlite_diagnostic(error) from error
+            raise
         # Do not hard-fail when the DB has more sessions than LIMIT (live homes).
         budget.consume_records(len(rows))
         output: list[SessionSummary] = []
@@ -608,15 +675,25 @@ class OpenCodeAdapter:
         assert root is not None
         provider = ref.provider
         if provider == SQLITE_FORMAT:
-            return self._show_sqlite(ref, query, root, budget)
-        if provider == FILE_FORMAT:
-            return self._show_file_store(ref, query, root, budget)
-        if provider == EXPORT_PROVIDER:
-            return self._show_export(ref, query, root, budget)
-        raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=provider)
+            session = self._show_sqlite(ref, query, root, budget)
+        elif provider == FILE_FORMAT:
+            session = self._show_file_store(ref, query, root, budget)
+        elif provider == EXPORT_PROVIDER:
+            session = self._show_export(ref, query, root, budget)
+        else:
+            raise DiagnosticError("E_UNSUPPORTED_FORMAT", source=self.key, provider=provider)
+        return replace(
+            session,
+            warnings=tuple(dict.fromkeys((*ref.warnings, *session.warnings))),
+        )
 
     def _show_sqlite(self, ref: ResolvedRef, query: Query, root: str, budget: ReadBudget) -> Session:
-        if ref.source_path is None or not is_within(ref.source_path, root):
+        if (
+            ref.source_path is None
+            or not is_within(ref.source_path, root)
+            or canonicalize_cwd(ref.source_path)
+            not in {canonicalize_cwd(path) for path in self._database_paths(root)}
+        ):
             raise DiagnosticError.unsafe_path()
         try:
             size = os.path.getsize(ref.source_path)
@@ -677,6 +754,10 @@ class OpenCodeAdapter:
                 ).fetchone()
         except sqlite3.DatabaseError as error:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=SQLITE_FORMAT) from error
+        except DiagnosticError as error:
+            if error.code in _DEGRADABLE_SQLITE_CODES and error.source is None:
+                raise _opencode_sqlite_diagnostic(error) from error
+            raise
         warnings: list[str] = []
         if orphan_count and int(orphan_count[0]) > 0:
             warnings.append("W_BROKEN_CHAIN")
@@ -737,10 +818,15 @@ class OpenCodeAdapter:
         session_root = os.path.join(storage, "session")
         if not is_within(ref.source_path, session_root):
             raise DiagnosticError.unsafe_path()
+        approved = {canonicalize_cwd(path) for path in _regular_json_files(session_root, root)}
+        if canonicalize_cwd(ref.source_path) not in approved:
+            raise DiagnosticError.unsafe_path()
         summary_value = self._read_json_file(ref.source_path, root, budget)
         summary = self._file_summary(ref.source_path, summary_value)
         if summary.session_id != ref.session_id:
             raise DiagnosticError("E_NO_MATCH", source=self.key)
+        if not _eligible(summary, query):
+            raise DiagnosticError.unsafe_path()
         # Scope to storage/message/<sessionID>/ — do not enumerate unrelated sessions.
         message_dir = os.path.join(storage, "message", ref.session_id)
         messages: dict[str, tuple[Mapping[str, Any], str]] = {}
@@ -813,6 +899,9 @@ class OpenCodeAdapter:
 
     def _show_export(self, ref: ResolvedRef, query: Query, root: str, budget: ReadBudget) -> Session:
         if ref.source_path is None:
+            raise DiagnosticError.unsafe_path()
+        approved = {canonicalize_cwd(path) for path in self._explicit_exports(root, query)}
+        if canonicalize_cwd(ref.source_path) not in approved:
             raise DiagnosticError.unsafe_path()
         summary, (_, messages) = self._read_export(ref.source_path, root, budget=budget)
         if summary.session_id != ref.session_id:

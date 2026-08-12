@@ -1534,21 +1534,23 @@ def _snapshot_sqlite_family_impl(
         raise DiagnosticError.invalid()
     safe, base = require_regular_no_symlinks(database, root)
     family_names = _family_names(safe)
+    last_busy_family = family_names
     for attempt in range(1, maximum_attempts + 1):
-        before = _family_state(safe, base, bounds=bounds)
-        state = dict(before[1])
-        if state["journal"] is not None:
-            raise DiagnosticError(
-                "E_SQLITE_HOT_JOURNAL",
-                provider=provider,
-                attempts=attempt,
-                family=(os.path.basename(safe + "-journal"),),
-            )
-        if hook:
-            hook("before-copy", attempt, safe)
-        temporary = tempfile.TemporaryDirectory(prefix="portable-resume-sqlite-")
-        os.chmod(temporary.name, 0o700)
+        temporary: tempfile.TemporaryDirectory[str] | None = None
         try:
+            before = _family_state(safe, base, bounds=bounds)
+            state = dict(before[1])
+            if state["journal"] is not None:
+                raise DiagnosticError(
+                    "E_SQLITE_HOT_JOURNAL",
+                    provider=provider,
+                    attempts=attempt,
+                    family=(os.path.basename(safe + "-journal"),),
+                )
+            if hook:
+                hook("before-copy", attempt, safe)
+            temporary = tempfile.TemporaryDirectory(prefix="portable-resume-sqlite-")
+            os.chmod(temporary.name, 0o700)
             total = 0
             for label in ("main", "wal"):
                 source = _family_paths(safe)[label]
@@ -1614,15 +1616,24 @@ def _snapshot_sqlite_family_impl(
                     _temporary=temporary,
                 )
         except DiagnosticError as error:
-            temporary.cleanup()
+            if temporary is not None:
+                temporary.cleanup()
             if error.code not in {"E_SOURCE_BUSY"}:
                 raise
+            if error.family:
+                last_busy_family = error.family
         except BaseException:
-            temporary.cleanup()
+            if temporary is not None:
+                temporary.cleanup()
             raise
         else:
-            temporary.cleanup()
-    raise DiagnosticError.source_busy(attempts=maximum_attempts, family=family_names, provider=provider)
+            if temporary is not None:
+                temporary.cleanup()
+    raise DiagnosticError.source_busy(
+        attempts=maximum_attempts,
+        family=last_busy_family,
+        provider=provider,
+    )
 
 
 def snapshot_sqlite_family(
@@ -1718,31 +1729,129 @@ def query_only_live_sqlite(
     >1GiB). The main file is opened no-follow first and SQLite receives only the
     process-local descriptor path, closing the validation-to-open pathname race.
     Live sidecars are refused because a descriptor URI cannot safely preserve
-    SQLite's basename-based WAL/SHM family lookup.
+    SQLite's basename-based WAL/SHM family lookup. Before yielding, the helper
+    establishes a read transaction; that pinned SQLite snapshot is the point at
+    which later legal source writes are assigned to the next reader run.
     """
 
     safe, base = require_regular_no_symlinks(database, root)
-    if os.path.exists(f"{safe}-journal") or os.path.lexists(f"{safe}-journal"):
-        raise DiagnosticError("E_SQLITE_HOT_JOURNAL", provider=provider)
-    # A descriptor URI pins the main inode, but SQLite derives sidecar names from
-    # the URI path. Refuse live sidecars rather than silently omit committed WAL.
-    for suffix in ("-wal", "-shm"):
-        member = f"{safe}{suffix}"
-        if not os.path.lexists(member):
-            continue
-        try:
-            mode = os.lstat(member).st_mode
-        except OSError as error:
-            raise DiagnosticError("E_SOURCE_BUSY", provider=provider) from error
-        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
-            raise DiagnosticError.unsafe_path()
+    try:
+        initially_validated = _fingerprint(os.lstat(safe))
+    except OSError as error:
+        raise DiagnosticError("E_SOURCE_BUSY", provider=provider) from error
+    descriptor = _open_no_follow(safe, base)
+    expected = _fingerprint(os.fstat(descriptor))
+    if expected != initially_validated:
+        os.close(descriptor)
         raise DiagnosticError.source_busy(
-            family=(os.path.basename(member),),
+            attempts=0,
+            family=(os.path.basename(safe),),
             provider=provider,
         )
 
-    descriptor = _open_no_follow(safe, base)
-    expected = _fingerprint(os.fstat(descriptor))
+    def reject_live_sidecars() -> None:
+        present: dict[str, str] = {}
+        # Validate every present sidecar before classifying the family. Unsafe
+        # symlink/non-regular members take precedence over advisory diagnostics.
+        for suffix in ("-journal", "-wal", "-shm"):
+            member = f"{safe}{suffix}"
+            if not os.path.lexists(member):
+                continue
+            try:
+                mode = os.lstat(member).st_mode
+            except OSError as error:
+                raise DiagnosticError.source_busy(
+                    attempts=0,
+                    family=(os.path.basename(member),),
+                    provider=provider,
+                ) from error
+            if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+                raise DiagnosticError.unsafe_path()
+            require_regular_no_symlinks(member, base)
+            present[suffix] = os.path.basename(member)
+        if "-journal" in present:
+            raise DiagnosticError(
+                "E_SQLITE_HOT_JOURNAL",
+                provider=provider,
+                attempts=0,
+                family=(present["-journal"],),
+            )
+        live_family = tuple(present[suffix] for suffix in ("-wal", "-shm") if suffix in present)
+        if live_family:
+            # A descriptor URI pins the main inode, but SQLite derives sidecar
+            # names from the URI path. Refuse live sidecars rather than omit
+            # committed WAL.
+            raise DiagnosticError(
+                "E_SQLITE_LIVE_WAL",
+                provider=provider,
+                attempts=0,
+                family=live_family,
+            )
+
+    def verify_main_entry() -> None:
+        verification = _open_no_follow(safe, base)
+        try:
+            if _fingerprint(os.fstat(verification)) != expected:
+                raise DiagnosticError.source_busy(
+                    attempts=0,
+                    family=(os.path.basename(safe),),
+                    provider=provider,
+                )
+        finally:
+            os.close(verification)
+
+    def reject_persistent_wal_header() -> None:
+        """Refuse a WAL-mode main before SQLite can recreate source sidecars.
+
+        SQLite persists WAL mode in file-header read/write version bytes 18-19.
+        A read transaction against a writable source directory may create a new
+        ``-wal``/``-shm`` pair even when the prior pair was removed normally.
+        This oversized live helper therefore must not connect to that source at
+        all; the private COW backend is the only safe WAL-mode path.
+        """
+
+        try:
+            if hasattr(os, "pread"):
+                first = os.pread(descriptor, 100, 0)
+                second = os.pread(descriptor, 100, 0)
+            else:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                first = os.read(descriptor, 100)
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                second = os.read(descriptor, 100)
+                os.lseek(descriptor, 0, os.SEEK_SET)
+        except OSError as error:
+            raise DiagnosticError.source_busy(
+                attempts=0,
+                family=(os.path.basename(safe),),
+                provider=provider,
+            ) from error
+        if first != second:
+            raise DiagnosticError.source_busy(
+                attempts=0,
+                family=(os.path.basename(safe),),
+                provider=provider,
+            )
+        if (
+            len(first) >= 20
+            and first[:16] == b"SQLite format 3\x00"
+            and (first[18] == 2 or first[19] == 2)
+        ):
+            raise DiagnosticError(
+                "E_SQLITE_LIVE_WAL",
+                provider=provider,
+                attempts=0,
+                family=(os.path.basename(safe),),
+            )
+
+    try:
+        reject_live_sidecars()
+        verify_main_entry()
+        reject_persistent_wal_header()
+        verify_main_entry()
+    except BaseException:
+        os.close(descriptor)
+        raise
     descriptor_path = next(
         (
             candidate
@@ -1759,22 +1868,27 @@ def query_only_live_sqlite(
     connection: sqlite3.Connection | None = None
     try:
         connection = sqlite3.connect(uri, uri=True)
-        # Detect a persistent rename/replacement during sqlite3.connect. The
-        # connection itself is already pinned to ``descriptor`` and therefore
-        # never follows the replacement.
-        verification = _open_no_follow(safe, base)
-        try:
-            if _fingerprint(os.fstat(verification)) != expected:
-                raise DiagnosticError.source_busy(
-                    family=(os.path.basename(safe),),
-                    provider=provider,
-                )
-        finally:
-            os.close(verification)
+        # Detect family changes during sqlite3.connect. The connection itself
+        # is already pinned to ``descriptor`` and never follows a replacement,
+        # but a newly created source WAL would otherwise be invisible through
+        # the descriptor URI.
+        reject_live_sidecars()
+        verify_main_entry()
         connection.execute("PRAGMA query_only=ON")
         value = connection.execute("PRAGMA query_only").fetchone()
         if value is None or value[0] != 1:
             raise DiagnosticError("E_INVARIANT", provider=provider)
+        reject_live_sidecars()
+        verify_main_entry()
+        # Establish the SQLite read snapshot before returning control. The
+        # descriptor and SQLite transaction are the linearization boundary:
+        # a sidecar that appears before this point is caught by the checks
+        # below, while a legal write after it belongs to a later source state
+        # and cannot change the active read transaction.
+        connection.execute("BEGIN")
+        connection.execute("SELECT COUNT(*) FROM sqlite_schema").fetchone()
+        reject_live_sidecars()
+        verify_main_entry()
         yield connection
     finally:
         if connection is not None:

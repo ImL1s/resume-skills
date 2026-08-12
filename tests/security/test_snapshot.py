@@ -12,6 +12,7 @@ from portable_resume.bounds import DEFAULT_BOUNDS, Bounds, ReadBudget
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.snapshot import (
     private_sqlite_connection,
+    query_only_live_sqlite,
     snapshot_regular_file,
     snapshot_sqlite_family,
     stable_read_bytes,
@@ -310,6 +311,193 @@ class StableSnapshotTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
         self.assertEqual(caught.exception.attempts, 3)
         self.assertEqual(initial_temp, set(Path(tempfile.gettempdir()).glob("portable-resume-sqlite-*")))
+
+    def test_initial_sqlite_family_state_busy_is_counted_and_retried(self) -> None:
+        database = self.create_database()
+        original = snapshot_module._family_state
+        calls = 0
+
+        def busy_once(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise DiagnosticError.source_busy(provider="synthetic")
+            return original(*args, **kwargs)
+
+        with mock.patch.object(snapshot_module, "_family_state", side_effect=busy_once):
+            with snapshot_sqlite_family(database, root=self.store, provider="synthetic") as snapshot:
+                self.assertEqual(snapshot.attempts, 2)
+
+    def test_initial_sqlite_family_state_exhaustion_reports_attempts_and_cleans(self) -> None:
+        database = self.create_database()
+        initial_temp = set(Path(tempfile.gettempdir()).glob("portable-resume-sqlite-*"))
+        with mock.patch.object(
+            snapshot_module,
+            "_family_state",
+            side_effect=DiagnosticError.source_busy(family=(database.name,), provider="synthetic"),
+        ):
+            with self.assertRaises(DiagnosticError) as caught:
+                snapshot_sqlite_family(database, root=self.store, provider="synthetic")
+        self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+        self.assertEqual(caught.exception.attempts, 3)
+        self.assertEqual(caught.exception.provider, "synthetic")
+        self.assertIn(database.name.replace(" ", ""), caught.exception.family)
+        self.assertEqual(initial_temp, set(Path(tempfile.gettempdir()).glob("portable-resume-sqlite-*")))
+
+    def test_live_sqlite_wal_diagnostic_validates_all_sidecars_without_connect(self) -> None:
+        database = self.create_database()
+        wal = Path(str(database) + "-wal")
+        shm = Path(str(database) + "-shm")
+        wal.write_bytes(b"synthetic-wal")
+        shm.write_bytes(b"synthetic-shm")
+        before = tree_snapshot(self.store)
+        with mock.patch.object(snapshot_module.sqlite3, "connect") as connect:
+            with self.assertRaises(DiagnosticError) as caught:
+                with query_only_live_sqlite(database, root=self.store, provider="synthetic"):
+                    pass
+        self.assertEqual(caught.exception.code, "E_SQLITE_LIVE_WAL")
+        self.assertEqual(caught.exception.attempts, 0)
+        self.assertEqual(caught.exception.provider, "synthetic")
+        self.assertEqual(
+            set(caught.exception.family),
+            {wal.name.replace(" ", ""), shm.name.replace(" ", "")},
+        )
+        connect.assert_not_called()
+        self.assertEqual(tree_snapshot(self.store), before)
+
+    def test_live_sqlite_sidecar_symlink_is_unsafe_before_wal_advisory(self) -> None:
+        database = self.create_database()
+        wal = Path(str(database) + "-wal")
+        shm = Path(str(database) + "-shm")
+        wal.write_bytes(b"synthetic-wal")
+        shm.symlink_to(wal)
+        with mock.patch.object(snapshot_module.sqlite3, "connect") as connect:
+            with self.assertRaises(DiagnosticError) as caught:
+                with query_only_live_sqlite(database, root=self.store, provider="synthetic"):
+                    pass
+        self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+        connect.assert_not_called()
+
+    def test_live_sqlite_main_replacement_before_open_is_busy_without_connect(self) -> None:
+        database = self.create_database()
+        replacement = self.store / "replacement.db"
+        replacement.write_bytes(database.read_bytes())
+        original_lexists = snapshot_module.os.path.lexists
+        replaced = False
+
+        def replace_before_sidecar_scan(path: str) -> bool:
+            nonlocal replaced
+            if not replaced and os.path.basename(path) == f"{database.name}-journal":
+                replaced = True
+                os.replace(replacement, database)
+            return original_lexists(path)
+
+        with mock.patch.object(snapshot_module.os.path, "lexists", side_effect=replace_before_sidecar_scan), mock.patch.object(
+            snapshot_module.sqlite3, "connect"
+        ) as connect:
+            with self.assertRaises(DiagnosticError) as caught:
+                with query_only_live_sqlite(database, root=self.store, provider="synthetic"):
+                    pass
+        self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+        self.assertEqual(caught.exception.provider, "synthetic")
+        self.assertEqual(caught.exception.attempts, 0)
+        self.assertEqual(caught.exception.family, (database.name.replace(" ", ""),))
+        connect.assert_not_called()
+
+    def test_live_sqlite_sidecars_created_during_connect_are_rejected_before_yield(self) -> None:
+        database = self.create_database()
+        wal = Path(str(database) + "-wal")
+        shm = Path(str(database) + "-shm")
+        real_connect = snapshot_module.sqlite3.connect
+
+        def connect_then_create_sidecars(*args: object, **kwargs: object) -> sqlite3.Connection:
+            connection = real_connect(*args, **kwargs)
+            wal.write_bytes(b"synthetic-wal")
+            shm.write_bytes(b"synthetic-shm")
+            return connection
+
+        yielded = False
+        with mock.patch.object(snapshot_module.sqlite3, "connect", side_effect=connect_then_create_sidecars):
+            with self.assertRaises(DiagnosticError) as caught:
+                with query_only_live_sqlite(database, root=self.store, provider="synthetic"):
+                    yielded = True
+        self.assertFalse(yielded)
+        self.assertEqual(caught.exception.code, "E_SQLITE_LIVE_WAL")
+        self.assertEqual(caught.exception.attempts, 0)
+        self.assertEqual(
+            set(caught.exception.family),
+            {wal.name.replace(" ", ""), shm.name.replace(" ", "")},
+        )
+
+    def test_live_sqlite_sidecars_created_after_snapshot_during_final_verify_are_later_state(self) -> None:
+        database = self.create_database()
+        wal = Path(str(database) + "-wal")
+        shm = Path(str(database) + "-shm")
+        real_open = snapshot_module._open_no_follow
+        opens = 0
+
+        def create_after_snapshot_then_open(path: str, root: str) -> int:
+            nonlocal opens
+            opens += 1
+            if opens == 6:
+                wal.write_bytes(b"synthetic-wal")
+                shm.write_bytes(b"synthetic-shm")
+            return real_open(path, root)
+
+        with mock.patch.object(snapshot_module, "_open_no_follow", side_effect=create_after_snapshot_then_open):
+            with query_only_live_sqlite(database, root=self.store, provider="synthetic") as connection:
+                self.assertTrue(connection.in_transaction)
+                observed = connection.execute("SELECT COUNT(*) FROM items").fetchone()
+
+        self.assertGreaterEqual(opens, 6)
+        self.assertTrue(wal.exists())
+        self.assertTrue(shm.exists())
+        self.assertEqual(observed, (1,))
+
+    def test_live_sqlite_read_transaction_is_linearized_before_yield(self) -> None:
+        database = self.create_database()
+        wal = Path(str(database) + "-wal")
+        shm = Path(str(database) + "-shm")
+
+        with query_only_live_sqlite(database, root=self.store, provider="synthetic") as connection:
+            self.assertTrue(connection.in_transaction)
+            observed = connection.execute("SELECT COUNT(*) FROM items").fetchone()
+            # A family created after the helper established its read snapshot
+            # belongs to a later source state and cannot redirect the pinned
+            # descriptor or change the active SQLite transaction.
+            wal.write_bytes(b"synthetic-later-wal")
+            shm.write_bytes(b"synthetic-later-shm")
+
+        self.assertEqual(observed, (1,))
+
+    def test_persistent_wal_mode_without_sidecars_is_rejected_before_connect_or_mutation(self) -> None:
+        database = self.store / "persistent-wal.db"
+        writer = sqlite3.connect(database)
+        try:
+            self.assertEqual(writer.execute("PRAGMA journal_mode=WAL").fetchone(), ("wal",))
+            writer.execute("CREATE TABLE stable(value TEXT)")
+            writer.execute("INSERT INTO stable VALUES ('source')")
+            writer.commit()
+        finally:
+            writer.close()
+        wal = Path(str(database) + "-wal")
+        shm = Path(str(database) + "-shm")
+        self.assertFalse(wal.exists())
+        self.assertFalse(shm.exists())
+        self.assertEqual(database.read_bytes()[18:20], b"\x02\x02")
+        before = tree_snapshot(self.store)
+
+        with mock.patch.object(snapshot_module.sqlite3, "connect") as connect:
+            with self.assertRaises(DiagnosticError) as caught:
+                with query_only_live_sqlite(database, root=self.store, provider="synthetic"):
+                    self.fail("persistent WAL mode must not open the source")
+
+        self.assertEqual(caught.exception.code, "E_SQLITE_LIVE_WAL")
+        self.assertEqual(caught.exception.attempts, 0)
+        self.assertEqual(caught.exception.provider, "synthetic")
+        self.assertEqual(caught.exception.family, (database.name.replace(" ", ""),))
+        connect.assert_not_called()
+        self.assertEqual(tree_snapshot(self.store), before)
 
     def test_private_snapshot_cleanup_on_consumer_exception(self) -> None:
         database = self.create_database()

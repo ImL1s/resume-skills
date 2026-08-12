@@ -938,7 +938,7 @@ class ClineAdapter:
                         _require_index_schema(connection)
                     index_ok = True
                 except DiagnosticError as error:
-                    if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"}:
+                    if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY", "E_SQLITE_LIVE_WAL"}:
                         return CapabilityReport(self.key, FORMAT_ID, "unsafe", root=root)
                     if error.code not in {"E_UNSUPPORTED_FORMAT", "E_CORRUPT_RECORD"}:
                         raise
@@ -962,7 +962,7 @@ class ClineAdapter:
         except DiagnosticError as error:
             state = (
                 "unsafe"
-                if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"}
+                if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY", "E_SQLITE_LIVE_WAL"}
                 else "unsupported"
             )
             return CapabilityReport(self.key, FORMAT_ID, state)

@@ -102,13 +102,18 @@
         "W_BROKEN_CHAIN",
         "W_MISSING_BLOB",
         "W_STALE_INDEX",
+        "W_CLI_MESSAGES_LANE",
         "W_OPTIONAL_ZSTD_UNAVAILABLE",
         "W_METADATA_REDACTED",
         "W_CONTROLS_REMOVED",
         "W_BINARY_OMITTED",
         "W_UNKNOWN_RECORD_SKIPPED",
         "W_HOST_DISCOVERY_UNPROVEN",
-        "W_LIVE_SMOKE_NOT_RUN"
+        "W_LIVE_SMOKE_NOT_RUN",
+        "W_SKILL_SHADOW",
+        "W_SKILL_DUPLICATE",
+        "W_RUNTIME_IDENTITY_DRIFT",
+        "W_SOURCE_PROVIDER_SKIPPED"
       ]
     },
     "warnings": {

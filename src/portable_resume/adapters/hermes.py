@@ -441,7 +441,7 @@ class HermesAdapter:
                 self.key, FORMAT_ID, "supported", root=root, evidence=(FORMAT_ID,)
             )
         except DiagnosticError as error:
-            if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"}:
+            if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY", "E_SQLITE_LIVE_WAL"}:
                 return CapabilityReport(self.key, FORMAT_ID, "unsafe")
             if error.code == "E_UNSUPPORTED_FORMAT":
                 return CapabilityReport(self.key, FORMAT_ID, "unsupported")

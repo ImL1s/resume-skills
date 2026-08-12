@@ -91,6 +91,7 @@ DIAGNOSTIC_SURFACES: dict[str, str] = {
     "E_UNSAFE_PATH": "Reader and installer",
     "E_SOURCE_BUSY": "Reader",
     "E_SQLITE_HOT_JOURNAL": "Reader",
+    "E_SQLITE_LIVE_WAL": "Reader",
     "E_LIMIT_EXCEEDED": "Reader",
     "E_CORRUPT_RECORD": "Reader",
     "E_INVARIANT": "Reader and installer",
