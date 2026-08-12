@@ -14,6 +14,12 @@ _CEILINGS: dict[str, int] = {
     "transcript_records": 50_000,
     "record_bytes": 16 * 1024 * 1024,
     "sqlite_snapshot_bytes": 256 * 1024 * 1024,
+    # Darwin/APFS clone snapshots account logical size separately from the
+    # bounded WAL prefix copied into private scratch (#263).
+    "sqlite_cow_logical_bytes": 2 * 1024 * 1024 * 1024,
+    "sqlite_wal_bytes": 256 * 1024 * 1024,
+    "sqlite_wal_frames": 524_288,
+    "sqlite_snapshot_deadline_ms": 30_000,
     "source_read_bytes": 256 * 1024 * 1024,
     "normalized_turns": 2_000,
     "normalized_content_bytes": 8 * 1024 * 1024,
@@ -72,6 +78,10 @@ class Bounds:
     transcript_records: int = _CEILINGS["transcript_records"]
     record_bytes: int = _CEILINGS["record_bytes"]
     sqlite_snapshot_bytes: int = _CEILINGS["sqlite_snapshot_bytes"]
+    sqlite_cow_logical_bytes: int = _CEILINGS["sqlite_cow_logical_bytes"]
+    sqlite_wal_bytes: int = _CEILINGS["sqlite_wal_bytes"]
+    sqlite_wal_frames: int = _CEILINGS["sqlite_wal_frames"]
+    sqlite_snapshot_deadline_ms: int = _CEILINGS["sqlite_snapshot_deadline_ms"]
     # Aggregate admitted source payload for one list/show (not output size).
     # Stability verification may re-read those same bytes without charging them again.
     source_read_bytes: int = _CEILINGS["source_read_bytes"]
