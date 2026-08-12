@@ -15,12 +15,15 @@
 - OpenCode live-WAL handling (#263): oversized/live SQLite families use a
   bounded, descriptor-pinned private snapshot only on Darwin with real APFS
   `fclonefileat`, same-volume private scratch, checksum-valid current-generation
-  WAL prefix, source-family revalidation, query-only private SQLite, and one
-  absolute deadline. Unsupported hosts remain closed as `E_SQLITE_LIVE_WAL`;
+  WAL prefix materialized through its last commit into the private clone,
+  exact-vnode `/.vol` SQLite open, identity-bound cleanup, and one absolute
+  deadline. Unsupported hosts remain closed as `E_SQLITE_LIVE_WAL`;
   independent qualified file-store/export providers remain usable with
   `W_SOURCE_PROVIDER_SKIPPED`. A real macOS/APFS CI proof archives content-free
   exact-head evidence; no source SQLite connection, SHM copy, WAL deletion,
-  checkpoint, `immutable=1`, or new dependency is used.
+  checkpoint, live-source `immutable=1`, or new dependency is used. The
+  materialized private clone alone is opened `mode=ro&immutable=1` so a scratch
+  pathname replacement cannot redirect SQLite and no private SHM is required.
 - SQLite-family initial state capture now participates in bounded retry
   accounting, preserving unsafe/limit/hot-journal hard failures and cleanup.
 - Reconciled the two shipped schema warning enums with runtime `WARNING_CODES`

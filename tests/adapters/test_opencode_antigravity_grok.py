@@ -372,8 +372,10 @@ class OpenCodeAdapterTests(unittest.TestCase):
                     summaries = adapter.list(current, ReadBudget())
                 self.assertEqual([item.session_id for item in summaries], ["schema-cow"])
                 self.assertTrue(uris)
-                self.assertTrue(all(uri.startswith("file:") for uri in uris))
-                self.assertTrue(all("mode=ro&cache=private" in uri for uri in uris))
+                self.assertTrue(all(uri.startswith("file:/.vol/") for uri in uris))
+                self.assertTrue(
+                    all("mode=ro&immutable=1&cache=private" in uri for uri in uris)
+                )
                 self.assertTrue(all(str(root) not in uri for uri in uris))
             finally:
                 writer.close()

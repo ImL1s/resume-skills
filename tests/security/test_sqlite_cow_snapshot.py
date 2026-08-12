@@ -76,7 +76,7 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
         )
         return identity, hashlib.sha256(path.read_bytes()).hexdigest(), tuple(attributes)
 
-    def test_private_query_only_connection_rebuilds_only_private_shm_and_passes_integrity(self) -> None:
+    def test_private_query_only_connection_uses_volume_inode_and_passes_integrity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self._require_real_apfs(root)
@@ -96,7 +96,8 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                     private_database = Path(connection.execute("PRAGMA database_list").fetchone()[2])
                     self.assertNotEqual(private_database, database)
                     self.assertFalse(str(private_database).startswith(str(root)))
-                    self.assertTrue(private_database.with_name(private_database.name + "-shm").exists())
+                    self.assertTrue(str(private_database).startswith("/.vol/"))
+                    self.assertFalse(Path(str(private_database) + "-shm").exists())
             finally:
                 writer.close()
 
@@ -234,7 +235,13 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                 writer.close()
 
     def test_generation_reset_truncate_replace_and_prefix_mutation_are_busy_and_cleanup(self) -> None:
-        scenarios = ("truncate_regrow", "wal_replace", "header_salt", "prefix_mutation")
+        scenarios = (
+            "truncate_during_copy",
+            "truncate_regrow",
+            "wal_replace",
+            "header_salt",
+            "prefix_mutation",
+        )
         for scenario in scenarios:
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -247,12 +254,24 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
 
                 def hook(stage: str, _attempt: int, _source: str) -> None:
                     nonlocal fired
-                    target_stage = "after-wal-copy" if scenario != "header_salt" else "after-clone"
+                    if scenario == "truncate_during_copy":
+                        target_stage = "after-wal-prefix"
+                    else:
+                        target_stage = (
+                            "after-wal-copy" if scenario != "header_salt" else "after-clone"
+                        )
                     if fired or stage != target_stage:
                         return
                     fired = True
                     data = wal.read_bytes()
-                    if scenario == "truncate_regrow":
+                    if scenario == "truncate_during_copy":
+                        descriptor = os.open(wal, os.O_RDWR)
+                        try:
+                            os.ftruncate(descriptor, 32)
+                            os.fsync(descriptor)
+                        finally:
+                            os.close(descriptor)
+                    elif scenario == "truncate_regrow":
                         time.sleep(0.002)
                         descriptor = os.open(wal, os.O_RDWR)
                         try:
@@ -478,6 +497,190 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                         self.assertTrue(fired)
             finally:
                 writer.close()
+
+    def test_private_main_swap_restore_cannot_change_descriptor_bound_query(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database, writer = self._live_database(root)
+            baseline = self._scratch_entries()
+            saved_main: Path | None = None
+            saved_wal: Path | None = None
+            replacement_main: Path | None = None
+            swapped = False
+
+            def hook(stage: str, _attempt: int, _source: str) -> None:
+                nonlocal saved_main, saved_wal, replacement_main, swapped
+                created = self._scratch_entries() - baseline
+                if len(created) != 1:
+                    return
+                scratch = Path(next(iter(created)))
+                main = scratch / "snapshot.sqlite"
+                wal = scratch / "snapshot.sqlite-wal"
+                if stage == "before-private-connect" and not swapped:
+                    token = scratch.name.removeprefix("portable-resume-cow-")
+                    saved_main = scratch.parent / ("issue263-saved-main-" + token)
+                    saved_wal = scratch.parent / ("issue263-saved-wal-" + token)
+                    replacement_main = main
+                    main.rename(saved_main)
+                    wal.rename(saved_wal)
+                    replacement = sqlite3.connect(replacement_main)
+                    replacement.execute(
+                        "CREATE TABLE session(id TEXT PRIMARY KEY, value TEXT)"
+                    )
+                    replacement.execute(
+                        "INSERT INTO session VALUES ('anchor', 'attacker')"
+                    )
+                    replacement.commit()
+                    replacement.close()
+                    swapped = True
+                elif stage == "after-private-connect" and swapped:
+                    assert saved_main is not None
+                    assert saved_wal is not None
+                    assert replacement_main is not None
+                    replacement_main.unlink()
+                    saved_main.rename(main)
+                    saved_wal.rename(wal)
+
+            try:
+                with private_sqlite_connection_live_wal_cow(
+                    database,
+                    root=root,
+                    attempts=1,
+                    hook=hook,
+                    provider="opencode-sqlite-v1",
+                ) as connection:
+                    self.assertTrue(swapped)
+                    self.assertEqual(
+                        connection.execute(
+                            "SELECT value FROM session WHERE id='anchor'"
+                        ).fetchone(),
+                        ("visible",),
+                    )
+            finally:
+                for path in (replacement_main, saved_main, saved_wal):
+                    if path is not None and path.exists():
+                        path.unlink()
+                writer.close()
+
+    def test_private_scratch_swap_during_connect_cannot_redirect_query(self) -> None:
+        import portable_resume.sqlite_cow as cow
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database, writer = self._live_database(root)
+            baseline = self._scratch_entries()
+            real_connect = cow.sqlite3.connect
+            saved_scratch: Path | None = None
+            replacement_scratch: Path | None = None
+            swapped = False
+
+            def restore() -> None:
+                if replacement_scratch is not None and replacement_scratch.exists():
+                    for child in replacement_scratch.iterdir():
+                        child.unlink()
+                    replacement_scratch.rmdir()
+                if saved_scratch is not None and saved_scratch.exists():
+                    assert replacement_scratch is not None
+                    saved_scratch.rename(replacement_scratch)
+
+            def connect(
+                database_arg: str, *args: object, **kwargs: object
+            ) -> sqlite3.Connection:
+                nonlocal saved_scratch, replacement_scratch, swapped
+                created = self._scratch_entries() - baseline
+                self.assertEqual(len(created), 1)
+                replacement_scratch = Path(next(iter(created)))
+                token = replacement_scratch.name.removeprefix("portable-resume-cow-")
+                saved_scratch = replacement_scratch.with_name(
+                    "issue263-saved-scratch-" + token
+                )
+                replacement_scratch.rename(saved_scratch)
+                replacement_scratch.mkdir(mode=0o700)
+                attacker = real_connect(replacement_scratch / "snapshot.sqlite")
+                try:
+                    attacker.execute(
+                        "CREATE TABLE session(id TEXT PRIMARY KEY, value TEXT)"
+                    )
+                    attacker.execute(
+                        "INSERT INTO session VALUES ('anchor', 'attacker')"
+                    )
+                    attacker.commit()
+                finally:
+                    attacker.close()
+                try:
+                    connection = real_connect(database_arg, *args, **kwargs)
+                    swapped = True
+                    return connection
+                finally:
+                    restore()
+
+            try:
+                with mock.patch.object(cow.sqlite3, "connect", side_effect=connect):
+                    with private_sqlite_connection_live_wal_cow(
+                        database,
+                        root=root,
+                        attempts=1,
+                        provider="opencode-sqlite-v1",
+                    ) as connection:
+                        self.assertTrue(swapped)
+                        self.assertEqual(
+                            connection.execute(
+                                "SELECT value FROM session WHERE id='anchor'"
+                            ).fetchone(),
+                            ("visible",),
+                        )
+            finally:
+                restore()
+                writer.close()
+            self.assertEqual(self._scratch_entries(), baseline)
+
+    def test_cleanup_rmdir_swap_removes_owned_inode_not_replacement(self) -> None:
+        import portable_resume.sqlite_cow as cow
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database, writer = self._live_database(root)
+            baseline = self._scratch_entries()
+            real_unlink = cow.unlink_volume_inode
+            replacement: Path | None = None
+            moved: Path | None = None
+
+            def unlink(descriptor: int, *, directory: bool = False) -> None:
+                nonlocal replacement, moved
+                if directory and replacement is None:
+                    created = self._scratch_entries() - baseline
+                    if len(created) == 1:
+                        replacement = Path(next(iter(created)))
+                        moved = replacement.with_name(replacement.name + ".moved")
+                        replacement.rename(moved)
+                        replacement.mkdir(mode=0o700)
+                real_unlink(descriptor, directory=directory)
+
+            try:
+                with mock.patch.object(cow, "unlink_volume_inode", side_effect=unlink):
+                    with self.assertRaises(DiagnosticError) as caught:
+                        with private_sqlite_connection_live_wal_cow(
+                            database,
+                            root=root,
+                            attempts=1,
+                            provider="opencode-sqlite-v1",
+                        ):
+                            pass
+                self.assertEqual(caught.exception.code, "E_INVARIANT")
+                self.assertIsNotNone(replacement)
+                self.assertTrue(replacement.is_dir())
+                self.assertIsNotNone(moved)
+                self.assertFalse(moved.exists())
+            finally:
+                if replacement is not None and replacement.exists():
+                    replacement.rmdir()
+                if moved is not None and moved.exists():
+                    moved.rmdir()
+                writer.close()
+            self.assertEqual(self._scratch_entries(), baseline)
 
     def test_quiescent_source_main_wal_shm_digest_inode_mode_mtime_xattr_and_entries_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

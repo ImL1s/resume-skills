@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real APFS proof for issue #263's descriptor-bound SQLite COW backend.
+"""Real APFS proof for issue #263's identity-bound SQLite COW backend.
 
 The emitted artifact contains only platform/build identifiers and counters. It
 never includes a source path, session identifier, or recovered row content.
@@ -22,7 +22,7 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Callable, Iterator, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -43,7 +43,9 @@ MINIMUM_ITERATIONS = 200
 CONTINUOUS_SUCCESSES = 100
 CHECKPOINT_BEFORE_SUCCESSES = 25
 CHECKPOINT_AFTER_SUCCESSES = 25
+PRIVATE_PATH_SWAP_SUCCESSES = 20
 REJECTIONS_PER_SCENARIO = 20
+PROOF_SCHEMA = "portable-resume/issue-263-apfs-proof-v2"
 REJECTION_SCENARIOS = (
     "restart_reset",
     "truncate_reset",
@@ -237,10 +239,13 @@ class _MutationAudit:
         self.source_roots: set[str] = set()
         self.reader_source_mutations = 0
         self.reader_source_sqlite_connects = 0
+        self.reader_descriptor_bound_sqlite_connects = 0
         self.clone_destinations_under_source = 0
         self.real_clone_calls = 0
+        self.exact_private_unlinks = 0
         self._original_open = os.open
         self._original_clone = cow_module.clone_file_from_fd
+        self._original_unlink_volume_inode = cow_module.unlink_volume_inode
         sys.addaudithook(self._audit)
 
     @contextlib.contextmanager
@@ -290,6 +295,8 @@ class _MutationAudit:
         if event == "sqlite3.connect" and args:
             if self._under_source(args[0]) or any(root in str(args[0]) for root in self.source_roots):
                 self.reader_source_sqlite_connects += 1
+            if str(args[0]).startswith("file:/.vol/"):
+                self.reader_descriptor_bound_sqlite_connects += 1
             return
         if event == "open" and len(args) >= 3:
             mode = args[1]
@@ -370,6 +377,15 @@ class _MutationAudit:
             deadline_check=deadline_check,
         )
 
+    def audited_unlink_volume_inode(self, descriptor: int, *, directory: bool = False) -> None:
+        current = self._descriptor_path(descriptor)
+        if current is None:
+            raise ProofFailure("cannot bind exact private cleanup target")
+        if any(is_within(current, root) for root in self.source_roots):
+            self.reader_source_mutations += 1
+        self._original_unlink_volume_inode(descriptor, directory=directory)
+        self.exact_private_unlinks += 1
+
 
 def _assert_runtime_capability() -> tuple[bool, bool]:
     if sys.platform != "darwin":
@@ -396,10 +412,25 @@ def _run_success(
     *,
     stage: str | None = None,
     action: str | None = None,
+    private_path_swap: bool = False,
 ) -> tuple[int, int]:
     scratch_before = _scratch_entries()
     fds_before = _fd_count()
     fired = False
+    private_swap_fired = False
+    saved_scratch: Path | None = None
+    replacement_scratch: Path | None = None
+    real_connect = sqlite3.connect
+
+    def restore_private_directory() -> None:
+        if replacement_scratch is not None and replacement_scratch.exists():
+            for child in replacement_scratch.iterdir():
+                child.unlink()
+            replacement_scratch.rmdir()
+        if saved_scratch is not None and saved_scratch.exists():
+            if replacement_scratch is None:
+                raise ProofFailure("private scratch restore target missing")
+            saved_scratch.rename(replacement_scratch)
 
     def hook(current: str, _attempt: int, _source: str) -> None:
         nonlocal fired
@@ -407,10 +438,45 @@ def _run_success(
             fired = True
             fixture.writer.action(action)
 
+    def swapped_connect(
+        database_arg: str, *args: object, **kwargs: object
+    ) -> sqlite3.Connection:
+        nonlocal private_swap_fired, saved_scratch, replacement_scratch
+        created = _scratch_entries() - scratch_before
+        if len(created) != 1:
+            raise ProofFailure("cannot identify private swap scratch")
+        replacement_scratch = Path(tempfile.gettempdir()) / next(iter(created))
+        token = replacement_scratch.name.removeprefix("portable-resume-cow-")
+        saved_scratch = replacement_scratch.with_name(
+            "issue263-proof-saved-scratch-" + token
+        )
+        replacement_scratch.rename(saved_scratch)
+        replacement_scratch.mkdir(mode=0o700)
+        with audit.as_owner("fixture"):
+            replacement = real_connect(replacement_scratch / "snapshot.sqlite")
+            try:
+                replacement.execute(
+                    "CREATE TABLE records(id INTEGER PRIMARY KEY, value TEXT NOT NULL)"
+                )
+                replacement.execute("INSERT INTO records VALUES (1, 'attacker')")
+                replacement.commit()
+            finally:
+                replacement.close()
+        try:
+            connection = cast(Callable[..., sqlite3.Connection], real_connect)(
+                database_arg, *args, **kwargs
+            )
+            private_swap_fired = True
+            return connection
+        finally:
+            with audit.as_owner("fixture"):
+                restore_private_directory()
+
     audit.source_roots.add(str(fixture.root.resolve()))
     audit.owner.value = "reader"
     audit.active = True
-    private_shm = False
+    if private_path_swap:
+        setattr(cow_module.sqlite3, "connect", swapped_connect)
     try:
         with private_sqlite_connection_live_wal_cow(
             fixture.database,
@@ -426,14 +492,17 @@ def _run_success(
             private_database = Path(connection.execute("PRAGMA database_list").fetchone()[2])
             if is_within(private_database, fixture.root):
                 raise ProofFailure("private SQLite opened below source root")
-            private_shm = Path(str(private_database) + "-shm").is_file()
+            if not str(private_database).startswith("/.vol/"):
+                raise ProofFailure("private SQLite did not use a volume-inode URI")
     finally:
+        setattr(cow_module.sqlite3, "connect", real_connect)
         audit.active = False
         audit.owner.value = "fixture"
+        restore_private_directory()
     if action is not None and not fired:
         raise ProofFailure("success hook did not run")
-    if not private_shm:
-        raise ProofFailure("private SHM was not rebuilt")
+    if private_path_swap and not private_swap_fired:
+        raise ProofFailure("private pathname swap hook did not run")
     if _scratch_entries() != scratch_before:
         raise ProofFailure("private scratch leak")
     if _fd_count() != fds_before:
@@ -547,7 +616,10 @@ def _run_rejection(fixture: _Fixture, scenario: str, audit: _MutationAudit) -> N
                 raise ProofFailure("forced rejection yielded a connection")
         except DiagnosticError as error:
             if error.code != "E_SOURCE_BUSY" or error.attempts != 1:
-                raise ProofFailure("forced rejection returned wrong diagnostic") from error
+                raise ProofFailure(
+                    f"forced rejection {scenario} returned {error.code} "
+                    f"with attempts={error.attempts!r}"
+                ) from error
     finally:
         audit.active = False
         audit.owner.value = "fixture"
@@ -581,6 +653,7 @@ def main() -> int:
     audit = _MutationAudit()
     os.open = audit.audited_open  # type: ignore[assignment]
     cow_module.clone_file_from_fd = audit.audited_clone
+    cow_module.unlink_volume_inode = audit.audited_unlink_volume_inode
     scratch_baseline = _scratch_entries()
     global_fds = _fd_count()
     max_main = 0
@@ -637,6 +710,17 @@ def main() -> int:
                 max_main = max(max_main, main_size)
                 max_wal = max(max_wal, wal_size)
 
+            for _ in range(PRIVATE_PATH_SWAP_SUCCESSES):
+                main_size, wal_size = _run_success(
+                    fixture,
+                    audit,
+                    private_path_swap=True,
+                )
+                integrity_successes += 1
+                cleanup_count += 1
+                max_main = max(max_main, main_size)
+                max_wal = max(max_wal, wal_size)
+
         rejection_counts: dict[str, int] = {}
         for scenario in REJECTION_SCENARIOS:
             count = 0
@@ -649,6 +733,7 @@ def main() -> int:
     finally:
         os.open = audit._original_open  # type: ignore[assignment]
         cow_module.clone_file_from_fd = audit._original_clone
+        cow_module.unlink_volume_inode = audit._original_unlink_volume_inode
 
     if audit.reader_source_mutations:
         raise ProofFailure("reader-owned source mutation observed")
@@ -658,6 +743,10 @@ def main() -> int:
         raise ProofFailure("clone destination entered source root")
     if audit.real_clone_calls < cleanup_count:
         raise ProofFailure("real clone count below exercised snapshots")
+    if audit.reader_descriptor_bound_sqlite_connects != integrity_successes:
+        raise ProofFailure("descriptor-bound SQLite open count mismatch")
+    if audit.exact_private_unlinks < cleanup_count * 2:
+        raise ProofFailure("exact private cleanup count below exercised snapshots")
     if _scratch_entries() != scratch_baseline:
         raise ProofFailure("global scratch leak")
     if _fd_count() != global_fds:
@@ -671,7 +760,7 @@ def main() -> int:
             f"/actions/runs/{os.environ['GITHUB_RUN_ID']}"
         )
     evidence: dict[str, object] = {
-        "schema": "portable-resume/issue-263-apfs-proof-v1",
+        "schema": PROOF_SCHEMA,
         "commit_sha": sha,
         "actions_run": run_url,
         "iterations_requested": args.iterations,
@@ -689,15 +778,21 @@ def main() -> int:
             "apfs": apfs,
             "same_volume": same_volume,
             "real_clone_calls": audit.real_clone_calls,
+            "volume_inode_uri": True,
+            "private_immutable": True,
+            "wal_materialized": True,
+            "unique_unlink": True,
         },
         "successes": {
             "quiescent_immutability": 1,
             "continuous_append": CONTINUOUS_SUCCESSES,
             "checkpoint_before_clone": CHECKPOINT_BEFORE_SUCCESSES,
             "checkpoint_after_clone": CHECKPOINT_AFTER_SUCCESSES,
+            "private_path_swap": PRIVATE_PATH_SWAP_SUCCESSES,
             "integrity_ok": integrity_successes,
             "anchor_visible": integrity_successes,
-            "private_shm": integrity_successes,
+            "materialized_committed_state": integrity_successes,
+            "descriptor_bound_open": audit.reader_descriptor_bound_sqlite_connects,
         },
         "rejections": rejection_counts,
         "safety": {
@@ -707,6 +802,7 @@ def main() -> int:
             "scratch_leaks": 0,
             "fd_leaks": 0,
             "cleanup_count": cleanup_count,
+            "exact_private_unlinks": audit.exact_private_unlinks,
         },
         "bounds_observed": {
             "max_main_logical_bytes": max_main,
@@ -726,7 +822,7 @@ if __name__ == "__main__":
         print(
             json.dumps(
                 {
-                    "schema": "portable-resume/issue-263-apfs-proof-v1",
+                    "schema": PROOF_SCHEMA,
                     "ok": False,
                     "reason": str(error),
                 },

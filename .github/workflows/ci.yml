@@ -127,7 +127,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Prove descriptor-bound APFS live-WAL snapshots
+      - name: Prove identity-bound APFS live-WAL snapshots
         env:
           PYTHONPATH: src
         run: |

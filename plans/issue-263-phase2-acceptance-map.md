@@ -1,7 +1,8 @@
 # Issue #263 Phase 2: coherent live-WAL snapshot acceptance map
 
-Status: **mapping approved; production implementation and exact-head proof are
-under review in PR #268**.
+Status: **mapping approved; implementation hardened after exact-head security
+review; revised production implementation and proof are under review in PR
+#268**.
 
 This document is the reviewed contract for the macOS/APFS phase of issue #263.
 The map itself does not enable live-WAL recovery. Production changes remain
@@ -22,15 +23,19 @@ gate.
 - Unsupported Darwin filesystems, Linux, Windows, missing symbols, and failed
   capability probes remain `E_SQLITE_LIVE_WAL` (`exit_code: 6`, `attempts: 0`).
 - The reader never opens a SQLite connection to the source family, invokes the
-  source CLI, copies source SHM, deletes a WAL, or uses `immutable=1`.
+  source CLI, copies source SHM, deletes a source WAL, or uses `immutable=1` on
+  a live source. After the accepted private WAL prefix is materialized into the
+  private clone, only that exact private vnode is opened with `immutable=1`.
 - All parsing, integrity checks, schema checks, and queries run against a
-  private `0700` directory and a percent-encoded
-  `mode=ro&cache=private` URI with `PRAGMA query_only=ON` read back as `1`.
+  private `0700` directory and a percent-encoded identity-bound
+  `file:/.vol/<device>/<inode>?mode=ro&immutable=1&cache=private` URI with
+  `PRAGMA query_only=ON` read back as `1`.
 - The stdlib-only runtime and existing lower-only `Bounds` contract remain.
 
-Forbidden alternatives: SQLite online backup against the source, a normal
-read-only source connection, `nolock=1`, source SHM copying, manual checkpoint
-or WAL deletion, unbounded retry, and mocked capability as production proof.
+Forbidden alternatives: SQLite online backup against the source, a normal or
+`immutable=1` source connection, pathname-based private SQLite open,
+`nolock=1`, source SHM copying, manual checkpoint or WAL deletion, unbounded
+retry, and mocked capability as production proof.
 
 ## Protocol and acceptance point
 
@@ -106,20 +111,48 @@ and the consumer query.
     changes after that point belong to the next run. Do not compare source main
     content/mtime after the atomic clone: a legal checkpoint may update source
     main while the private clone remains paired with the same-generation WAL.
-11. Open only the private URI, set and read back query-only, install a deadline
-    progress handler, run `PRAGMA integrity_check(1)`, validate exact OpenCode
-    schema, then run list/show. Any SQLite-created SHM must remain in scratch.
-12. Close SQLite first. Enumerate and unlink known private artifacts through the
-    pinned scratch descriptor, reject unknown nested entries, close descriptors,
-    and remove scratch through its pinned parent. Cleanup is idempotent on
-    success, retry, diagnostic, cancellation, consumer exception, and integrity
-    failure. Cleanup failure is `E_INVARIANT`, never silent success.
+11. Revalidate the copied private WAL descriptor against the accepted prefix,
+    then overlay frames through the last valid commit marker into the retained
+    `O_RDWR` private-main descriptor. Later uncommitted frames are ignored;
+    frames above the final committed page count are skipped; the private main is
+    truncated to that count and `fsync`ed. This is private COW materialization,
+    not a source checkpoint. It is bounded by the logical-size/frame/byte limits
+    and the same deadline.
+12. Resolve the retained private-main descriptor through Darwin's identity-bound
+    `/.vol/<device>/<inode>` namespace and verify it still matches `fstat`.
+    Open only that exact vnode with
+    `mode=ro&immutable=1&cache=private`, set and read back query-only, install a
+    deadline progress handler, run `PRAGMA integrity_check(1)`, validate exact
+    OpenCode schema, then run list/show. SQLite does not discover a live WAL or
+    create SHM because the accepted commit is already materialized. A transient
+    scratch-path replacement must not redirect this open.
+13. Close SQLite first. Unlink each retained private file vnode and then the
+    retained scratch-directory vnode through its verified `/.vol` identity with
+    Darwin `unlinkat(AT_UNIQUE|AT_REMOVEDIR-as-needed)`. `AT_UNIQUE` rejects
+    multiple path aliases instead of deleting through an ambiguous name. Reject
+    unknown entries and any scratch-path replacement; never unlink the
+    replacement. Cleanup is idempotent on success, retry, diagnostic,
+    cancellation, consumer exception, and integrity failure. Cleanup failure is
+    `E_INVARIANT`, never silent success.
+
+The identity/cleanup primitive is Darwin-specific and capability-gated. Apple's
+XNU tests construct `/.vol/<device>/<inode>` paths and verify they resolve the
+same inode ([`volfs_chroot.c`](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/tests/vfs/volfs_chroot.c#L49-L85));
+XNU lookup marks these as volume-file-system paths and rejects a `UNIQUE`
+lookup when the vnode has multiple paths
+([`vfs_lookup.c`](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/vfs/vfs_lookup.c#L420-L447),
+[`vfs_lookup.c`](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/vfs/vfs_lookup.c#L600-L611)).
+The shipped macOS SDK declares `AT_UNIQUE=0x8000` and
+`AT_REMOVEDIR=0x0080`; real tests on the supported host must prove both exact
+rename-bound removal and multi-link rejection. Failure of any primitive keeps
+the backend closed.
 
 The correctness claim is limited to this pairing: the atomic main-file image is
-overlaid by a checksum-valid prefix from the same pinned WAL generation. All
-checksum-valid commits at or before the accepted prefix are recoverable;
-transactions committed after the accepted prefix may be absent until the next
-run. Uncommitted tail frames are never claimed as committed output.
+materialized through the last commit in a checksum-valid prefix from the same
+pinned WAL generation, then opened by exact private-vnode identity. All
+checksum-valid commits at or before the accepted commit boundary are
+recoverable; transactions committed after it may be absent until the next run.
+Uncommitted tail frames are never applied or claimed as committed output.
 
 ## Fixed bounds and errno policy
 
@@ -198,12 +231,18 @@ mocked clone, retry-after-flake, or result from an older SHA is not proof.
 - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_source_main_wal_shm_symlink_and_nonregular_are_unsafe_without_side_effect`
 - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_source_parent_main_wal_and_scratch_path_swaps_fail_closed`
 - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_transient_main_path_swap_restore_cannot_change_fd_clone_source`
+- `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_private_main_swap_restore_cannot_change_descriptor_bound_query`
+- `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_private_scratch_swap_during_connect_cannot_redirect_query`
+- `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_cleanup_rmdir_swap_removes_owned_inode_not_replacement`
 - Cover symlink/non-regular main, WAL, and SHM; parent replacement; main/WAL
   rename replacement; transient source-main swap-and-restore during the clone;
-  scratch replacement; basename membership revalidation; no-follow opens;
-  cleanup without following attacker-controlled paths. The transient-swap test
+  private-main swap-and-restore at SQLite open; scratch replacement; basename
+  membership revalidation; no-follow opens; identity-bound cleanup without
+  deleting attacker-controlled replacements. The transient source-swap test
   must assert the private clone bytes/inode provenance come from the pinned
-  source fd, never the temporary pathname replacement.
+  source fd. The private-swap test must prove SQLite remains bound to the
+  original private vnode, and cleanup must remove the relocated owned directory
+  while preserving the replacement and returning `E_INVARIANT`.
 
 ### 6. Static source immutability
 
@@ -223,10 +262,13 @@ mocked clone, retry-after-flake, or result from an older SHA is not proof.
 
 ### 8. Private-only SQLite effects
 
-- `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_private_query_only_connection_rebuilds_only_private_shm_and_passes_integrity`
+- `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_private_query_only_connection_uses_volume_inode_and_passes_integrity`
 - `tests/adapters/test_opencode_antigravity_grok.py::OpenCodeAdapterTests.test_issue263_cow_connection_validates_opencode_schema_and_private_uri`
-- Assert private percent-encoded URI, private cache, read-back query-only,
-  private-only SHM, integrity result, exact schema, and close-before-cleanup.
+- `tests/unit/test_sqlite_wal_prefix.py::WalPrefixTests.test_materialize_applies_only_committed_private_wal_state`
+- Assert the percent-encoded `/.vol` URI resolves the retained private-main
+  inode, uses private cache plus private-only `immutable=1`, reads query-only
+  back as enabled, does not create SHM, ignores uncommitted tail frames, passes
+  integrity/exact schema, and closes SQLite before exact-vnode cleanup.
 
 ### 9. Fallback contract
 
@@ -289,13 +331,16 @@ real successful `fclonefileat` are present. Minimum non-vacuous evidence:
 - at least 100 coherent continuous-append successes;
 - at least 25 successes each for checkpoint-before-clone and
   checkpoint-after-clone;
+- at least 20 successes where the replaceable private-main pathname is swapped
+  before SQLite open and restored after open while the anchor remains visible;
 - at least 20 forced bounded rejections each for reset, truncate, WAL
   replacement, header/salt change, accepted-prefix mutation, and source
   pathname replacement;
 - `integrity_check=ok` for every success, anchor commit visible, and no future
   or uncommitted row required;
-- zero reader-owned source mutation, zero private scratch leaks, and zero FD
-  leaks;
+- every successful SQLite open uses `file:/.vol/...`; exact-vnode cleanup uses
+  `AT_UNIQUE`; zero reader-owned source mutation, zero private scratch leaks,
+  and zero FD leaks;
 - content-free counters only: exact SHA, OS/build/arch, Python/SQLite versions,
   backend/flags, APFS/same-volume booleans, bounded sizes, outcomes, cleanup
   count, and raw-output SHA-256. No source paths or recovered row text.
@@ -320,3 +365,13 @@ and two exact-mapping Codex callbacks with no major issues
 [second](https://github.com/ImL1s/resume-skills/pull/268#issuecomment-5266080079)).
 Those callbacks approve only the map. The production implementation still
 requires fresh exact-head gates, real APFS proof, CI artifact, and Codex review.
+
+The first implementation review then found two gaps not covered by the original
+map: a scratch-path swap could redirect SQLite before a post-open identity check
+([P1](https://github.com/ImL1s/resume-skills/pull/268#discussion_r3767163004)),
+and stat-then-`rmdir` cleanup could delete a replacement while leaking the owned
+directory
+([P2](https://github.com/ImL1s/resume-skills/pull/268#discussion_r3767163012)).
+Steps 11-13 and evidence rows 5/8 are the mandatory remediation. The earlier
+mapping approvals do not approve this revision; only a fresh review on the
+final implementation SHA can clear it.

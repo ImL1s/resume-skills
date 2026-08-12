@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ctypes
+import errno
 import os
+import stat
 import sys
 from typing import Callable
 
@@ -12,6 +14,9 @@ CLONE_NOOWNERCOPY = 0x0002
 _CLONE_FLAGS = CLONE_NOFOLLOW | CLONE_NOOWNERCOPY
 _MAXPATHLEN = 1024
 _MFSTYPENAMELEN = 16
+_AT_FDCWD = -2
+_AT_REMOVEDIR = 0x0080
+_AT_UNIQUE = 0x8000
 
 
 class DarwinCloneUnavailable(OSError):
@@ -67,6 +72,46 @@ def is_apfs_fd(descriptor: int) -> bool:
     if function(descriptor, ctypes.byref(value)) != 0:
         return False
     return bytes(value.f_fstypename).split(b"\0", 1)[0].lower() == b"apfs"
+
+
+def volume_inode_path(descriptor: int) -> str:
+    """Return Darwin's identity-bound ``/.vol/<device>/<inode>`` path."""
+
+    if sys.platform != "darwin" or type(descriptor) is not int or descriptor < 0:
+        raise DarwinCloneUnavailable("Darwin volume inode path unavailable")
+    try:
+        opened = os.fstat(descriptor)
+    except OSError as error:
+        raise DarwinCloneUnavailable("cannot inspect descriptor identity") from error
+    path = f"/.vol/{opened.st_dev}/{opened.st_ino}"
+    try:
+        resolved = os.stat(path, follow_symlinks=False)
+    except OSError as error:
+        raise DarwinCloneUnavailable("volume inode path unavailable") from error
+    if (
+        resolved.st_dev != opened.st_dev
+        or resolved.st_ino != opened.st_ino
+        or stat.S_IFMT(resolved.st_mode) != stat.S_IFMT(opened.st_mode)
+    ):
+        raise DarwinCloneUnavailable("volume inode identity mismatch")
+    return path
+
+
+def unlink_volume_inode(descriptor: int, *, directory: bool = False) -> None:
+    """Remove exactly one pinned Darwin vnode, rejecting extra path aliases."""
+
+    path = volume_inode_path(descriptor)
+    try:
+        function = _libc().unlinkat
+    except (AttributeError, OSError) as error:
+        raise DarwinCloneUnavailable("unlinkat symbol unavailable") from error
+    function.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+    function.restype = ctypes.c_int
+    flags = _AT_UNIQUE | (_AT_REMOVEDIR if directory else 0)
+    ctypes.set_errno(0)
+    if function(_AT_FDCWD, os.fsencode(path), flags) != 0:
+        error_number = ctypes.get_errno() or errno.EIO
+        raise OSError(error_number, os.strerror(error_number), path)
 
 
 def clone_file_from_fd(

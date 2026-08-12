@@ -211,3 +211,83 @@ def validate_wal_prefix(
         committed_pages=committed_pages,
         sha256=digest.hexdigest(),
     )
+
+
+def materialize_wal_prefix(
+    main_descriptor: int,
+    wal_descriptor: int,
+    prefix: WalPrefix,
+    *,
+    max_logical_bytes: int,
+    deadline_check: DeadlineCheck | None = None,
+) -> None:
+    """Apply the last committed WAL state to one pinned private main file.
+
+    ``prefix`` has already been accepted against the source family.  This
+    function revalidates the copied private WAL descriptor byte-for-byte,
+    overlays frames only through its final commit marker, and truncates the
+    private main file to that commit's declared page count.  It never receives
+    or opens a source pathname.
+    """
+
+    if (
+        type(main_descriptor) is not int
+        or main_descriptor < 0
+        or type(wal_descriptor) is not int
+        or wal_descriptor < 0
+        or not isinstance(prefix, WalPrefix)
+        or type(max_logical_bytes) is not int
+        or max_logical_bytes < 0
+    ):
+        raise DiagnosticError.invalid()
+    check = deadline_check or (lambda: None)
+    verified = validate_wal_prefix(
+        wal_descriptor,
+        source_size=prefix.length,
+        max_bytes=prefix.length,
+        max_frames=prefix.frame_count,
+        deadline_check=check,
+    )
+    if verified != prefix:
+        raise _busy()
+
+    header = _pread_exact(main_descriptor, 100, 0)
+    if header[:16] != b"SQLite format 3\0":
+        raise _busy()
+    encoded_main_page_size = struct.unpack(">H", header[16:18])[0]
+    if _page_size(encoded_main_page_size) != prefix.page_size:
+        raise _busy()
+    if prefix.last_commit_frame == 0:
+        check()
+        return
+
+    logical_size = prefix.committed_pages * prefix.page_size
+    if logical_size <= 0 or logical_size > max_logical_bytes:
+        raise DiagnosticError.limit_exceeded()
+    frame_size = _WAL_FRAME_HEADER_BYTES + prefix.page_size
+    for frame_number in range(1, prefix.last_commit_frame + 1):
+        check()
+        offset = _WAL_HEADER_BYTES + (frame_number - 1) * frame_size
+        frame = _pread_exact(wal_descriptor, frame_size, offset)
+        page_number = struct.unpack(">I", frame[:4])[0]
+        if page_number == 0:
+            raise _busy()
+        if page_number > prefix.committed_pages:
+            continue
+        page = memoryview(frame)[_WAL_FRAME_HEADER_BYTES:]
+        destination_offset = (page_number - 1) * prefix.page_size
+        while page:
+            try:
+                written = os.pwrite(main_descriptor, page, destination_offset)
+            except OSError as error:
+                raise _busy() from error
+            if written <= 0:
+                raise _busy()
+            destination_offset += written
+            page = page[written:]
+    try:
+        os.ftruncate(main_descriptor, logical_size)
+        os.fsync(main_descriptor)
+    except OSError as error:
+        raise _busy() from error
+    check()

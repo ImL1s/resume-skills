@@ -122,8 +122,10 @@ sidecars cannot be handled by the proven backend on the current host. On Darwin,
 OpenCode first attempts a bounded descriptor-bound snapshot only when the source
 and private scratch are same-volume APFS and real `fclonefileat` succeeds. The
 source main/WAL/SHM are pinned no-follow; only a checksum-valid current-generation
-WAL prefix is copied beside an atomic private main clone, and SQLite opens only
-that private family with query-only enabled. Linux, Windows, non-APFS,
+WAL prefix is copied, revalidated, and materialized through its last commit into
+an atomic private main clone. SQLite opens that exact private vnode through a
+verified Darwin `/.vol` identity with query-only enabled; it never opens a
+replaceable scratch pathname or the source. Linux, Windows, non-APFS,
 cross-volume, missing-symbol, and failed-capability paths retain this diagnostic.
 
 The static hint directs the operator to close or quiesce OpenCode and retry once.
@@ -132,6 +134,12 @@ remains in persistent WAL mode and this reader cannot open it safely on that
 host; use an eligible persisted file-store or explicit export fallback instead.
 Never delete or checkpoint WAL manually. OpenCode may return a qualified
 fallback with `W_SOURCE_PROVIDER_SKIPPED`.
+
+`immutable=1` is never used on the changing source family. It is used only for
+the already-materialized private clone, where it prevents SQLite from deriving
+live sidecars and keeps all effects inside reader-owned scratch. Cleanup removes
+only retained private vnode identities and fails `E_INVARIANT` rather than
+deleting a pathname replacement.
 
 ## Installer result exits
 

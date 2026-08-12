@@ -47,7 +47,7 @@ class Issue263APFSProofContractTests(unittest.TestCase):
                 {
                     "ok": False,
                     "reason": "iterations below proof minimum",
-                    "schema": "portable-resume/issue-263-apfs-proof-v1",
+                    "schema": "portable-resume/issue-263-apfs-proof-v2",
                 },
             )
 

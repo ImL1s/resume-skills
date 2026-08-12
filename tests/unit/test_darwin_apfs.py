@@ -11,6 +11,8 @@ from pathlib import Path
 from portable_resume.platform_fs.darwin_apfs import (
     clone_file_from_fd,
     is_apfs_fd,
+    unlink_volume_inode,
+    volume_inode_path,
 )
 
 
@@ -36,6 +38,46 @@ class DarwinApfsTests(unittest.TestCase):
                 os.close(source_fd)
 
             self.assertEqual((root / "private-clone").read_bytes(), b"pinned-original")
+
+    def test_volume_inode_path_and_unlink_stay_bound_across_rename(self) -> None:
+        if sys.platform != "darwin":
+            return
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            owned = root / "owned"
+            owned.mkdir()
+            descriptor = os.open(owned, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            replacement = root / "replacement"
+            moved = root / "moved"
+            try:
+                identity_path = Path(volume_inode_path(descriptor))
+                self.assertEqual(identity_path.stat().st_ino, os.fstat(descriptor).st_ino)
+                owned.rename(moved)
+                replacement.mkdir()
+                replacement.rename(owned)
+                unlink_volume_inode(descriptor, directory=True)
+                self.assertFalse(moved.exists())
+                self.assertTrue(owned.is_dir())
+            finally:
+                os.close(descriptor)
+
+    def test_unique_unlink_rejects_regular_file_with_extra_hard_link(self) -> None:
+        if sys.platform != "darwin":
+            return
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            owned = root / "owned"
+            alias = root / "alias"
+            owned.write_bytes(b"private")
+            os.link(owned, alias)
+            descriptor = os.open(owned, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                with self.assertRaises(OSError):
+                    unlink_volume_inode(descriptor)
+                self.assertTrue(owned.is_file())
+                self.assertTrue(alias.is_file())
+            finally:
+                os.close(descriptor)
 
 
 if __name__ == "__main__":

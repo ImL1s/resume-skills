@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import struct
 import tempfile
 import unittest
 from pathlib import Path
 
 from portable_resume.diagnostics import DiagnosticError
-from portable_resume.sqlite_wal import validate_wal_prefix
+from portable_resume.sqlite_wal import materialize_wal_prefix, validate_wal_prefix
 
 
 def _checksum(data: bytes, *, big_endian: bool, state: tuple[int, int] = (0, 0)) -> tuple[int, int]:
@@ -142,6 +143,58 @@ class WalPrefixTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(DiagnosticError) as caught:
                 self._validate(corrupt)
             self.assertEqual(caught.exception.code, "E_SOURCE_BUSY")
+
+    def test_materialize_applies_only_committed_private_wal_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.sqlite"
+            private = root / "private.sqlite"
+            writer = sqlite3.connect(source)
+            try:
+                writer.execute("PRAGMA page_size=512")
+                writer.execute("PRAGMA journal_mode=WAL")
+                writer.execute("PRAGMA wal_autocheckpoint=0")
+                writer.execute("CREATE TABLE records(id INTEGER PRIMARY KEY, value TEXT)")
+                writer.execute("INSERT INTO records VALUES (1, 'base')")
+                writer.commit()
+                writer.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                private.write_bytes(source.read_bytes())
+                writer.execute("INSERT INTO records VALUES (2, 'committed')")
+                writer.commit()
+                writer.execute("INSERT INTO records VALUES (3, 'uncommitted')")
+
+                wal = Path(str(source) + "-wal")
+                wal_fd = os.open(wal, os.O_RDONLY | os.O_NOFOLLOW)
+                main_fd = os.open(private, os.O_RDWR | os.O_NOFOLLOW)
+                try:
+                    prefix = validate_wal_prefix(
+                        wal_fd,
+                        source_size=wal.stat().st_size,
+                        max_bytes=1024 * 1024,
+                        max_frames=100,
+                    )
+                    materialize_wal_prefix(
+                        main_fd,
+                        wal_fd,
+                        prefix,
+                        max_logical_bytes=1024 * 1024,
+                    )
+                finally:
+                    os.close(main_fd)
+                    os.close(wal_fd)
+
+                reader = sqlite3.connect(f"file:{private}?mode=ro&immutable=1", uri=True)
+                try:
+                    self.assertEqual(
+                        reader.execute("SELECT id, value FROM records ORDER BY id").fetchall(),
+                        [(1, "base"), (2, "committed")],
+                    )
+                    self.assertEqual(reader.execute("PRAGMA integrity_check(1)").fetchone(), ("ok",))
+                finally:
+                    reader.close()
+            finally:
+                writer.rollback()
+                writer.close()
 
 
 if __name__ == "__main__":

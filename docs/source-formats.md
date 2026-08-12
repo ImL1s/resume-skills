@@ -57,9 +57,12 @@ OpenCode SQLite, file-store, and export providers. Synthetic fixtures: `tests/fi
 - **Oversized live WAL (#263):** regular main/WAL/SHM members are pinned and
   validated before use. Darwin may recover through a real same-volume APFS
   `fclonefileat` of the pinned main descriptor plus a bounded checksum-valid
-  current-generation WAL prefix in private `0700` scratch. SQLite, integrity,
-  schema, list, and show access only the query-only private family; source SHM is
-  validated but never copied. Unsupported hosts/capabilities return
+  current-generation WAL prefix in private `0700` scratch. The prefix is
+  materialized through its last commit into the private clone; SQLite,
+  integrity, schema, list, and show then access that exact private vnode through
+  Darwin `/.vol`, never a replaceable pathname. Source SHM is validated but
+  never copied, and the private immutable open creates no SHM. Unsupported
+  hosts/capabilities return
   `E_SQLITE_LIVE_WAL` (`attempts: 0`). A qualified independent file-store or
   explicit export may still be listed/shown with `W_SOURCE_PROVIDER_SKIPPED`;
   its provider and source path remain authoritative. After quiescing, retry

@@ -1,8 +1,9 @@
 """Darwin/APFS private SQLite snapshots for active WAL families.
 
 The source family is handled only through no-follow descriptors.  SQLite is
-opened only after an atomic APFS clone of the pinned main descriptor and a
-checksum-validated WAL prefix have been placed in private scratch.
+opened only after an atomic APFS clone of the pinned main descriptor has been
+materialized through the last checksum-validated WAL commit.  The connection
+uses the exact private vnode, not its replaceable scratch pathname.
 """
 
 from __future__ import annotations
@@ -24,8 +25,20 @@ from urllib.parse import quote
 from .bounds import DEFAULT_BOUNDS, Bounds, validate_bounds
 from .diagnostics import DiagnosticError
 from .paths import canonicalize_cwd, is_within, require_regular_no_symlinks
-from .platform_fs.darwin_apfs import DarwinCloneUnavailable, clone_file_from_fd, is_apfs_fd
-from .sqlite_wal import WalHeader, WalPrefix, validate_wal_header, validate_wal_prefix
+from .platform_fs.darwin_apfs import (
+    DarwinCloneUnavailable,
+    clone_file_from_fd,
+    is_apfs_fd,
+    unlink_volume_inode,
+    volume_inode_path,
+)
+from .sqlite_wal import (
+    WalHeader,
+    WalPrefix,
+    materialize_wal_prefix,
+    validate_wal_header,
+    validate_wal_prefix,
+)
 
 AttemptHook = Callable[[str, int, str], None]
 
@@ -36,7 +49,6 @@ _JOURNAL_NAME = _MAIN_NAME + "-journal"
 _KNOWN_PRIVATE_MEMBERS = frozenset({_MAIN_NAME, _WAL_NAME, _SHM_NAME, _JOURNAL_NAME})
 _SQLITE_COW_RESERVE_BYTES = 64 * 1024 * 1024
 _SCRATCH_NAME_ATTEMPTS = 8
-_SCRATCH_CLEANUP_SCAN_LIMIT = 4_096
 
 _CAPABILITY_ERRNOS = frozenset(
     value
@@ -79,26 +91,6 @@ def _close_quietly(descriptor: int | None) -> None:
         os.close(descriptor)
     except OSError:
         pass
-
-
-def _darwin_descriptor_basename(descriptor: int, parent: str) -> str | None:
-    """Return the current same-parent name of an open Darwin descriptor."""
-
-    if sys.platform != "darwin":
-        return None
-    try:
-        import fcntl
-
-        raw = fcntl.fcntl(descriptor, getattr(fcntl, "F_GETPATH", 50), bytes(1_024))
-        current = os.fsdecode(raw.split(b"\0", 1)[0])
-    except (ImportError, OSError, ValueError):
-        return None
-    if os.path.dirname(current) != parent:
-        return None
-    name = os.path.basename(current)
-    if not name or name in {".", ".."} or "/" in name or "\0" in name:
-        return None
-    return name
 
 
 @dataclass(slots=True)
@@ -174,6 +166,8 @@ class _PrivateScratch:
     parent_fd: int
     directory_fd: int
     directory_identity: tuple[int, int, int]
+    main_fd: int | None = None
+    wal_fd: int | None = None
     closed: bool = False
 
     def verify_entry(self) -> None:
@@ -194,86 +188,72 @@ class _PrivateScratch:
             return
         failure: BaseException | None = None
         entry_mismatch = False
-        relocated_name: str | None = None
         try:
             try:
                 self.verify_entry()
             except DiagnosticError:
-                # The pathname was replaced or the directory was renamed.  We
-                # still own the pinned directory fd and may safely remove only
-                # its known private children.  Never follow or unlink the
-                # attacker's replacement entry at the original name.
                 entry_mismatch = True
+            for attribute in ("wal_fd", "main_fd"):
+                descriptor = getattr(self, attribute)
+                if descriptor is None or descriptor < 0:
+                    continue
+                try:
+                    if sys.platform == "darwin":
+                        unlink_volume_inode(descriptor)
+                    else:
+                        # Non-Darwin execution reaches this only in mocked unit
+                        # tests; the production backend rejects it before clone.
+                        expected = _identity(os.fstat(descriptor))
+                        removed = False
+                        for name in _KNOWN_PRIVATE_MEMBERS:
+                            try:
+                                current = os.stat(
+                                    name,
+                                    dir_fd=self.directory_fd,
+                                    follow_symlinks=False,
+                                )
+                            except FileNotFoundError:
+                                continue
+                            if _identity(current) == expected:
+                                os.unlink(name, dir_fd=self.directory_fd)
+                                removed = True
+                                break
+                        if not removed:
+                            raise DiagnosticError("E_INVARIANT")
+                except FileNotFoundError as error:
+                    if failure is None:
+                        failure = DiagnosticError("E_INVARIANT")
+                        failure.__cause__ = error
+                except (DarwinCloneUnavailable, OSError) as error:
+                    if failure is None:
+                        failure = DiagnosticError("E_INVARIANT")
+                        failure.__cause__ = error
+                finally:
+                    _close_quietly(descriptor)
+                    setattr(self, attribute, None)
             try:
-                names = os.listdir(self.directory_fd)
-            except OSError as error:
-                raise DiagnosticError("E_INVARIANT") from error
-            if any(name not in _KNOWN_PRIVATE_MEMBERS for name in names):
-                raise DiagnosticError("E_INVARIANT")
-            for name in names:
-                try:
-                    current = os.stat(name, dir_fd=self.directory_fd, follow_symlinks=False)
-                except OSError as error:
-                    raise DiagnosticError("E_INVARIANT") from error
-                if not stat.S_ISREG(current.st_mode):
+                if os.listdir(self.directory_fd):
                     raise DiagnosticError("E_INVARIANT")
-                try:
-                    os.unlink(name, dir_fd=self.directory_fd)
-                except OSError as error:
-                    raise DiagnosticError("E_INVARIANT") from error
-            relocated_name = _darwin_descriptor_basename(self.directory_fd, self.parent)
+                if failure is None and sys.platform == "darwin":
+                    unlink_volume_inode(self.directory_fd, directory=True)
+                    try:
+                        os.stat(self.name, dir_fd=self.parent_fd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        entry_mismatch = True
+                elif failure is None:
+                    self.verify_entry()
+                    os.rmdir(self.name, dir_fd=self.parent_fd)
+            except (DarwinCloneUnavailable, OSError) as error:
+                if failure is None:
+                    failure = DiagnosticError("E_INVARIANT")
+                    failure.__cause__ = error
         except BaseException as error:
             failure = error
         finally:
             _close_quietly(self.directory_fd)
             self.directory_fd = -1
-
-        removal_name: str | None = None
-        path_entry: os.stat_result | None = None
-        try:
-            path_entry = os.stat(self.name, dir_fd=self.parent_fd, follow_symlinks=False)
-        except OSError:
-            pass
-        if path_entry is not None and _identity(path_entry) == self.directory_identity:
-            removal_name = self.name
-        if removal_name is None and relocated_name is not None:
-            relocated: os.stat_result | None = None
-            try:
-                relocated = os.stat(
-                    relocated_name,
-                    dir_fd=self.parent_fd,
-                    follow_symlinks=False,
-                )
-            except OSError:
-                pass
-            if relocated is not None and _identity(relocated) == self.directory_identity:
-                removal_name = relocated_name
-        if removal_name is None and failure is None:
-            # Bounded recovery for a same-parent rename.  Directory hard links
-            # are not supported, so the pinned inode can have at most one name.
-            try:
-                os.lseek(self.parent_fd, 0, os.SEEK_SET)
-                with os.scandir(self.parent_fd) as entries:
-                    for index, entry in enumerate(entries):
-                        if index >= _SCRATCH_CLEANUP_SCAN_LIMIT:
-                            raise DiagnosticError("E_INVARIANT")
-                        try:
-                            observed = entry.stat(follow_symlinks=False)
-                        except OSError as error:
-                            raise DiagnosticError("E_INVARIANT") from error
-                        if _identity(observed) == self.directory_identity:
-                            removal_name = entry.name
-                            break
-            except BaseException as error:
-                failure = error
-        if failure is None and removal_name is None:
-            failure = DiagnosticError("E_INVARIANT")
-        if failure is None and removal_name is not None:
-            try:
-                os.rmdir(removal_name, dir_fd=self.parent_fd)
-            except OSError as error:
-                failure = DiagnosticError("E_INVARIANT")
-                failure.__cause__ = error
         _close_quietly(self.parent_fd)
         self.parent_fd = -1
         self.closed = True
@@ -287,7 +267,7 @@ class _PrivateScratch:
 
 @dataclass(slots=True)
 class CowSQLiteSnapshot:
-    """Accepted private main/WAL pair backed by a pinned scratch directory."""
+    """Accepted materialized private database backed by pinned scratch vnodes."""
 
     directory: str
     database: str
@@ -302,8 +282,14 @@ class CowSQLiteSnapshot:
 
     @property
     def uri(self) -> str:
-        encoded = quote(os.path.abspath(self.database), safe="/")
-        return f"file:{encoded}?mode=ro&cache=private"
+        descriptor = self._scratch.main_fd
+        if descriptor is None or descriptor < 0:
+            raise DiagnosticError("E_INVARIANT", provider=self._provider)
+        try:
+            encoded = quote(volume_inode_path(descriptor), safe="/")
+        except DarwinCloneUnavailable as error:
+            raise DiagnosticError("E_INVARIANT", provider=self._provider) from error
+        return f"file:{encoded}?mode=ro&immutable=1&cache=private"
 
     def _call_hook(self, stage: str) -> None:
         if self._hook is not None:
@@ -611,7 +597,7 @@ def _clone_main(
             )
             cloned = os.open(
                 _MAIN_NAME,
-                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
                 dir_fd=scratch.directory_fd,
             )
             try:
@@ -628,8 +614,10 @@ def _clone_main(
                     main_size=cloned_stat.st_size,
                     wal_size=initial_wal_size,
                 )
+                scratch.main_fd = cloned
+                cloned = -1
             finally:
-                os.close(cloned)
+                _close_quietly(cloned)
             return scratch
         except DiagnosticError as error:
             if scratch is not None:
@@ -663,39 +651,37 @@ def _copy_prefix(
     *,
     deadline: _Deadline,
 ) -> str:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
         destination = os.open(_WAL_NAME, flags, 0o600, dir_fd=scratch.directory_fd)
     except OSError as error:
         raise DiagnosticError("E_INVARIANT") from error
     digest = hashlib.sha256()
+    scratch.wal_fd = destination
     offset = 0
-    try:
-        while offset < prefix.length:
-            deadline.check()
-            try:
-                block = os.pread(family.wal_fd, min(64 * 1024, prefix.length - offset), offset)
-            except OSError as error:
-                raise DiagnosticError.source_busy(
-                    family=family.family_names, provider=deadline.provider
-                ) from error
-            if not block:
-                raise DiagnosticError.source_busy(
-                    family=family.family_names, provider=deadline.provider
-                )
-            digest.update(block)
-            view = memoryview(block)
-            while view:
-                written = os.write(destination, view)
-                if written <= 0:
-                    raise DiagnosticError("E_INVARIANT")
-                view = view[written:]
-            offset += len(block)
-        os.fsync(destination)
-        os.fchmod(destination, 0o600)
-    finally:
-        os.close(destination)
+    while offset < prefix.length:
+        deadline.check()
+        try:
+            block = os.pread(family.wal_fd, min(64 * 1024, prefix.length - offset), offset)
+        except OSError as error:
+            raise DiagnosticError.source_busy(
+                family=family.family_names, provider=deadline.provider
+            ) from error
+        if not block:
+            raise DiagnosticError.source_busy(
+                family=family.family_names, provider=deadline.provider
+            )
+        digest.update(block)
+        view = memoryview(block)
+        while view:
+            written = os.write(destination, view)
+            if written <= 0:
+                raise DiagnosticError("E_INVARIANT")
+            view = view[written:]
+        offset += len(block)
+    os.fsync(destination)
+    os.fchmod(destination, 0o600)
     return digest.hexdigest()
 
 
@@ -828,9 +814,22 @@ def _snapshot_attempt(
             deadline=deadline,
         )
         scratch.verify_entry()
+        if scratch.main_fd is None or scratch.wal_fd is None:
+            raise DiagnosticError("E_INVARIANT", provider=provider)
+        materialize_wal_prefix(
+            scratch.main_fd,
+            scratch.wal_fd,
+            prefix,
+            max_logical_bytes=bounds.sqlite_cow_logical_bytes,
+            deadline_check=deadline.check,
+        )
+        try:
+            private_database = volume_inode_path(scratch.main_fd)
+        except DarwinCloneUnavailable as error:
+            raise DiagnosticError("E_INVARIANT", provider=provider) from error
         return CowSQLiteSnapshot(
             directory=scratch.path,
-            database=os.path.join(scratch.path, _MAIN_NAME),
+            database=private_database,
             source_name=family.basename,
             attempts=attempt,
             family=family.family_names,
