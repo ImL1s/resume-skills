@@ -59,6 +59,59 @@ same two CLI entry points. `quick-install` defaults to user-global roots; use
 the lower-level transactional commands below for dry runs, explicit roots,
 verification, backup replacement, or uninstall.
 
+## Windows user install and shared Skill roots
+
+When `pipx` is unavailable, install the wheel into Python's user site and ask
+that interpreter for its own Scripts directory. Do not copy a version-specific
+path such as `Python311\Scripts`; Python minor versions and Store/python.org
+layouts differ.
+
+```powershell
+python -m pip install --user portable-resume
+$scripts = python -c "import sysconfig; print(sysconfig.get_path('scripts', 'nt_user'))"
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+$parts = @($userPath -split ';' | Where-Object { $_ })
+if ($parts -notcontains $scripts) {
+  [Environment]::SetEnvironmentVariable('Path', (@($parts + $scripts) -join ';'), 'User')
+}
+```
+
+Open a **new** PowerShell after updating the User PATH, then install and verify
+the destination profiles you use:
+
+```powershell
+install-resume-skills quick-install claude
+install-resume-skills verify --host claude --scope global
+install-resume-skills quick-install cursor
+install-resume-skills verify --host cursor --scope global
+install-resume-skills quick-install codex
+install-resume-skills verify --host codex --scope global
+```
+
+`quick-install all` preflights the requested profiles, groups aliases of the
+same physical root, locks unique physical roots in deterministic order, and
+leaves each root with a manifest representing its requested claims. When every
+existing claim is included in an older-version coordinated upgrade, that new
+generation is published once. The installer fails closed rather than publishing
+mixed bundle versions. Verify each intended host separately because runtime
+visibility through a junction is not the same as an ownership claim.
+
+An intermediate symlink/junction spelling is rejected before installer control
+state is created. A supported leaf Skill-root alias can participate in a shared
+physical-root claim group. If `E_UNSAFE_PATH` occurs, pass `--root` using the
+physical Skill directory and retry. If `E_VERIFY_MISMATCH` occurs, re-install
+only after inspecting or repairing invalid ownership state; if the mismatch is
+specifically a missing shared-root claim, re-install every intended host claim
+together, then verify each host. Static
+diagnostic hints deliberately contain no discovered paths; use `audit-host` for
+bounded root discovery when needed.
+
+Windows native mutation is supported, but the Windows release hard gate remains
+the focused Claude/Cursor/Codex smoke in
+[`WINDOWS_PRODUCTIZATION.md`](../WINDOWS_PRODUCTIZATION.md). It is not a full
+306/306 Windows installed-runner or host-UI claim. Optional `doctor-path` and
+continue-on-error behavior are not part of this workflow.
+
 ## Public marketplace install
 
 The independent

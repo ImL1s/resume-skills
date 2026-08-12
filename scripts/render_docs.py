@@ -88,7 +88,7 @@ DIAGNOSTIC_SURFACES: dict[str, str] = {
     "E_AMBIGUOUS": "Reader",
     "E_UNSUPPORTED_FORMAT": "Reader",
     "E_CAPABILITY_UNAVAILABLE": "Reader",
-    "E_UNSAFE_PATH": "Reader",
+    "E_UNSAFE_PATH": "Reader and installer",
     "E_SOURCE_BUSY": "Reader",
     "E_SQLITE_HOT_JOURNAL": "Reader",
     "E_LIMIT_EXCEEDED": "Reader",

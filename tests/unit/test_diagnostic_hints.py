@@ -21,6 +21,26 @@ class DiagnosticHintTests(unittest.TestCase):
         payload = json.loads(error.to_json())
         self.assertEqual(payload["hint"], expected)
 
+    def test_windows_install_failures_include_static_content_free_hints(self) -> None:
+        for code, required in (
+            ("E_UNSAFE_PATH", ("symlink/junction", "--root", "install-hosts.md")),
+            ("E_VERIFY_MISMATCH", ("invalid state", "shared-root claim", "re-install")),
+        ):
+            with self.subTest(code=code):
+                error = DiagnosticError(
+                    code,
+                    message="attacker supplied message",
+                    hint="attacker supplied hint",
+                )
+                value = error.to_dict()
+                validate_diagnostic(value)
+                self.assertEqual(value["hint"], _DEFAULT_HINTS[code])
+                self.assertTrue(all(token in value["hint"] for token in required))
+                serialized = json.dumps(value)
+                self.assertNotIn("attacker", serialized)
+                self.assertNotIn("/Users/", serialized)
+                self.assertNotIn("/home/", serialized)
+
     def test_e_no_match_has_null_hint(self) -> None:
         error = DiagnosticError("E_NO_MATCH")
         value = error.to_dict()
@@ -52,7 +72,7 @@ class DiagnosticHintTests(unittest.TestCase):
         self.assertEqual(error.hint, value["hint"])
 
     def test_codes_without_map_entry_emit_null_hint(self) -> None:
-        for code in ("E_INVALID_INPUT", "E_INSTALL_BUSY", "E_VERIFY_MISMATCH"):
+        for code in ("E_INVALID_INPUT", "E_INSTALL_BUSY"):
             with self.subTest(code=code):
                 value = DiagnosticError(code).to_dict()
                 validate_diagnostic(value)

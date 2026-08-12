@@ -90,10 +90,23 @@ _DEFAULT_MESSAGES = {
 # Static, content-free remediation hints (plan 031). Callers cannot inject
 # paths or user data; only codes listed here emit a hint.
 _DEFAULT_HINTS: dict[str, str] = {
+    "E_UNSAFE_PATH": (
+        "Do not use an unsafe symlink/junction spelling or other non-regular path. For "
+        "installer roots, select the physical Skill directory with --root, then retry. "
+        "See https://github.com/ImL1s/resume-skills/blob/main/docs/install-hosts.md"
+        "#windows-user-install-and-shared-skill-roots."
+    ),
     "E_INSTALL_SHADOW": (
         "Run 'install-resume-skills audit-host --host <host> --scope <scope>' "
         "to locate the conflicting root; then uninstall the stale claim or "
         "re-run install with --project/--root."
+    ),
+    "E_VERIFY_MISMATCH": (
+        "Ownership state or installed payload verification failed. Inspect or repair "
+        "invalid state first. If this is specifically a missing shared-root claim, "
+        "re-install every intended host claim together, then "
+        "verify each host separately. See https://github.com/ImL1s/resume-skills/blob/main/"
+        "docs/install-hosts.md#windows-user-install-and-shared-skill-roots."
     ),
 }
 

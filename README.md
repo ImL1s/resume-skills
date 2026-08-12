@@ -78,6 +78,38 @@ install-resume-skills quick-install qwen
 install-resume-skills quick-install qwen --project "$PWD"
 ```
 
+### Windows without pipx
+
+Use Python's actual user-base Scripts directory rather than a hard-coded
+`Python311` path (the directory changes with the interpreter and install
+layout):
+
+```powershell
+python -m pip install --user portable-resume
+$scripts = python -c "import sysconfig; print(sysconfig.get_path('scripts', 'nt_user'))"
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+$parts = @($userPath -split ';' | Where-Object { $_ })
+if ($parts -notcontains $scripts) {
+  [Environment]::SetEnvironmentVariable('Path', (@($parts + $scripts) -join ';'), 'User')
+}
+```
+
+Open a **new** PowerShell after changing the User PATH, then install and verify
+the profiles you use:
+
+```powershell
+install-resume-skills quick-install claude
+install-resume-skills verify --host claude --scope global
+```
+
+Start with and verify the hosts you actually use. `quick-install all` is a
+transactional convenience across the registry-derived profiles, not evidence
+that every destination UI was activated. On Windows, the release hard gate is
+the focused Claude/Cursor/Codex product smoke, **not** 306/306. Shared
+symlink/junction roots are grouped by their physical root and require an
+ownership claim for every intended host. See
+[Windows user install and shared Skill roots](docs/install-hosts.md#windows-user-install-and-shared-skill-roots).
+
 For a host-native public marketplace install, add the
 [`portable-resume-marketplace`](https://github.com/ImL1s/portable-resume-marketplace):
 
