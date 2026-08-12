@@ -112,7 +112,7 @@ jobs:
         run: python scripts/smoke_windows_product_install.py
 
   issue263-apfs-proof:
-    name: issue #263 real APFS COW proof
+    name: "issue #263 real APFS COW proof"
     runs-on: macos-latest
     timeout-minutes: 20
     steps:

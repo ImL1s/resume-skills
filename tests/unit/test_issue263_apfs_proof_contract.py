@@ -14,6 +14,13 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class Issue263APFSProofContractTests(unittest.TestCase):
+    def test_ci_exposes_a_specific_proof_check_name(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('name: "issue #263 real APFS COW proof"', workflow)
+
     def test_below_minimum_fails_before_capability_probe_or_artifact_write(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "proof.json"
