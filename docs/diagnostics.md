@@ -138,7 +138,8 @@ fallback with `W_SOURCE_PROVIDER_SKIPPED`.
 `immutable=1` is never used on the changing source family. It is used only for
 the already-materialized private clone, where it prevents SQLite from deriving
 live sidecars and keeps all effects inside reader-owned scratch. Cleanup removes
-only retained private vnode identities and fails `E_INVARIANT` rather than
+only retained private vnode identities, rejects on the first unknown scratch
+entry without materializing the directory, and fails `E_INVARIANT` rather than
 deleting a pathname replacement.
 
 ## Installer result exits

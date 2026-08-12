@@ -49,6 +49,11 @@ _JOURNAL_NAME = _MAIN_NAME + "-journal"
 _KNOWN_PRIVATE_MEMBERS = frozenset({_MAIN_NAME, _WAL_NAME, _SHM_NAME, _JOURNAL_NAME})
 _SQLITE_COW_RESERVE_BYTES = 64 * 1024 * 1024
 _SCRATCH_NAME_ATTEMPTS = 8
+# Keep the cleanup primitive tied to the actual interpreter host.  Tests may
+# emulate the Darwin capability gate by patching ``sys.platform``; that must
+# not make a Linux process call Darwin-only ``unlinkat(AT_UNIQUE)`` symbols and
+# mask the intended E_SQLITE_LIVE_WAL diagnostic.
+_RUNTIME_IS_DARWIN = sys.platform == "darwin"
 
 _CAPABILITY_ERRNOS = frozenset(
     value
@@ -91,6 +96,16 @@ def _close_quietly(descriptor: int | None) -> None:
         os.close(descriptor)
     except OSError:
         pass
+
+
+def _scratch_directory_empty(descriptor: int) -> bool:
+    """Check scratch emptiness without materializing attacker-added entries."""
+
+    try:
+        with os.scandir(descriptor) as entries:
+            return next(entries, None) is None
+    except OSError as error:
+        raise DiagnosticError("E_INVARIANT") from error
 
 
 @dataclass(slots=True)
@@ -198,7 +213,7 @@ class _PrivateScratch:
                 if descriptor is None or descriptor < 0:
                     continue
                 try:
-                    if sys.platform == "darwin":
+                    if _RUNTIME_IS_DARWIN:
                         unlink_volume_inode(descriptor)
                     else:
                         # Non-Darwin execution reaches this only in mocked unit
@@ -232,9 +247,9 @@ class _PrivateScratch:
                     _close_quietly(descriptor)
                     setattr(self, attribute, None)
             try:
-                if os.listdir(self.directory_fd):
+                if not _scratch_directory_empty(self.directory_fd):
                     raise DiagnosticError("E_INVARIANT")
-                if failure is None and sys.platform == "darwin":
+                if failure is None and _RUNTIME_IS_DARWIN:
                     unlink_volume_inode(self.directory_fd, directory=True)
                     try:
                         os.stat(self.name, dir_fd=self.parent_fd, follow_symlinks=False)

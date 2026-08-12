@@ -61,7 +61,8 @@ OpenCode SQLite, file-store, and export providers. Synthetic fixtures: `tests/fi
   materialized through its last commit into the private clone; SQLite,
   integrity, schema, list, and show then access that exact private vnode through
   Darwin `/.vol`, never a replaceable pathname. Source SHM is validated but
-  never copied, and the private immutable open creates no SHM. Unsupported
+  never copied, the private immutable open creates no SHM, and cleanup rejects
+  the first unknown scratch entry without an unbounded listing. Unsupported
   hosts/capabilities return
   `E_SQLITE_LIVE_WAL` (`attempts: 0`). A qualified independent file-store or
   explicit export may still be listed/shown with `W_SOURCE_PROVIDER_SKIPPED`;

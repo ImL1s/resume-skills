@@ -19,11 +19,15 @@
   exact-vnode `/.vol` SQLite open, identity-bound cleanup, and one absolute
   deadline. Unsupported hosts remain closed as `E_SQLITE_LIVE_WAL`;
   independent qualified file-store/export providers remain usable with
-  `W_SOURCE_PROVIDER_SKIPPED`. A real macOS/APFS CI proof archives content-free
-  exact-head evidence; no source SQLite connection, SHM copy, WAL deletion,
+  `W_SOURCE_PROVIDER_SKIPPED`. A real macOS/APFS CI proof explicitly checks and
+  asserts the PR head, then archives content-free canonical JSON plus an
+  exact-byte SHA-256 sidecar named for that same head; no source SQLite
+  connection, SHM copy, WAL deletion,
   checkpoint, live-source `immutable=1`, or new dependency is used. The
   materialized private clone alone is opened `mode=ro&immutable=1` so a scratch
   pathname replacement cannot redirect SQLite and no private SHM is required.
+  Cleanup rejects the first unknown scratch entry incrementally without an
+  unbounded directory listing.
 - SQLite-family initial state capture now participates in bounded retry
   accounting, preserving unsafe/limit/hot-journal hard failures and cleanup.
 - Reconciled the two shipped schema warning enums with runtime `WARNING_CODES`

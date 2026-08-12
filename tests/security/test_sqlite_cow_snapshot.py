@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import errno
 import hashlib
@@ -14,8 +15,10 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Callable
 from unittest import mock
 
+import portable_resume.sqlite_cow as cow_module
 from portable_resume.bounds import DEFAULT_BOUNDS
 from portable_resume.diagnostics import DiagnosticError
 from portable_resume.platform_fs.darwin_apfs import DarwinCloneUnavailable, is_apfs_fd
@@ -23,6 +26,31 @@ from portable_resume.snapshot import private_sqlite_connection_live_wal_cow
 
 
 class SQLiteCowSnapshotTests(unittest.TestCase):
+    def test_scratch_nonempty_check_stops_after_first_unknown_entry(self) -> None:
+        class HostileEntries:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def __enter__(self) -> "HostileEntries":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def __iter__(self) -> "HostileEntries":
+                return self
+
+            def __next__(self) -> object:
+                self.calls += 1
+                if self.calls == 1:
+                    return SimpleNamespace(name="attacker-entry")
+                raise AssertionError("cleanup must not enumerate a second entry")
+
+        entries = HostileEntries()
+        with mock.patch.object(cow_module.os, "scandir", return_value=entries):
+            self.assertFalse(cow_module._scratch_directory_empty(123))
+        self.assertEqual(entries.calls, 1)
+
     def _live_database(self, root: Path, *, subdirectory: bool = False) -> tuple[Path, sqlite3.Connection]:
         parent = root / "store" if subdirectory else root
         parent.mkdir(exist_ok=True)
@@ -56,6 +84,7 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
     def _file_state(path: Path) -> tuple[tuple[int, int, int, int, int], str, tuple[tuple[str, bytes], ...]]:
         current = path.lstat()
         names: list[str] = []
+        getxattr = getattr(os, "getxattr", None)
         if hasattr(os, "listxattr"):
             try:
                 names = sorted(os.listxattr(path, follow_symlinks=False))
@@ -64,7 +93,10 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
         attributes: list[tuple[str, bytes]] = []
         for name in names:
             try:
-                attributes.append((name, os.getxattr(path, name, follow_symlinks=False)))
+                if callable(getxattr):
+                    attributes.append(
+                        (name, getxattr(path, name, follow_symlinks=False))
+                    )
             except OSError:
                 pass
         identity = (
@@ -116,6 +148,19 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                     side_effect=DarwinCloneUnavailable("missing"),
                 ),
             ),
+            (
+                # Linux CI emulates the Darwin capability branch above.  The
+                # failed clone must use the real host's safe cleanup primitive
+                # rather than trying Darwin-only unlinkat symbols and masking
+                # E_SQLITE_LIVE_WAL with E_INVARIANT.
+                mock.patch("portable_resume.sqlite_cow.sys.platform", "darwin"),
+                mock.patch("portable_resume.sqlite_cow._RUNTIME_IS_DARWIN", False),
+                mock.patch("portable_resume.sqlite_cow.is_apfs_fd", return_value=True),
+                mock.patch(
+                    "portable_resume.sqlite_cow.clone_file_from_fd",
+                    side_effect=DarwinCloneUnavailable("missing"),
+                ),
+            ),
         )
         for patches in scenarios:
             with self.subTest(count=len(patches)), tempfile.TemporaryDirectory() as temporary:
@@ -123,26 +168,24 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                 database, writer = self._live_database(root)
                 before = self._scratch_entries()
                 try:
-                    entered = []
-                    for item in patches:
-                        entered.append(item.__enter__())
-                    with self.assertRaises(DiagnosticError) as caught:
-                        with private_sqlite_connection_live_wal_cow(
-                            database,
-                            root=root,
-                            provider="opencode-sqlite-v1",
-                        ):
-                            self.fail("unsupported backend must not yield")
-                    self.assertEqual(caught.exception.code, "E_SQLITE_LIVE_WAL")
-                    self.assertEqual(caught.exception.exit_code, 6)
-                    self.assertEqual(caught.exception.attempts, 0)
-                    self.assertEqual(caught.exception.provider, "opencode-sqlite-v1")
-                    self.assertIn("opencode.db-wal", caught.exception.family)
-                    self.assertIsNotNone(caught.exception.hint)
-                    self.assertEqual(self._scratch_entries(), before)
+                    with contextlib.ExitStack() as stack:
+                        for patcher in patches:
+                            stack.enter_context(patcher)
+                        with self.assertRaises(DiagnosticError) as caught:
+                            with private_sqlite_connection_live_wal_cow(
+                                database,
+                                root=root,
+                                provider="opencode-sqlite-v1",
+                            ):
+                                self.fail("unsupported backend must not yield")
+                        self.assertEqual(caught.exception.code, "E_SQLITE_LIVE_WAL")
+                        self.assertEqual(caught.exception.exit_code, 6)
+                        self.assertEqual(caught.exception.attempts, 0)
+                        self.assertEqual(caught.exception.provider, "opencode-sqlite-v1")
+                        self.assertIn("opencode.db-wal", caught.exception.family)
+                        self.assertIsNotNone(caught.exception.hint)
+                        self.assertEqual(self._scratch_entries(), before)
                 finally:
-                    for item in reversed(patches):
-                        item.__exit__(None, None, None)
                     writer.close()
 
     def test_append_beyond_accepted_prefix_is_deferred_without_losing_committed_prefix(self) -> None:
@@ -443,8 +486,10 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                         self.fail("scratch pathname swap must not yield")
                 self.assertEqual(caught.exception.code, "E_INVARIANT")
                 self.assertIsNotNone(moved)
+                assert moved is not None
                 self.assertFalse(moved.exists())  # pinned reader-owned scratch was cleaned
                 self.assertIsNotNone(replacement)
+                assert replacement is not None
                 self.assertTrue(replacement.is_dir())  # attacker replacement was not touched
             finally:
                 if replacement is not None and replacement.exists():
@@ -471,12 +516,23 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
             original_clone = cow.clone_file_from_fd
             fired = False
 
-            def clone(source_fd: int, destination_fd: int, name: str, **kwargs: object) -> None:
+            def clone(
+                source_fd: int,
+                destination_fd: int,
+                name: str,
+                *,
+                deadline_check: Callable[[], None] | None = None,
+            ) -> None:
                 nonlocal fired
                 database.rename(saved)
                 decoy.rename(database)
                 try:
-                    original_clone(source_fd, destination_fd, name, **kwargs)
+                    original_clone(
+                        source_fd,
+                        destination_fd,
+                        name,
+                        deadline_check=deadline_check,
+                    )
                     fired = True
                 finally:
                     database.rename(decoy)
@@ -610,7 +666,9 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                 finally:
                     attacker.close()
                 try:
-                    connection = real_connect(database_arg, *args, **kwargs)
+                    connection = real_connect(  # type: ignore[call-overload]
+                        database_arg, *args, **kwargs
+                    )
                     swapped = True
                     return connection
                 finally:
@@ -671,8 +729,10 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                             pass
                 self.assertEqual(caught.exception.code, "E_INVARIANT")
                 self.assertIsNotNone(replacement)
+                assert replacement is not None
                 self.assertTrue(replacement.is_dir())
                 self.assertIsNotNone(moved)
+                assert moved is not None
                 self.assertFalse(moved.exists())
             finally:
                 if replacement is not None and replacement.exists():
@@ -722,7 +782,9 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
 
             def audited_connect(database_arg: str, *args: object, **kwargs: object) -> sqlite3.Connection:
                 uris.append(str(database_arg))
-                return real_connect(database_arg, *args, **kwargs)
+                return real_connect(  # type: ignore[call-overload]
+                    database_arg, *args, **kwargs
+                )
 
             def hook(stage: str, _attempt: int, _source: str) -> None:
                 nonlocal appended

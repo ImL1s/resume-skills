@@ -119,6 +119,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -130,6 +131,7 @@ jobs:
       - name: Prove identity-bound APFS live-WAL snapshots
         env:
           PYTHONPATH: src
+          ISSUE263_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           python scripts/prove_issue263_macos_apfs.py \
             --iterations 200 \
@@ -138,8 +140,10 @@ jobs:
       - name: Upload sanitized APFS proof
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: issue263-apfs-proof-${{ github.sha }}
-          path: issue263-proof/issue263-apfs-proof.json
+          name: issue263-apfs-proof-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            issue263-proof/issue263-apfs-proof.json
+            issue263-proof/issue263-apfs-proof.json.sha256
           if-no-files-found: error
           retention-days: 30
 

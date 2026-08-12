@@ -635,7 +635,13 @@ def _run_rejection(fixture: _Fixture, scenario: str, audit: _MutationAudit) -> N
 def _write_output(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    serialized = (canonical + "\n").encode("ascii")
+    path.write_bytes(serialized)
+    checksum = hashlib.sha256(serialized).hexdigest()
+    path.with_name(path.name + ".sha256").write_text(
+        f"{checksum}  {path.name}\n",
+        encoding="ascii",
+    )
     print(canonical)
 
 
@@ -646,6 +652,10 @@ def main() -> int:
     args = parser.parse_args()
     if args.iterations < MINIMUM_ITERATIONS:
         raise ProofFailure("iterations below proof minimum")
+    sha = _git("rev-parse", "HEAD")
+    expected_sha = os.environ.get("ISSUE263_EXPECTED_SHA")
+    if expected_sha and sha != expected_sha:
+        raise ProofFailure("proof HEAD does not match expected SHA")
     if _git("status", "--porcelain"):
         raise ProofFailure("proof requires a clean exact HEAD")
 
@@ -752,7 +762,6 @@ def main() -> int:
     if _fd_count() != global_fds:
         raise ProofFailure("global descriptor leak")
 
-    sha = _git("rev-parse", "HEAD")
     run_url = None
     if os.environ.get("GITHUB_SERVER_URL") and os.environ.get("GITHUB_REPOSITORY") and os.environ.get("GITHUB_RUN_ID"):
         run_url = (
@@ -809,8 +818,6 @@ def main() -> int:
             "max_source_wal_bytes": max_wal,
         },
     }
-    raw = json.dumps(evidence, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()
-    evidence["raw_output_sha256"] = hashlib.sha256(raw).hexdigest()
     _write_output(args.output, evidence)
     return 0
 

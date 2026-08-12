@@ -130,10 +130,11 @@ and the consumer query.
     retained scratch-directory vnode through its verified `/.vol` identity with
     Darwin `unlinkat(AT_UNIQUE|AT_REMOVEDIR-as-needed)`. `AT_UNIQUE` rejects
     multiple path aliases instead of deleting through an ambiguous name. Reject
-    unknown entries and any scratch-path replacement; never unlink the
-    replacement. Cleanup is idempotent on success, retry, diagnostic,
-    cancellation, consumer exception, and integrity failure. Cleanup failure is
-    `E_INVARIANT`, never silent success.
+    any unknown entry on the first incremental directory result and any
+    scratch-path replacement; never enumerate or materialize attacker-added
+    names and never unlink the replacement. Cleanup is idempotent on success,
+    retry, diagnostic, cancellation, consumer exception, and integrity failure.
+    Cleanup failure is `E_INVARIANT`, never silent success.
 
 The identity/cleanup primitive is Darwin-specific and capability-gated. Apple's
 XNU tests construct `/.vol/<device>/<inode>` paths and verify they resolve the
@@ -234,6 +235,7 @@ mocked clone, retry-after-flake, or result from an older SHA is not proof.
 - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_private_main_swap_restore_cannot_change_descriptor_bound_query`
 - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_private_scratch_swap_during_connect_cannot_redirect_query`
 - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_cleanup_rmdir_swap_removes_owned_inode_not_replacement`
+- `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_scratch_nonempty_check_stops_after_first_unknown_entry`
 - Cover symlink/non-regular main, WAL, and SHM; parent replacement; main/WAL
   rename replacement; transient source-main swap-and-restore during the clone;
   private-main swap-and-restore at SQLite open; scratch replacement; basename
@@ -343,10 +345,15 @@ real successful `fclonefileat` are present. Minimum non-vacuous evidence:
   and zero FD leaks;
 - content-free counters only: exact SHA, OS/build/arch, Python/SQLite versions,
   backend/flags, APFS/same-volume booleans, bounded sizes, outcomes, cleanup
-  count, and raw-output SHA-256. No source paths or recovered row text.
+  count, and an adjacent SHA-256 sidecar over the exact canonical JSON artifact
+  bytes. No source paths or recovered row text, and no self-referential digest
+  field inside the JSON.
 
-The exact-head macOS proof job must archive the sanitized artifact and its
-Actions URL/SHA. Ordinary mocked tests or a skipped CI lane cannot enable the
+The macOS proof job must explicitly checkout the pull-request head SHA, assert
+that SHA inside the harness before probing capabilities, name the artifact with
+that same SHA, and archive both the sanitized JSON and its exact-byte checksum
+sidecar with the Actions URL/SHA. The default synthetic PR merge commit is not
+exact-head proof. Ordinary mocked tests or a skipped CI lane cannot enable the
 backend or close #263.
 
 ## Security-review decision record
@@ -375,3 +382,14 @@ directory
 Steps 11-13 and evidence rows 5/8 are the mandatory remediation. The earlier
 mapping approvals do not approve this revision; only a fresh review on the
 final implementation SHA can clear it.
+
+The next implementation review found one additional P1 and two P2 evidence /
+resource gaps: the proof job checked out GitHub's synthetic PR merge commit
+instead of the exact head
+([P1](https://github.com/ImL1s/resume-skills/pull/268#discussion_r3767439033));
+the JSON embedded a digest of a different pre-digest serialization
+([P2](https://github.com/ImL1s/resume-skills/pull/268#discussion_r3767439048));
+and cleanup materialized every unknown scratch entry with `listdir`
+([P2](https://github.com/ImL1s/resume-skills/pull/268#discussion_r3767439060)).
+The exact-head checkout/assertion, adjacent exact-byte checksum sidecar, and
+single-entry incremental rejection above are mandatory before the final review.
