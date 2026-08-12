@@ -350,7 +350,8 @@ class _MutationAudit:
         source_fd: int,
         destination_dir_fd: int,
         destination_name: str,
-        **kwargs: object,
+        *,
+        deadline_check: Callable[[], None] | None = None,
     ) -> None:
         self.real_clone_calls += 1
         try:
@@ -366,7 +367,7 @@ class _MutationAudit:
             source_fd,
             destination_dir_fd,
             destination_name,
-            **kwargs,
+            deadline_check=deadline_check,
         )
 
 
