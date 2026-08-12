@@ -7,6 +7,15 @@
   physical-root ownership, and the focused Windows evidence boundary. Static,
   content-free hints for `E_UNSAFE_PATH` and `E_VERIFY_MISMATCH` point operators
   to that workflow without exposing selected paths (#247).
+- OpenCode Phase 1 live-WAL handling (#263): oversized live SQLite families now
+  return the closed `E_SQLITE_LIVE_WAL` diagnostic with zero attempts and a
+  static quiesce-and-retry hint. Independent qualified file-store/export
+  providers remain usable with `W_SOURCE_PROVIDER_SKIPPED`. This does **not**
+  implement or prove a live copy-on-write SQLite snapshot backend.
+- SQLite-family initial state capture now participates in bounded retry
+  accounting, preserving unsafe/limit/hot-journal hard failures and cleanup.
+- Reconciled the two shipped schema warning enums with runtime `WARNING_CODES`
+  and added an exact-set regression.
 
 ## [0.4.2] — 2026-08-05
 

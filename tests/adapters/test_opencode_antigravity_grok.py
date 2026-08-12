@@ -116,6 +116,286 @@ class FixtureManifestTests(unittest.TestCase):
 
 
 class OpenCodeAdapterTests(unittest.TestCase):
+    def _live_wal_root(self, temporary: str, *, fallback: bool) -> Path:
+        root = Path(temporary)
+        if fallback:
+            shutil.copytree(fixture_root("opencode", "s-ope-02") / "storage", root / "storage")
+        database = root / "opencode.db"
+        database.write_bytes(b"synthetic-main")
+        Path(str(database) + "-wal").write_bytes(b"synthetic-wal")
+        Path(str(database) + "-shm").write_bytes(b"synthetic-shm")
+        return root
+
+    def test_issue263_live_wal_degrades_to_file_store_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._live_wal_root(temporary, fallback=True)
+            before = tree_snapshot(root)
+            adapter = OpenCodeAdapter(root=str(root))
+            current = query("opencode", root, "ses-file")
+            lowered = replace(DEFAULT_BOUNDS, sqlite_snapshot_bytes=1)
+            with mock.patch("portable_resume.adapters.opencode.DEFAULT_BOUNDS", lowered):
+                report = adapter.probe(current)
+                summaries = adapter.list(current, ReadBudget())
+                shown = adapter.show(resolve(summaries, "ses-file"), current, ReadBudget())
+
+            self.assertEqual(report.state, "partial")
+            self.assertEqual(report.format_id, FILE_FORMAT)
+            self.assertIn("W_SOURCE_PROVIDER_SKIPPED", report.warnings)
+            self.assertEqual([item.provider for item in summaries], [FILE_FORMAT])
+            self.assertIn("W_SOURCE_PROVIDER_SKIPPED", summaries[0].warnings)
+            self.assertIn("W_SOURCE_PROVIDER_SKIPPED", shown.warnings)
+            self.assertEqual(tree_snapshot(root), before)
+
+    def test_issue263_live_wal_without_fallback_rethrows_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._live_wal_root(temporary, fallback=False)
+            adapter = OpenCodeAdapter(root=str(root))
+            current = query("opencode", root)
+            lowered = replace(DEFAULT_BOUNDS, sqlite_snapshot_bytes=1)
+            with mock.patch("portable_resume.adapters.opencode.DEFAULT_BOUNDS", lowered):
+                for operation in (lambda: adapter.probe(current), lambda: adapter.list(current, ReadBudget())):
+                    with self.subTest(operation=operation), self.assertRaises(DiagnosticError) as caught:
+                        operation()
+                    self.assertEqual(caught.exception.code, "E_SQLITE_LIVE_WAL")
+                    self.assertEqual(caught.exception.source, "opencode")
+                    self.assertEqual(caught.exception.attempts, 0)
+                    self.assertEqual(caught.exception.provider, SQLITE_FORMAT)
+
+    def test_issue263_empty_or_ineligible_fallback_does_not_hide_live_wal(self) -> None:
+        for mode in ("empty-file", "ineligible-file", "empty-export", "ineligible-export"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = self._live_wal_root(temporary, fallback=mode == "ineligible-file")
+                if mode == "empty-file":
+                    for name in ("session", "message", "part"):
+                        (root / "storage" / name).mkdir(parents=True, exist_ok=True)
+                elif mode == "empty-export":
+                    (root / "exports").mkdir()
+                elif mode == "ineligible-export":
+                    (root / "exports").mkdir()
+                    shutil.copy2(
+                        fixture_root("opencode", "s-ope-06") / "exports" / "session.json",
+                        root / "exports" / "session.json",
+                    )
+                adapter = OpenCodeAdapter(root=str(root))
+                current = Query(
+                    source="opencode",
+                    ref="definitely-not-present",
+                    cwd="/workspace/different-project",
+                    source_root=str(root),
+                )
+                lowered = replace(DEFAULT_BOUNDS, sqlite_snapshot_bytes=1)
+                with mock.patch("portable_resume.adapters.opencode.DEFAULT_BOUNDS", lowered):
+                    for operation in (
+                        lambda: adapter.probe(current),
+                        lambda: adapter.list(current, ReadBudget()),
+                    ):
+                        with self.assertRaises(DiagnosticError) as caught:
+                            operation()
+                        self.assertEqual(caught.exception.code, "E_SQLITE_LIVE_WAL")
+
+    def test_issue263_alternate_sqlite_without_eligible_rows_does_not_hide_live_wal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._live_wal_root(temporary, fallback=False)
+            _write_opencode_db(
+                root / "opencode.sqlite",
+                sessions=[("other", "/workspace/other", "other", 1, 2)],
+            )
+            current = query("opencode", root, "missing")
+            lowered = replace(DEFAULT_BOUNDS, sqlite_snapshot_bytes=1)
+            with mock.patch("portable_resume.adapters.opencode.DEFAULT_BOUNDS", lowered):
+                with self.assertRaises(DiagnosticError) as caught:
+                    OpenCodeAdapter(root=str(root)).list(current, ReadBudget())
+            self.assertEqual(caught.exception.code, "E_SQLITE_LIVE_WAL")
+
+    def test_issue263_healthy_alternate_sqlite_rows_are_not_labeled_as_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._live_wal_root(temporary, fallback=False)
+            _write_opencode_db(
+                root / "opencode.sqlite",
+                sessions=[("healthy", CWD, "healthy", 1, 2)],
+                messages=[
+                    (
+                        "msg-user",
+                        "healthy",
+                        3,
+                        json.dumps({"role": "user", "content": "question"}),
+                    ),
+                    (
+                        "msg-assistant",
+                        "healthy",
+                        4,
+                        json.dumps({"role": "assistant", "content": "answer"}),
+                    ),
+                ],
+            )
+            adapter = OpenCodeAdapter(root=str(root))
+            current = query("opencode", root, "healthy")
+            lowered = replace(DEFAULT_BOUNDS, sqlite_snapshot_bytes=1)
+            with mock.patch("portable_resume.adapters.opencode.DEFAULT_BOUNDS", lowered):
+                report = adapter.probe(current)
+                summaries = adapter.list(current, ReadBudget())
+                shown = adapter.show(resolve(summaries, "healthy"), current, ReadBudget())
+
+            self.assertEqual(report.format_id, SQLITE_FORMAT)
+            self.assertNotIn("W_SOURCE_PROVIDER_SKIPPED", report.warnings)
+            self.assertEqual([item.provider for item in summaries], [SQLITE_FORMAT])
+            self.assertNotIn("W_SOURCE_PROVIDER_SKIPPED", summaries[0].warnings)
+            self.assertNotIn("W_SOURCE_PROVIDER_SKIPPED", shown.warnings)
+
+    def test_issue263_exact_fallback_ref_stays_bound_when_sqlite_recovers(self) -> None:
+        root = fixture_root("opencode", "s-ope-02")
+        adapter = OpenCodeAdapter(root=str(root))
+        current = query("opencode", root, "ses-file")
+        summary = adapter.list(current, ReadBudget())[0]
+        ref = ResolvedRef.from_summary(replace(summary, warnings=("W_SOURCE_PROVIDER_SKIPPED",)))
+        with mock.patch.object(adapter, "_show_sqlite", side_effect=AssertionError("must not rebind provider")):
+            shown = adapter.show(ref, current, ReadBudget())
+        self.assertEqual(shown.source_path, summary.source_path)
+        self.assertIn("W_SOURCE_PROVIDER_SKIPPED", shown.warnings)
+
+    def test_issue263_exact_sqlite_ref_rejects_different_source_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copy2(fixture_root("opencode", "s-ope-01") / "opencode.db", root)
+            decoy = root / "decoy.db"
+            decoy.write_bytes(b"synthetic-decoy")
+            adapter = OpenCodeAdapter(root=str(root))
+            current = query("opencode", root, "ses-sql")
+            summary = adapter.list(current, ReadBudget())[0]
+            ref = ResolvedRef.from_summary(replace(summary, source_path=str(decoy)))
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.show(ref, current, ReadBudget())
+            self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+    def test_issue263_exact_export_ref_rejects_unapproved_root_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            forged = root / "forged.json"
+            shutil.copy2(
+                fixture_root("opencode", "s-ope-06") / "exports" / "session.json",
+                forged,
+            )
+            adapter = OpenCodeAdapter(root=str(root))
+            ref = ResolvedRef(
+                "ses-export",
+                str(forged),
+                provider=EXPORT_PROVIDER,
+            )
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.show(ref, query("opencode", root, "ses-export"), ReadBudget())
+            self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+    def test_issue263_file_store_show_requires_query_admitted_session_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copytree(fixture_root("opencode", "s-ope-02") / "storage", root / "storage")
+            original = root / "storage" / "session" / "project" / "ses-file.json"
+            forged = root / "storage" / "session" / "forged.txt"
+            value = json.loads(original.read_text())
+            value["id"] = "forged"
+            value["directory"] = CWD
+            forged.write_text(json.dumps(value))
+            adapter = OpenCodeAdapter(root=str(root))
+            ref = ResolvedRef("forged", str(forged), provider=FILE_FORMAT, cwd=CWD)
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.show(ref, query("opencode", root, "forged"), ReadBudget())
+            self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+            wrong_cwd = root / "storage" / "session" / "wrong-cwd.json"
+            value["id"] = "wrong-cwd"
+            value["directory"] = "/workspace/other"
+            wrong_cwd.write_text(json.dumps(value))
+            wrong_ref = ResolvedRef("wrong-cwd", str(wrong_cwd), provider=FILE_FORMAT, cwd="/workspace/other")
+            with self.assertRaises(DiagnosticError) as caught:
+                adapter.show(wrong_ref, query("opencode", root, "wrong-cwd"), ReadBudget())
+            self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+    def test_issue263_unsafe_live_sidecar_does_not_degrade_to_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._live_wal_root(temporary, fallback=True)
+            shm = root / "opencode.db-shm"
+            shm.unlink()
+            shm.symlink_to(root / "opencode.db-wal")
+            adapter = OpenCodeAdapter(root=str(root))
+            lowered = replace(DEFAULT_BOUNDS, sqlite_snapshot_bytes=1)
+            with mock.patch("portable_resume.adapters.opencode.DEFAULT_BOUNDS", lowered):
+                with self.assertRaises(DiagnosticError) as caught:
+                    adapter.list(query("opencode", root), ReadBudget())
+            self.assertEqual(caught.exception.code, "E_UNSAFE_PATH")
+
+    def test_issue263_fallback_duplicate_remains_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copytree(fixture_root("opencode", "s-ope-02") / "storage", root / "storage")
+            exports = root / "exports"
+            exports.mkdir()
+            (exports / "same.json").write_text(
+                json.dumps(
+                    {
+                        "info": {
+                            "id": "ses-file",
+                            "directory": CWD,
+                            "time": {"created": 1, "updated": 2},
+                        },
+                        "messages": [],
+                    }
+                )
+            )
+            adapter = OpenCodeAdapter(root=str(root))
+            current = query("opencode", root, "ses-file", within_min=0)
+            summaries = adapter.list(current, ReadBudget())
+            self.assertEqual({item.provider for item in summaries}, {FILE_FORMAT, EXPORT_PROVIDER})
+            with self.assertRaises(AmbiguousSelection):
+                select_session(
+                    summaries,
+                    ref="ses-file",
+                    cwd=CWD,
+                    approved_roots=(str(root),),
+                )
+
+    def test_issue263_only_live_or_busy_sqlite_errors_degrade(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._live_wal_root(temporary, fallback=True)
+            adapter = OpenCodeAdapter(root=str(root))
+            current = query("opencode", root)
+            for code in (
+                "E_UNSAFE_PATH",
+                "E_CORRUPT_RECORD",
+                "E_SQLITE_HOT_JOURNAL",
+                "E_LIMIT_EXCEEDED",
+            ):
+                error = DiagnosticError(code, source="opencode", provider=SQLITE_FORMAT)
+                with self.subTest(code=code), mock.patch.object(
+                    adapter, "_sqlite_supported", side_effect=error
+                ):
+                    with self.assertRaises(DiagnosticError) as probe_error:
+                        adapter.probe(current)
+                    self.assertEqual(probe_error.exception.code, code)
+                with self.subTest(code=f"list-{code}"), mock.patch.object(
+                    adapter, "_list_sqlite", side_effect=error
+                ):
+                    with self.assertRaises(DiagnosticError) as list_error:
+                        adapter.list(current, ReadBudget())
+                    self.assertEqual(list_error.exception.code, code)
+
+    def test_issue263_probe_does_not_scan_optional_fallback_after_sqlite_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copy2(fixture_root("opencode", "s-ope-01") / "opencode.db", root)
+            shutil.copytree(fixture_root("opencode", "s-ope-02") / "storage", root / "storage")
+            adapter = OpenCodeAdapter(root=str(root))
+
+            with mock.patch.object(
+                adapter,
+                "_list_file_store",
+                side_effect=AssertionError("healthy SQLite probe must not enumerate optional fallback"),
+            ):
+                report = adapter.probe(query("opencode", root))
+
+            self.assertEqual(report.state, "supported")
+            self.assertEqual(report.format_id, SQLITE_FORMAT)
+            self.assertEqual(report.evidence, ("sqlite:opencode.db",))
+
     def test_sqlite_signature_list_show_join_order_and_immutability(self) -> None:
         root = fixture_root("opencode", "s-ope-01")
         before = tree_snapshot(root)

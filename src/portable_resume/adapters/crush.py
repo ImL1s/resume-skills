@@ -562,7 +562,7 @@ class CrushAdapter:
                 with _open_connection(database, root) as connection:
                     _require_schema(connection)
             except DiagnosticError as error:
-                if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"}:
+                if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY", "E_SQLITE_LIVE_WAL"}:
                     return CapabilityReport(self.key, FORMAT_ID, "unsafe", root=root)
                 if error.code in {"E_UNSUPPORTED_FORMAT", "E_CORRUPT_RECORD"}:
                     return CapabilityReport(self.key, FORMAT_ID, "unsupported", root=root)
@@ -571,7 +571,7 @@ class CrushAdapter:
                 self.key, FORMAT_ID, "supported", root=root, evidence=(FORMAT_ID,)
             )
         except DiagnosticError as error:
-            state = "unsafe" if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY"} else "unsupported"
+            state = "unsafe" if error.code in {"E_UNSAFE_PATH", "E_SOURCE_BUSY", "E_SQLITE_LIVE_WAL"} else "unsupported"
             return CapabilityReport(self.key, FORMAT_ID, state)
 
     def list(self, query: Query, budget: ReadBudget) -> list[SessionSummary]:

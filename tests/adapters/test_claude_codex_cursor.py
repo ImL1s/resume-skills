@@ -1992,6 +1992,43 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertEqual(shown.session_id, identifier)
         self.assertEqual(before, tree_snapshot(self.root))
 
+    def test_issue263_live_wal_sqlite_probe_list_show_use_rollout(self) -> None:
+        identifier, _rollout = self.rollout()
+        database = self.database(9, [])
+        Path(str(database) + "-wal").write_bytes(b"synthetic wal")
+        Path(str(database) + "-shm").write_bytes(b"synthetic shm")
+        before = tree_snapshot(self.root)
+        lowered = replace(DEFAULT_BOUNDS, sqlite_snapshot_bytes=1)
+        with mock.patch.object(codex_sqlite, "DEFAULT_BOUNDS", lowered):
+            capability = codex.ADAPTER.probe(self.query())
+            values = codex.ADAPTER.list(self.query(), ReadBudget())
+            shown = codex.ADAPTER.show(
+                ResolvedRef.from_summary(values[0]),
+                self.query(),
+                ReadBudget(),
+            )
+        self.assertEqual(capability.format_id, codex.ROLLOUT_FORMAT)
+        self.assertIn("W_STALE_INDEX", capability.warnings)
+        self.assertEqual([item.session_id for item in values], [identifier])
+        self.assertIn("W_STALE_INDEX", values[0].warnings)
+        self.assertIn("W_STALE_INDEX", shown.warnings)
+        self.assertEqual(before, tree_snapshot(self.root))
+
+    def test_show_drops_list_only_truncation_but_keeps_stale_index_warning(self) -> None:
+        identifier, rollout = self.rollout()
+        shown = codex.ADAPTER.show(
+            ResolvedRef(
+                identifier,
+                str(rollout),
+                provider=codex.ROLLOUT_FORMAT,
+                warnings=("W_TRUNCATED", "W_STALE_INDEX"),
+            ),
+            self.query(),
+            ReadBudget(),
+        )
+        self.assertNotIn("W_TRUNCATED", shown.warnings)
+        self.assertIn("W_STALE_INDEX", shown.warnings)
+
     def test_issue198_dict_source_subagent_soft_skipped(self) -> None:
         parent_id, _parent = self.rollout()
         sub_id = str(uuid.uuid4())

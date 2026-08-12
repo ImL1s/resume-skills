@@ -56,6 +56,7 @@ The table is generated from `ERROR_EXIT_CODES` and the fixed `DiagnosticError` m
 | `E_UNSAFE_PATH` | 6 | The requested path is outside an approved safe root or is not a regular file. | Reader and installer |
 | `E_SOURCE_BUSY` | 6 | The source changed during bounded stable-read attempts. | Reader |
 | `E_SQLITE_HOT_JOURNAL` | 6 | The SQLite family contains an unproven rollback journal. | Reader |
+| `E_SQLITE_LIVE_WAL` | 6 | The SQLite database has live WAL sidecars that cannot be read safely on this host. | Reader |
 | `E_LIMIT_EXCEEDED` | 7 | A configured resource bound was exceeded. | Reader |
 | `E_CORRUPT_RECORD` | 7 | A persisted record is corrupt or invalid. | Reader |
 | `E_INVARIANT` | 8 | An internal contract invariant failed. | Reader and installer |
@@ -98,6 +99,7 @@ The ordinary list/show warnings below are not stderr diagnostics. They ride insi
 - `W_RUNTIME_IDENTITY_DRIFT`
 - `W_SKILL_DUPLICATE`
 - `W_SKILL_SHADOW`
+- `W_SOURCE_PROVIDER_SKIPPED`
 - `W_STALE_INDEX`
 - `W_TRUNCATED`
 - `W_UNKNOWN_RECORD_SKIPPED`
@@ -112,6 +114,18 @@ fall through to bounded plain JSONL discovery under `sessions/` and surface
 `W_STALE_INDEX` on the stdout envelope when the index was skipped or stale.
 Callers should treat that warning as degraded metadata, not as a total hard
 fail, and prefer parent `cli`/`vscode` rollouts when present.
+
+### OpenCode note: oversized live WAL (#263 Phase 1)
+
+`E_SQLITE_LIVE_WAL` is exit 6 with `attempts: 0` when regular live WAL/SHM
+sidecars prevent a safe descriptor-only query. The static hint directs the
+operator to close or quiesce OpenCode and retry once. If the diagnostic persists
+after SQLite removes live sidecars, the main database remains in persistent WAL
+mode and this reader cannot open it safely on that host; use an eligible
+persisted file-store or explicit export fallback instead. Never delete or
+checkpoint WAL manually. OpenCode may return a qualified fallback with
+`W_SOURCE_PROVIDER_SKIPPED`. This is fallback/diagnostic behavior only; no live
+copy-on-write SQLite snapshot backend is implemented or claimed.
 
 ## Installer result exits
 

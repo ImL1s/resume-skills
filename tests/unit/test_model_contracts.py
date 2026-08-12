@@ -162,6 +162,16 @@ class ModelContractTests(unittest.TestCase):
             self.assertFalse(schema["$defs"][name]["additionalProperties"])
         self.assertEqual(schema["properties"]["schema_version"]["const"], "portable-resume/v1")
 
+    def test_schema_warning_enum_exactly_matches_runtime_codes(self) -> None:
+        from portable_resume.diagnostics import WARNING_CODES
+
+        public = json.loads(Path("schemas/portable-resume-v1.schema.json").read_text())
+        bundled = json.loads(
+            Path("src/portable_resume/resources/portable-resume-v1.schema.json").read_text()
+        )
+        self.assertEqual(public, bundled)
+        self.assertEqual(set(public["$defs"]["warning"]["enum"]), set(WARNING_CODES))
+
 
 if __name__ == "__main__":
     unittest.main()
