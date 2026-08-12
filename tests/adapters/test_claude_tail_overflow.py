@@ -118,6 +118,180 @@ class ClaudeTailOverflowTests(unittest.TestCase):
         self.assertEqual(session.last_assistant_action, "answer")
         self.assertIn("W_TRUNCATED", session.warnings)
 
+    def test_tail_fallback_preserves_authoritative_head_cwd(self) -> None:
+        from tests.helpers.core import tree_snapshot
+
+        session_id = str(uuid.uuid4())
+        main_user_id = str(uuid.uuid4())
+        assistant_id = str(uuid.uuid4())
+        worktree = self.root / "worktree"
+        worktree.mkdir()
+        records = [
+            self.turn("user", str(uuid.uuid4()), None, "head request", -5, sessionId=session_id),
+            *({"type": "meta"} for _ in range(10_000)),
+            self.turn(
+                "user",
+                str(uuid.uuid4()),
+                None,
+                "worktree request",
+                -3,
+                sessionId=session_id,
+                cwd=str(worktree),
+            ),
+            self.turn("user", main_user_id, None, "latest request", -2, sessionId=session_id),
+            self.turn("assistant", assistant_id, main_user_id, "answer", -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        self.assertGreater(path.stat().st_size, 128 * 1024)
+        before = tree_snapshot(str(self.root))
+
+        summaries = claude.ADAPTER.list(
+            self.query(),
+            ReadBudget(
+                Bounds(
+                    source_read_bytes=128 * 1024,
+                    record_bytes=64 * 1024,
+                    transcript_records=5_000,
+                    scanned_records=2_000,
+                )
+            ),
+        )
+        self.assertEqual([summary.session_id for summary in summaries], [session_id])
+
+        session = claude.ADAPTER.show(
+            ResolvedRef.from_summary(summaries[0]),
+            self.query(),
+            ReadBudget(
+                Bounds(
+                    source_read_bytes=128 * 1024,
+                    record_bytes=64 * 1024,
+                    transcript_records=5_000,
+                    scanned_records=2_000,
+                )
+            ),
+        )
+        self.assertEqual(session.cwd, str(self.cwd))
+        self.assertEqual(session.last_user_request, "latest request")
+        self.assertEqual(session.last_assistant_action, "answer")
+        self.assertIn("W_TRUNCATED", session.warnings)
+        self.assertEqual(tree_snapshot(str(self.root)), before)
+
+    def test_tail_fallback_uses_tail_cwd_when_head_window_has_none(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        assistant_id = str(uuid.uuid4())
+        records = [
+            *({"type": "meta", "pad": "x" * 128} for _ in range(1_000)),
+            self.turn("user", user_id, None, "latest request", -2, sessionId=session_id),
+            self.turn("assistant", assistant_id, user_id, "answer", -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        budget = ReadBudget(
+            Bounds(
+                source_read_bytes=128 * 1024,
+                record_bytes=64 * 1024,
+                transcript_records=100,
+                scanned_records=2_000,
+            )
+        )
+
+        session = claude.ADAPTER.show(
+            ResolvedRef(session_id, str(path)),
+            self.query(),
+            budget,
+        )
+
+        self.assertEqual(session.cwd, str(self.cwd))
+        self.assertEqual(session.last_assistant_action, "answer")
+        self.assertIn("W_TRUNCATED", session.warnings)
+
+    def test_tail_fallback_preserves_large_terminal_record_and_byte_accounting(self) -> None:
+        session_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+        assistant_id = str(uuid.uuid4())
+        records = [
+            self.turn("user", str(uuid.uuid4()), None, "head request", -5, sessionId=session_id),
+            *({"type": "meta", "pad": "x" * 8_800} for _ in range(100)),
+            self.turn("user", user_id, None, "latest request", -2, sessionId=session_id),
+            self.turn("assistant", assistant_id, user_id, "a" * (90 * 1024), -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        limit = 1024 * 1024
+        self.assertLess(path.stat().st_size, limit)
+        self.assertGreater(path.stat().st_size, 900 * 1024)
+        budget = ReadBudget(
+            Bounds(
+                source_read_bytes=limit,
+                record_bytes=limit,
+                transcript_records=100,
+                scanned_records=2_000,
+            )
+        )
+
+        session = claude.ADAPTER.show(
+            ResolvedRef(session_id, str(path)),
+            self.query(),
+            budget,
+        )
+
+        self.assertEqual(session.cwd, str(self.cwd))
+        self.assertTrue(session.last_assistant_action)
+        self.assertIn("W_TRUNCATED", session.warnings)
+        self.assertEqual(budget.bytes_read, path.stat().st_size)
+
+    def test_transcript_overflow_preserves_head_cwd_when_file_fits_byte_budget(self) -> None:
+        session_id = str(uuid.uuid4())
+        main_user_id = str(uuid.uuid4())
+        assistant_id = str(uuid.uuid4())
+        worktree = self.root / "worktree"
+        worktree.mkdir()
+        records = [
+            self.turn("user", str(uuid.uuid4()), None, "head request", -5, sessionId=session_id),
+            *({"type": "meta"} for _ in range(103)),
+            self.turn(
+                "user",
+                str(uuid.uuid4()),
+                None,
+                "worktree request",
+                -3,
+                sessionId=session_id,
+                cwd=str(worktree),
+            ),
+            self.turn("user", main_user_id, None, "latest request", -2, sessionId=session_id),
+            self.turn("assistant", assistant_id, main_user_id, "answer", -1, sessionId=session_id),
+        ]
+        _, path = self.session(records, identifier=session_id)
+        self.assertEqual(len(records), 107)
+        self.assertLess(path.stat().st_size, 128 * 1024)
+        summaries = claude.ADAPTER.list(
+            self.query(),
+            ReadBudget(
+                Bounds(
+                    source_read_bytes=128 * 1024,
+                    transcript_records=3,
+                    scanned_records=2_000,
+                )
+            ),
+        )
+        self.assertEqual([summary.session_id for summary in summaries], [session_id])
+
+        session = claude.ADAPTER.show(
+            ResolvedRef.from_summary(summaries[0]),
+            self.query(),
+            ReadBudget(
+                Bounds(
+                    source_read_bytes=128 * 1024,
+                    transcript_records=3,
+                    scanned_records=2_000,
+                )
+            ),
+        )
+
+        self.assertEqual(session.cwd, str(self.cwd))
+        self.assertEqual(session.last_user_request, "latest request")
+        self.assertEqual(session.last_assistant_action, "answer")
+        self.assertIn("W_TRUNCATED", session.warnings)
+
     def test_parent_outside_admitted_window_warns_broken_chain(self) -> None:
         session_id = str(uuid.uuid4())
         user_id = str(uuid.uuid4())
