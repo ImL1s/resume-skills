@@ -89,9 +89,11 @@ and the consumer query.
 9. Write only `snapshot.sqlite-wal` in private scratch (`0600`, create-exclusive,
    no-follow). Re-read or digest-and-compare the exact accepted source prefix,
    require current source WAL length `>= N`, and require unchanged full header,
-   source parent membership, and main/WAL pathname identities. Append strictly
+   source parent membership, main/WAL pathname identities, and descriptor-relative
+   absence of a rollback journal immediately before acceptance. Append strictly
    beyond `N` is allowed. Interior mutation, shrink/regrow, generation reset,
-   or pathname replacement rejects the attempt.
+   pathname replacement, or a rollback journal created after initial validation
+   rejects the attempt (`E_SQLITE_HOT_JOURNAL`).
 10. The private family is accepted only after steps 1-9 succeed. Legal source
     changes after that point belong to the next run. Do not compare source main
     content/mtime after the atomic clone: a legal checkpoint may update source
@@ -247,6 +249,7 @@ mocked clone, retry-after-flake, or result from an older SHA is not proof.
 
 - Re-run these exact snapshot regressions:
   - `tests/security/test_snapshot.py::StableSnapshotTests.test_sqlite_rollback_journal_fails_closed`
+  - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_rollback_journal_created_between_validation_and_acceptance_fails_closed`
   - `tests/security/test_snapshot.py::StableSnapshotTests.test_sqlite_family_race_retries_then_busy_and_cleans_private_dirs`
   - `tests/security/test_verifier_regressions.py::VerifierRegressionTests.test_sqlite_post_verification_same_stat_mutation_fails_closed`
 - Update and run these exact runtime/installed-package regressions for the new
