@@ -1590,6 +1590,254 @@ class CodexAdapterTests(unittest.TestCase):
         values = codex.ADAPTER.list(self.query(identifier), ReadBudget())
         self.assertEqual([item.session_id for item in values], [identifier])
 
+    def test_issue260_rejected_heads_do_not_exhaust_matching_head_budget(self) -> None:
+        """Cwd-rejected metadata heads are provisional, not aggregate admission."""
+
+        target, target_path = self.rollout()
+        child = self.cwd / "child"
+        child.mkdir()
+        for index in range(8):
+            identifier = str(uuid.uuid4())
+            self.rollout(
+                identifier,
+                records=[
+                    {
+                        "type": "session_meta",
+                        "timestamp": stamp(-20 - index),
+                        "payload": {
+                            "id": identifier,
+                            "cwd": str(child / str(index)),
+                            "source": "cli",
+                        },
+                    },
+                    {
+                        "type": "world_state",
+                        "payload": {"synthetic": True, "padding": "x" * 300},
+                    },
+                ],
+            )
+        # Deterministically inspect every non-match before the matching rollout
+        # without moving the target outside the default listing age window.
+        target_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+        os.utime(target_path, ns=(target_ns, target_ns))
+        for index, path in enumerate(target_path.parent.glob("*.jsonl"), start=1):
+            if path != target_path:
+                newer = target_ns + index
+                os.utime(path, ns=(newer, newer))
+        limits = replace(DEFAULT_BOUNDS, source_read_bytes=1_024)
+        budget = ReadBudget(limits)
+
+        values = codex.ADAPTER.list(self.query(), budget)
+
+        self.assertEqual([item.session_id for item in values], [target])
+        self.assertLessEqual(budget.bytes_read, target_path.stat().st_size)
+
+    def test_issue260_parent_cwd_miss_is_empty_after_many_leaf_heads(self) -> None:
+        child = self.cwd / "child"
+        child.mkdir()
+        for index in range(8):
+            identifier = str(uuid.uuid4())
+            self.rollout(
+                identifier,
+                records=[
+                    {
+                        "type": "session_meta",
+                        "timestamp": stamp(-index),
+                        "payload": {
+                            "id": identifier,
+                            "cwd": str(child / str(index)),
+                            "source": "cli",
+                        },
+                    },
+                    {
+                        "type": "world_state",
+                        "payload": {"synthetic": True, "padding": "x" * 300},
+                    },
+                ],
+            )
+
+        budget = ReadBudget(replace(DEFAULT_BOUNDS, source_read_bytes=1_024))
+        self.assertEqual(codex.ADAPTER.list(self.query(), budget), [])
+        self.assertEqual(budget.bytes_read, 0)
+
+    def test_issue260_exact_uuid_uses_sparse_exact_discovery(self) -> None:
+        identifier, _path = self.rollout()
+        with mock.patch.object(
+            codex,
+            "_rollout_paths",
+            side_effect=AssertionError("exact UUID must not build the broad rollout list"),
+        ), mock.patch.object(
+            codex,
+            "_read_rollout_head",
+            wraps=codex._read_rollout_head,
+        ) as head:
+            values = codex.ADAPTER.list(self.query(identifier), ReadBudget())
+
+        self.assertEqual([item.session_id for item in values], [identifier])
+        self.assertEqual(head.call_count, 1)
+
+    def test_issue260_exact_uuid_finds_target_beyond_broad_entry_cap(self) -> None:
+        identifier = str(uuid.uuid4())
+        old_day = self.root / "sessions" / "2026" / "07" / "19"
+        target = old_day / f"rollout-2026-07-19T00-00-00-{identifier}.jsonl"
+        write_jsonl(
+            target,
+            [{"type": "session_meta", "timestamp": stamp(), "payload": {"id": identifier, "cwd": str(self.cwd), "source": "cli"}}],
+        )
+        new_day = self.root / "sessions" / "2026" / "07" / "20"
+        new_day.mkdir(parents=True)
+        for _index in range(DEFAULT_BOUNDS.scanned_records + 1):
+            noise = str(uuid.uuid4())
+            (new_day / f"rollout-2026-07-20T00-00-00-{noise}.jsonl").write_bytes(b"{}\n")
+
+        values = codex.ADAPTER.list(self.query(identifier), ReadBudget())
+
+        self.assertEqual([item.session_id for item in values], [identifier])
+        self.assertEqual(Path(values[0].source_path), target)
+
+    def test_issue260_exact_uuid_orders_active_archive_collision_by_mtime(self) -> None:
+        identifier, active = self.rollout()
+        _same, archived = self.rollout(identifier, archived=True)
+        active_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+        os.utime(active, ns=(active_ns, active_ns))
+        os.utime(archived, ns=(active_ns + 1_000_000_000, active_ns + 1_000_000_000))
+
+        values = codex.ADAPTER.list(self.query(identifier), ReadBudget())
+
+        self.assertEqual(len(values), 1)
+        self.assertEqual(Path(values[0].source_path), archived)
+
+    def test_issue260_exact_show_rejects_match_before_incomplete_archive_scan(self) -> None:
+        identifier, _active = self.rollout()
+        _same, _archived = self.rollout(identifier, archived=True)
+        limits = replace(codex.DEFAULT_BOUNDS, transcript_records=8)
+        archive_day = self.root / "archived_sessions" / "2026" / "07" / "20"
+        for _index in range(8):
+            noise = str(uuid.uuid4())
+            (archive_day / f"rollout-2026-07-20T00-00-00-{noise}.jsonl").write_bytes(b"{}\n")
+
+        with mock.patch.object(codex, "DEFAULT_BOUNDS", limits):
+            with self.assertRaises(DiagnosticError) as caught:
+                codex.ADAPTER.show(
+                    ResolvedRef(identifier, None),
+                    self.query(identifier),
+                    ReadBudget(),
+                )
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_issue260_exact_show_rejects_incomplete_no_match(self) -> None:
+        identifier = str(uuid.uuid4())
+        day = self.root / "sessions" / "2026" / "07" / "20"
+        day.mkdir(parents=True)
+        for _index in range(9):
+            noise = str(uuid.uuid4())
+            (day / f"rollout-2026-07-20T00-00-00-{noise}.jsonl").write_bytes(b"{}\n")
+
+        with mock.patch.object(
+            codex,
+            "DEFAULT_BOUNDS",
+            replace(codex.DEFAULT_BOUNDS, transcript_records=8),
+        ):
+            with self.assertRaises(DiagnosticError) as caught:
+                codex.ADAPTER.show(
+                    ResolvedRef(identifier, None),
+                    self.query(identifier),
+                    ReadBudget(),
+                )
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+
+    def test_issue260_exact_show_complete_unique_and_collision_are_deterministic(self) -> None:
+        unique, _path = self.rollout()
+        shown = codex.ADAPTER.show(
+            ResolvedRef(unique, None),
+            self.query(unique),
+            ReadBudget(),
+        )
+        self.assertEqual(shown.session_id, unique)
+
+        collision, _active = self.rollout()
+        _same, _archived = self.rollout(collision, archived=True)
+        with self.assertRaises(DiagnosticError) as caught:
+            codex.ADAPTER.show(
+                ResolvedRef(collision, None),
+                self.query(collision),
+                ReadBudget(),
+            )
+        self.assertEqual(caught.exception.code, "E_NO_MATCH")
+
+    def test_issue260_exact_path_short_circuits_broad_discovery(self) -> None:
+        identifier, path = self.rollout()
+        with mock.patch.object(
+            codex,
+            "_rollout_paths",
+            side_effect=AssertionError("approved exact path must not enumerate rollouts"),
+        ):
+            values = codex.ADAPTER.list(self.query(str(path)), ReadBudget())
+
+        self.assertEqual([item.session_id for item in values], [identifier])
+        self.assertEqual(Path(values[0].source_path), path)
+
+    def test_issue260_exact_path_preserves_archive_and_path_safety(self) -> None:
+        archived, archived_path = self.rollout(archived=True)
+        self.assertEqual(
+            [item.session_id for item in codex.ADAPTER.list(self.query(str(archived_path)), ReadBudget())],
+            [archived],
+        )
+
+        outside = Path(self.temp.name).parent / f"rollout-2026-07-20T00-00-00-{uuid.uuid4()}.jsonl"
+        outside.write_text("{}\n", encoding="utf-8")
+        self.addCleanup(outside.unlink, missing_ok=True)
+        with self.assertRaises(DiagnosticError) as escaped:
+            codex.ADAPTER.list(self.query(str(outside)), ReadBudget())
+        self.assertEqual(escaped.exception.code, "E_UNSAFE_PATH")
+
+        link_id = str(uuid.uuid4())
+        link = self.root / "sessions" / "2026" / "07" / "20" / (
+            f"rollout-2026-07-20T00-00-00-{link_id}.jsonl"
+        )
+        link.parent.mkdir(parents=True)
+        link.symlink_to(archived_path)
+        with self.assertRaises(DiagnosticError) as linked:
+            codex.ADAPTER.list(self.query(str(link)), ReadBudget())
+        self.assertEqual(linked.exception.code, "E_UNSAFE_PATH")
+
+    def test_issue260_broad_zstd_discovery_preserves_matches_provisionally(self) -> None:
+        matching, matching_path = self.rollout(suffix=".jsonl.zst")
+        child = self.cwd / "child"
+        child.mkdir()
+        other = str(uuid.uuid4())
+        _other, other_path = self.rollout(
+            other,
+            suffix=".jsonl.zst",
+            records=[
+                {"type": "session_meta", "timestamp": stamp(), "payload": {"id": other, "cwd": str(child), "source": "cli"}},
+            ],
+        )
+        now_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+        os.utime(matching_path, ns=(now_ns, now_ns))
+        os.utime(other_path, ns=(now_ns + 1_000_000_000, now_ns + 1_000_000_000))
+        budget = ReadBudget(replace(DEFAULT_BOUNDS, source_read_bytes=matching_path.stat().st_size * 2 + 128))
+        with mock.patch.object(codex, "_trusted_zstd", return_value="/trusted/zstd"), mock.patch.object(
+            codex, "_decompress_zstd", side_effect=lambda data, *, max_bytes: data
+        ) as decoder:
+            values = codex.ADAPTER.list(self.query(), budget)
+
+        self.assertEqual([item.session_id for item in values], [matching])
+        self.assertEqual(decoder.call_count, 2)
+        self.assertLessEqual(budget.bytes_read, matching_path.stat().st_size * 2)
+
+    def test_issue260_exact_zstd_keeps_real_decompressed_limit(self) -> None:
+        identifier, path = self.rollout(suffix=".jsonl.zst")
+        with mock.patch.object(codex, "_trusted_zstd", return_value="/trusted/zstd"), mock.patch.object(
+            codex,
+            "_decompress_zstd",
+            side_effect=DiagnosticError.limit_exceeded(),
+        ):
+            with self.assertRaises(DiagnosticError) as caught:
+                codex.ADAPTER.list(self.query(identifier), ReadBudget())
+        self.assertEqual(caught.exception.code, "E_LIMIT_EXCEEDED")
+        self.assertEqual(codex._rollout_id(str(path)), identifier)
+
     def test_list_fs_soft_limit_keeps_db_rows(self) -> None:
         """Soft FS fallback cap must merge, not raise away, verified DB rows (#7)."""
 

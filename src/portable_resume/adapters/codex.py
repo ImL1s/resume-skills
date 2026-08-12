@@ -21,7 +21,13 @@ from typing import Any, Mapping
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
 from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
-from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
+from ..paths import (
+    canonical_root,
+    canonicalize_cwd,
+    is_within,
+    require_regular_no_symlinks,
+    same_cwd,
+)
 from ..sanitize import sanitize_turn_record
 from ..snapshot import StableRead, stable_read_bytes, stable_read_windows, stable_scan_lines
 from .base import CapabilityReport, ResolvedRef
@@ -217,6 +223,13 @@ def _rollout_paths(
     soft_limit: bool = False,
     truncated: list[bool] | None = None,
 ) -> list[str]:
+    exact = _exact_uuid_ref(query.ref)
+    if exact is not None:
+        return _exact_rollout_paths(
+            root,
+            exact,
+            truncated=truncated,
+        )
     scan_state = [0]
     values = _walk_rollouts(
         os.path.join(root, "sessions"),
@@ -242,8 +255,37 @@ def _rollout_paths(
                     truncated=truncated,
                 )
             )
-    exact = _exact_uuid_ref(query.ref)
-    filtered = [path for path in values if exact is None or _rollout_id(path) == exact]
+    def newest(path: str) -> tuple[float, str]:
+        try:
+            return (-os.lstat(path).st_mtime, path)
+        except OSError:
+            return (0.0, path)
+
+    return sorted(values, key=newest)
+
+
+def _exact_rollout_paths(
+    root: str,
+    identifier: str,
+    *,
+    truncated: list[bool] | None = None,
+) -> list[str]:
+    """Find one native UUID with separate directory and filename bounds."""
+
+    directory_visits = [0]
+    name_visits = [0]
+    values: list[str] = []
+    for container in ("sessions", "archived_sessions"):
+        values.extend(
+            _walk_exact_rollouts(
+                os.path.join(root, container),
+                root,
+                identifier,
+                directory_visits=directory_visits,
+                name_visits=name_visits,
+                truncated=truncated,
+            )
+        )
 
     def newest(path: str) -> tuple[float, str]:
         try:
@@ -251,7 +293,91 @@ def _rollout_paths(
         except OSError:
             return (0.0, path)
 
-    return sorted(filtered, key=newest)
+    return sorted(values, key=newest)
+
+
+def _walk_exact_rollouts(
+    container: str,
+    root: str,
+    identifier: str,
+    *,
+    max_depth: int = 4,
+    directory_visits: list[int] | None = None,
+    name_visits: list[int] | None = None,
+    truncated: list[bool] | None = None,
+) -> list[str]:
+    """Filename-aware exact lookup without spending the broad rollout cap.
+
+    Directory traversal retains the conservative ``scanned_records`` ceiling.
+    Irrelevant filenames use the larger transcript-record ceiling because they
+    are inert directory metadata, not admitted rollout records or bodies. If
+    either ceiling stops the lookup, callers receive an honest truncation signal
+    and must not claim an exact miss or unique collision result.
+    """
+
+    if not _regular_directory(container, root):
+        return []
+    directories = directory_visits if directory_visits is not None else [0]
+    names = name_visits if name_visits is not None else [0]
+    output: list[str] = []
+    stopped = [False]
+
+    def stop() -> None:
+        stopped[0] = True
+        if truncated is not None:
+            truncated[0] = True
+
+    def visit(directory: str, depth: int) -> None:
+        if stopped[0]:
+            return
+        directories[0] += 1
+        if directories[0] > DEFAULT_BOUNDS.scanned_records:
+            stop()
+            return
+        child_directories: list[str] = []
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    names[0] += 1
+                    if names[0] > DEFAULT_BOUNDS.transcript_records:
+                        stop()
+                        break
+                    path = os.path.join(directory, entry.name)
+                    if entry.is_symlink():
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        if depth < max_depth:
+                            child_directories.append(path)
+                        continue
+                    if _rollout_id(path) != identifier:
+                        continue
+                    try:
+                        current = os.lstat(path)
+                    except OSError:
+                        continue
+                    if stat.S_ISREG(current.st_mode) and not stat.S_ISLNK(current.st_mode):
+                        output.append(path)
+        except OSError as error:
+            raise DiagnosticError.source_busy(provider=ROLLOUT_FORMAT) from error
+        for child in sorted(child_directories, reverse=True):
+            visit(child, depth + 1)
+
+    visit(container, 0)
+    return output
+
+
+def _exact_rollout_path_ref(root: str, ref: str | None) -> str | None:
+    if not ref or not os.path.isabs(ref):
+        return None
+    path, _base = require_regular_no_symlinks(ref, root)
+    if _rollout_id(path) is None:
+        return None
+    if not any(
+        is_within(path, os.path.join(root, container))
+        for container in ("sessions", "archived_sessions")
+    ):
+        return None
+    return path
 
 
 def _sample_rollout_paths(
@@ -1030,22 +1156,34 @@ def _normalized_turns(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any
     return turns, tuple(dict.fromkeys(warnings))
 
 
+def _provisional_metadata_budget(budget: ReadBudget) -> ReadBudget:
+    return ReadBudget(
+        budget.limits,
+        records=budget.records,
+        transcript_records_read=budget.transcript_records_read,
+        bytes_read=budget.bytes_read,
+        turns=budget.turns,
+    )
+
+
 def _rollout_summary(path: str, root: str, query: Query, budget: ReadBudget) -> SessionSummary | None:
     identifier = _rollout_id(path)
     if identifier is None:
         return None
+    baseline = _provisional_metadata_budget(budget)
+    admitted = _provisional_metadata_budget(baseline)
     if path.endswith(".zst"):
         # Compressed list discovery still needs a trusted decoder; without it skip.
         if _trusted_zstd() is None:
             return None
-        observation, records, warnings, provider = _read_rollout(path, root, budget)
+        observation, records, warnings, provider = _read_rollout(path, root, admitted)
         updated = _mtime(observation)
     else:
         try:
             records, warnings, provider, updated = _read_rollout_head(
                 path,
                 root,
-                budget,
+                admitted,
                 max_records=_PROBE_HEAD_RECORDS,
             )
         except DiagnosticError as error:
@@ -1064,6 +1202,7 @@ def _rollout_summary(path: str, root: str, query: Query, budget: ReadBudget) -> 
         return None
     if not _within(updated, query, identifier):
         return None
+    budget.commit_provisional(baseline, admitted)
     # List path: title from first user-ish record without full turn normalization.
     first_user = None
     for record in records:
@@ -1221,6 +1360,12 @@ class CodexAdapter:
         root = _existing_root(query)
         if root is None:
             raise DiagnosticError("E_CAPABILITY_UNAVAILABLE", source=self.key)
+        if query.ref and os.path.isabs(query.ref):
+            exact_path = _exact_rollout_path_ref(root, query.ref)
+            if exact_path is None:
+                return []
+            item = _rollout_summary(exact_path, root, query, budget)
+            return [] if item is None else [item]
         values: list[SessionSummary] = []
         database_supported = False
         stale_dropped = False
@@ -1309,7 +1454,16 @@ class CodexAdapter:
             # Head-parse up to listed_sessions *new* FS rows so newer FS sessions
             # can outrank older DB rows after merge (not stop at combined count).
             fs_target = DEFAULT_BOUNDS.listed_sessions
-            for path in _rollout_paths(root, query, soft_limit=True, truncated=truncated):
+            paths = (
+                _exact_rollout_paths(
+                    root,
+                    exact_ref,
+                    truncated=truncated,
+                )
+                if exact_ref is not None
+                else _rollout_paths(root, query, soft_limit=True, truncated=truncated)
+            )
+            for path in paths:
                 if fs_added >= fs_target:
                     fs_truncated = True
                     break
@@ -1346,9 +1500,10 @@ class CodexAdapter:
         if len(ranked) > DEFAULT_BOUNDS.listed_sessions:
             ranked = ranked[: DEFAULT_BOUNDS.listed_sessions]
             fs_truncated = True
-        if fs_truncated and not ranked:
-            # Empty + truncated: exact/cwd filters may exclude the soft prefix.
-            # Fail closed so callers do not treat an incomplete scan as no-match.
+        if fs_truncated and (not ranked or exact_ref is not None):
+            # Empty + truncated may exclude a cwd match. Exact UUID truncation
+            # could also hide an active/archive collision, so never claim a
+            # unique exact result from an incomplete lookup.
             raise DiagnosticError.limit_exceeded()
         extra_warnings: list[str] = []
         if fs_truncated:
@@ -1380,7 +1535,16 @@ class CodexAdapter:
             raise DiagnosticError("E_CAPABILITY_UNAVAILABLE", source=self.key)
         path = ref.source_path
         if path is None:
-            matches = [candidate for candidate in _rollout_paths(root, query) if _rollout_id(candidate) == ref.session_id]
+            truncated = [False]
+            matches = _exact_rollout_paths(
+                root,
+                ref.session_id,
+                truncated=truncated,
+            )
+            if truncated[0]:
+                # An incomplete exact scan may hide the only match or an
+                # active/archive collision. Never accept even one prefix hit.
+                raise DiagnosticError.limit_exceeded()
             if len(matches) != 1:
                 raise DiagnosticError("E_NO_MATCH", source=self.key)
             path = matches[0]
