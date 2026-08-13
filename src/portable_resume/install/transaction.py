@@ -700,8 +700,12 @@ def plan_install(
         raise DiagnosticError("E_INVARIANT")
     base_generation = None if existing is None else existing.generation
     base_digest = manifest_content_digest(existing)
-    if existing is not None and existing.bundle_version != BUNDLE_VERSION and existing.claims:
-        # Single version per root: allow update only when all claims move together.
+    if (
+        existing is not None
+        and existing.bundle_version != BUNDLE_VERSION
+        and existing.claims
+    ):
+        # One payload identity per root: allow update only when all claims move together.
         if any(c != claim for c in existing.claims):
             raise DiagnosticError("E_INSTALL_CONFLICT")
     generation = 1 if existing is None else existing.generation + 1
@@ -763,6 +767,37 @@ def plan_install(
         base_manifest_digest=base_digest,
         sources=sources,
     )
+
+
+def _requires_coordinated_upgrade(
+    existing: Manifest | None,
+    requested_identities: set[str],
+) -> bool:
+    """Return whether an owned root must publish all claims as one generation."""
+
+    if len(requested_identities) != 1:
+        raise DiagnosticError("E_INSTALL_CONFLICT")
+    if existing is None or not existing.claims:
+        return False
+    requested = next(iter(requested_identities))
+    recorded = {existing.package_identity}
+    recorded.update(
+        identity
+        for metadata in existing.claims.values()
+        if isinstance((identity := metadata.get("package_identity")), str)
+    )
+    return existing.bundle_version != BUNDLE_VERSION or recorded != {requested}
+
+
+def _group_package_identities(
+    entries: list[tuple[int, MultiTargetBinding]],
+    *,
+    sources: tuple[str, ...] | None,
+) -> set[str]:
+    return {
+        package_identity(materialize_plan(binding.host, sources=sources))
+        for _index, binding in entries
+    }
 
 
 def _plan_coordinated_group(
@@ -4379,13 +4414,13 @@ def install_multi_targets(
         results_by_index: dict[int, dict[str, Any]] = {}
         for key in ordered_keys:
             existing = projected[key]
-            if (
-                existing is not None
-                and existing.bundle_version != BUNDLE_VERSION
-                and existing.claims
+            entries = owner_first(key, existing)
+            if _requires_coordinated_upgrade(
+                existing,
+                _group_package_identities(entries, sources=sources),
             ):
                 _final, per_host = _plan_coordinated_group(
-                    entries=owner_first(key, existing),
+                    entries=entries,
                     scope=scope,
                     existing=existing,
                     dry_run=True,
@@ -4399,7 +4434,7 @@ def install_multi_targets(
                     )
                 continue
             assume_manifest_files = False
-            for index, binding in owner_first(key, existing):
+            for index, binding in entries:
                 plan = plan_install(
                     host=binding.host,
                     scope=scope,
@@ -4425,10 +4460,9 @@ def install_multi_targets(
     for key in ordered_keys:
         existing = load_manifest(key)
         entries = owner_first(key, existing)
-        coordinated = (
-            existing is not None
-            and existing.bundle_version != BUNDLE_VERSION
-            and existing.claims
+        coordinated = _requires_coordinated_upgrade(
+            existing,
+            _group_package_identities(entries, sources=sources),
         )
         if coordinated:
             _plan_coordinated_group(
@@ -4482,9 +4516,7 @@ def install_multi_targets(
             hosts = [binding.host for _index, binding in entries]
             if len(hosts) < 2:
                 continue
-            identities = {
-                package_identity(materialize_plan(host, sources=sources)) for host in hosts
-            }
+            identities = _group_package_identities(entries, sources=sources)
             if len(identities) > 1:
                 raise DiagnosticError("E_INSTALL_CONFLICT", family=tuple(sorted(hosts)))
 
@@ -4492,10 +4524,9 @@ def install_multi_targets(
             lock = lock_by_key[key]
             existing = load_manifest(key)
             entries = owner_first(key, existing)
-            if (
-                existing is not None
-                and existing.bundle_version != BUNDLE_VERSION
-                and existing.claims
+            if _requires_coordinated_upgrade(
+                existing,
+                _group_package_identities(entries, sources=sources),
             ):
                 final_plan, per_host = _plan_coordinated_group(
                     entries=entries,

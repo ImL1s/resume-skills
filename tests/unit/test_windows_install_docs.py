@@ -27,11 +27,12 @@ class WindowsInstallDocsTests(unittest.TestCase):
             self.assertIn("shared", text.lower())
             self.assertIn("physical root", text.lower())
             self.assertRegex(text, r"(?s)(?:\*\*not\*\*|not)\s+(?:a\s+)?(?:full\s+)?306/306")
-        self.assertIn("Verify each intended host separately", guide)
+        self.assertRegex(guide, r"Verify\s+each intended host separately")
         self.assertIn("focused Claude/Cursor/Codex", guide)
         self.assertIn("WINDOWS_PRODUCTIZATION.md", guide)
         self.assertNotIn("publishes one final manifest per root", guide)
-        self.assertIn("older-version coordinated upgrade", guide)
+        self.assertIn("bundle-version **or package-identity** upgrade", guide)
+        self.assertIn("source-checkout", guide)
 
         match = re.search(r"\[Windows user install and shared Skill roots\]\(([^)]+)\)", readme)
         if match is None:
