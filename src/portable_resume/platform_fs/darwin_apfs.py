@@ -90,6 +90,28 @@ def is_apfs_fd(descriptor: int) -> bool:
     return bytes(value.f_fstypename).split(b"\0", 1)[0].lower() == b"apfs"
 
 
+def unique_unlink_supported() -> bool:
+    """Return whether this Darwin kernel recognizes ``AT_UNIQUE``.
+
+    The flag was added after the original ``unlinkat(2)`` ABI.  Probe it with
+    an invalid directory descriptor so the syscall cannot name or remove any
+    filesystem entry: supporting kernels proceed to descriptor validation and
+    return ``EBADF``; older kernels reject the unknown flag as ``EINVAL``.
+    """
+
+    if sys.platform != "darwin":
+        return False
+    try:
+        function = _libc().unlinkat
+    except (AttributeError, OSError):
+        return False
+    function.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+    function.restype = ctypes.c_int
+    ctypes.set_errno(0)
+    result = function(-1, b".", _AT_UNIQUE)
+    return result == -1 and ctypes.get_errno() == errno.EBADF
+
+
 def volume_inode_path(descriptor: int) -> str:
     """Return Darwin's identity-bound ``/.vol/<device>/<inode>`` path."""
 

@@ -34,6 +34,7 @@ The accepted WAL commit is materialized into the private clone and SQLite opens
 its already-unlinked retained Darwin descriptor through a verified `/dev/fd`
 URI, not the mutable scratch pathname. APFS clone-data identity gates reject a
 substituted clone result before WAL materialization.
-Linux, Windows, non-APFS, cross-volume, missing-symbol, and failed-capability
-paths remain `E_SQLITE_LIVE_WAL`; qualified file-store/export fallback keeps the
-OpenCode matrix cell enabled without claiming universal live-WAL support.
+Linux, Windows, non-APFS, cross-volume, missing-symbol, kernels without
+`unlinkat(AT_UNIQUE)`, and other failed-capability paths remain
+`E_SQLITE_LIVE_WAL`; qualified file-store/export fallback keeps the OpenCode
+matrix cell enabled without claiming universal live-WAL support.

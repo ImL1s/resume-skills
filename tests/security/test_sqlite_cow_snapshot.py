@@ -145,6 +145,18 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                 mock.patch("portable_resume.sqlite_cow.sys.platform", "darwin"),
                 mock.patch("portable_resume.sqlite_cow.is_apfs_fd", return_value=True),
                 mock.patch(
+                    "portable_resume.sqlite_cow.unique_unlink_supported",
+                    return_value=False,
+                ),
+            ),
+            (
+                mock.patch("portable_resume.sqlite_cow.sys.platform", "darwin"),
+                mock.patch("portable_resume.sqlite_cow.is_apfs_fd", return_value=True),
+                mock.patch(
+                    "portable_resume.sqlite_cow.unique_unlink_supported",
+                    return_value=True,
+                ),
+                mock.patch(
                     "portable_resume.sqlite_cow.clone_file_from_fd",
                     side_effect=DarwinCloneUnavailable("missing"),
                 ),
@@ -157,6 +169,10 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                 mock.patch("portable_resume.sqlite_cow.sys.platform", "darwin"),
                 mock.patch("portable_resume.sqlite_cow._RUNTIME_IS_DARWIN", False),
                 mock.patch("portable_resume.sqlite_cow.is_apfs_fd", return_value=True),
+                mock.patch(
+                    "portable_resume.sqlite_cow.unique_unlink_supported",
+                    return_value=True,
+                ),
                 mock.patch(
                     "portable_resume.sqlite_cow.clone_file_from_fd",
                     side_effect=DarwinCloneUnavailable("missing"),
@@ -188,6 +204,59 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                         self.assertEqual(self._scratch_entries(), before)
                 finally:
                     writer.close()
+
+    def test_missing_unique_unlink_degrades_before_scratch_without_source_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database, writer = self._live_database(root)
+            members = (
+                database,
+                Path(str(database) + "-wal"),
+                Path(str(database) + "-shm"),
+            )
+            before = {path.name: self._file_state(path) for path in members}
+            before_entries = tuple(sorted(path.name for path in root.iterdir()))
+            before_scratch = self._scratch_entries()
+
+            def forbidden_scratch(*_args: object, **_kwargs: object) -> object:
+                raise AssertionError("scratch must not be allocated without AT_UNIQUE")
+
+            try:
+                with (
+                    mock.patch("portable_resume.sqlite_cow.sys.platform", "darwin"),
+                    mock.patch("portable_resume.sqlite_cow.is_apfs_fd", return_value=True),
+                    mock.patch(
+                        "portable_resume.sqlite_cow.unique_unlink_supported",
+                        return_value=False,
+                    ),
+                    mock.patch(
+                        "portable_resume.sqlite_cow._create_scratch_in",
+                        side_effect=forbidden_scratch,
+                    ),
+                ):
+                    with self.assertRaises(DiagnosticError) as caught:
+                        with private_sqlite_connection_live_wal_cow(
+                            database,
+                            root=root,
+                            provider="opencode-sqlite-v1",
+                        ):
+                            self.fail("missing AT_UNIQUE must not yield")
+                self.assertEqual(caught.exception.code, "E_SQLITE_LIVE_WAL")
+                self.assertNotEqual(caught.exception.code, "E_INVARIANT")
+                self.assertEqual(caught.exception.exit_code, 6)
+                self.assertEqual(caught.exception.attempts, 0)
+                self.assertEqual(caught.exception.provider, "opencode-sqlite-v1")
+                self.assertEqual(
+                    {path.name: self._file_state(path) for path in members},
+                    before,
+                )
+                self.assertEqual(
+                    tuple(sorted(path.name for path in root.iterdir())),
+                    before_entries,
+                )
+                self.assertEqual(self._scratch_entries(), before_scratch)
+            finally:
+                writer.close()
 
     def test_append_beyond_accepted_prefix_is_deferred_without_losing_committed_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

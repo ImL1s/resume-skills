@@ -19,7 +19,8 @@ gate.
 
 - First consumer: OpenCode list/show through a private SQLite snapshot.
 - Enabled backend: Darwin on a real APFS source and same-volume APFS scratch
-  where a real `fclonefileat` call succeeds.
+  where a real `fclonefileat` call succeeds and the running kernel recognizes
+  `unlinkat(AT_UNIQUE)`.
 - Unsupported Darwin filesystems, Linux, Windows, missing symbols, and failed
   capability probes remain `E_SQLITE_LIVE_WAL` (`exit_code: 6`, `attempts: 0`).
 - The reader never opens a SQLite connection to the source family, invokes the
@@ -75,7 +76,11 @@ and the consumer query.
    argument as `int srcfd` and states that the source is identified by that file
    descriptor rather than a path
    (<https://github.com/apple-oss-distributions/xnu/blob/main/bsd/man/man2/clonefile.2>).
-   The `ctypes` wrapper must declare that exact four-argument ABI and a real
+   Before allocating scratch, probe `AT_UNIQUE` with an invalid directory
+   descriptor: supporting kernels proceed to descriptor validation (`EBADF`),
+   while older kernels reject the unknown flag (`EINVAL`). The probe cannot
+   name or remove a filesystem entry. The `ctypes` wrapper must declare that
+   exact four-argument ABI and a real
    descriptor-bound test must prove pathname replacement cannot redirect the
    clone. Before the syscall, read `ATTR_CMNEXT_CLONEID` from the pinned source
    descriptor through `fgetattrlist`. Open the result no-follow and require a
@@ -158,8 +163,10 @@ XNU lookup marks these as volume-file-system paths and rejects a `UNIQUE`
 lookup when the vnode has multiple paths
 ([`vfs_lookup.c`](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/vfs/vfs_lookup.c#L420-L447),
 [`vfs_lookup.c`](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/vfs/vfs_lookup.c#L600-L611)).
-The shipped macOS SDK declares `AT_UNIQUE=0x8000` and
-`AT_REMOVEDIR=0x0080`; real tests on the supported host must prove both exact
+The supported macOS SDK/kernel declares `AT_UNIQUE=0x8000` and
+`AT_REMOVEDIR=0x0080`; older kernels reject the former as an unknown flag, so
+the non-mutating runtime probe is mandatory before scratch allocation. Real
+tests on the supported host must prove both exact
 rename-bound removal and multi-link rejection. Failure of any primitive keeps
 the backend closed.
 

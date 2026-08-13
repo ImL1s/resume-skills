@@ -128,8 +128,11 @@ APFS data-stream ID against the pinned source, unlinks the private main before
 materialization, and rechecks its resulting private data-stream ID at query
 phase boundaries. SQLite opens the retained exact descriptor through a verified
 `/dev/fd` URI with query-only enabled; it never opens a replaceable scratch
-pathname or the source. Linux, Windows, non-APFS,
-cross-volume, missing-symbol, and failed-capability paths retain this diagnostic.
+pathname or the source. Linux, Windows, non-APFS, cross-volume, missing-symbol,
+kernels without `unlinkat(AT_UNIQUE)`, and other failed-capability paths retain
+this diagnostic. The `AT_UNIQUE` check is a non-mutating invalid-descriptor
+syscall probe performed before private scratch allocation, so an unsupported
+kernel cannot leave a cloned database behind.
 
 The static hint directs the operator to close or quiesce OpenCode and retry once.
 If the diagnostic persists after SQLite removes live sidecars, the main database

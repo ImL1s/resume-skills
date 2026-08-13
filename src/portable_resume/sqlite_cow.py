@@ -32,6 +32,7 @@ from .platform_fs.darwin_apfs import (
     clone_file_from_fd,
     descriptor_fd_path,
     is_apfs_fd,
+    unique_unlink_supported,
     unlink_volume_inode,
 )
 from .sqlite_wal import (
@@ -607,7 +608,11 @@ def _clone_main(
     bounds: Bounds,
     deadline: _Deadline,
 ) -> _PrivateScratch:
-    if sys.platform != "darwin" or not is_apfs_fd(family.main_fd):
+    if (
+        sys.platform != "darwin"
+        or not is_apfs_fd(family.main_fd)
+        or not unique_unlink_supported()
+    ):
         raise DiagnosticError(
             "E_SQLITE_LIVE_WAL",
             provider=deadline.provider,

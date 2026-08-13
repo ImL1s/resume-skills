@@ -28,6 +28,9 @@
   materialized, already-unlinked private clone alone is opened
   `mode=ro&immutable=1` so a scratch-path or clone-result substitution cannot
   redirect SQLite and no private SHM is required.
+  Kernels that do not recognize `unlinkat(AT_UNIQUE)` are rejected by a
+  non-mutating invalid-descriptor probe before scratch allocation or cloning,
+  preserving the Phase 1 `E_SQLITE_LIVE_WAL` fallback without residue.
   Cleanup rejects the first unknown scratch entry incrementally without an
   unbounded directory listing.
 - SQLite-family initial state capture now participates in bounded retry

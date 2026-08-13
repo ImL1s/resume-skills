@@ -2,27 +2,84 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+import portable_resume.platform_fs.darwin_apfs as darwin_apfs
 
 from portable_resume.platform_fs.darwin_apfs import (
     clone_data_id,
     clone_file_from_fd,
     descriptor_fd_path,
     is_apfs_fd,
+    unique_unlink_supported,
     unlink_volume_inode,
     volume_inode_path,
 )
 
 
 class DarwinApfsTests(unittest.TestCase):
+    def test_unique_unlink_capability_probe_is_non_mutating_and_kernel_bound(self) -> None:
+        for error_number, expected in (
+            (errno.EBADF, True),
+            (errno.EINVAL, False),
+            (getattr(errno, "ENOTSUP", errno.EINVAL), False),
+        ):
+            with self.subTest(error_number=error_number):
+                function = mock.Mock()
+
+                def probe(*_args: object) -> int:
+                    ctypes.set_errno(error_number)
+                    return -1
+
+                function.side_effect = probe
+                library = SimpleNamespace(unlinkat=function)
+                with (
+                    mock.patch.object(darwin_apfs.sys, "platform", "darwin"),
+                    mock.patch.object(darwin_apfs, "_libc", return_value=library),
+                ):
+                    self.assertEqual(unique_unlink_supported(), expected)
+                function.assert_called_once_with(-1, b".", 0x8000)
+
+    def test_real_unique_unlink_probe_does_not_create_or_remove_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            marker = root / "keep"
+            marker.write_bytes(b"probe")
+            before_scratch = {
+                str(path)
+                for path in Path(tempfile.gettempdir()).glob("portable-resume-cow-*")
+            }
+            before_entries = tuple(sorted(path.name for path in root.iterdir()))
+            supported = unique_unlink_supported()
+            if sys.platform != "darwin":
+                self.assertFalse(supported)
+            else:
+                self.assertIsInstance(supported, bool)
+            self.assertEqual(marker.read_bytes(), b"probe")
+            self.assertEqual(
+                tuple(sorted(path.name for path in root.iterdir())),
+                before_entries,
+            )
+            self.assertEqual(
+                {
+                    str(path)
+                    for path in Path(tempfile.gettempdir()).glob("portable-resume-cow-*")
+                },
+                before_scratch,
+            )
+
     def test_real_fclonefileat_clones_from_pinned_source_fd(self) -> None:
         if sys.platform != "darwin":
             self.assertFalse(is_apfs_fd(-1))
-            return
+            self.skipTest("real fclonefileat proof requires Darwin")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "source"
@@ -59,7 +116,7 @@ class DarwinApfsTests(unittest.TestCase):
 
     def test_descriptor_fd_path_reopens_unlinked_regular_file_identity(self) -> None:
         if sys.platform != "darwin":
-            return
+            self.skipTest("descriptor fd paths require Darwin")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             owned = root / "owned"
@@ -83,7 +140,7 @@ class DarwinApfsTests(unittest.TestCase):
 
     def test_volume_inode_path_and_unlink_stay_bound_across_rename(self) -> None:
         if sys.platform != "darwin":
-            return
+            self.skipTest("volume inode paths require Darwin")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             owned = root / "owned"
@@ -105,7 +162,7 @@ class DarwinApfsTests(unittest.TestCase):
 
     def test_unique_unlink_rejects_regular_file_with_extra_hard_link(self) -> None:
         if sys.platform != "darwin":
-            return
+            self.skipTest("unique unlink requires Darwin")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             owned = root / "owned"
