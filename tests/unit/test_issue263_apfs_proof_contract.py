@@ -19,6 +19,18 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class Issue263APFSProofContractTests(unittest.TestCase):
+    def test_v3_contract_includes_clone_destination_substitution(self) -> None:
+        namespace = runpy.run_path(
+            str(ROOT / "scripts" / "prove_issue263_macos_apfs.py"),
+            run_name="issue263_proof_contract",
+        )
+
+        self.assertEqual(
+            namespace["PROOF_SCHEMA"],
+            "portable-resume/issue-263-apfs-proof-v3",
+        )
+        self.assertIn("clone_destination_swap", namespace["REJECTION_SCENARIOS"])
+
     def test_ci_exposes_a_specific_proof_check_name(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"
@@ -112,7 +124,7 @@ class Issue263APFSProofContractTests(unittest.TestCase):
                 {
                     "ok": False,
                     "reason": "iterations below proof minimum",
-                    "schema": "portable-resume/issue-263-apfs-proof-v2",
+                    "schema": "portable-resume/issue-263-apfs-proof-v3",
                 },
             )
 

@@ -17,6 +17,10 @@ _MFSTYPENAMELEN = 16
 _AT_FDCWD = -2
 _AT_REMOVEDIR = 0x0080
 _AT_UNIQUE = 0x8000
+_ATTR_BIT_MAP_COUNT = 5
+_ATTR_CMNEXT_CLONEID = 0x00000100
+_FSOPT_ATTR_CMN_EXTENDED = 0x00000020
+_CLONE_ID_RESULT_BYTES = 12
 
 
 class DarwinCloneUnavailable(OSError):
@@ -46,6 +50,18 @@ class _StatFs(ctypes.Structure):
         ("f_mntfromname", ctypes.c_char * _MAXPATHLEN),
         ("f_flags_ext", ctypes.c_uint32),
         ("f_reserved", ctypes.c_uint32 * 7),
+    ]
+
+
+class _AttrList(ctypes.Structure):
+    _fields_ = [
+        ("bitmapcount", ctypes.c_uint16),
+        ("reserved", ctypes.c_uint16),
+        ("commonattr", ctypes.c_uint32),
+        ("volattr", ctypes.c_uint32),
+        ("dirattr", ctypes.c_uint32),
+        ("fileattr", ctypes.c_uint32),
+        ("forkattr", ctypes.c_uint32),
     ]
 
 
@@ -97,6 +113,91 @@ def volume_inode_path(descriptor: int) -> str:
     return path
 
 
+def clone_data_id(descriptor: int) -> int:
+    """Return the descriptor's APFS pure-clone data-stream identity."""
+
+    if sys.platform != "darwin" or type(descriptor) is not int or descriptor < 0:
+        raise DarwinCloneUnavailable("Darwin clone identity unavailable")
+    try:
+        opened = os.fstat(descriptor)
+    except OSError as error:
+        raise DarwinCloneUnavailable("cannot inspect clone descriptor") from error
+    if not stat.S_ISREG(opened.st_mode):
+        raise DarwinCloneUnavailable("clone identity requires a regular file")
+    try:
+        function = _libc().fgetattrlist
+    except (AttributeError, OSError) as error:
+        raise DarwinCloneUnavailable("fgetattrlist symbol unavailable") from error
+    function.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(_AttrList),
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_ulong,
+    ]
+    function.restype = ctypes.c_int
+    attributes = _AttrList(
+        _ATTR_BIT_MAP_COUNT,
+        0,
+        0,
+        0,
+        0,
+        0,
+        _ATTR_CMNEXT_CLONEID,
+    )
+    result = (ctypes.c_ubyte * _CLONE_ID_RESULT_BYTES)()
+    ctypes.set_errno(0)
+    if (
+        function(
+            descriptor,
+            ctypes.byref(attributes),
+            result,
+            len(result),
+            _FSOPT_ATTR_CMN_EXTENDED,
+        )
+        != 0
+    ):
+        error_number = ctypes.get_errno() or errno.EIO
+        raise OSError(error_number, os.strerror(error_number))
+    raw = bytes(result)
+    returned = int.from_bytes(raw[:4], byteorder=sys.byteorder, signed=False)
+    clone_id = int.from_bytes(raw[4:12], byteorder=sys.byteorder, signed=False)
+    if returned != _CLONE_ID_RESULT_BYTES or clone_id == 0:
+        raise DarwinCloneUnavailable("APFS clone identity unavailable")
+    return clone_id
+
+
+def descriptor_fd_path(descriptor: int) -> str:
+    """Return a verified process-local path that reopens the exact descriptor."""
+
+    if sys.platform != "darwin" or type(descriptor) is not int or descriptor < 0:
+        raise DarwinCloneUnavailable("Darwin descriptor path unavailable")
+    try:
+        expected = os.fstat(descriptor)
+    except OSError as error:
+        raise DarwinCloneUnavailable("cannot inspect private descriptor") from error
+    if not stat.S_ISREG(expected.st_mode):
+        raise DarwinCloneUnavailable("descriptor path requires a regular file")
+    path = f"/dev/fd/{descriptor}"
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    probe: int | None = None
+    try:
+        probe = os.open(path, flags)
+        reopened = os.fstat(probe)
+    except OSError as error:
+        raise DarwinCloneUnavailable("descriptor path unavailable") from error
+    finally:
+        if probe is not None:
+            os.close(probe)
+    if (
+        reopened.st_dev != expected.st_dev
+        or reopened.st_ino != expected.st_ino
+        or stat.S_IFMT(reopened.st_mode) != stat.S_IFMT(expected.st_mode)
+    ):
+        raise DarwinCloneUnavailable("descriptor path identity mismatch")
+    return path
+
+
 def unlink_volume_inode(descriptor: int, *, directory: bool = False) -> None:
     """Remove exactly one pinned Darwin vnode, rejecting extra path aliases."""
 
@@ -120,7 +221,7 @@ def clone_file_from_fd(
     destination_name: str,
     *,
     deadline_check: Callable[[], None] | None = None,
-) -> None:
+) -> int:
     """Clone one pinned source file into a pinned destination directory."""
 
     if (
@@ -136,6 +237,8 @@ def clone_file_from_fd(
     ):
         raise ValueError("invalid descriptor clone arguments")
     check = deadline_check or (lambda: None)
+    check()
+    source_clone_id = clone_data_id(source_fd)
     check()
     try:
         function = _libc().fclonefileat
@@ -154,3 +257,4 @@ def clone_file_from_fd(
     check()
     if result != 0:
         raise OSError(error_number, os.strerror(error_number))
+    return source_clone_id

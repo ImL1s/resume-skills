@@ -45,8 +45,9 @@ CHECKPOINT_BEFORE_SUCCESSES = 25
 CHECKPOINT_AFTER_SUCCESSES = 25
 PRIVATE_PATH_SWAP_SUCCESSES = 20
 REJECTIONS_PER_SCENARIO = 20
-PROOF_SCHEMA = "portable-resume/issue-263-apfs-proof-v2"
+PROOF_SCHEMA = "portable-resume/issue-263-apfs-proof-v3"
 REJECTION_SCENARIOS = (
+    "clone_destination_swap",
     "restart_reset",
     "truncate_reset",
     "wal_replace",
@@ -242,6 +243,8 @@ class _MutationAudit:
         self.reader_descriptor_bound_sqlite_connects = 0
         self.clone_destinations_under_source = 0
         self.real_clone_calls = 0
+        self.clone_destination_swaps = 0
+        self.swap_next_clone_destination = False
         self.exact_private_unlinks = 0
         self._original_open = os.open
         self._original_clone = cow_module.clone_file_from_fd
@@ -295,7 +298,7 @@ class _MutationAudit:
         if event == "sqlite3.connect" and args:
             if self._under_source(args[0]) or any(root in str(args[0]) for root in self.source_roots):
                 self.reader_source_sqlite_connects += 1
-            if str(args[0]).startswith("file:/.vol/"):
+            if str(args[0]).startswith("file:/dev/fd/"):
                 self.reader_descriptor_bound_sqlite_connects += 1
             return
         if event == "open" and len(args) >= 3:
@@ -359,7 +362,7 @@ class _MutationAudit:
         destination_name: str,
         *,
         deadline_check: Callable[[], None] | None = None,
-    ) -> None:
+    ) -> int:
         self.real_clone_calls += 1
         try:
             import fcntl
@@ -370,12 +373,68 @@ class _MutationAudit:
             raise ProofFailure("cannot bind clone destination")
         if any(is_within(destination, root) for root in self.source_roots):
             self.clone_destinations_under_source += 1
-        self._original_clone(
+        source_clone_id = self._original_clone(
             source_fd,
             destination_dir_fd,
             destination_name,
             deadline_check=deadline_check,
         )
+        if self.swap_next_clone_destination:
+            self.swap_next_clone_destination = False
+            destination_path = os.path.join(destination, destination_name)
+            with self.as_owner("fixture"):
+                os.unlink(destination_path)
+                replacement = self._original_open(
+                    destination_path,
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    0o600,
+                )
+                try:
+                    offset = 0
+                    source_size = os.fstat(source_fd).st_size
+                    while offset < source_size:
+                        block = os.pread(source_fd, min(64 * 1024, source_size - offset), offset)
+                        if not block:
+                            raise ProofFailure("clone swap source copy ended early")
+                        view = memoryview(block)
+                        while view:
+                            written = os.write(replacement, view)
+                            if written <= 0:
+                                raise ProofFailure("clone swap replacement write failed")
+                            view = view[written:]
+                        offset += len(block)
+                    os.fsync(replacement)
+                finally:
+                    os.close(replacement)
+                crafted = sqlite3.connect(destination_path)
+                try:
+                    changed = crafted.execute(
+                        "UPDATE records SET value='forged' WHERE id=1"
+                    ).rowcount
+                    if changed != 1:
+                        raise ProofFailure("clone swap replacement row missing")
+                    crafted.commit()
+                    checkpoint = crafted.execute(
+                        "PRAGMA wal_checkpoint(TRUNCATE)"
+                    ).fetchone()
+                    if checkpoint is None or checkpoint[0] != 0:
+                        raise ProofFailure("clone swap replacement checkpoint failed")
+                    if crafted.execute("PRAGMA integrity_check(1)").fetchone() != (
+                        "ok",
+                    ):
+                        raise ProofFailure("clone swap replacement integrity failed")
+                finally:
+                    crafted.close()
+                for suffix in ("-wal", "-shm", "-journal"):
+                    Path(destination_path + suffix).unlink(missing_ok=True)
+                if os.stat(destination_path, follow_symlinks=False).st_size != source_size:
+                    raise ProofFailure("clone swap replacement size changed")
+            self.clone_destination_swaps += 1
+        return source_clone_id
 
     def audited_unlink_volume_inode(self, descriptor: int, *, directory: bool = False) -> None:
         current = self._descriptor_path(descriptor)
@@ -492,8 +551,8 @@ def _run_success(
             private_database = Path(connection.execute("PRAGMA database_list").fetchone()[2])
             if is_within(private_database, fixture.root):
                 raise ProofFailure("private SQLite opened below source root")
-            if not str(private_database).startswith("/.vol/"):
-                raise ProofFailure("private SQLite did not use a volume-inode URI")
+            if not str(private_database).startswith("/dev/fd/"):
+                raise ProofFailure("private SQLite did not use a descriptor URI")
     finally:
         setattr(cow_module.sqlite3, "connect", real_connect)
         audit.active = False
@@ -588,15 +647,18 @@ def _run_rejection(fixture: _Fixture, scenario: str, audit: _MutationAudit) -> N
         "header_salt_change": "after-clone",
         "accepted_prefix_mutation": "after-wal-copy",
         "source_pathname_replacement": "after-family-pin",
-    }[scenario]
+    }.get(scenario)
+    if scenario != "clone_destination_swap" and stage is None:
+        raise ProofFailure("unknown rejection scenario")
     scratch_before = _scratch_entries()
     fds_before = _fd_count()
     fired = False
     cleanup: Callable[[], None] = _noop
+    clone_swaps_before = audit.clone_destination_swaps
 
     def hook(current: str, _attempt: int, _source: str) -> None:
         nonlocal fired, cleanup
-        if current == stage and not fired:
+        if stage is not None and current == stage and not fired:
             fired = True
             with audit.as_owner("fixture"):
                 _expected, cleanup = _mutate_rejection(fixture, scenario, audit)
@@ -604,6 +666,8 @@ def _run_rejection(fixture: _Fixture, scenario: str, audit: _MutationAudit) -> N
     audit.source_roots.add(str(fixture.root.resolve()))
     audit.owner.value = "reader"
     audit.active = True
+    if scenario == "clone_destination_swap":
+        audit.swap_next_clone_destination = True
     try:
         try:
             with private_sqlite_connection_live_wal_cow(
@@ -615,15 +679,22 @@ def _run_rejection(fixture: _Fixture, scenario: str, audit: _MutationAudit) -> N
             ):
                 raise ProofFailure("forced rejection yielded a connection")
         except DiagnosticError as error:
-            if error.code != "E_SOURCE_BUSY" or error.attempts != 1:
+            expected_code = (
+                "E_INVARIANT" if scenario == "clone_destination_swap" else "E_SOURCE_BUSY"
+            )
+            expected_attempts = None if scenario == "clone_destination_swap" else 1
+            if error.code != expected_code or error.attempts != expected_attempts:
                 raise ProofFailure(
                     f"forced rejection {scenario} returned {error.code} "
                     f"with attempts={error.attempts!r}"
                 ) from error
     finally:
+        audit.swap_next_clone_destination = False
         audit.active = False
         audit.owner.value = "fixture"
         cleanup()
+    if scenario == "clone_destination_swap":
+        fired = audit.clone_destination_swaps == clone_swaps_before + 1
     if not fired:
         raise ProofFailure("rejection hook did not run")
     if _scratch_entries() != scratch_before:
@@ -787,7 +858,10 @@ def main() -> int:
             "apfs": apfs,
             "same_volume": same_volume,
             "real_clone_calls": audit.real_clone_calls,
-            "volume_inode_uri": True,
+            "descriptor_fd_uri": True,
+            "clone_data_id_bound": True,
+            "clone_destination_swap_rejected": True,
+            "private_main_unlinked_before_materialization": True,
             "private_immutable": True,
             "wal_materialized": True,
             "unique_unlink": True,

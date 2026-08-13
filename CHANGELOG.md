@@ -16,16 +16,18 @@
   bounded, descriptor-pinned private snapshot only on Darwin with real APFS
   `fclonefileat`, same-volume private scratch, checksum-valid current-generation
   WAL prefix materialized through its last commit into the private clone,
-  exact-vnode `/.vol` SQLite open, identity-bound cleanup, and one absolute
-  deadline. Unsupported hosts remain closed as `E_SQLITE_LIVE_WAL`;
+  source/destination APFS clone-data-ID binding, immediate private-main unlink,
+  verified descriptor `/dev/fd` SQLite open, identity-bound cleanup, and one
+  absolute deadline. Unsupported hosts remain closed as `E_SQLITE_LIVE_WAL`;
   independent qualified file-store/export providers remain usable with
   `W_SOURCE_PROVIDER_SKIPPED`. A real macOS/APFS CI proof explicitly checks and
   asserts the PR head, then archives content-free canonical JSON plus an
   exact-byte SHA-256 sidecar named for that same head; no source SQLite
   connection, SHM copy, WAL deletion,
   checkpoint, live-source `immutable=1`, or new dependency is used. The
-  materialized private clone alone is opened `mode=ro&immutable=1` so a scratch
-  pathname replacement cannot redirect SQLite and no private SHM is required.
+  materialized, already-unlinked private clone alone is opened
+  `mode=ro&immutable=1` so a scratch-path or clone-result substitution cannot
+  redirect SQLite and no private SHM is required.
   Cleanup rejects the first unknown scratch entry incrementally without an
   unbounded directory listing.
 - SQLite-family initial state capture now participates in bounded retry

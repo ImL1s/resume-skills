@@ -59,10 +59,13 @@ OpenCode SQLite, file-store, and export providers. Synthetic fixtures: `tests/fi
   `fclonefileat` of the pinned main descriptor plus a bounded checksum-valid
   current-generation WAL prefix in private `0700` scratch. The prefix is
   materialized through its last commit into the private clone; SQLite,
-  integrity, schema, list, and show then access that exact private vnode through
-  Darwin `/.vol`, never a replaceable pathname. Source SHM is validated but
-  never copied, the private immutable open creates no SHM, and cleanup rejects
-  the first unknown scratch entry without an unbounded listing. Unsupported
+  integrity, schema, list, and show then access an already-unlinked retained
+  private-main descriptor through a verified `/dev/fd` URI, never a replaceable
+  pathname. The descriptor-bound APFS clone-data ID must match the pinned source
+  before unlink and remain stable at private-query phase boundaries. Source SHM
+  is validated but never copied, the private immutable open creates no SHM, and
+  cleanup rejects the first unknown scratch entry without an unbounded listing.
+  Unsupported
   hosts/capabilities return
   `E_SQLITE_LIVE_WAL` (`attempts: 0`). A qualified independent file-store or
   explicit export may still be listed/shown with `W_SOURCE_PROVIDER_SKIPPED`;

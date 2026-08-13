@@ -27,9 +27,11 @@ gate.
   a live source. After the accepted private WAL prefix is materialized into the
   private clone, only that exact private vnode is opened with `immutable=1`.
 - All parsing, integrity checks, schema checks, and queries run against a
-  private `0700` directory and a percent-encoded identity-bound
-  `file:/.vol/<device>/<inode>?mode=ro&immutable=1&cache=private` URI with
-  `PRAGMA query_only=ON` read back as `1`.
+  private `0700` directory and a percent-encoded descriptor-bound
+  `file:/dev/fd/<retained-fd>?mode=ro&immutable=1&cache=private` URI with
+  `PRAGMA query_only=ON` read back as `1`. The private main has already been
+  unlinked and the `/dev/fd` reopen is verified against its retained
+  `(device,inode,type)` before SQLite sees the URI.
 - The stdlib-only runtime and existing lower-only `Bounds` contract remain.
 
 Forbidden alternatives: SQLite online backup against the source, a normal or
@@ -75,8 +77,15 @@ and the consumer query.
    (<https://github.com/apple-oss-distributions/xnu/blob/main/bsd/man/man2/clonefile.2>).
    The `ctypes` wrapper must declare that exact four-argument ABI and a real
    descriptor-bound test must prove pathname replacement cannot redirect the
-   clone. Open the result no-follow, require regular/same-device, bind its
-   identity, and force mode `0600`.
+   clone. Before the syscall, read `ATTR_CMNEXT_CLONEID` from the pinned source
+   descriptor through `fgetattrlist`. Open the result no-follow and require a
+   regular, single-link, same-device, distinct-inode, exact-size file whose
+   descriptor-bound clone ID equals the captured source data-stream ID. This
+   rejects a valid same-size database substituted after `fclonefileat` but
+   before the result open. Force mode `0600`, then unlink exactly that private
+   main vnode with `AT_UNIQUE`; require link count zero and unchanged
+   identity, size, and clone ID before continuing. No private-main pathname
+   remains during WAL materialization.
 7. Re-read the pinned source WAL header. Any raw-header/generation change,
    reset, shrink, or replacement rejects this attempt as `E_SOURCE_BUSY`.
 8. Capture the bounded current-generation prefix from the physically complete
@@ -118,19 +127,25 @@ and the consumer query.
     truncated to that count and `fsync`ed. This is private COW materialization,
     not a source checkpoint. It is bounded by the logical-size/frame/byte limits
     and the same deadline.
-12. Resolve the retained private-main descriptor through Darwin's identity-bound
-    `/.vol/<device>/<inode>` namespace and verify it still matches `fstat`.
-    Open only that exact vnode with
+12. Capture the private main's new data-stream ID after committed-WAL
+    materialization. Verify the retained descriptor is regular, unlinked, and
+    still has that exact ID before and after the private-connect hook, after
+    SQLite open, after integrity checking, and after the consumer returns.
+    Verify that `/dev/fd/<retained-fd>` reopens the same
+    `(device,inode,type)`, then open only that descriptor URI with
     `mode=ro&immutable=1&cache=private`, set and read back query-only, install a
     deadline progress handler, run `PRAGMA integrity_check(1)`, validate exact
     OpenCode schema, then run list/show. SQLite does not discover a live WAL or
     create SHM because the accepted commit is already materialized. A transient
-    scratch-path replacement must not redirect this open.
-13. Close SQLite first. Unlink each retained private file vnode and then the
-    retained scratch-directory vnode through its verified `/.vol` identity with
-    Darwin `unlinkat(AT_UNIQUE|AT_REMOVEDIR-as-needed)`. `AT_UNIQUE` rejects
-    multiple path aliases instead of deleting through an ambiguous name. Reject
-    any unknown entry on the first incremental directory result and any
+    scratch-path replacement or retained attacker pathname cannot redirect this
+    open.
+13. Close SQLite first, verify the retained unlinked private-main data identity
+    once more, and close that descriptor. Unlink the retained private WAL vnode
+    and then the retained scratch-directory vnode through their verified
+    `/.vol` identities with Darwin
+    `unlinkat(AT_UNIQUE|AT_REMOVEDIR-as-needed)`. `AT_UNIQUE` rejects multiple
+    path aliases instead of deleting through an ambiguous name. Reject any
+    unknown entry on the first incremental directory result and any
     scratch-path replacement; never enumerate or materialize attacker-added
     names and never unlink the replacement. Cleanup is idempotent on success,
     retry, diagnostic, cancellation, consumer exception, and integrity failure.
@@ -148,9 +163,17 @@ The shipped macOS SDK declares `AT_UNIQUE=0x8000` and
 rename-bound removal and multi-link rejection. Failure of any primitive keeps
 the backend closed.
 
+Apple's `getattrlist(2)` contract defines `fgetattrlist` as descriptor-bound and
+defines `ATTR_CMNEXT_CLONEID` as the unique data-stream identifier shared by
+pure clones. It requires `FSOPT_ATTR_CMN_EXTENDED` and the `forkattr` bitmap
+field for this attribute
+(<https://github.com/apple-oss-distributions/xnu/blob/main/bsd/man/man2/getattrlist.2>).
+The backend uses this value only as an identity gate around the atomic clone
+and private descriptor; it does not treat it as a content digest.
+
 The correctness claim is limited to this pairing: the atomic main-file image is
 materialized through the last commit in a checksum-valid prefix from the same
-pinned WAL generation, then opened by exact private-vnode identity. All
+pinned WAL generation, then opened through the exact retained private descriptor. All
 checksum-valid commits at or before the accepted commit boundary are
 recoverable; transactions committed after it may be absent until the next run.
 Uncommitted tail frames are never applied or claimed as committed output.
@@ -232,7 +255,9 @@ mocked clone, retry-after-flake, or result from an older SHA is not proof.
 - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_source_main_wal_shm_symlink_and_nonregular_are_unsafe_without_side_effect`
 - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_source_parent_main_wal_and_scratch_path_swaps_fail_closed`
 - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_transient_main_path_swap_restore_cannot_change_fd_clone_source`
-- `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_private_main_swap_restore_cannot_change_descriptor_bound_query`
+- `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_private_clone_destination_swap_is_rejected_before_wal_materialization`
+- `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_private_clone_retained_attacker_fd_mutation_is_rejected`
+- `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_private_main_path_injection_cannot_change_descriptor_bound_query`
 - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_private_scratch_swap_during_connect_cannot_redirect_query`
 - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_cleanup_rmdir_swap_removes_owned_inode_not_replacement`
 - `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_scratch_nonempty_check_stops_after_first_unknown_entry`
@@ -244,7 +269,11 @@ mocked clone, retry-after-flake, or result from an older SHA is not proof.
   must assert the private clone bytes/inode provenance come from the pinned
   source fd. The private-swap test must prove SQLite remains bound to the
   original private vnode, and cleanup must remove the relocated owned directory
-  while preserving the replacement and returning `E_INVARIANT`.
+  while preserving the replacement and returning `E_INVARIANT`. The clone
+  destination substitution test must use a valid same-size SQLite replacement
+  and prove rejection occurs before WAL materialization; the retained-FD test
+  must prove a post-unlink private mutation is detected by the data-stream ID
+  gate.
 
 ### 6. Static source immutability
 
@@ -264,11 +293,12 @@ mocked clone, retry-after-flake, or result from an older SHA is not proof.
 
 ### 8. Private-only SQLite effects
 
-- `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_private_query_only_connection_uses_volume_inode_and_passes_integrity`
+- `tests/security/test_sqlite_cow_snapshot.py::SQLiteCowSnapshotTests.test_private_query_only_connection_uses_unlinked_descriptor_and_passes_integrity`
 - `tests/adapters/test_opencode_antigravity_grok.py::OpenCodeAdapterTests.test_issue263_cow_connection_validates_opencode_schema_and_private_uri`
 - `tests/unit/test_sqlite_wal_prefix.py::WalPrefixTests.test_materialize_applies_only_committed_private_wal_state`
-- Assert the percent-encoded `/.vol` URI resolves the retained private-main
-  inode, uses private cache plus private-only `immutable=1`, reads query-only
+- Assert the percent-encoded `/dev/fd/<retained-fd>` URI reopens the retained,
+  already-unlinked private-main inode, uses private cache plus private-only
+  `immutable=1`, reads query-only
   back as enabled, does not create SHM, ignores uncommitted tail frames, passes
   integrity/exact schema, and closes SQLite before exact-vnode cleanup.
 
@@ -337,12 +367,14 @@ real successful `fclonefileat` are present. Minimum non-vacuous evidence:
   before SQLite open and restored after open while the anchor remains visible;
 - at least 20 forced bounded rejections each for reset, truncate, WAL
   replacement, header/salt change, accepted-prefix mutation, and source
-  pathname replacement;
+  pathname replacement, plus clone-destination substitution between
+  `fclonefileat` return and result open;
 - `integrity_check=ok` for every success, anchor commit visible, and no future
   or uncommitted row required;
-- every successful SQLite open uses `file:/.vol/...`; exact-vnode cleanup uses
-  `AT_UNIQUE`; zero reader-owned source mutation, zero private scratch leaks,
-  and zero FD leaks;
+- every successful SQLite open uses the verified `file:/dev/fd/...` URI; the
+  private main is unlinked before materialization, remaining exact-vnode cleanup
+  uses `AT_UNIQUE`, and reader-owned source mutation, private scratch leaks, and
+  FD leaks remain zero;
 - content-free counters only: exact SHA, OS/build/arch, Python/SQLite versions,
   backend/flags, APFS/same-volume booleans, bounded sizes, outcomes, cleanup
   count, and an adjacent SHA-256 sidecar over the exact canonical JSON artifact
@@ -393,3 +425,11 @@ and cleanup materialized every unknown scratch entry with `listdir`
 ([P2](https://github.com/ImL1s/resume-skills/pull/268#discussion_r3767439060)).
 The exact-head checkout/assertion, adjacent exact-byte checksum sidecar, and
 single-entry incremental rejection above are mandatory before the final review.
+
+The next exact-head implementation review found that the pathname result of
+`fclonefileat` could still be substituted before the reader opened it
+([P1](https://github.com/ImL1s/resume-skills/pull/268#discussion_r3768549006)).
+The source/destination clone-data-ID comparison, immediate exact unlink,
+descriptor URI, retained-ID phase checks, same-size valid-database regression,
+and real forced proof rejection above are the mandatory remediation. Earlier
+green CI and review evidence do not apply to the amended implementation SHA.

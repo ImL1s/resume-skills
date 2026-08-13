@@ -7,6 +7,7 @@ import dataclasses
 import errno
 import hashlib
 import os
+import shutil
 import sqlite3
 import stat
 import sys
@@ -108,7 +109,7 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
         )
         return identity, hashlib.sha256(path.read_bytes()).hexdigest(), tuple(attributes)
 
-    def test_private_query_only_connection_uses_volume_inode_and_passes_integrity(self) -> None:
+    def test_private_query_only_connection_uses_unlinked_descriptor_and_passes_integrity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self._require_real_apfs(root)
@@ -128,7 +129,7 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                     private_database = Path(connection.execute("PRAGMA database_list").fetchone()[2])
                     self.assertNotEqual(private_database, database)
                     self.assertFalse(str(private_database).startswith(str(root)))
-                    self.assertTrue(str(private_database).startswith("/.vol/"))
+                    self.assertTrue(str(private_database).startswith("/dev/fd/"))
                     self.assertFalse(Path(str(private_database) + "-shm").exists())
             finally:
                 writer.close()
@@ -522,18 +523,19 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                 name: str,
                 *,
                 deadline_check: Callable[[], None] | None = None,
-            ) -> None:
+            ) -> int:
                 nonlocal fired
                 database.rename(saved)
                 decoy.rename(database)
                 try:
-                    original_clone(
+                    clone_id = original_clone(
                         source_fd,
                         destination_fd,
                         name,
                         deadline_check=deadline_check,
                     )
                     fired = True
+                    return clone_id
                 finally:
                     database.rename(decoy)
                     saved.rename(database)
@@ -554,32 +556,200 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
             finally:
                 writer.close()
 
-    def test_private_main_swap_restore_cannot_change_descriptor_bound_query(self) -> None:
+    def test_private_clone_destination_swap_is_rejected_before_wal_materialization(self) -> None:
+        import portable_resume.sqlite_cow as cow
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database = root / "opencode.db"
+            writer = sqlite3.connect(database)
+            writer.execute("PRAGMA journal_mode=WAL")
+            writer.execute("PRAGMA wal_autocheckpoint=0")
+            writer.execute("CREATE TABLE session(id TEXT PRIMARY KEY, value TEXT)")
+            writer.execute("CREATE TABLE sentinel(value TEXT)")
+            writer.execute("INSERT INTO session VALUES ('anchor', 'visible')")
+            writer.execute("INSERT INTO sentinel VALUES ('source')")
+            writer.commit()
+            self.assertEqual(writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0], 0)
+            writer.execute("INSERT INTO session VALUES ('future', 'later')")
+            writer.commit()
+
+            attacker = root / "attacker.db"
+            shutil.copyfile(database, attacker)
+            replacement = sqlite3.connect(attacker)
+            replacement.execute("UPDATE sentinel SET value='attacker'")
+            replacement.commit()
+            self.assertEqual(
+                replacement.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0],
+                0,
+            )
+            replacement.close()
+            self.assertEqual(attacker.stat().st_size, database.stat().st_size)
+            immutable = sqlite3.connect(
+                f"file:{attacker}?mode=ro&immutable=1", uri=True
+            )
+            try:
+                self.assertEqual(
+                    immutable.execute("SELECT value FROM sentinel").fetchone(),
+                    ("attacker",),
+                )
+            finally:
+                immutable.close()
+
+            baseline = self._scratch_entries()
+            original_clone = cow.clone_file_from_fd
+            saved_clone: Path | None = None
+            attacker_entry: Path | None = None
+
+            def clone(
+                source_fd: int,
+                destination_fd: int,
+                name: str,
+                *,
+                deadline_check: Callable[[], None] | None = None,
+            ) -> int:
+                nonlocal saved_clone, attacker_entry
+                clone_id = original_clone(
+                    source_fd,
+                    destination_fd,
+                    name,
+                    deadline_check=deadline_check,
+                )
+                created = self._scratch_entries() - baseline
+                self.assertEqual(len(created), 1)
+                scratch = Path(next(iter(created)))
+                attacker_entry = scratch / name
+                saved_clone = scratch.with_name(scratch.name + ".saved-clone")
+                attacker_entry.rename(saved_clone)
+                shutil.copyfile(attacker, attacker_entry)
+                return clone_id
+
+            source_before = {
+                path.name: self._file_state(path)
+                for path in (database, Path(str(database) + "-wal"), Path(str(database) + "-shm"))
+            }
+            try:
+                with (
+                    mock.patch.object(cow, "clone_file_from_fd", side_effect=clone),
+                    mock.patch.object(
+                        cow,
+                        "materialize_wal_prefix",
+                        wraps=cow.materialize_wal_prefix,
+                    ) as materialize,
+                ):
+                    with self.assertRaises(DiagnosticError) as caught:
+                        with private_sqlite_connection_live_wal_cow(
+                            database,
+                            root=root,
+                            attempts=1,
+                            provider="opencode-sqlite-v1",
+                        ):
+                            self.fail("attacker-selected clone destination must not yield")
+                self.assertEqual(caught.exception.code, "E_INVARIANT")
+                materialize.assert_not_called()
+                self.assertIsNotNone(attacker_entry)
+                assert attacker_entry is not None
+                self.assertFalse(attacker_entry.exists())
+                self.assertIsNotNone(saved_clone)
+                assert saved_clone is not None
+                self.assertTrue(saved_clone.is_file())
+                source_after = {
+                    path.name: self._file_state(path)
+                    for path in (
+                        database,
+                        Path(str(database) + "-wal"),
+                        Path(str(database) + "-shm"),
+                    )
+                }
+                self.assertEqual(source_after, source_before)
+            finally:
+                writer.close()
+                if attacker_entry is not None and attacker_entry.exists():
+                    attacker_entry.unlink()
+                    for suffix in ("-wal", "-shm", "-journal"):
+                        Path(str(attacker_entry) + suffix).unlink(missing_ok=True)
+                    attacker_entry.parent.rmdir()
+                if saved_clone is not None and saved_clone.exists():
+                    saved_clone.unlink()
+                attacker.unlink(missing_ok=True)
+            self.assertEqual(self._scratch_entries(), baseline)
+
+    def test_private_clone_retained_attacker_fd_mutation_is_rejected(self) -> None:
+        import portable_resume.sqlite_cow as cow
+
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self._require_real_apfs(root)
             database, writer = self._live_database(root)
             baseline = self._scratch_entries()
-            saved_main: Path | None = None
-            saved_wal: Path | None = None
+            original_clone = cow.clone_file_from_fd
+            attacker_fd: int | None = None
+            mutated = False
+
+            def clone(
+                source_fd: int,
+                destination_fd: int,
+                name: str,
+                *,
+                deadline_check: Callable[[], None] | None = None,
+            ) -> int:
+                nonlocal attacker_fd
+                clone_id = original_clone(
+                    source_fd,
+                    destination_fd,
+                    name,
+                    deadline_check=deadline_check,
+                )
+                attacker_fd = os.open(name, os.O_RDWR | os.O_NOFOLLOW, dir_fd=destination_fd)
+                return clone_id
+
+            def hook(stage: str, _attempt: int, _source: str) -> None:
+                nonlocal mutated
+                if stage == "after-clone" and not mutated:
+                    assert attacker_fd is not None
+                    os.pwrite(attacker_fd, b"attacker", 0)
+                    os.fsync(attacker_fd)
+                    mutated = True
+
+            try:
+                with mock.patch.object(cow, "clone_file_from_fd", side_effect=clone):
+                    with self.assertRaises(DiagnosticError) as caught:
+                        with private_sqlite_connection_live_wal_cow(
+                            database,
+                            root=root,
+                            attempts=1,
+                            hook=hook,
+                            provider="opencode-sqlite-v1",
+                        ):
+                            self.fail("retained attacker FD mutation must not yield")
+                self.assertTrue(mutated)
+                self.assertEqual(caught.exception.code, "E_INVARIANT")
+            finally:
+                if attacker_fd is not None:
+                    os.close(attacker_fd)
+                writer.close()
+            self.assertEqual(self._scratch_entries(), baseline)
+
+    def test_private_main_path_injection_cannot_change_descriptor_bound_query(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._require_real_apfs(root)
+            database, writer = self._live_database(root)
+            baseline = self._scratch_entries()
             replacement_main: Path | None = None
             swapped = False
 
             def hook(stage: str, _attempt: int, _source: str) -> None:
-                nonlocal saved_main, saved_wal, replacement_main, swapped
+                nonlocal replacement_main, swapped
                 created = self._scratch_entries() - baseline
                 if len(created) != 1:
                     return
                 scratch = Path(next(iter(created)))
                 main = scratch / "snapshot.sqlite"
-                wal = scratch / "snapshot.sqlite-wal"
                 if stage == "before-private-connect" and not swapped:
-                    token = scratch.name.removeprefix("portable-resume-cow-")
-                    saved_main = scratch.parent / ("issue263-saved-main-" + token)
-                    saved_wal = scratch.parent / ("issue263-saved-wal-" + token)
                     replacement_main = main
-                    main.rename(saved_main)
-                    wal.rename(saved_wal)
+                    self.assertFalse(main.exists())
                     replacement = sqlite3.connect(replacement_main)
                     replacement.execute(
                         "CREATE TABLE session(id TEXT PRIMARY KEY, value TEXT)"
@@ -591,12 +761,8 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                     replacement.close()
                     swapped = True
                 elif stage == "after-private-connect" and swapped:
-                    assert saved_main is not None
-                    assert saved_wal is not None
                     assert replacement_main is not None
                     replacement_main.unlink()
-                    saved_main.rename(main)
-                    saved_wal.rename(wal)
 
             try:
                 with private_sqlite_connection_live_wal_cow(
@@ -614,9 +780,8 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                         ("visible",),
                     )
             finally:
-                for path in (replacement_main, saved_main, saved_wal):
-                    if path is not None and path.exists():
-                        path.unlink()
+                if replacement_main is not None and replacement_main.exists():
+                    replacement_main.unlink()
                 writer.close()
 
     def test_private_scratch_swap_during_connect_cannot_redirect_query(self) -> None:

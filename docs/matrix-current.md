@@ -31,7 +31,9 @@ Matrix inclusion does not imply every provider tier is readable in every live
 state. For #263, OpenCode live-WAL SQLite recovery is capability-gated to a real
 same-volume Darwin/APFS descriptor clone plus validated private WAL prefix.
 The accepted WAL commit is materialized into the private clone and SQLite opens
-its exact Darwin vnode identity, not the mutable scratch pathname.
+its already-unlinked retained Darwin descriptor through a verified `/dev/fd`
+URI, not the mutable scratch pathname. APFS clone-data identity gates reject a
+substituted clone result before WAL materialization.
 Linux, Windows, non-APFS, cross-volume, missing-symbol, and failed-capability
 paths remain `E_SQLITE_LIVE_WAL`; qualified file-store/export fallback keeps the
 OpenCode matrix cell enabled without claiming universal live-WAL support.

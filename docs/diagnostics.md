@@ -123,9 +123,12 @@ OpenCode first attempts a bounded descriptor-bound snapshot only when the source
 and private scratch are same-volume APFS and real `fclonefileat` succeeds. The
 source main/WAL/SHM are pinned no-follow; only a checksum-valid current-generation
 WAL prefix is copied, revalidated, and materialized through its last commit into
-an atomic private main clone. SQLite opens that exact private vnode through a
-verified Darwin `/.vol` identity with query-only enabled; it never opens a
-replaceable scratch pathname or the source. Linux, Windows, non-APFS,
+an atomic private main clone. The reader verifies that clone's descriptor-bound
+APFS data-stream ID against the pinned source, unlinks the private main before
+materialization, and rechecks its resulting private data-stream ID at query
+phase boundaries. SQLite opens the retained exact descriptor through a verified
+`/dev/fd` URI with query-only enabled; it never opens a replaceable scratch
+pathname or the source. Linux, Windows, non-APFS,
 cross-volume, missing-symbol, and failed-capability paths retain this diagnostic.
 
 The static hint directs the operator to close or quiesce OpenCode and retry once.
@@ -136,11 +139,12 @@ Never delete or checkpoint WAL manually. OpenCode may return a qualified
 fallback with `W_SOURCE_PROVIDER_SKIPPED`.
 
 `immutable=1` is never used on the changing source family. It is used only for
-the already-materialized private clone, where it prevents SQLite from deriving
-live sidecars and keeps all effects inside reader-owned scratch. Cleanup removes
-only retained private vnode identities, rejects on the first unknown scratch
-entry without materializing the directory, and fails `E_INVARIANT` rather than
-deleting a pathname replacement.
+the already-materialized, unlinked private clone, where it prevents SQLite from
+deriving live sidecars and keeps all effects inside reader-owned scratch.
+Cleanup closes that private-main descriptor and removes only retained remaining
+private vnode identities, rejects on the first unknown scratch entry without
+materializing the directory, and fails `E_INVARIANT` rather than deleting a
+pathname replacement.
 
 ## Installer result exits
 

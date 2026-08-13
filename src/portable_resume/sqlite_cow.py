@@ -3,7 +3,8 @@
 The source family is handled only through no-follow descriptors.  SQLite is
 opened only after an atomic APFS clone of the pinned main descriptor has been
 materialized through the last checksum-validated WAL commit.  The connection
-uses the exact private vnode, not its replaceable scratch pathname.
+uses the retained, already-unlinked private descriptor, not its replaceable
+scratch pathname.
 """
 
 from __future__ import annotations
@@ -27,10 +28,11 @@ from .diagnostics import DiagnosticError
 from .paths import canonicalize_cwd, is_within, require_regular_no_symlinks
 from .platform_fs.darwin_apfs import (
     DarwinCloneUnavailable,
+    clone_data_id,
     clone_file_from_fd,
+    descriptor_fd_path,
     is_apfs_fd,
     unlink_volume_inode,
-    volume_inode_path,
 )
 from .sqlite_wal import (
     WalHeader,
@@ -182,6 +184,7 @@ class _PrivateScratch:
     directory_fd: int
     directory_identity: tuple[int, int, int]
     main_fd: int | None = None
+    main_clone_id: int | None = None
     wal_fd: int | None = None
     closed: bool = False
 
@@ -214,7 +217,8 @@ class _PrivateScratch:
                     continue
                 try:
                     if _RUNTIME_IS_DARWIN:
-                        unlink_volume_inode(descriptor)
+                        if os.fstat(descriptor).st_nlink != 0:
+                            unlink_volume_inode(descriptor)
                     else:
                         # Non-Darwin execution reaches this only in mocked unit
                         # tests; the production backend rejects it before clone.
@@ -294,6 +298,7 @@ class CowSQLiteSnapshot:
     _deadline: _Deadline
     _provider: str | None
     _hook: AttemptHook | None
+    _private_data_id: int
 
     @property
     def uri(self) -> str:
@@ -301,7 +306,7 @@ class CowSQLiteSnapshot:
         if descriptor is None or descriptor < 0:
             raise DiagnosticError("E_INVARIANT", provider=self._provider)
         try:
-            encoded = quote(volume_inode_path(descriptor), safe="/")
+            encoded = quote(descriptor_fd_path(descriptor), safe="/")
         except DarwinCloneUnavailable as error:
             raise DiagnosticError("E_INVARIANT", provider=self._provider) from error
         return f"file:{encoded}?mode=ro&immutable=1&cache=private"
@@ -310,16 +315,35 @@ class CowSQLiteSnapshot:
         if self._hook is not None:
             self._hook(stage, self.attempts, self.source_name)
 
+    def _verify_private_identity(self) -> None:
+        descriptor = self._scratch.main_fd
+        if descriptor is None or descriptor < 0:
+            raise DiagnosticError("E_INVARIANT", provider=self._provider)
+        try:
+            current = os.fstat(descriptor)
+            current_data_id = clone_data_id(descriptor)
+        except (DarwinCloneUnavailable, OSError) as error:
+            raise DiagnosticError("E_INVARIANT", provider=self._provider) from error
+        if (
+            not stat.S_ISREG(current.st_mode)
+            or current.st_nlink != 0
+            or current_data_id != self._private_data_id
+        ):
+            raise DiagnosticError("E_INVARIANT", provider=self._provider)
+
     def connect(self) -> sqlite3.Connection:
         self._deadline.check()
         self._scratch.verify_entry()
+        self._verify_private_identity()
         self._call_hook("before-private-connect")
         self._scratch.verify_entry()
+        self._verify_private_identity()
         connection: sqlite3.Connection | None = None
         try:
             connection = sqlite3.connect(self.uri, uri=True)
             self._call_hook("after-private-connect")
             self._scratch.verify_entry()
+            self._verify_private_identity()
             connection.execute("PRAGMA query_only=ON")
             if connection.execute("PRAGMA query_only").fetchone() != (1,):
                 raise DiagnosticError("E_INVARIANT", provider=self._provider)
@@ -338,6 +362,7 @@ class CowSQLiteSnapshot:
                     family=self.family,
                     provider=self._provider,
                 )
+            self._verify_private_identity()
             return connection
         except DiagnosticError:
             if connection is not None:
@@ -604,7 +629,7 @@ def _clone_main(
                 main_size=family.main_stat.st_size,
                 wal_size=initial_wal_size,
             )
-            clone_file_from_fd(
+            expected_clone_id = clone_file_from_fd(
                 family.main_fd,
                 scratch.directory_fd,
                 _MAIN_NAME,
@@ -615,22 +640,41 @@ def _clone_main(
                 os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
                 dir_fd=scratch.directory_fd,
             )
+            scratch.main_fd = cloned
+            cloned = -1
             try:
-                cloned_stat = os.fstat(cloned)
+                assert scratch.main_fd is not None
+                cloned_stat = os.fstat(scratch.main_fd)
                 if (
                     not stat.S_ISREG(cloned_stat.st_mode)
                     or cloned_stat.st_dev != family.main_stat.st_dev
+                    or cloned_stat.st_ino == family.main_stat.st_ino
+                    or cloned_stat.st_nlink != 1
+                    or cloned_stat.st_size != family.main_stat.st_size
                     or cloned_stat.st_size > bounds.sqlite_cow_logical_bytes
                 ):
-                    raise DiagnosticError.limit_exceeded()
-                os.fchmod(cloned, 0o600)
+                    raise DiagnosticError("E_INVARIANT", provider=deadline.provider)
+                scratch.main_clone_id = expected_clone_id
+                if clone_data_id(scratch.main_fd) != expected_clone_id:
+                    raise DiagnosticError("E_INVARIANT", provider=deadline.provider)
+                os.fchmod(scratch.main_fd, 0o600)
                 _require_space(
                     scratch,
                     main_size=cloned_stat.st_size,
                     wal_size=initial_wal_size,
                 )
-                scratch.main_fd = cloned
-                cloned = -1
+                try:
+                    unlink_volume_inode(scratch.main_fd)
+                except (DarwinCloneUnavailable, OSError) as error:
+                    raise DiagnosticError("E_INVARIANT", provider=deadline.provider) from error
+                detached_stat = os.fstat(scratch.main_fd)
+                if (
+                    detached_stat.st_nlink != 0
+                    or _identity(detached_stat) != _identity(cloned_stat)
+                    or detached_stat.st_size != cloned_stat.st_size
+                    or clone_data_id(scratch.main_fd) != expected_clone_id
+                ):
+                    raise DiagnosticError("E_INVARIANT", provider=deadline.provider)
             finally:
                 _close_quietly(cloned)
             return scratch
@@ -698,6 +742,28 @@ def _copy_prefix(
     os.fsync(destination)
     os.fchmod(destination, 0o600)
     return digest.hexdigest()
+
+
+def _verify_unmaterialized_clone(
+    scratch: _PrivateScratch,
+    *,
+    provider: str | None,
+) -> None:
+    descriptor = scratch.main_fd
+    expected = scratch.main_clone_id
+    if descriptor is None or descriptor < 0 or expected is None:
+        raise DiagnosticError("E_INVARIANT", provider=provider)
+    try:
+        current = os.fstat(descriptor)
+        current_data_id = clone_data_id(descriptor)
+    except (DarwinCloneUnavailable, OSError) as error:
+        raise DiagnosticError("E_INVARIANT", provider=provider) from error
+    if (
+        not stat.S_ISREG(current.st_mode)
+        or current.st_nlink != 0
+        or current_data_id != expected
+    ):
+        raise DiagnosticError("E_INVARIANT", provider=provider)
 
 
 def _same_entry(
@@ -792,6 +858,7 @@ def _snapshot_attempt(
         scratch = _clone_main(family, bounds=bounds, deadline=deadline)
         if hook is not None:
             hook("after-clone", attempt, family.safe)
+        _verify_unmaterialized_clone(scratch, provider=provider)
         if validate_wal_header(family.wal_fd, deadline_check=deadline.check).raw != family.header.raw:
             raise DiagnosticError.source_busy(
                 attempts=attempt, family=family.family_names, provider=provider
@@ -831,6 +898,7 @@ def _snapshot_attempt(
         scratch.verify_entry()
         if scratch.main_fd is None or scratch.wal_fd is None:
             raise DiagnosticError("E_INVARIANT", provider=provider)
+        _verify_unmaterialized_clone(scratch, provider=provider)
         materialize_wal_prefix(
             scratch.main_fd,
             scratch.wal_fd,
@@ -838,8 +906,10 @@ def _snapshot_attempt(
             max_logical_bytes=bounds.sqlite_cow_logical_bytes,
             deadline_check=deadline.check,
         )
+        private_data_id = clone_data_id(scratch.main_fd)
+        scratch.main_clone_id = None
         try:
-            private_database = volume_inode_path(scratch.main_fd)
+            private_database = descriptor_fd_path(scratch.main_fd)
         except DarwinCloneUnavailable as error:
             raise DiagnosticError("E_INVARIANT", provider=provider) from error
         return CowSQLiteSnapshot(
@@ -853,6 +923,7 @@ def _snapshot_attempt(
             _deadline=deadline,
             _provider=provider,
             _hook=hook,
+            _private_data_id=private_data_id,
         )
     except BaseException:
         if scratch is not None:
@@ -919,6 +990,7 @@ def private_sqlite_connection_live_wal_cow_impl(
         try:
             yield connection
             deadline.check()
+            snapshot._verify_private_identity()
         except sqlite3.OperationalError as error:
             if deadline.expired():
                 raise DiagnosticError.source_busy(
