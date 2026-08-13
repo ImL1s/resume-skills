@@ -32,6 +32,7 @@ EMBEDDED_IDENTITY = Path("resources/build-identity.json")
 _STABLE_BASE_VERSION = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 MAX_SDIST_FILE_BYTES = 64 * 1024 * 1024
 MAX_SDIST_TOTAL_BYTES = 512 * 1024 * 1024
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 
 
 @contextmanager
@@ -129,6 +130,124 @@ def _stat_fingerprint(value: os.stat_result) -> tuple[int, int, int, int, int, i
         value.st_mtime_ns,
         value.st_ctime_ns,
     )
+
+
+def _is_link_or_reparse(value: os.stat_result) -> bool:
+    return stat.S_ISLNK(value.st_mode) or bool(
+        getattr(value, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT
+    )
+
+
+def _open_optional_real_directory(
+    path: str | Path,
+    *,
+    dir_fd: int | None = None,
+    subject: str,
+) -> int | None:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(path, flags, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise ValueError(f"{subject} is not a real directory") from error
+    opened = os.fstat(descriptor)
+    if not stat.S_ISDIR(opened.st_mode) or _is_link_or_reparse(opened):
+        os.close(descriptor)
+        raise ValueError(f"{subject} is not a real directory")
+    return descriptor
+
+
+def _refresh_generated_build_identity_by_descriptor(build_root: Path) -> bool:
+    descriptors: list[int] = []
+    try:
+        for component, subject in (
+            (build_root, "setuptools build root"),
+            ("portable_resume", "setuptools package staging directory"),
+            ("resources", "setuptools resource staging directory"),
+        ):
+            descriptor = _open_optional_real_directory(
+                component,
+                dir_fd=descriptors[-1] if descriptors else None,
+                subject=subject,
+            )
+            if descriptor is None:
+                return False
+            descriptors.append(descriptor)
+        try:
+            existing = os.stat(
+                "build-identity.json",
+                dir_fd=descriptors[-1],
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return False
+        if not stat.S_ISREG(existing.st_mode) or _is_link_or_reparse(existing):
+            raise ValueError("generated setuptools build identity is not a regular file")
+        try:
+            os.unlink("build-identity.json", dir_fd=descriptors[-1])
+        except OSError as error:
+            raise ValueError(
+                "generated setuptools build identity could not be refreshed"
+            ) from error
+        return True
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _refresh_generated_build_identity_by_path(build_root: Path) -> bool:
+    package = build_root / "portable_resume"
+    resources = package / "resources"
+    for directory, subject in (
+        (build_root, "setuptools build root"),
+        (package, "setuptools package staging directory"),
+        (resources, "setuptools resource staging directory"),
+    ):
+        try:
+            metadata = directory.lstat()
+        except FileNotFoundError:
+            return False
+        if not stat.S_ISDIR(metadata.st_mode) or _is_link_or_reparse(metadata):
+            raise ValueError(f"{subject} is not a real directory")
+    destination = resources / "build-identity.json"
+    try:
+        existing = destination.lstat()
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(existing.st_mode) or _is_link_or_reparse(existing):
+        raise ValueError("generated setuptools build identity is not a regular file")
+    try:
+        destination.unlink()
+    except OSError as error:
+        raise ValueError(
+            "generated setuptools build identity could not be refreshed"
+        ) from error
+    return True
+
+
+def refresh_generated_build_identity(build_root: Path) -> bool:
+    """Remove only build_py's generated identity from its reusable staging tree.
+
+    Finalized artifact trees still use :func:`write_staged_identity` and retain
+    its exact-identity refusal.  This narrower operation is only for the
+    disposable ``build_py --build-lib`` tree, before package sources are copied.
+    """
+
+    root = Path(build_root)
+    descriptor_operations = (
+        os.open in os.supports_dir_fd
+        and os.stat in os.supports_dir_fd
+        and os.unlink in os.supports_dir_fd
+    )
+    if descriptor_operations:
+        return _refresh_generated_build_identity_by_descriptor(root)
+    return _refresh_generated_build_identity_by_path(root)
 
 
 def _read_staged_regular_file(path: Path, before: os.stat_result) -> bytes:

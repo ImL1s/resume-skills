@@ -15,6 +15,7 @@ for candidate in (ROOT, ROOT / "src", ROOT / "scripts"):
         sys.path.insert(0, str(candidate))
 
 from build_artifact_identity import (  # noqa: E402
+    refresh_generated_build_identity,
     reproducible_build_umask,
     resolve_build_identity,
     stage_package_identity,
@@ -71,6 +72,8 @@ class EmbeddedIdentitySdist(sdist):
 class EmbeddedIdentityBuildPy(build_py):
     def run(self) -> None:
         identity = _identity()
+        if not self.editable_mode:
+            refresh_generated_build_identity(Path(self.build_lib))
         super().run()
         if self.editable_mode:
             return
