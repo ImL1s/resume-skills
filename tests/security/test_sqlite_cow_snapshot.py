@@ -1116,6 +1116,11 @@ class SQLiteCowSnapshotTests(unittest.TestCase):
                         mock.patch.object(cow, "is_apfs_fd", return_value=True),
                         mock.patch.object(
                             cow,
+                            "unique_unlink_supported",
+                            return_value=True,
+                        ),
+                        mock.patch.object(
+                            cow,
                             "clone_file_from_fd",
                             side_effect=OSError(number, "synthetic"),
                         ),

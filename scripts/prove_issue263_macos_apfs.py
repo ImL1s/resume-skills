@@ -34,6 +34,7 @@ from portable_resume.platform_fs.darwin_apfs import (  # noqa: E402
     CLONE_NOFOLLOW,
     CLONE_NOOWNERCOPY,
     is_apfs_fd,
+    unique_unlink_supported,
 )
 from portable_resume.snapshot import private_sqlite_connection_live_wal_cow  # noqa: E402
 
@@ -446,9 +447,12 @@ class _MutationAudit:
         self.exact_private_unlinks += 1
 
 
-def _assert_runtime_capability() -> tuple[bool, bool]:
+def _assert_runtime_capability() -> tuple[bool, bool, bool]:
     if sys.platform != "darwin":
         raise ProofFailure("Darwin required")
+    unique_unlink = unique_unlink_supported()
+    if not unique_unlink:
+        raise ProofFailure("unlinkat(AT_UNIQUE) required")
     with tempfile.TemporaryDirectory(prefix="issue263-proof-capability-") as temporary:
         root = Path(temporary)
         source_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -462,7 +466,7 @@ def _assert_runtime_capability() -> tuple[bool, bool]:
             os.close(source_fd)
     if not source_apfs or not scratch_apfs or not same_volume:
         raise ProofFailure("same-volume APFS required")
-    return source_apfs and scratch_apfs, same_volume
+    return source_apfs and scratch_apfs, same_volume, unique_unlink
 
 
 def _run_success(
@@ -730,7 +734,7 @@ def main() -> int:
     if _git("status", "--porcelain"):
         raise ProofFailure("proof requires a clean exact HEAD")
 
-    apfs, same_volume = _assert_runtime_capability()
+    apfs, same_volume, unique_unlink = _assert_runtime_capability()
     audit = _MutationAudit()
     os.open = audit.audited_open  # type: ignore[assignment]
     cow_module.clone_file_from_fd = audit.audited_clone
@@ -864,7 +868,7 @@ def main() -> int:
             "private_main_unlinked_before_materialization": True,
             "private_immutable": True,
             "wal_materialized": True,
-            "unique_unlink": True,
+            "unique_unlink": unique_unlink,
         },
         "successes": {
             "quiescent_immutability": 1,

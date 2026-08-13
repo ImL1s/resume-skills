@@ -30,6 +30,9 @@ class Issue263APFSProofContractTests(unittest.TestCase):
             "portable-resume/issue-263-apfs-proof-v3",
         )
         self.assertIn("clone_destination_swap", namespace["REJECTION_SCENARIOS"])
+        self.assertIn("unique_unlink_supported", namespace)
+        capability = namespace["_assert_runtime_capability"]
+        self.assertEqual(capability.__annotations__.get("return"), "tuple[bool, bool, bool]")
 
     def test_ci_exposes_a_specific_proof_check_name(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
