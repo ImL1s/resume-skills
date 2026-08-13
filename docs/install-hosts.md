@@ -91,9 +91,11 @@ install-resume-skills verify --host codex --scope global
 `quick-install all` preflights the requested profiles, groups aliases of the
 same physical root, locks unique physical roots in deterministic order, and
 leaves each root with a manifest representing its requested claims. When every
-existing claim is included in an older-version coordinated upgrade, that new
-generation is published once. The installer fails closed rather than publishing
-mixed bundle versions. Verify each intended host separately because runtime
+existing claim is included in a bundle-version **or package-identity** upgrade,
+that coordinated generation is published once. This includes source-checkout
+upgrades between commits that share the same development base version. The
+installer fails closed rather than publishing mixed payload identities. Verify
+each intended host separately because runtime
 visibility through a junction is not the same as an ownership claim.
 
 An intermediate symlink/junction spelling is rejected before installer control

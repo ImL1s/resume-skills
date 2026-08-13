@@ -16,7 +16,7 @@ import portable_resume.install.cli as install_cli_module
 from portable_resume.install.cli import run as install_cli_run
 from portable_resume.install.catalog import BUNDLE_VERSION, MANIFEST_SCHEMA, resolve_skill_root
 from portable_resume.install.manifest import claim_key, sha256_bytes
-from portable_resume.install.render import materialize_plan
+from portable_resume.install.render import materialize_plan, package_identity
 import portable_resume.install.transaction as transaction_module
 from portable_resume.install.transaction import (
     execute_install,
@@ -107,6 +107,38 @@ class InstallerTransactionTests(unittest.TestCase):
             legacy["files"][rel]["sha256"] = sha256_bytes(old_bytes)
         manifest_file.write_text(
             json.dumps(legacy, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return shared, [("gemini", str(gemini)), ("claude", str(shared))]
+
+    def _same_version_stale_identity_targets(
+        self,
+    ) -> tuple[Path, list[tuple[str, str]]]:
+        shared = self.home / ".claude" / "skills"
+        gemini = self.home / ".gemini" / "skills"
+        gemini.parent.mkdir(parents=True)
+        os.symlink(shared, gemini)
+        execute_install(plan_install(host="claude", scope="global", root=str(shared)))
+        execute_install(plan_install(host="gemini", scope="global", root=str(shared)))
+
+        manifest_file = Path(manifest_path(str(shared)))
+        stale = json.loads(manifest_file.read_text(encoding="utf-8"))
+        shared_rel = next(
+            rel
+            for rel, entry in sorted(stale["files"].items())
+            if len(entry["claims"]) == 2
+        )
+        old_files = dict(materialize_plan("claude"))
+        old_bytes = b"same-version-stale-generated-payload\n"
+        old_files[shared_rel] = old_bytes
+        old_identity = package_identity(old_files)
+        (shared / shared_rel).write_bytes(old_bytes)
+        stale["files"][shared_rel]["sha256"] = sha256_bytes(old_bytes)
+        stale["package_identity"] = old_identity
+        for claim in stale["claims"].values():
+            claim["package_identity"] = old_identity
+        manifest_file.write_text(
+            json.dumps(stale, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
             encoding="utf-8",
         )
         return shared, [("gemini", str(gemini)), ("claude", str(shared))]
@@ -259,6 +291,124 @@ class InstallerTransactionTests(unittest.TestCase):
                 self.assertEqual(self._file_bytes(shared), before)
 
         self.assertEqual(load_manifest(str(shared)).bundle_version, BUNDLE_VERSION)
+
+    def test_same_version_identity_upgrade_is_atomic_and_needs_no_force(self) -> None:
+        shared, targets = self._same_version_stale_identity_targets()
+        before = load_manifest(str(shared))
+        assert before is not None
+        before_tree = self._file_bytes(shared)
+
+        preview = install_multi_targets(targets, scope="global", dry_run=True)
+
+        self.assertEqual(self._file_bytes(shared), before_tree)
+        self.assertTrue(all(item["dry_run"] for item in preview))
+        original_write = transaction_module._atomic_write_support_file_under_fd
+        manifest_writes = 0
+
+        def count_manifest_write(root_fd, name, data, **kwargs):
+            nonlocal manifest_writes
+            if name == transaction_module.MANIFEST_NAME:
+                manifest_writes += 1
+            return original_write(root_fd, name, data, **kwargs)
+
+        with mock.patch.object(
+            transaction_module,
+            "_atomic_write_support_file_under_fd",
+            side_effect=count_manifest_write,
+        ):
+            results = install_multi_targets(targets, scope="global")
+
+        self.assertEqual(manifest_writes, 1)
+        self.assertEqual([item["plan"]["host"] for item in results], ["gemini", "claude"])
+        final = load_manifest(str(shared))
+        assert final is not None
+        self.assertEqual(final.bundle_version, before.bundle_version)
+        self.assertEqual(final.generation, before.generation + 1)
+        self.assertNotEqual(final.package_identity, before.package_identity)
+        for host, root in targets:
+            requested_claim = claim_key(host=host, scope="global", root=root)
+            self.assertTrue(verify_root(root, claim=requested_claim)["ok"])
+
+    def test_same_version_identity_upgrade_requires_all_existing_claims(self) -> None:
+        shared, targets = self._same_version_stale_identity_targets()
+        before = self._file_bytes(shared)
+
+        with self.assertRaises(DiagnosticError) as caught:
+            install_multi_targets([targets[0]], scope="global", dry_run=True)
+
+        self.assertEqual(caught.exception.code, "E_INSTALL_CONFLICT")
+        self.assertEqual(self._file_bytes(shared), before)
+
+    def test_same_version_identity_upgrade_rejects_divergent_alias_payloads(self) -> None:
+        shared, targets = self._same_version_stale_identity_targets()
+        before = self._file_bytes(shared)
+        original_materialize = transaction_module.materialize_plan
+
+        def divergent(host: str, *, sources=None):
+            files = dict(original_materialize(host, sources=sources))
+            if host == "gemini":
+                rel = next(iter(sorted(files)))
+                files[rel] = files[rel] + b"divergent"
+            return files
+
+        with mock.patch.object(
+            transaction_module,
+            "materialize_plan",
+            side_effect=divergent,
+        ):
+            with self.assertRaises(DiagnosticError) as caught:
+                install_multi_targets(targets, scope="global", dry_run=True)
+
+        self.assertEqual(caught.exception.code, "E_INSTALL_CONFLICT")
+        self.assertEqual(self._file_bytes(shared), before)
+
+    def test_same_version_identity_change_with_one_existing_claim_uses_group_path(
+        self,
+    ) -> None:
+        root = Path(self.root)
+        execute_install(plan_install(host="claude", scope="project", root=str(root)))
+        manifest_file = Path(manifest_path(str(root)))
+        stale = json.loads(manifest_file.read_text(encoding="utf-8"))
+        rel = next(iter(sorted(stale["files"])))
+        old_bytes = b"single-claim-same-version-stale\n"
+        (root / rel).write_bytes(old_bytes)
+        stale["files"][rel]["sha256"] = sha256_bytes(old_bytes)
+        stale["package_identity"] = "a" * 64
+        for claim in stale["claims"].values():
+            claim["package_identity"] = "a" * 64
+        manifest_file.write_text(
+            json.dumps(stale, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        result = install_multi_targets(
+            [("claude", str(root))],
+            scope="project",
+        )[0]
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(verify_root(str(root))["ok"])
+
+    def test_quick_install_all_upgrades_same_version_identity(self) -> None:
+        shared, targets = self._same_version_stale_identity_targets()
+        hosts = [host for host, _root in targets]
+        stdout = StringIO()
+        stderr = StringIO()
+        with (
+            mock.patch.object(install_cli_module, "_hosts", return_value=hosts),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            code = install_cli_run(
+                ["quick-install", "all", "--home", str(self.home)]
+            )
+
+        self.assertEqual(code, 0, stderr.getvalue())
+        self.assertEqual(
+            [result["host"] for result in json.loads(stdout.getvalue())["results"]],
+            hosts,
+        )
+        self.assertTrue(verify_root(str(shared))["ok"])
 
     def test_multi_claim_upgrade_rejects_unrequested_old_claim_without_mutation(self) -> None:
         shared, targets = self._legacy_multi_claim_targets()
