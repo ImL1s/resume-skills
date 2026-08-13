@@ -29,13 +29,14 @@ snapshot primitive has copied a stable main/WAL family to private storage.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
 import stat
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 from .base import CapabilityReport, ResolvedRef
 from ..bounds import DEFAULT_BOUNDS, ReadBudget
@@ -43,7 +44,12 @@ from ..diagnostics import DiagnosticError
 from ..model import Query, Session, SessionSummary, Turn
 from ..paths import canonical_root, canonicalize_cwd, is_within, same_cwd
 from ..sanitize import sanitize_turn_record
-from ..snapshot import private_sqlite_connection, query_only_live_sqlite, stable_read_bytes
+from ..snapshot import (
+    private_sqlite_connection,
+    private_sqlite_connection_live_wal_cow,
+    query_only_live_sqlite,
+    stable_read_bytes,
+)
 
 SQLITE_FORMAT = "opencode-sqlite-v1"
 FILE_FORMAT = "opencode-file-store-v1"
@@ -339,21 +345,8 @@ class OpenCodeAdapter:
 
     def _sqlite_supported(self, database: str, root: str) -> bool:
         try:
-            size = os.path.getsize(database)
-        except OSError:
-            return False
-        try:
-            if size > DEFAULT_BOUNDS.sqlite_snapshot_bytes:
-                with query_only_live_sqlite(database, root=root, provider=SQLITE_FORMAT) as connection:
-                    self._require_schema(connection)
-            else:
-                with private_sqlite_connection(
-                    database,
-                    root=root,
-                    hook=self._sqlite_hook,
-                    provider=SQLITE_FORMAT,
-                ) as connection:
-                    self._require_schema(connection)
+            with self._sqlite_connection(database, root) as connection:
+                self._require_schema(connection)
             return True
         except sqlite3.DatabaseError:
             return False
@@ -361,6 +354,69 @@ class OpenCodeAdapter:
             if error.code == "E_UNSUPPORTED_FORMAT":
                 return False
             raise
+
+    @contextlib.contextmanager
+    def _sqlite_connection(self, database: str, root: str) -> Iterator[sqlite3.Connection]:
+        """Open only an accepted private snapshot for a live WAL family.
+
+        Small quiescent stores retain the existing byte-copy path. Oversized
+        rollback-mode stores retain the descriptor-pinned live read. A live or
+        persistent WAL family is handed to the capability-gated Darwin/APFS COW
+        backend; unsupported hosts preserve ``E_SQLITE_LIVE_WAL`` for the
+        provider-local file/export fallback policy.
+        """
+
+        try:
+            size = os.path.getsize(database)
+        except OSError as error:
+            raise DiagnosticError(
+                "E_SOURCE_BUSY", source=self.key, provider=SQLITE_FORMAT
+            ) from error
+
+        if size <= DEFAULT_BOUNDS.sqlite_snapshot_bytes:
+            yielded = False
+            try:
+                with private_sqlite_connection(
+                    database,
+                    root=root,
+                    hook=self._sqlite_hook,
+                    provider=SQLITE_FORMAT,
+                ) as connection:
+                    yielded = True
+                    yield connection
+                return
+            except DiagnosticError as error:
+                if yielded or error.code != "E_SOURCE_BUSY":
+                    raise
+                # The COW backend is specifically a live-WAL recovery path.
+                # A main-only rewrite/race must retain E_SOURCE_BUSY rather
+                # than being reclassified by a WAL backend that has no
+                # sidecars to pin.
+                if not any(os.path.lexists(database + suffix) for suffix in ("-wal", "-shm")):
+                    raise
+        else:
+            yielded = False
+            try:
+                with query_only_live_sqlite(
+                    database,
+                    root=root,
+                    provider=SQLITE_FORMAT,
+                ) as connection:
+                    yielded = True
+                    yield connection
+                return
+            except DiagnosticError as error:
+                if yielded or error.code != "E_SQLITE_LIVE_WAL":
+                    raise
+
+        with private_sqlite_connection_live_wal_cow(
+            database,
+            root=root,
+            bounds=DEFAULT_BOUNDS,
+            hook=self._sqlite_hook,
+            provider=SQLITE_FORMAT,
+        ) as connection:
+            yield connection
 
     @staticmethod
     def _require_schema(connection: sqlite3.Connection) -> None:
@@ -536,22 +592,8 @@ class OpenCodeAdapter:
             ).fetchall()
 
         try:
-            size = os.path.getsize(database)
-        except OSError as error:
-            raise DiagnosticError("E_SOURCE_BUSY", source=self.key, provider=SQLITE_FORMAT) from error
-        try:
-            if size > DEFAULT_BOUNDS.sqlite_snapshot_bytes:
-                # Avoid multi-GiB private copies for list; readonly live query.
-                with query_only_live_sqlite(database, root=root, provider=SQLITE_FORMAT) as connection:
-                    rows = _fetch(connection)
-            else:
-                with private_sqlite_connection(
-                    database,
-                    root=root,
-                    hook=self._sqlite_hook,
-                    provider=SQLITE_FORMAT,
-                ) as connection:
-                    rows = _fetch(connection)
+            with self._sqlite_connection(database, root) as connection:
+                rows = _fetch(connection)
         except sqlite3.DatabaseError as error:
             raise DiagnosticError("E_CORRUPT_RECORD", source=self.key, provider=SQLITE_FORMAT) from error
         except DiagnosticError as error:
@@ -695,23 +737,9 @@ class OpenCodeAdapter:
             not in {canonicalize_cwd(path) for path in self._database_paths(root)}
         ):
             raise DiagnosticError.unsafe_path()
-        try:
-            size = os.path.getsize(ref.source_path)
-        except OSError as error:
-            raise DiagnosticError("E_SOURCE_BUSY", source=self.key, provider=SQLITE_FORMAT) from error
         row_cap = min(budget.limits.transcript_records, DEFAULT_BOUNDS.transcript_records)
         try:
-            ctx = (
-                query_only_live_sqlite(ref.source_path, root=root, provider=SQLITE_FORMAT)
-                if size > DEFAULT_BOUNDS.sqlite_snapshot_bytes
-                else private_sqlite_connection(
-                    ref.source_path,
-                    root=root,
-                    hook=self._sqlite_hook,
-                    provider=SQLITE_FORMAT,
-                )
-            )
-            with ctx as connection:
+            with self._sqlite_connection(ref.source_path, root) as connection:
                 self._require_schema(connection)
                 summary_row = connection.execute(
                     'SELECT id,directory,title,time_created,time_updated FROM "session" WHERE id=?',

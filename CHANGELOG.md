@@ -12,11 +12,27 @@
   physical-root ownership, and the focused Windows evidence boundary. Static,
   content-free hints for `E_UNSAFE_PATH` and `E_VERIFY_MISMATCH` point operators
   to that workflow without exposing selected paths (#247).
-- OpenCode Phase 1 live-WAL handling (#263): oversized live SQLite families now
-  return the closed `E_SQLITE_LIVE_WAL` diagnostic with zero attempts and a
-  static quiesce-and-retry hint. Independent qualified file-store/export
-  providers remain usable with `W_SOURCE_PROVIDER_SKIPPED`. This does **not**
-  implement or prove a live copy-on-write SQLite snapshot backend.
+- OpenCode live-WAL handling (#263): oversized/live SQLite families use a
+  bounded, descriptor-pinned private snapshot only on Darwin with real APFS
+  `fclonefileat`, same-volume private scratch, checksum-valid current-generation
+  WAL prefix materialized through its last commit into the private clone,
+  source/destination APFS clone-data-ID binding, immediate private-main unlink,
+  verified descriptor `/dev/fd` SQLite open, identity-bound cleanup, and one
+  absolute deadline. Unsupported hosts remain closed as `E_SQLITE_LIVE_WAL`;
+  independent qualified file-store/export providers remain usable with
+  `W_SOURCE_PROVIDER_SKIPPED`. A real macOS/APFS CI proof explicitly checks and
+  asserts the PR head, then archives content-free canonical JSON plus an
+  exact-byte SHA-256 sidecar named for that same head; no source SQLite
+  connection, SHM copy, WAL deletion,
+  checkpoint, live-source `immutable=1`, or new dependency is used. The
+  materialized, already-unlinked private clone alone is opened
+  `mode=ro&immutable=1` so a scratch-path or clone-result substitution cannot
+  redirect SQLite and no private SHM is required.
+  Kernels that do not recognize `unlinkat(AT_UNIQUE)` are rejected by a
+  non-mutating invalid-descriptor probe before scratch allocation or cloning,
+  preserving the Phase 1 `E_SQLITE_LIVE_WAL` fallback without residue.
+  Cleanup rejects the first unknown scratch entry incrementally without an
+  unbounded directory listing.
 - SQLite-family initial state capture now participates in bounded retry
   accounting, preserving unsafe/limit/hot-journal hard failures and cleanup.
 - Reconciled the two shipped schema warning enums with runtime `WARNING_CODES`
