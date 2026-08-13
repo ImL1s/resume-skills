@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -19,6 +21,7 @@ from scripts.git_build_identity import git_build_identity
 from scripts.build_artifact_identity import (
     IDENTITY_FILE_ENV,
     IDENTITY_SHA256_ENV,
+    refresh_generated_build_identity,
     reproducible_build_umask,
     resolve_build_identity,
     stage_package_identity,
@@ -426,6 +429,139 @@ class ArtifactIdentityTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 stage_package_identity(package, identity)
+
+    @unittest.skipUnless(
+        os.environ.get("PORTABLE_RESUME_TEST_SETUPTOOLS_BUILD") == "1",
+        "requires the pinned artifact-build toolchain",
+    )
+    def test_build_py_refreshes_reusable_stale_identity(self) -> None:
+        repository = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as temporary:
+            build_lib = Path(temporary) / "reusable-build-lib"
+            command = [
+                sys.executable,
+                "setup.py",
+                "build_py",
+                "--build-lib",
+                str(build_lib),
+            ]
+            first = subprocess.run(
+                command,
+                cwd=repository,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+
+            destination = (
+                build_lib
+                / "portable_resume"
+                / "resources"
+                / "build-identity.json"
+            )
+            current = json.loads(destination.read_text(encoding="utf-8"))
+            replacement_sha = (
+                "a" * 40 if current.get("commit_sha") != "a" * 40 else "b" * 40
+            )
+            stale = build_identity(
+                package_root=build_lib / "portable_resume",
+                base_version=str(current["base_version"]),
+                commit_sha=replacement_sha,
+                dirty=False,
+                build_inputs_sha256="c" * 64,
+            )
+            destination.write_bytes(identity_json_bytes(stale))
+
+            second = subprocess.run(
+                command,
+                cwd=repository,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+            self.assertEqual(
+                json.loads(destination.read_text(encoding="utf-8")),
+                current,
+            )
+
+    def test_build_refresh_removes_only_owned_generated_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            build_root = Path(temporary) / "build-lib"
+            resources = build_root / "portable_resume" / "resources"
+            resources.mkdir(parents=True)
+            destination = resources / "build-identity.json"
+            destination.write_text("stale\n", encoding="utf-8")
+            sibling = resources / "keep.txt"
+            sibling.write_text("keep\n", encoding="utf-8")
+
+            self.assertTrue(refresh_generated_build_identity(build_root))
+
+            self.assertFalse(destination.exists())
+            self.assertEqual(sibling.read_text(encoding="utf-8"), "keep\n")
+            self.assertFalse(refresh_generated_build_identity(build_root))
+
+    def test_build_refresh_portable_path_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            build_root = Path(temporary) / "build-lib"
+            destination = (
+                build_root
+                / "portable_resume"
+                / "resources"
+                / "build-identity.json"
+            )
+            destination.parent.mkdir(parents=True)
+            destination.write_text("stale\n", encoding="utf-8")
+
+            with mock.patch.object(os, "supports_dir_fd", set()):
+                self.assertTrue(refresh_generated_build_identity(build_root))
+
+            self.assertFalse(destination.exists())
+
+    def test_build_refresh_rejects_symlink_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            build_root = root / "build-lib"
+            resources = build_root / "portable_resume" / "resources"
+            resources.mkdir(parents=True)
+            outside = root / "outside.json"
+            outside.write_text("outside\n", encoding="utf-8")
+            destination = resources / "build-identity.json"
+            try:
+                destination.symlink_to(outside)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks are unavailable")
+
+            with self.assertRaisesRegex(ValueError, "not a regular file"):
+                refresh_generated_build_identity(build_root)
+
+            self.assertEqual(outside.read_text(encoding="utf-8"), "outside\n")
+            self.assertTrue(destination.is_symlink())
+
+    def test_build_refresh_rejects_symlinked_resources_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            build_root = root / "build-lib"
+            package = build_root / "portable_resume"
+            package.mkdir(parents=True)
+            outside = root / "outside-resources"
+            outside.mkdir()
+            outside_identity = outside / "build-identity.json"
+            outside_identity.write_text("outside\n", encoding="utf-8")
+            try:
+                (package / "resources").symlink_to(outside, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("directory symlinks are unavailable")
+
+            with self.assertRaisesRegex(ValueError, "not a real directory"):
+                refresh_generated_build_identity(build_root)
+
+            self.assertEqual(
+                outside_identity.read_text(encoding="utf-8"),
+                "outside\n",
+            )
 
     def test_reproducible_sdist_normalizes_metadata_and_gzip_header(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -21,6 +21,11 @@
   accounting, preserving unsafe/limit/hot-journal hard failures and cleanup.
 - Reconciled the two shipped schema warning enums with runtime `WARNING_CODES`
   and added an exact-set regression.
+- Setuptools source-checkout upgrades now refresh only the generated
+  `build_py` identity inside the reusable build staging tree before copying
+  sources. A stale identity from an earlier commit no longer blocks
+  `pipx install --force .`, while finalized artifact staging still refuses
+  identity drift and symlinked/non-regular staging paths fail closed (#272).
 
 ## [0.4.2] — 2026-08-05
 
