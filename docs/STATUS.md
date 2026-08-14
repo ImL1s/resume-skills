@@ -1,10 +1,8 @@
 # Project status (2026-08-15)
 
-## Current release: 0.4.3 (candidate pin on main)
+## Current release: 0.4.3
 
-Release candidate package version is exact **`0.4.3`** for annotated tag `v0.4.3`
-(advances from published immutable `v0.4.2`). After publish, `main` must advance
-to `0.4.4.dev0`.
+Current `main` advances to `0.4.4.dev0` after publishing immutable `v0.4.3`.
 It no longer reuses immutable published `v0.3.4` as the package base. Explicit build/release tooling includes Git
 state plus deterministic registry/source digests. One canonical pre-build pin is
 embedded byte-for-byte in wheel, sdist, all 18 direct-host ZIPs, and all seven
@@ -36,8 +34,8 @@ actors. The separate optional trusted-zstd reader boundary remains documented in
 | CI (v0.3.4 release commit @ `fa1344b`) | **pass**: [Ubuntu + macOS × Python 3.11–3.14 + dist smoke](https://github.com/ImL1s/resume-skills/actions/runs/30269684151) |
 | Phase 0 / Milestone N1 | **merged** [PR #49](https://github.com/ImL1s/resume-skills/pull/49) → `7b5192c` |
 | `v0.3.4` release workflow | **pass**: [14 jobs through GitHub Release and PyPI](https://github.com/ImL1s/resume-skills/actions/runs/30269713516) |
-| Published release | **pass**: [GitHub Release v0.4.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.2) (prior [v0.4.1](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.1) / [v0.4.0](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.0) / [v0.3.4](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4) remain historical) |
-| Public PyPI installation | **pass for 0.4.2** ([portable-resume 0.4.2](https://pypi.org/project/portable-resume/0.4.2/), 306-cell artifact); prior `0.4.1` / `0.4.0` / `0.3.4` remain historical |
+| Published release | **pass**: [GitHub Release v0.4.3](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.3) (prior [v0.4.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.2) / [v0.4.1](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.1) / [v0.4.0](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.0) / [v0.3.4](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4) remain historical) |
+| Public PyPI installation | **pass for 0.4.3** ([portable-resume 0.4.3](https://pypi.org/project/portable-resume/0.4.3/), 306-cell artifact); prior `0.4.2` / `0.4.1` / `0.4.0` / `0.3.4` remain historical |
 | Public marketplace catalog | **synced** [`portable-resume-marketplace@7833e4a`](https://github.com/ImL1s/portable-resume-marketplace/commit/7833e4a3628213f78eb8458f30e9873d43a95fa6) / [marketplace `v0.3.4`](https://github.com/ImL1s/portable-resume-marketplace/releases/tag/v0.3.4); fresh through **0.4.1** host reinstall **not-run** |
 | Cursor full bubble graph | **not claimed** |
 | Codex large-rollout budget + parent list filter (Issue #3) | **done on main** [PR #4](https://github.com/ImL1s/resume-skills/pull/4) merge `48746c4` — P0 hotfix (not full streaming) |
@@ -221,8 +219,9 @@ Codex/multi-CLI merge blockers on [PR #49](https://github.com/ImL1s/resume-skill
 | Cursor graph completeness | not claimed | upstream schema/recovery work beyond current best effort |
 
 The latest published GitHub release is
-[`v0.4.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.2)
-([PyPI 0.4.2](https://pypi.org/project/portable-resume/0.4.2/)); prior
+[`v0.4.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.3)
+([PyPI 0.4.3](https://pypi.org/project/portable-resume/0.4.3/)); prior
+[`v0.4.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.2),
 [`v0.4.1`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.1),
 [`v0.4.0`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.0) and
 [`v0.3.4`](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4) remain

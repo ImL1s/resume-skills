@@ -1,5 +1,16 @@
 # Evidence summary
 
+## v0.4.3 (2026-08-14)
+
+- Tag: `v0.4.3` → commit `4e73b44a02b7643e12545653a8c1953d05d4c7ae`
+- Release workflow: [Actions run 31820997135](https://github.com/ImL1s/resume-skills/actions/runs/31820997135) (success)
+- GitHub Release: https://github.com/ImL1s/resume-skills/releases/tag/v0.4.3
+- PyPI: https://pypi.org/project/portable-resume/0.4.3/
+- Highlights: OpenCode Darwin/APFS live-WAL (#263); same-version shared-root identity (#271); stale setuptools identity refresh (#272); Windows install DX (#247)
+- Windows installed-runner: focused product-install smoke only (not full 306/306 on Windows)
+- Host UI / marketplace reinstall on this tip: **not-run**
+- Build identity: `source_sha256=b30d78e4d902fa74f682453324dae310627e8dac4edafb5a513f902944dad482` `registry_sha256=1a9725210209390ab86d84de465a0b5850e90d0e115f20d8edeb8ccc48c90d5e`
+
 ## v0.4.2 (2026-08-05)
 
 - Tag: `v0.4.2` → commit `3e12823932c2f2c9622cb0d8c10dbfaa4572a8d9`
