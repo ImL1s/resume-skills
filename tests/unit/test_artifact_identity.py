@@ -445,9 +445,12 @@ class ArtifactIdentityTests(unittest.TestCase):
                 "--build-lib",
                 str(build_lib),
             ]
+            environment = dict(os.environ)
+            environment["PORTABLE_RESUME_ALLOW_STABLE_DEVELOPMENT_IDENTITY"] = "1"
             first = subprocess.run(
                 command,
                 cwd=repository,
+                env=environment,
                 text=True,
                 capture_output=True,
                 check=False,
@@ -476,6 +479,7 @@ class ArtifactIdentityTests(unittest.TestCase):
             second = subprocess.run(
                 command,
                 cwd=repository,
+                env=environment,
                 text=True,
                 capture_output=True,
                 check=False,
