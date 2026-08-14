@@ -121,10 +121,13 @@ separate and require their own rows in
 
 ### Current state
 
-- `0.4.3` release candidate: version pin and CHANGELOG heading prepared on `main`
-  for annotated tag `v0.4.3` (OpenCode live-WAL #263, same-version identity
-  upgrade #271, stale setuptools identity refresh #272, Windows install DX #247).
-  Evidence after publish is owned by the `release.yml` run for that tag.
+- `v0.4.3`: **published** from annotated tag at commit
+  `4e73b44a02b7643e12545653a8c1953d05d4c7ae`.
+  [Release run 31820997135](https://github.com/ImL1s/resume-skills/actions/runs/31820997135)
+  and evidence in [`evidence-summary.md`](evidence-summary.md) (OpenCode live-WAL
+  #263, same-version identity upgrade #271, stale setuptools identity refresh
+  #272, Windows install DX #247). Current `main` advances to `0.4.4.dev0` after
+  this tag.
 - `v0.4.2`: **published** from annotated tag at commit
   `3e12823932c2f2c9622cb0d8c10dbfaa4572a8d9`.
   [Release run 31018019355](https://github.com/ImL1s/resume-skills/actions/runs/31018019355)
@@ -152,8 +155,9 @@ separate and require their own rows in
   [`STATUS.md`](STATUS.md) and is not retroactively claimed as a successful
   callback.
 - Published outputs (latest):
-  [GitHub Release v0.4.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.2)
-  and [PyPI 0.4.2](https://pypi.org/project/portable-resume/0.4.2/); prior
+  [GitHub Release v0.4.3](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.3)
+  and [PyPI 0.4.3](https://pypi.org/project/portable-resume/0.4.3/); prior
+  [v0.4.2](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.2),
   [v0.4.1](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.1),
   [v0.4.0](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.0) and
   [v0.3.4](https://github.com/ImL1s/resume-skills/releases/tag/v0.3.4) /
