@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: zh-CN v0.4.3.dev0 -->
+<!-- portable-resume-i18n: zh-CN v0.4.3 -->
 <!-- portable-resume-counts: sources=17 destinations=18 -->
 # Portable Resume — 简体中文快速指南
 

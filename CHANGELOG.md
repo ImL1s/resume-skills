@@ -2,11 +2,13 @@
 
 ## Unreleased
 
+## [0.4.3] — 2026-08-15
+
 - Installer coordinated shared-root upgrades now key on package identity as
-  well as the human bundle version. Source-checkout builds that remain
-  `0.4.3.dev0` can therefore atomically move every represented claim to a new
-  commit payload with one manifest generation/publication; omitted claims and
-  divergent alias payload identities still fail closed (#271).
+  well as the human bundle version. Same-base development checkouts can therefore
+  atomically move every represented claim to a new commit payload with one
+  manifest generation/publication; omitted claims and divergent alias payload
+  identities still fail closed (#271).
 - Windows installer DX now documents a dynamic Python user Scripts-directory
   lookup, explicit User PATH/new-shell setup, per-host verification, shared
   physical-root ownership, and the focused Windows evidence boundary. Static,

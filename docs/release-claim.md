@@ -121,13 +121,16 @@ separate and require their own rows in
 
 ### Current state
 
+- `0.4.3` release candidate: version pin and CHANGELOG heading prepared on `main`
+  for annotated tag `v0.4.3` (OpenCode live-WAL #263, same-version identity
+  upgrade #271, stale setuptools identity refresh #272, Windows install DX #247).
+  Evidence after publish is owned by the `release.yml` run for that tag.
 - `v0.4.2`: **published** from annotated tag at commit
   `3e12823932c2f2c9622cb0d8c10dbfaa4572a8d9`.
   [Release run 31018019355](https://github.com/ImL1s/resume-skills/actions/runs/31018019355)
   and evidence in [`evidence-summary.md`](evidence-summary.md) (POSIX installer
   root inode/dirfd pin #255/PR #256; multi-target physical_key freeze #251–#253;
   selected-source verify #240; verify honesty #242; Grok compaction v1 #238).
-  Current `main` advances to `0.4.3.dev0` after this tag.
 - `v0.4.1`: **published** from annotated tag at commit
   `a2ae025dcdf6a3944eb6752caadd67a53c28f46e`.
   [Release run 30837046570](https://github.com/ImL1s/resume-skills/actions/runs/30837046570)
