@@ -12,23 +12,24 @@
 
 Clean-room-oriented Agent Skills for migrating bounded local coding-agent context into a **fresh** session. Readers never invoke the source agent CLI and never add a network path; recovered text is marked untrusted and stale.
 
-**Current release:** [`0.4.2`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.2)
-· [PyPI](https://pypi.org/project/portable-resume/0.4.2/) · **306/306** packaging and
+**Current release:** [`0.4.3`](https://github.com/ImL1s/resume-skills/releases/tag/v0.4.3)
+· [PyPI](https://pypi.org/project/portable-resume/0.4.3/) · **306/306** packaging and
 Ubuntu installed-runner cells (17 sources × 18 destinations). Windows native
 mutating install is **supported** (#125); Windows hard gate is focused product-install
-smoke (3 hosts), **not** full 306/306 on Windows. Published `v0.4.1` / `v0.4.0`
-remain historical; published `v0.3.4` remains historical 81.
+smoke (3 hosts), **not** full 306/306 on Windows. Published `v0.4.2` / `v0.4.1` /
+`v0.4.0` remain historical; published `v0.3.4` remains historical 81.
 
 **Host evidence boundary:** v0.3.2-era checks cover 7/7 exact native local
 plugin/extension installs, 8/8 host-native headless Skill invocations, 6/6
 compatible public marketplace installs, and Cursor/Kimi pickers. Fresh through
-0.4.2 host reinstall/picker flows and Pi/OpenClaw native UI remain **not-run**
+0.4.3 host reinstall/picker flows and Pi/OpenClaw native UI remain **not-run**
 (still not re-run on this tip).
 
-**Current `main` development version:** `0.4.3.dev0`. Explicit build/release
-reports add `+g<commit>[.dirty]` while package metadata keeps the PEP 440 base.
-Artifact builds pin one canonical identity before producing bytes. Repository-level
-immutable `v*` tag enforcement remains active ([ruleset `20148806`](https://github.com/ImL1s/resume-skills/rules/20148806)).
+**Release candidate on `main`:** exact package version `0.4.3` (tag `v0.4.3`).
+Build/release reports still add `+g<commit>[.dirty]` only for dirty/dev checkouts;
+this release pin uses the clean exact version. Artifact builds pin one canonical
+identity before producing bytes. Repository-level immutable `v*` tag enforcement
+remains active ([ruleset `20148806`](https://github.com/ImL1s/resume-skills/rules/20148806)).
 
 ## Sources and destinations
 

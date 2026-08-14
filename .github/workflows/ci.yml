@@ -172,6 +172,7 @@ jobs:
       - name: Reusable setuptools staging regression
         env:
           PORTABLE_RESUME_TEST_SETUPTOOLS_BUILD: "1"
+          PORTABLE_RESUME_ALLOW_STABLE_DEVELOPMENT_IDENTITY: "1"
           PYTHONPATH: src
         run: >-
           python -m unittest -v

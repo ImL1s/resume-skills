@@ -1,4 +1,4 @@
-<!-- portable-resume-i18n: ko v0.4.3.dev0 -->
+<!-- portable-resume-i18n: ko v0.4.3 -->
 <!-- portable-resume-counts: sources=17 destinations=18 -->
 # Portable Resume — 한국어 빠른 시작
 
